@@ -18,8 +18,8 @@ fetch_upstreams() {
 show_status() {
 	printf '%-28s %-8s %-8s %s\n' repository ahead behind upstream
 	for spec in \
-		"happyro-web-client|$CLIENT_REPO|$ROBROWSERLEGACY_BRANCH" \
-		"happyro-web-server|$SERVER_REPO|$RATHENA_BRANCH" \
+		"happyro-client|$CLIENT_REPO|$ROBROWSERLEGACY_BRANCH" \
+		"happyro-server|$SERVER_REPO|$RATHENA_BRANCH" \
 		"remote-client-js|$GATEWAY_REPO|$REMOTE_CLIENT_JS_BRANCH"; do
 		IFS='|' read -r label repo branch <<<"$spec"
 		read -r ahead behind < <(git -C "$repo" rev-list --left-right --count "HEAD...upstream/$branch")
