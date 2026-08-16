@@ -38,11 +38,14 @@ make test-gateway
 make build-server
 make database-start
 make server-start
+make gateway-start
+make gateway-verify
+make test-account
 ```
 
-`make configure-resources` links the validated runtime GRF, `DATA.INI`, BGM, and System files into the vendor gateway without duplicating the 3.4 GB client tree. `make test-gateway` then runs the gateway doctor against those resources.
+`make configure-resources` links the validated runtime GRF, `DATA.INI`, BGM, and System files into the vendor gateway without duplicating the 3.4 GB client tree. `make test-gateway` then runs the gateway doctor against those resources. The gateway publishes the tested PWA build from `repos/happyro-client/dist/Web` at `/applications/pwa/`, proxies the rAthena HTTP API on the same origin, and runs as `happyro-gateway.service`.
 
-The client loads the required `Config.happyro.js` synchronously before initialization; optional `Config.local.js` overrides remain available for developer-specific settings. The pinned RemoteClient-JS revision references an unpublished local ESRGAN package. HappyRO does not enable ESRGAN, so `patches/remote-client-js/0001-disable-unavailable-esrgan-dependency.patch` removes only that install-time dependency from the vendor worktree.
+The client loads the required `Config.happyro.js` synchronously before initialization and does not contact GitHub at runtime. The pinned RemoteClient-JS revision references an unpublished local ESRGAN package. HappyRO does not enable ESRGAN, so the vendor worktree carries reproducible patches for that dependency and the same-origin rAthena API proxy.
 
 ## Database and rAthena runtime
 
@@ -61,6 +64,7 @@ rAthena login, char, and map listen on `10.24.1.1` ports `6900`, `6121`, and `51
 Stop the stack in dependency order:
 
 ```bash
+make gateway-stop
 make server-stop
 make database-stop
 ```
