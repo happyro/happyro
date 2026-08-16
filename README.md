@@ -1,16 +1,18 @@
-# HappyRO Web
+# HappyRO
 
-HappyRO Web is the LAN-only roBrowserLegacy development stack. It is independent from `happyro-desktop` and does not use the Windows client, public GRF services, or public WebSocket proxies.
+HappyRO is the LAN-only roBrowserLegacy development stack. It is independent from `happyro-desktop` and does not use the Windows client, public GRF services, or public WebSocket proxies.
 
 ## Repository layout
 
 ```text
-happyro-web/
+happyro/
 ├── configs/                         # HappyRO client configuration
+├── deploy/mariadb/                  # Pinned LAN development database
+├── deploy/rathena/                  # rAthena LAN runtime profile
 ├── deploy/remote-client/            # LAN gateway environment
 ├── inputs/                           # Immutable source and staged runtime assets
-├── repos/happyro-web-client/         # HappyRO roBrowserLegacy fork
-├── repos/happyro-web-server/         # HappyRO rAthena fork
+├── repos/happyro-client/         # HappyRO roBrowserLegacy fork
+├── repos/happyro-server/         # HappyRO rAthena fork
 ├── vendor/robrowserlegacy-remote-client-js/
 ├── versions/                         # Locked upstream base revisions
 ├── scripts/                          # Repeatable checks/builds
@@ -30,14 +32,40 @@ make status
 make doctor
 make upstream-status
 make configure-client
+make configure-resources
 make test-client
 make test-gateway
 make build-server
+make database-start
+make server-start
 ```
 
-`make test-gateway` currently installs dependencies without running the resource-bound prepare hook, then tests static configuration. Starting the gateway requires a complete, validated `DATA.INI` plus all listed GRFs in the vendor gateway's ignored `resources/` directory.
+`make configure-resources` links the validated runtime GRF, `DATA.INI`, BGM, and System files into the vendor gateway without duplicating the 3.4 GB client tree. `make test-gateway` then runs the gateway doctor against those resources.
 
 The client loads the required `Config.happyro.js` synchronously before initialization; optional `Config.local.js` overrides remain available for developer-specific settings. The pinned RemoteClient-JS revision references an unpublished local ESRGAN package. HappyRO does not enable ESRGAN, so `patches/remote-client-js/0001-disable-unavailable-esrgan-dependency.patch` removes only that install-time dependency from the vendor worktree.
+
+## Database and rAthena runtime
+
+The Web stack owns a separate MariaDB 10.11.18 instance. It is pinned by image digest, stores data under ignored `work/runtime/mariadb-10.11/`, and binds only to `127.0.0.1:33062`. The schemas are `happyro` and `happyro_log`; passwords are generated locally and are never committed.
+
+```bash
+make database-start
+make database-verify
+make server-start
+make server-verify
+make status
+```
+
+rAthena login, char, and map listen on `10.24.1.1` ports `6900`, `6121`, and `5121`. Its HTTP API listens only on `127.0.0.1:8889`; port `8888` remains owned by the NAS `tinyproxy` service. The four rAthena processes run as transient systemd services and remain active after `make server-start` returns.
+
+Stop the stack in dependency order:
+
+```bash
+make server-stop
+make database-stop
+```
+
+The stop commands retain MariaDB data and generated secrets. The initial schema scripts run only when the database data directory is empty.
 
 ## Updating upstreams
 
@@ -47,8 +75,8 @@ All HappyRO-owned repositories use `main`. Forks keep `origin` for HappyRO and `
 make fetch-upstreams
 make upstream-status
 
-git -C repos/happyro-web-client merge --no-ff upstream/master
-git -C repos/happyro-web-server merge --no-ff upstream/master
+git -C repos/happyro-client merge --no-ff upstream/master
+git -C repos/happyro-server merge --no-ff upstream/master
 ```
 
 Run the relevant tests before pushing a merge. RemoteClient-JS stays at its locked vendor revision until its compatibility patch has been checked against a newer upstream commit.
