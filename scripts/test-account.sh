@@ -20,8 +20,8 @@ umask 077
 if [[ ! -f "$account_file" ]]; then
 	mkdir -p "$(dirname "$account_file")"
 	{
-		printf 'TEST_ACCOUNT_USER=happyrotest\n'
-		printf 'TEST_ACCOUNT_PASSWORD=%s\n' "$(openssl rand -hex 10)"
+		printf 'TEST_ACCOUNT_USER=happytest\n'
+		printf 'TEST_ACCOUNT_PASSWORD=happyro\n'
 		printf 'TEST_ACCOUNT_SEX=M\n'
 	} > "$account_file"
 fi
@@ -37,7 +37,7 @@ set +a
 [[ "$TEST_ACCOUNT_USER" =~ ^[a-z0-9]{6,23}$ ]] || fail "invalid test account name"
 [[ "$TEST_ACCOUNT_SEX" == M || "$TEST_ACCOUNT_SEX" == F ]] || fail "invalid test account sex"
 
-if [[ ! "$TEST_ACCOUNT_PASSWORD" =~ ^[a-f0-9]{20}$ ]]; then
+if [[ ! "$TEST_ACCOUNT_PASSWORD" =~ ^[A-Za-z0-9]{6,23}$ ]]; then
 	TEST_ACCOUNT_PASSWORD="$(openssl rand -hex 10)"
 	{
 		printf 'TEST_ACCOUNT_USER=%s\n' "$TEST_ACCOUNT_USER"
@@ -49,7 +49,7 @@ fi
 
 sql="
 INSERT INTO \`$DB_MAIN_DATABASE\`.login (userid, user_pass, sex, email)
-SELECT '$TEST_ACCOUNT_USER', '$TEST_ACCOUNT_PASSWORD', '$TEST_ACCOUNT_SEX', 'happyrotest@localhost'
+SELECT '$TEST_ACCOUNT_USER', '$TEST_ACCOUNT_PASSWORD', '$TEST_ACCOUNT_SEX', 'happytest@localhost'
 WHERE NOT EXISTS (
   SELECT 1 FROM \`$DB_MAIN_DATABASE\`.login WHERE userid='$TEST_ACCOUNT_USER'
 );

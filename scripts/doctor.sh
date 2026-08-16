@@ -45,6 +45,7 @@ bash -n \
 	"$PROJECT_ROOT/scripts/configure-server.sh" \
 	"$PROJECT_ROOT/scripts/gateway.sh" \
 	"$PROJECT_ROOT/scripts/test-account.sh" \
+	"$PROJECT_ROOT/scripts/automation-account.sh" \
 	"$PROJECT_ROOT/scripts/server.sh" \
 	"$PROJECT_ROOT/deploy/mariadb/init/20-happyro-databases.sh"
 git -C "$PROJECT_ROOT" check-ignore -q work/runtime/mariadb-10.11/secrets.env

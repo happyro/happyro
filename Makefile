@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: status doctor fetch-upstreams upstream-status configure-client configure-gateway configure-resources configure-server database-start database-stop database-status database-verify server-start server-stop server-status server-verify gateway-start gateway-stop gateway-status gateway-verify test-account test-client test-gateway build-server test
+.PHONY: status doctor fetch-upstreams upstream-status configure-client configure-gateway configure-resources configure-server database-start database-stop database-status database-verify server-start server-stop server-status server-verify gateway-start gateway-stop gateway-status gateway-verify test-account automation-account test-client test-gateway build-server test
 
 status:
 	@./scripts/status.sh
@@ -64,6 +64,9 @@ gateway-verify:
 
 test-account:
 	@./scripts/test-account.sh
+
+automation-account:
+	@./scripts/automation-account.sh
 
 test-client: configure-client
 	@./scripts/test-client.sh
