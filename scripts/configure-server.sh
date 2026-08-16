@@ -75,6 +75,7 @@ write_database_entry() {
 	printf 'char_ip: %s\n' "$SERVER_LAN_IP"
 	printf 'char_port: %s\n' "$CHAR_PORT"
 	printf 'server_name: HappyRO\n'
+	printf 'pincode_enabled: no\n'
 } > "$import_dir/char_conf.txt"
 
 {

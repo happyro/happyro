@@ -21,6 +21,10 @@ printf '\n%-28s %s\n' runtime state
 database_state="$(docker inspect --format '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' happyro-mariadb 2>/dev/null || true)"
 printf '%-28s %s\n' mariadb "${database_state:-stopped}"
 
+gateway_state=stopped
+systemctl is-active --quiet happyro-gateway.service 2>/dev/null && gateway_state=running
+printf '%-28s %s\n' gateway "$gateway_state"
+
 for spec in \
 	"login-server|happyro-login.service" \
 	"char-server|happyro-char.service" \

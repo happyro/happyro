@@ -4,7 +4,7 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(dirname "$0")/lib.sh"
 
-for command in git node npm cmake c++ docker openssl rg ss systemctl systemd-run; do
+for command in git node npm cmake c++ docker openssl rg ss curl systemctl systemd-run; do
 	command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 done
 docker compose version >/dev/null
@@ -27,7 +27,11 @@ rg -q '^#undef PACKET_OBFUSCATION$' "$SERVER_REPO/src/custom/defines_post.hpp"
 ! rg -q '@chicowall/robrowser-esrgan' "$GATEWAY_REPO/package.json"
 git -C "$GATEWAY_REPO" apply --check --reverse \
 	"$PROJECT_ROOT/patches/remote-client-js/0001-disable-unavailable-esrgan-dependency.patch"
+git -C "$GATEWAY_REPO" apply --check --reverse \
+	"$PROJECT_ROOT/patches/remote-client-js/0002-proxy-rathena-web-api.patch"
 rg -q '^WS_ALLOWED_TARGETS=10\.24\.1\.1:6900,10\.24\.1\.1:6121,10\.24\.1\.1:5121$' \
+	"$PROJECT_ROOT/deploy/remote-client/.env.example"
+rg -q '^RATHENA_WEB_API_URL=http://127\.0\.0\.1:8889$' \
 	"$PROJECT_ROOT/deploy/remote-client/.env.example"
 rg -q '^MARIADB_IMAGE=mariadb:10\.11@sha256:[0-9a-f]{64}$' "$MARIADB_PROFILE"
 rg -q '^DB_BIND_IP=127\.0\.0\.1$' "$MARIADB_PROFILE"
@@ -35,9 +39,12 @@ rg -q '^DB_PORT=33062$' "$MARIADB_PROFILE"
 rg -q '^SERVER_LAN_IP=10\.24\.1\.1$' "$RATHENA_PROFILE"
 rg -q '^WEB_BIND_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
 rg -q '^WEB_PORT=8889$' "$RATHENA_PROFILE"
+rg -q '^pincode_enabled: no$' "$SERVER_REPO/conf/import/char_conf.txt"
 bash -n \
 	"$PROJECT_ROOT/scripts/database.sh" \
 	"$PROJECT_ROOT/scripts/configure-server.sh" \
+	"$PROJECT_ROOT/scripts/gateway.sh" \
+	"$PROJECT_ROOT/scripts/test-account.sh" \
 	"$PROJECT_ROOT/scripts/server.sh" \
 	"$PROJECT_ROOT/deploy/mariadb/init/20-happyro-databases.sh"
 git -C "$PROJECT_ROOT" check-ignore -q work/runtime/mariadb-10.11/secrets.env
