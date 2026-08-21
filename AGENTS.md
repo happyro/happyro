@@ -31,7 +31,9 @@
 - NPC 唯一名、变量名、事件标签、代码标识符和玩家自定义角色名保持原样。
 - 玩家可见人名默认使用稳定中文名；已有官方或项目译名时沿用，其他语言人名通常采用中文音译，英文人名无既定译名时选择稳定音译。
 - 特定术语可按语境保留原样，例如 Zeny；同一语境中必须保持一致。
-- 新增译名、人名和保留项登记到 docs/zh-cn/terms-names.csv。
+- 翻译总清单和四个 agent 的工作目录位于 docs/zh-cn/translation-manifest.tsv 和 docs/zh-cn/agent-xx/。
+- 新增译名、人名和保留项先登记到对应 agent 的 terms-names.csv，最终合并到 docs/zh-cn/terms-names.csv。
+- agent 完成翻译的文件最终登记到 docs/zh-cn/translated-files.tsv；用户验收不写入 agent 记录。
+- 翻译期间每个 agent 只修改自己分配的源码文件和 docs/zh-cn/agent-xx/，不修改根目录总表，不提交代码。
 - 中文汉化工作流和文档入口见 docs/zh-cn/README.md。
 - 当前阶段不进行自动测试，全部源码翻译完成后由用户统一手动验收。
-
