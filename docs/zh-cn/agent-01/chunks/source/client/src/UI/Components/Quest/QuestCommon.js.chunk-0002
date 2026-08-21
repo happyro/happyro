@@ -1,0 +1,273 @@
+
+			// Bind toggle button
+			const toggleBtn = root.querySelector(`#${toggle_id}`);
+			if (toggleBtn) {
+				toggleBtn.addEventListener('click', e => onClickQuestToggle(e));
+
+				// Load toggle icon
+				if (quest.active == 1) {
+					Client.loadFile(`${DB.INTERFACE_PATH}renew_questui/bt_lock_open.bmp`, data => {
+						toggleBtn.style.backgroundImage = `url(${data})`;
+					});
+				} else {
+					Client.loadFile(`${DB.INTERFACE_PATH}renew_questui/bt_lock.bmp`, data => {
+						toggleBtn.style.backgroundImage = `url(${data})`;
+					});
+				}
+			}
+
+			// Bind show button
+			const showBtn = root.querySelector(`#${show_id}`);
+			if (showBtn) {
+				showBtn.addEventListener('click', e => onClickQuestDisplay(e));
+				Client.loadFile(`${DB.INTERFACE_PATH}renew_questui/${bt_check}.bmp`, data => {
+					showBtn.style.backgroundImage = `url(${data})`;
+				});
+			}
+			return;
+		}
+
+		const toggle_id = `qid${quest.questID}`;
+		const title = quest.title.length > 30 ? `${quest.title.substr(0, 30)}...` : quest.title;
+		const pattern = /^ico_/;
+		const quest_icon = pattern.test(quest.icon) ? 'SG_FEEL.bmp' : quest.icon;
+		const li_text = `<div class="quest-item-icon"> <div class="quest-item-icon-image"></div> </div> <div class="quest-item-title"> <span class="quest-item-title-text">${title}</span> </div>`;
+
+		const ul_id = quest.active == 1 ? '#active-quest-list' : '#inactive-quest-list';
+
+		// Create list item for main list
+		const li = document.createElement('li');
+		li.id = toggle_id;
+		li.className = `quest-item ${toggle_id}`;
+		li.innerHTML = li_text;
+
+		// Load quest icon
+		Client.loadFile(`${DB.INTERFACE_PATH}item/${quest_icon}`, data => {
+			const iconEl = li.querySelector('.quest-item-icon-image');
+			if (iconEl) {
+				iconEl.style.backgroundImage = `url(${data})`;
+			}
+		});
+
+		li.addEventListener('contextmenu', e => onClickQuestToggle(e));
+		li.addEventListener('click', e => onClickQuest(e));
+
+		const ul = root.querySelector(ul_id);
+		if (ul) {
+			ul.appendChild(li);
+		}
+
+		// Create duplicate for "all" list
+		const liAll = document.createElement('li');
+		liAll.className = `quest-item ${toggle_id}`;
+		liAll.innerHTML = li_text;
+
+		Client.loadFile(`${DB.INTERFACE_PATH}item/${quest_icon}`, data => {
+			const iconEl = liAll.querySelector('.quest-item-icon-image');
+			if (iconEl) {
+				iconEl.style.backgroundImage = `url(${data})`;
+			}
+		});
+
+		liAll.addEventListener('click', e => onClickQuest(e));
+
+		const allList = root.querySelector('#all-quest-list');
+		if (allList) {
+			allList.appendChild(liAll);
+		}
+	};
+
+	function onClickMenu(e) {
+		const root = Quest.getRoot();
+		const menuItem = e.currentTarget;
+		const menuId = menuItem.id;
+
+		if (_active_menu === menuId) {
+			return;
+		}
+		_active_menu = menuId;
+
+		if (renewLayout) {
+			let background_image = '';
+			root.querySelector('#active-quest-list').style.display = 'none';
+			root.querySelector('#inactive-quest-list').style.display = 'none';
+			root.querySelector('#feature-quest-list').style.display = 'none';
+			root.querySelector('#cooldown-quest-list').style.display = 'none';
+
+			switch (_active_menu) {
+				case 'feature':
+					background_image = 'bg_quest2';
+					root.querySelector('#feature-quest-list').style.display = '';
+					break;
+				case 'inactive':
+					background_image = 'bg_quest3';
+					root.querySelector('#inactive-quest-list').style.display = '';
+					break;
+				case 'cooldown':
+					background_image = 'bg_quest4';
+					root.querySelector('#cooldown-quest-list').style.display = '';
+					break;
+				default:
+					background_image = 'bg_quest1';
+					root.querySelector('#active-quest-list').style.display = '';
+			}
+
+			Client.loadFile(`${DB.INTERFACE_PATH}renew_questui/${background_image}.bmp`, data => {
+				const titlebar = root.querySelector('.titlebar');
+				if (titlebar) {
+					titlebar.style.backgroundImage = `url(${data})`;
+				}
+			});
+		} else {
+			let background_image = '';
+			root.querySelector('#active-quest-list').style.display = 'none';
+			root.querySelector('#inactive-quest-list').style.display = 'none';
+			root.querySelector('#all-quest-list').style.display = 'none';
+
+			switch (_active_menu) {
+				case 'inactive':
+					background_image = 'tab_que_02';
+					root.querySelector('#inactive-quest-list').style.display = '';
+					break;
+				case 'all':
+					background_image = 'tab_que_03';
+					root.querySelector('#all-quest-list').style.display = '';
+					break;
+				default:
+					background_image = 'tab_que_01';
+					root.querySelector('#active-quest-list').style.display = '';
+			}
+
+			Client.loadFile(`${DB.INTERFACE_PATH}basic_interface/${background_image}.bmp`, data => {
+				const el = root.querySelector('.quest-menu');
+				if (el) {
+					el.style.backgroundImage = `url(${data})`;
+				}
+			});
+		}
+
+		questHelper.clearQuestDesc();
+	}
+
+	function onClickQuest(e) {
+		const root = Quest.getRoot();
+		const toggleEl = e.currentTarget;
+		const tid = toggleEl.id || toggleEl.className.match(/qid(\d+)/)?.[0];
+		const id = tid ? tid.replace('qid', '') : null;
+		if (!id) {
+			return;
+		}
+
+		if (_index > -1) {
+			root.querySelectorAll(`.qid${_index}`).forEach(el => {
+				el.style.backgroundColor = 'white';
+			});
+			const prevById = root.querySelector(`#qid${_index}`);
+			if (prevById) {
+				prevById.style.backgroundColor = 'white';
+			}
+		}
+		_index = id;
+		toggleEl.style.backgroundColor = 'lightgray';
+	}
+
+	function onClickQuestToggle(e) {
+		const toggleEl = e.currentTarget;
+		const tid = toggleEl.id;
+		const id = tid.replace('qid', '');
+		const _pkt = new PACKET.CZ.ACTIVE_QUEST();
+		_pkt.questID = _questList[id].questID;
+		_pkt.active = _questList[id].active == 1 ? 0 : 1;
+		Network.sendPacket(_pkt);
+	}
+
+	function onClickView() {
+		if (_index > -1) {
+			questHelper.clearQuestDesc();
+			questHelper.setQuestInfo(_questList[_index]);
+			questHelper.prepare();
+			questHelper.append();
+			questHelper.ui.show();
+		}
+	}
+
+	function onClickQuestCheckbox() {
+		const root = Quest.getRoot();
+		let checkbox_background;
+		if (_preferences.showwindow) {
+			checkbox_background = 'checkbox_off';
+			questWindow.ui.hide();
+		} else {
+			checkbox_background = 'checkbox_on';
+			questWindow.ui.show();
+		}
+		_preferences.showwindow = !_preferences.showwindow;
+		_preferences.save();
+
+		Client.loadFile(`${DB.INTERFACE_PATH}renew_questui/${checkbox_background}.bmp`, data => {
+			const el = root.querySelector('.toggle-quest-image');
+			if (el) {
+				el.style.backgroundImage = `url(${data})`;
+			}
+		});
+	}
+
+	function onClickQuestDisplay(e) {
+		const root = Quest.getRoot();
+		const displayEl = e.currentTarget;
+		const cid = displayEl.id;
+		const id = cid.replace('sid', '');
+		const iid = parseInt(Number(id));
+
+		let checkbox_background = '';
+		if (_questNotShowList.includes(iid)) {
+			const index = _questNotShowList.indexOf(iid);
+			_questNotShowList.splice(index, 1);
+			checkbox_background = 'bt_check_on';
+		} else {
+			_questNotShowList.push(iid);
+			checkbox_background = 'bt_check_off';
+		}
+
+		Client.loadFile(`${DB.INTERFACE_PATH}renew_questui/${checkbox_background}.bmp`, data => {
+			const el = root.querySelector(`#${cid}`);
+			if (el) {
+				el.style.backgroundImage = `url(${data})`;
+			}
+		});
+
+		questWindow.ClearQuestList();
+		questWindow.setQuestList(_questList, _questNotShowList);
+	}
+
+	function refreshQuestUI() {
+		Quest.ClearQuestList();
+		Quest.setQuestList(_questList);
+		if (questWindow) {
+			questWindow.ClearQuestList();
+			questWindow.setQuestList(_questList, _questNotShowList);
+		}
+	}
+
+	Quest.ClearQuestList = function ClearQuestList() {
+		const root = Quest.getRoot();
+		if (!root) {
+			return;
+		}
+		root.querySelectorAll('.quest-list').forEach(el => {
+			el.innerHTML = '';
+		});
+	};
+
+	/**
+	 * Close the window
+	 */
+	function onClose() {
+		Quest.ui.hide();
+	}
+
+	/**
+	 * Export
+	 */
+	return UIManager.addComponent(Quest);
+}

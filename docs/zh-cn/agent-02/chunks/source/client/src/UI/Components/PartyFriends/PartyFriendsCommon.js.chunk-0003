@@ -1,0 +1,500 @@
+			for (let i = 0; i < count; i++) {
+				Component.addPartyMember(members[i]);
+			}
+
+			_index = -1;
+		};
+
+		/**
+		 * Add a new party member to the list
+		 *
+		 * @param {object} player information
+		 */
+		Component.addPartyMember = function addPartyMember(player) {
+			const role = player.role || player.Role || 0;
+			const count = _party.length;
+			const root = _root();
+			let node;
+
+			// Check if we are the leader
+			if (player.AID === Session.AID) {
+				Session.isPartyLeader = role === 0;
+				const addBtn = root.querySelector('.party.add');
+				if (addBtn) {
+					addBtn.style.display = Session.isPartyLeader ? 'inline-block' : 'none';
+				}
+			}
+
+			// Search for duplicates entries
+			const nodes = root.querySelectorAll('.content .party .node');
+			for (let i = 0; i < count; ++i) {
+				if (_party[i].AID === player.AID && _party[i].characterName === player.characterName) {
+					node = nodes[i];
+					break;
+				}
+			}
+
+			// Update
+			if (node) {
+				node.classList.remove('leader', 'online');
+
+				if (role === 0) {
+					node.classList.add('leader');
+				}
+				if (player.state === 0) {
+					node.classList.add('online');
+				}
+
+				node.style.backgroundImage = '';
+				const nameEl = node.querySelector('.name');
+				if (nameEl) nameEl.textContent = player.characterName;
+				const mapEl = node.querySelector('.map');
+				if (mapEl) mapEl.textContent = `(${DB.getMapName(player.mapName)})`;
+			}
+
+			// Create
+			else {
+				player = Object.assign({}, player);
+
+				_party.push(player);
+				const partyContent = root.querySelector('.content .party');
+				if (partyContent) {
+					const div = document.createElement('div');
+					div.className = `node${role === 0 ? ' leader' : ''}${player.state === 0 ? ' online' : ''}`;
+					div.innerHTML =
+						`<span class="name">${_escapeHTML(player.characterName)}</span>` +
+						`<span class="map">(${_escapeHTML(DB.getMapName(player.mapName))})</span>` +
+						'<canvas class="life" width="60" height="5"></canvas> <span class="hp"></span>';
+					partyContent.appendChild(div);
+					node = div;
+				}
+			}
+
+			if (!node) return;
+
+			const hpEl = node.querySelector('.hp');
+			if (hpEl) hpEl.textContent = '';
+
+			const canvas = node.querySelector('canvas');
+			if (canvas) {
+				const ctx = canvas.getContext('2d');
+				ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+				// Update life
+				if (player.life && player.life.display) {
+					ctx.drawImage(player.life.canvas, 0, 0, 60, 5, 0, 0, 60, 5);
+					if (hpEl) hpEl.textContent = `${player.life.hp}/${player.life.hp_max}`;
+				}
+			}
+
+			// Add texture
+			const texture =
+				role === 0 && player.state === 0 ? 'grp_leader.bmp' : player.state === 0 ? 'grp_online.bmp' : '';
+			if (texture) {
+				Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/' + texture, function (url) {
+					if (node) node.style.backgroundImage = `url(${url})`;
+				});
+			}
+		};
+
+		/**
+		 * Remove a character from list
+		 *
+		 * @param {number} account id
+		 * @param {string} character name
+		 */
+		Component.removePartyMember = function removePartyMember(AID, characterName) {
+			const root = _root();
+
+			if (AID === Session.AID) {
+				_party.length = 0;
+
+				const partyContent = root.querySelector('.content .party');
+				if (partyContent) partyContent.innerHTML = '';
+
+				const partyName = root.querySelector('.partyname');
+				if (partyName) partyName.textContent = '';
+
+				const createBtn = root.querySelector('.party.create');
+				if (createBtn) createBtn.style.display = 'inline-block';
+
+				const leaveBtn = root.querySelector('.party.leave');
+				const addBtn = root.querySelector('.party.add');
+				if (leaveBtn) leaveBtn.style.display = 'none';
+				if (addBtn) addBtn.style.display = 'none';
+
+				ChatBox.addText(DB.getMessage(84), ChatBox.TYPE.BLUE, ChatBox.FILTER.PARTY_SETUP);
+				return;
+			}
+
+			const count = _party.length;
+			const nodes = root.querySelectorAll('.content .party .node');
+
+			for (let i = 0; i < count; ++i) {
+				if (_party[i].AID === AID && _party[i].characterName === characterName) {
+					_party.splice(i, 1);
+					if (nodes[i]) nodes[i].remove();
+					break;
+				}
+			}
+		};
+
+		/**
+		 * Update player life in interface
+		 *
+		 * @param {number} account id
+		 * @param {canvas} canvas life element
+		 * @param {number} hp
+		 * @param {number} maxhp
+		 */
+		Component.updateMemberLife = function updateMemberLife(AID, canvas, hp, maxhp) {
+			const count = _party.length;
+			const root = _root();
+			const nodes = root.querySelectorAll('.content .party .node');
+
+			for (let i = 0; i < count; ++i) {
+				if (_party[i].AID === AID && _party[i].state === 0) {
+					const node = nodes[i];
+					if (!node) break;
+					const cvs = node.querySelector('canvas');
+					if (cvs) {
+						const ctx = cvs.getContext('2d');
+						ctx.drawImage(canvas, 0, 0, 60, 5, 0, 0, 60, 5);
+					}
+					const hpEl = node.querySelector('.hp');
+					if (hpEl) hpEl.textContent = `${hp}/${maxhp}`;
+					break;
+				}
+			}
+		};
+	}
+
+	/**
+	 * Extend inventory window size
+	 *
+	 * @param {number} width
+	 * @param {number} height
+	 */
+	Component.resize = function resize(width, height) {
+		const root = _root();
+		width = Math.min(Math.max(width, 12), 13);
+		height = Math.min(Math.max(height, 6), 12);
+
+		_preferences.width = width;
+		_preferences.height = height;
+		_preferences.save();
+
+		const content = root.querySelector('.content');
+		if (content) {
+			content.style.width = `${width * 20}px`;
+			content.style.height = `${height * 20}px`;
+		}
+	};
+
+	/**
+	 * Update party options
+	 *
+	 * @param {boolean} exp share option
+	 * @param {boolean} item share option
+	 * @param {boolean} item sharing option
+	 */
+	Component.setOptions = function setOptions(exp_share, item_share, item_sharing_type) {
+		if (exp_share !== undefined) {
+			_options.exp_share = exp_share;
+		}
+		if (item_share !== undefined) {
+			_options.item_share = item_share;
+		}
+		if (item_sharing_type !== undefined) {
+			_options.item_sharing_type = item_sharing_type;
+		}
+	};
+
+	/**
+	 * Check if character is a group member
+	 *
+	 * @param {string} character name
+	 */
+	Component.isGroupMember = function isGroupMember(characterName) {
+		const count = _party.length;
+		for (let i = 0; i < count; ++i) {
+			if (_party[i].characterName === characterName) {
+				return true;
+			}
+		}
+
+		return false;
+	};
+
+	// ─── Renewal-only detached member helpers ──────────────
+
+	/**
+	 * Logic when clicking a member node to handle possible drag out
+	 */
+	function onMemberMouseDown(event) {
+		// Only left click blocks event propagation to game world
+		if (event.which === 1) {
+			event.stopPropagation();
+		} else {
+			return;
+		}
+
+		const node = this;
+		const AID = parseInt(node.dataset.aid, 10);
+
+		event.preventDefault();
+
+		// Selection change immediately on mousedown
+		onSelectionChangeRenewal.call(node, event);
+
+		const player = _party.find(member => member.AID == AID);
+
+		if (!player) {
+			return;
+		}
+
+		// Handle Skill Targeting
+		if (SkillTargetSelection && SkillTargetSelection.__active && !_preferences.friend) {
+			if (player.state === 0) {
+				SkillTargetSelection.intersectEntityId(player.AID);
+			}
+			SkillTargetSelection.remove();
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			return;
+		}
+
+		// Block ONLY dragging if already detached
+		if (_detachedMembers[AID]) {
+			return;
+		}
+
+		// Offline members are not draggable
+		if (player.state !== 0) {
+			return;
+		}
+
+		// Block dragging out when locked
+		if (_preferences.lock) {
+			return;
+		}
+
+		const startX = event.pageX;
+		const startY = event.pageY;
+		let isDragging = false;
+		const threshold = 5;
+		let ghostWrapper = null;
+		let ghostInner = null;
+
+		const nodeRect = node.getBoundingClientRect();
+
+		function onMouseMove(moveEvent) {
+			if (!isDragging) {
+				if (Math.abs(moveEvent.pageX - startX) > threshold || Math.abs(moveEvent.pageY - startY) > threshold) {
+					isDragging = true;
+
+					if (ContextMenu) {
+						ContextMenu.remove();
+					}
+
+					// Create screen-wide drag shield
+					ghostWrapper = document.createElement('div');
+					ghostWrapper.className = 'drag-shield';
+					ghostWrapper.style.cssText =
+						'position:fixed; top:0; left:0; right:0; bottom:0; z-index:10000; background:transparent; cursor:grabbing;';
+
+					ghostInner = document.createElement('div');
+					ghostInner.id = 'PartyFriends';
+					ghostInner.className = 'drag-ghost-wrapper';
+					ghostInner.style.cssText =
+						'position:absolute; pointer-events:none; opacity:0.6; background:none !important; border:none !important; height:auto !important; width:auto !important;';
+
+					const ghostContent = document.createElement('div');
+					ghostContent.className = 'content';
+					ghostContent.style.cssText =
+						'background:none !important; height:auto !important; width:auto !important;';
+
+					const ghostParty = document.createElement('div');
+					ghostParty.className = 'party info-v2';
+
+					const clonedNode = node.cloneNode(true);
+					ghostParty.appendChild(clonedNode);
+					ghostContent.appendChild(ghostParty);
+					ghostInner.appendChild(ghostContent);
+					ghostWrapper.appendChild(ghostInner);
+					document.body.appendChild(ghostWrapper);
+
+					// Canvas content isn't cloned, redraw if possible
+					const srcCanvas = node.querySelector('canvas');
+					const dstCanvas = clonedNode.querySelector('canvas');
+					if (srcCanvas && dstCanvas) {
+						dstCanvas.width = srcCanvas.width;
+						dstCanvas.height = srcCanvas.height;
+						dstCanvas.getContext('2d').drawImage(srcCanvas, 0, 0);
+					}
+
+					ghostInner.style.width = `${node.offsetWidth}px`;
+					ghostInner.style.height = `${node.offsetHeight}px`;
+				}
+			}
+
+			if (isDragging && ghostInner) {
+				ghostInner.style.left = `${moveEvent.clientX - (startX - nodeRect.left)}px`;
+				ghostInner.style.top = `${moveEvent.clientY - (startY - nodeRect.top)}px`;
+				moveEvent.preventDefault();
+			}
+		}
+
+		function onMouseUp(upEvent) {
+			window.removeEventListener('mousemove', onMouseMove);
+			window.removeEventListener('mouseup', onMouseUp);
+
+			if (ghostWrapper) {
+				ghostWrapper.remove();
+				ghostWrapper = null;
+				ghostInner = null;
+			}
+
+			if (isDragging) {
+				upEvent.stopImmediatePropagation();
+
+				const hostEl = Component._host;
+				const rect = hostEl.getBoundingClientRect();
+				const x = upEvent.pageX;
+				const y = upEvent.pageY;
+
+				// Check if dropped outside (with a small 10px buffer)
+				if (
+					x < rect.left - 10 ||
+					x > rect.left + rect.width + 10 ||
+					y < rect.top - 10 ||
+					y > rect.top + rect.height + 10
+				) {
+					detachMember(AID, player, x, y);
+					Component.saveDetachedMembers();
+				}
+			}
+		}
+
+		window.addEventListener('mousemove', onMouseMove);
+		window.addEventListener('mouseup', onMouseUp);
+	}
+
+	/**
+	 * Find the next available slot for a detached member window.
+	 */
+	function getNextAvailableSlot() {
+		const startX = 0;
+		const startY = 100;
+		const stepY = 38 + 10;
+		let currentY = startY;
+
+		let found = true;
+		while (found) {
+			found = false;
+			for (const aid in _detachedMembers) {
+				const ext = _detachedMembers[aid];
+				if (ext && ext._host) {
+					const posLeft = ext._host.offsetLeft;
+					const posTop = ext._host.offsetTop;
+					if (Math.abs(posLeft - startX) < 5 && Math.abs(posTop - currentY) < 5) {
+						currentY += stepY;
+						found = true;
+						break;
+					}
+				}
+			}
+		}
+
+		return { x: startX, y: currentY };
+	}
+
+	/**
+	 * Position all detached members into a neat vertical stack
+	 */
+	function sortDetachedMembers() {
+		const startX = 0;
+		const startY = 100;
+		const stepY = 38 + 10;
+		let currentY = startY;
+
+		for (let i = 0, count = _party.length; i < count; i++) {
+			const player = _party[i];
+			const external = _detachedMembers[player.AID];
+
+			if (external && external._host) {
+				external._host.style.left = `${startX}px`;
+				external._host.style.top = `${currentY}px`;
+				currentY += stepY;
+			}
+		}
+
+		Component.saveDetachedMembers();
+	}
+
+	/**
+	 * Create an external mini-window for a member
+	 */
+	function detachMember(AID, player, x, y, restorePos) {
+		if (_detachedMembers[AID]) {
+			return;
+		}
+
+		const external = PartyMemberExternal.clone(`PartyMemberExternal_${AID}`, true);
+		external.name = `PartyMemberExternal_${AID}`;
+		UIManager.addComponent(external);
+
+		// Cleanup external window and refresh party list
+		external.onRemove = function () {
+			delete _detachedMembers[AID];
+			delete UIManager.components[external.name];
+			const tooltip = document.getElementById('ro-tooltip-party');
+			if (tooltip) tooltip.style.display = 'none';
+			Component.refreshPartyList();
+
+			if (external._closedByUser) {
+				Component.saveDetachedMembers();
+			}
+		};
+
+		external.setMember(AID, player);
+		external.append();
+
+		let initX = x - 75;
+		let initY = y - 19;
+
+		if (restorePos) {
+			initX = restorePos.x;
+			initY = restorePos.y;
+		} else {
+			const slot = getNextAvailableSlot();
+			initX = slot.x;
+			initY = slot.y;
+		}
+
+		external._host.style.left = `${initX}px`;
+		external._host.style.top = `${initY}px`;
+
+		_detachedMembers[AID] = external;
+		Component.refreshPartyList();
+	}
+
+	/**
+	 * Helper to restore a detached member from saved layout.
+	 */
+	function restoreDetachedMember(player) {
+		if (_detachedMembers[player.AID]) {
+			return;
+		}
+
+		if (!Session.Entity?.display?.name) {
+			return;
+		}
+
+		if (_savedPositions === null) {
+			const key = `PartyFriends_${Session.Entity.display.name}_Detached`;
+			const savedStr = localStorage.getItem(key);
+			_savedPositions = {};
+			try {
+				if (savedStr) {
+					_savedPositions = JSON.parse(savedStr);

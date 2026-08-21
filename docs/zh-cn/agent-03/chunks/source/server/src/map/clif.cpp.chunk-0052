@@ -1,0 +1,400 @@
+		return;
+	}
+
+	// Check if the player even requested to join the party
+	if( !util::vector_exists( sd->party_booking_requests, p->CID ) ){
+		return;
+	}
+
+	util::vector_erase_if_exists( sd->party_booking_requests, p->CID );
+
+	// Only party leaders can reply
+	if( !party_isleader( sd ) ){
+		return;
+	}
+
+	struct party_data* party = party_search( sd->status.party_id );
+
+	if( party == nullptr ){
+		return;
+	}
+
+	if( party->instance_id > 0 && battle_config.instance_block_invite ){
+		return;
+	}
+
+	if( p->accept ){
+		party_join( *tsd, sd->status.party_id );
+	}
+
+	clif_partybooking_reply( tsd, sd, p->accept );
+#endif
+}
+
+/// /resetskill.
+/// Request to skills.
+/// 0bb1 <type>.W <unknown>.B (CZ_RESET_SKILL)
+void clif_parse_reset_skill( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20220216 || PACKETVER_ZERO_NUM >= 20220203
+	const PACKET_CZ_RESET_SKILL* p = reinterpret_cast<PACKET_CZ_RESET_SKILL*>( RFIFOP( fd, 0 ) );
+	char cmd[CHAT_SIZE_MAX];
+
+	safesnprintf( cmd, sizeof( cmd ), "%cresetskill", atcommand_symbol );
+
+	is_atcommand( fd, sd, cmd, 1 );
+#endif
+}
+
+void clif_set_dialog_align( const map_session_data& sd, int32 npcid, e_say_dialog_align align )
+{
+#if PACKETVER_MAIN_NUM >= 20210203 || PACKETVER_RE_NUM >= 20211103 || PACKETVER_ZERO_NUM >= 20221024
+	PACKET_ZC_DIALOG_TEXT_ALIGN p = {};
+
+	p.PacketType = HEADER_ZC_DIALOG_TEXT_ALIGN;
+	p.align = align;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif  // PACKETVER_MAIN_NUM >= 20210203 || PACKETVER_RE_NUM >= 20211103 || PACKETVER_ZERO_NUM >= 20221024
+}
+
+void clif_set_npc_window_size( const map_session_data& sd, int32 width, int32 height ){
+#if PACKETVER_MAIN_NUM >= 20220504
+	PACKET_ZC_DIALOG_WINDOW_SIZE p = {};
+
+	p.PacketType = HEADER_ZC_DIALOG_WINDOW_SIZE;
+	p.width = width;
+	p.height = height;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif  // PACKETVER_MAIN_NUM >= 20220504
+}
+
+void clif_set_npc_window_pos( const map_session_data& sd, int32 x, int32 y ){
+#if PACKETVER_MAIN_NUM >= 20220504
+	PACKET_ZC_DIALOG_WINDOW_POS p = {};
+
+	p.PacketType = HEADER_ZC_DIALOG_WINDOW_POS;
+	p.x = x;
+	p.y = y;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif  // PACKETVER_MAIN_NUM >= 20220504
+}
+
+void clif_set_npc_window_pos_percent( const map_session_data& sd, int32 x, int32 y ){
+#if PACKETVER_MAIN_NUM >= 20220504
+	PACKET_ZC_DIALOG_WINDOW_POS2 p = {};
+
+	p.PacketType = HEADER_ZC_DIALOG_WINDOW_POS2;
+	p.x = x;
+	p.y = y;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif  // PACKETVER_MAIN_NUM >= 20220504
+}
+
+/// Displays a special popup.
+/// Works only if player moved from one map to another.
+/// 0bbe <popup id>.L (ZC_SPECIALPOPUP)
+void clif_specialpopup(const map_session_data& sd, int32 id ){
+#if PACKETVER >= 20221005
+	PACKET_ZC_SPECIALPOPUP p = {};
+
+	p.PacketType = HEADER_ZC_SPECIALPOPUP;
+	p.ppId = id;
+
+	clif_send( &p, sizeof( p ), &sd, SELF);
+#endif
+}
+
+/// 0c0c <result>.W (ZC_GM_CHECKER)
+void clif_macro_checker( const map_session_data& sd, e_macro_checker_result result ){
+#if PACKETVER_MAIN_NUM >= 20240502
+	PACKET_ZC_GM_CHECKER p = {};
+
+	p.packetType = HEADER_ZC_GM_CHECKER;
+	p.result = result;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+/// /macrochecker <mapname>
+/// 0c0b <mapname>.16B (CZ_GM_CHECKER)
+void clif_parse_macro_checker( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20240502
+	if( !pc_can_use_command(sd, "macrochecker", COMMAND_ATCOMMAND)) {
+		return;
+	}
+
+	const PACKET_CZ_GM_CHECKER* p = reinterpret_cast<PACKET_CZ_GM_CHECKER*>( RFIFOP( fd, 0 ) );
+	char command[CHAT_SIZE_MAX];
+	char mapname[MAP_NAME_LENGTH_EXT];
+
+	safestrncpy( mapname, p->mapname, sizeof( mapname ) );
+
+	safesnprintf( command, sizeof( command ),"%cmacrochecker %s", atcommand_symbol, mapname );
+
+	is_atcommand( sd->fd, sd, command, 1 );
+#endif
+}
+
+/// In clients 2025-01-22 and newer if you hold shift and right-click an item in the storage,
+/// the item will be moved to the favorite tab of the inventory.
+/// However if it is a stackable item and that item already exists in your inventory, it will
+/// be added to the respective tab, where the item is currently.
+/// 0c22 <unknown>.L <index>.W <amount>.L (CZ_MOVE_ITEM_TO_PERSONAL)
+void clif_parse_MoveFromKafraFav( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20250122
+	const PACKET_CZ_MOVE_ITEM_TO_PERSONAL* p = reinterpret_cast<PACKET_CZ_MOVE_ITEM_TO_PERSONAL*>( RFIFOP( fd, 0 ) );
+
+	uint16 item_index = server_storage_index( p->index );
+	uint32 item_amount = p->amount;
+
+	if( sd->state.storage_flag == 1 ){
+		storage_storageget( sd, &sd->storage, item_index, item_amount, true );
+	}else if( sd->state.storage_flag == 2 ){
+		storage_guild_storageget( sd, item_index, item_amount, true );
+	}else if( sd->state.storage_flag == 3 ){
+		storage_storageget( sd, &sd->premiumStorage, item_index, item_amount, true );
+	}
+#endif
+}
+
+/*==========================================
+ * Main client packet processing function
+ *------------------------------------------*/
+static int32 clif_parse(int32 fd)
+{
+	int32 cmd, packet_len;
+	TBL_PC* sd;
+	int32 pnum;
+#ifdef PACKET_OBFUSCATION
+	int32 cmd2;
+#endif
+
+	//TODO apply delays or disconnect based on packet throughput [FlavioJS]
+	// Note: "click masters" can do 80+ clicks in 10 seconds
+
+	for( pnum = 0; pnum < 3; ++pnum )// Limit max packets per cycle to 3 (delay packet spammers) [FlavioJS]  -- This actually aids packet spammers, but stuff like /str+ gets slow without it [Ai4rei]
+	{ // begin main client packet processing loop
+
+	sd = (TBL_PC *)session[fd]->session_data;
+
+	if (session[fd]->flag.eof) {
+		if (sd) {
+			if (sd->state.autotrade) {
+				//Disassociate character from the socket connection.
+				session[fd]->session_data = nullptr;
+				sd->fd = 0;
+				ShowInfo("Character '" CL_WHITE "%s" CL_RESET "' logged off (using @autotrade).\n", sd->status.name);
+			} else
+			if (sd->state.active) {
+				// Player logout display [Valaris]
+				ShowInfo("Character '" CL_WHITE "%s" CL_RESET "' logged off.\n", sd->status.name);
+				clif_quitsave(fd, sd);
+			} else {
+				//Unusual logout (during log on/off/map-changer procedure)
+				ShowInfo("Player AID:%d/CID:%d logged off.\n", sd->status.account_id, sd->status.char_id);
+				map_quit(sd);
+			}
+		} else {
+			ShowInfo("Closed connection from '" CL_WHITE "%s" CL_RESET "'.\n", ip2str(session[fd]->client_addr, nullptr));
+		}
+		do_close(fd);
+		return 0;
+	}
+
+	if (RFIFOREST(fd) < 2)
+		return 0;
+
+	cmd = RFIFOW(fd, 0);
+
+#ifdef PACKET_OBFUSCATION
+	// Check if it is a player that tries to connect to the map server.
+	if( sd ){
+		// Decrypt the current packet ID with the last key stored in the session.
+		cmd = (cmd ^ ((sd->cryptKey >> 16) & 0x7FFF));
+	}else{
+		// Store the original value for checking
+		cmd2 = cmd;
+
+		// A player tries to connect - use the initial keys for the decryption of the packet ID.
+		cmd = (cmd ^ ((((clif_cryptKey[0] * clif_cryptKey[1]) + clif_cryptKey[2]) >> 16) & 0x7FFF));
+	}
+#endif
+
+	// filter out invalid / unsupported packets
+	if (cmd > MAX_PACKET_DB || cmd < MIN_PACKET_DB || packet_db[cmd].len == 0) {
+		ShowWarning("clif_parse: Received unsupported packet (packet 0x%04x, %d bytes received), disconnecting session #%d.\n", cmd, RFIFOREST(fd), fd);
+
+#ifdef DUMP_INVALID_PACKET
+		ShowDump(RFIFOP(fd,0), RFIFOREST(fd));
+#endif
+
+#ifdef PACKET_OBFUSCATION_WARN
+		// If it is a connection attempt, check if the packet would have been valid without decrypting it
+		if( !sd ){
+#ifdef PACKET_OBFUSCATION
+			if( cmd2 >= MIN_PACKET_DB && cmd2 < MAX_PACKET_DB && packet_db[cmd2].len != 0 && packet_db[cmd2].func == clif_parse_WantToConnection ){
+				ShowWarning( "clif_parse: It looks like you have enabled PACKET_OBFUSCATION on server side, but disabled it on client side.\n" );
+			}
+#else
+			// Try to use the initial keys for the decryption of the packet ID.
+			cmd = (cmd ^ ((((clif_cryptKey[0] * clif_cryptKey[1]) + clif_cryptKey[2]) >> 16) & 0x7FFF));
+
+			if( cmd >= MIN_PACKET_DB && cmd < MAX_PACKET_DB && packet_db[cmd].len != 0 && packet_db[cmd].func == clif_parse_WantToConnection ){
+				ShowWarning( "clif_parse: It looks like you have disabled PACKET_OBFUSCATION on server side, but enabled it on client side.\n" );
+			}
+#endif
+		}
+#endif
+
+		set_eof(fd);
+		return 0;
+	}
+
+	// determine real packet length
+	packet_len = packet_db[cmd].len;
+	if (packet_len == -1) { // variable-length packet
+		if (RFIFOREST(fd) < 4)
+			return 0;
+
+		packet_len = RFIFOW(fd,2);
+		if (packet_len < 4 || packet_len > 32768) {
+			ShowWarning("clif_parse: Received packet 0x%04x specifies invalid packet_len (%d), disconnecting session #%d.\n", cmd, packet_len, fd);
+#ifdef DUMP_INVALID_PACKET
+			ShowDump(RFIFOP(fd,0), RFIFOREST(fd));
+#endif
+			set_eof(fd);
+			return 0;
+		}
+	}
+	if ((int32)RFIFOREST(fd) < packet_len){
+		ShowWarning( "clif_parse: Received packet 0x%04x with expected packet length %d, but only %d bytes remaining, disconnecting session #%d.\n", cmd, packet_len, RFIFOREST( fd ), fd );
+#ifdef DUMP_INVALID_PACKET
+		ShowDump( RFIFOP( fd, 0 ), RFIFOREST( fd ) );
+#endif
+		set_eof( fd );
+		return 0; // not enough data received to form the packet
+	}
+
+#ifdef PACKET_OBFUSCATION
+	RFIFOW(fd, 0) = cmd;
+	if (sd)
+		sd->cryptKey = ((sd->cryptKey * clif_cryptKey[1]) + clif_cryptKey[2]) & 0xFFFFFFFF; // Update key for the next packet
+#endif
+
+	if( packet_db[cmd].func == clif_parse_debug )
+		packet_db[cmd].func(fd, sd);
+	else if( packet_db[cmd].func != nullptr ) {
+		if( !sd && packet_db[cmd].func != clif_parse_WantToConnection )
+			; //Only valid packet when there is no session
+		else
+		if( sd && sd->prev == nullptr && packet_db[cmd].func != clif_parse_LoadEndAck )
+			; //Only valid packet when player is not on a map
+		else
+			packet_db[cmd].func(fd, sd);
+	}
+#ifdef DUMP_UNKNOWN_PACKET
+	else DumpUnknown(fd,sd,cmd,packet_len);
+#endif
+	RFIFOSKIP(fd, packet_len);
+	}; // main loop end
+
+	return 0;
+}
+
+void packetdb_addpacket( uint16 cmd, uint16 length, void (*func)(int32, map_session_data *), ... ){
+	va_list argp;
+	int32 i;
+
+	if(cmd <= 0 || cmd > MAX_PACKET_DB)
+		return;
+
+	packet_db[cmd].len = length;
+	packet_db[cmd].func = func;
+
+	va_start(argp, func);
+
+	for( i = 0; i < MAX_PACKET_POS; i++ ){
+		int32 offset = va_arg(argp, int32);
+
+		if( offset == 0 ){
+			break;
+		}
+
+		packet_db[cmd].pos[i] = offset;
+	}
+
+	if( i == MAX_PACKET_POS ){
+		ShowError( "Too many positions found for packet 0x%04x (max=%d).\n", cmd, MAX_PACKET_POS );
+	}
+
+	va_end(argp);
+}
+
+/*==========================================
+ * Reads packets and setups its array reference
+ *------------------------------------------*/
+void packetdb_readdb(){
+	memset(packet_db,0,sizeof(packet_db));
+
+#include "clif_packetdb.hpp"
+#include "clif_shuffle.hpp"
+
+	ShowStatus("Using packet version: " CL_WHITE "%d" CL_RESET ".\n", PACKETVER);
+
+#ifdef PACKET_OBFUSCATION
+	ShowStatus("Packet Obfuscation: " CL_GREEN "Enabled" CL_RESET ". Keys: " CL_WHITE "0x%08X, 0x%08X, 0x%08X" CL_RESET "\n", clif_cryptKey[0], clif_cryptKey[1], clif_cryptKey[2]);
+#else
+	ShowStatus("Packet Obfuscation: " CL_RED "Disabled" CL_RESET ".\n");
+#endif
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+void do_init_clif(void) {
+	const int32 colors[COLOR_MAX] = {
+		0x00FF00, // COLOR_DEFAULT
+		0xFF0000, // COLOR_RED
+		0xFFFFFF, // COLOR_WHITE
+		0xFFFF00, // COLOR_YELLOW
+		0x00FFFF, // COLOR_CYAN
+		0xB5FFB5, // COLOR_LIGHT_GREEN
+		0xFFFF63, // COLOR_LIGHT_YELLOW
+	};
+
+	/**
+	 * Setup Color Table (saves unnecessary load of strtoul on every call)
+	 **/
+	for( int32 i = 0; i < COLOR_MAX; i++ ){
+		color_table[i] = ( colors[i] & 0x0000FF ) << 16 | ( colors[i] & 0x00FF00 ) | ( colors[i] & 0xFF0000 ) >> 16; //RGB to BGR
+	}
+
+	packetdb_readdb();
+
+	set_defaultparse(clif_parse);
+	if( make_listen_bind(bind_ip,map_port) == -1 ) {
+		ShowFatalError("Failed to bind to port '" CL_WHITE "%d" CL_RESET "'\n",map_port);
+		exit(EXIT_FAILURE);
+	}
+
+	add_timer_func_list(clif_clearunit_delayed_sub, "clif_clearunit_delayed_sub");
+	add_timer_func_list(clif_delayquit, "clif_delayquit");
+
+#if PACKETVER_MAIN_NUM >= 20190403 || PACKETVER_RE_NUM >= 20190320
+	add_timer_func_list( clif_ping_timer, "clif_ping_timer" );
+
+	if( battle_config.ping_timer_interval > 0 ){
+		add_timer_interval( gettick() + battle_config.ping_timer_interval * 1000, clif_ping_timer, 0, 0, battle_config.ping_timer_interval * 1000 );	
+	}
+#endif
+
+	delay_clearunit_ers = ers_new(sizeof(block_list),"clif.cpp::delay_clearunit_ers",ERS_OPT_CLEAR);
+}
+
+void do_final_clif(void) {
+	ers_destroy(delay_clearunit_ers);
+}

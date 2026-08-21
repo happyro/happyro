@@ -1,0 +1,500 @@
+			if( sc && sc->getSCE(SC_EXPLOSIONSPIRITS) )
+				req.spiritball = 0;
+			break;
+		case MO_EXTREMITYFIST:
+			if( sc ) {
+				if( sc->getSCE(SC_BLADESTOP) )
+					req.spiritball--;
+				else if( sc->getSCE(SC_COMBO) ) {
+#ifndef RENEWAL
+					switch( sc->getSCE(SC_COMBO)->val1 ) {
+						case MO_COMBOFINISH:
+							req.spiritball = 4;
+							break;
+						case CH_CHAINCRUSH: //It should consume whatever is left as long as it's at least 1.
+							req.spiritball = sd->spiritball?sd->spiritball:1;
+							break;
+					}
+#else
+					req.spiritball = sd->spiritball ? sd->spiritball : 1;
+#endif
+				} else if( sc->getSCE(SC_RAISINGDRAGON) && sd->spiritball > 5)
+					req.spiritball = sd->spiritball; // must consume all regardless of the amount required
+			}
+			break;
+		case LG_RAGEBURST:
+			req.spiritball = sd->spiritball?sd->spiritball:1;
+			break;
+		case SR_FALLENEMPIRE:
+			if (sc && (sc->getSCE(SC_FIRST_FAITH_POWER) || sc->getSCE(SC_SECOND_JUDGE) || sc->getSCE(SC_THIRD_EXOR_FLAME)))
+				req.spiritball = 0;
+			break;
+		case SR_TIGERCANNON:
+			if (sc && sc->getSCE(SC_THIRD_EXOR_FLAME))
+				req.spiritball = 0;
+			break;
+		case SR_RAMPAGEBLASTER:
+		case SR_RIDEINLIGHTNING:
+			if (sc && sc->getSCE(SC_MASSIVE_F_BLASTER))
+				req.spiritball = 0;
+			break;
+		case SR_GATEOFHELL:
+			if( sc && sc->getSCE(SC_COMBO) && sc->getSCE(SC_COMBO)->val1 == SR_FALLENEMPIRE )
+				req.sp -= req.sp * 10 / 100;
+			break;
+		case SR_FLASHCOMBO:
+			if (sc && (sc->getSCE(SC_SECOND_JUDGE) || sc->getSCE(SC_THIRD_EXOR_FLAME)))
+				req.spiritball = 0;
+			break;
+		case SO_SUMMON_AGNI:
+		case SO_SUMMON_AQUA:
+		case SO_SUMMON_VENTUS:
+		case SO_SUMMON_TERA: {
+				int32 spirit_sympathy = pc_checkskill(sd,SO_EL_SYMPATHY);
+
+				if( spirit_sympathy )
+					req.sp -= req.sp * (5 + 5 * spirit_sympathy) / 100;
+			}
+			break;
+		case NPC_PSYCHIC_WAVE:
+		case SO_PSYCHIC_WAVE:
+			if( sc && (sc->getSCE(SC_HEATER_OPTION) || sc->getSCE(SC_COOLER_OPTION) || sc->getSCE(SC_CURSED_SOIL_OPTION) || sc->getSCE(SC_BLAST_OPTION)) )
+				req.sp += req.sp / 2; // 1.5x SP cost
+			break;
+		case BO_ACIDIFIED_ZONE_WATER:
+		case BO_ACIDIFIED_ZONE_GROUND:
+		case BO_ACIDIFIED_ZONE_WIND:
+		case BO_ACIDIFIED_ZONE_FIRE:
+			if (sc != nullptr && sc->hasSCE(SC_RESEARCHREPORT) && req.amount[0] > 0)
+				req.amount[0]--;
+			break;
+	}
+
+	//Check if player is using the copied skill [Cydh]
+	uint16 idx = skill_get_index(skill_id);
+
+	if (sd->status.skill[idx].flag == SKILL_FLAG_PLAGIARIZED) {
+		uint16 req_opt = skill->copyable.req_opt;
+
+		if (req_opt & SKILL_REQ_HPCOST)
+			req.hp = 0;
+		if (req_opt & SKILL_REQ_MAXHPTRIGGER)
+			req.mhp = 0;
+		if (req_opt & SKILL_REQ_SPCOST)
+			req.sp = 0;
+		if (req_opt & SKILL_REQ_HPRATECOST)
+			req.hp_rate = 0;
+		if (req_opt & SKILL_REQ_SPRATECOST)
+			req.sp_rate = 0;
+		if (req_opt & SKILL_REQ_ZENYCOST)
+			req.zeny = 0;
+		if (req_opt & SKILL_REQ_WEAPON)
+			req.weapon = 0;
+		if (req_opt & SKILL_REQ_AMMO) {
+			req.ammo = 0;
+			req.ammo_qty = 0;
+		}
+		if (req_opt & SKILL_REQ_STATE)
+			req.state = ST_NONE;
+		if (req_opt & SKILL_REQ_STATUS) {
+			req.status.clear();
+			req.status.shrink_to_fit();
+		}
+		if (req_opt & SKILL_REQ_SPIRITSPHERECOST)
+			req.spiritball = 0;
+		if (req_opt & SKILL_REQ_ITEMCOST) {
+			memset(req.itemid, 0, sizeof(req.itemid));
+			memset(req.amount, 0, sizeof(req.amount));
+		}
+		if (req_opt & SKILL_REQ_EQUIPMENT) {
+			req.eqItem.clear();
+			req.eqItem.shrink_to_fit();
+		}
+		if (req_opt & SKILL_REQ_APCOST)
+			req.ap = 0;
+		if (req_opt & SKILL_REQ_APRATECOST)
+			req.ap_rate = 0;
+	}
+
+	return req;
+}
+
+/*==========================================
+ * Does cast-time reductions based on dex, item bonuses and config setting
+ *------------------------------------------*/
+int32 skill_castfix(block_list *bl, uint16 skill_id, uint16 skill_lv) {
+	nullpo_ret(bl);
+
+	double time = skill_get_cast(skill_id, skill_lv);
+
+#ifndef RENEWAL_CAST
+	{
+		map_session_data *sd = BL_CAST(BL_PC, bl);
+		status_change *sc = status_get_sc(bl);
+		int32 reduce_cast_rate = 0;
+		uint8 flag = skill_get_castnodex(skill_id);
+
+		// Calculate base cast time (reduced by dex)
+		if (!(flag&1)) {
+			int32 scale = battle_config.castrate_dex_scale - status_get_dex(bl);
+
+			if (scale > 0)	// not instant cast
+				time = time * (float)scale / battle_config.castrate_dex_scale;
+			else
+				return 0; // instant cast
+		}
+
+		// Calculate cast time reduced by item/card bonuses
+		if (sd) {
+			if (!(flag&4)) {
+				if (sd->castrate != 100)
+					reduce_cast_rate += 100 - sd->castrate;
+				if (sd->bonus.add_varcast != 0)
+					time += sd->bonus.add_varcast; // bonus bVariableCast
+			}
+			// Skill-specific reductions work regardless of flag
+			for (const auto &it : sd->skillcastrate) {
+				if (it.id == skill_id) {
+					time += time * it.val / 100;
+					break;
+				}
+			}
+			for (const auto &it : sd->skillvarcast) {
+				if (it.id == skill_id) { // bonus2 bSkillVariableCast
+					time += it.val;
+					break;
+				}
+			}
+		}
+
+		// These cast time reductions are processed even if the skill fails
+		if (sc != nullptr && !sc->empty()) {
+			// Magic Strings stacks additively with item bonuses
+			if (!(flag&2) && sc->getSCE(SC_POEMBRAGI))
+				reduce_cast_rate += sc->getSCE(SC_POEMBRAGI)->val2;
+			// Foresight halves the cast time, it does not stack additively
+			if (sc->getSCE(SC_MEMORIZE)) {
+				if (!sd || pc_checkskill(sd, skill_id) > 0) { // Foresight only decreases cast times from learned skills, not skills granted by items
+					if(!(flag&2))
+						time -= time * 50 / 100;
+					// Foresight counter gets reduced even if the skill is not affected by it
+					if ((--sc->getSCE(SC_MEMORIZE)->val2) <= 0)
+						status_change_end(bl, SC_MEMORIZE);
+				}
+			}
+		}
+
+		time = time * (1 - (float)reduce_cast_rate / 100);
+	}
+#endif
+
+	// config cast time multiplier
+	if (battle_config.cast_rate != 100)
+		time = time * battle_config.cast_rate / 100;
+	// return final cast time
+	time = max((int32)time, 0);
+	//ShowInfo("Castime castfix = %f\n",time);
+
+	return (int32)time;
+}
+
+#ifndef RENEWAL_CAST
+/**
+ * Get the skill cast time for Pre-Re cast
+ * @param bl: The caster
+ * @param time: Cast time before Status Change addition or reduction
+ * @return time: Modified castime after status change addition or reduction
+ */
+int32 skill_castfix_sc(block_list *bl, double time, uint8 flag)
+{
+	if (time < 0)
+		return 0;
+
+	if (bl->type == BL_MOB || bl->type == BL_NPC)
+		return (int32)time;
+
+	status_change *sc = status_get_sc(bl);
+
+	if (sc != nullptr && !sc->empty()) {
+		if (!(flag&2)) {
+			if (sc->getSCE(SC_SLOWCAST))
+				time += time * sc->getSCE(SC_SLOWCAST)->val2 / 100;
+			if (sc->getSCE(SC_PARALYSIS))
+				time += sc->getSCE(SC_PARALYSIS)->val3;
+			if (sc->getSCE(SC_IZAYOI))
+				time -= time * 50 / 100;
+		}
+		if (sc->getSCE(SC_SUFFRAGIUM)) {
+			if(!(flag&2))
+				time -= time * sc->getSCE(SC_SUFFRAGIUM)->val2 / 100;
+			//Suffragium ends even if the skill is not affected by it
+			status_change_end(bl, SC_SUFFRAGIUM);
+		}
+	}
+
+	time = std::max(time, 0.0);
+	//ShowInfo("Castime castfix_sc = %f\n",time);
+
+	return (int32)time;
+}
+#else
+/**
+ * Get the skill cast time for RENEWAL_CAST.
+ * FixedRate reduction never be stacked, always get the HIGHEST VALUE TO REDUCE (-20% vs 10%, -20% wins!)
+ * Additive value:
+ *    Variable CastTime : time  += value
+ *    Fixed CastTime    : fixed += value
+ * Multipicative value
+ *    Variable CastTime : VARCAST_REDUCTION(value)
+ *    Fixed CastTime    : FIXEDCASTRATE2(value)
+ * @param bl: The caster
+ * @param time: Cast time without reduction
+ * @param skill_id: Skill ID of the casted skill
+ * @param skill_lv: Skill level of the casted skill
+ * @return time: Modified castime after status and bonus addition or reduction
+ */
+int32 skill_vfcastfix(block_list *bl, double time, uint16 skill_id, uint16 skill_lv)
+{
+	nullpo_ret(bl);
+
+	if (time < 0)
+		return 0;
+
+	if (bl->type == BL_MOB || bl->type == BL_NPC)
+		return (int32)time;
+
+	status_change *sc = status_get_sc(bl);
+	map_session_data *sd = BL_CAST(BL_PC, bl);
+	int32 fixed = skill_get_fixed_cast(skill_id, skill_lv), fixcast_r = 0, varcast_r = 0, reduce_cast_rate = 0;
+	uint8 flag = skill_get_castnodex(skill_id);
+
+	if (fixed < 0) {
+		if (battle_config.default_fixed_castrate > 0) {
+			fixed = (int32)time * battle_config.default_fixed_castrate / 100; // fixed time
+			time = time * (100 - battle_config.default_fixed_castrate) / 100; // variable time
+		} else
+			fixed = 0;
+	}
+
+	// Additive Variable Cast bonus adjustments by items
+	if (sd && !(flag&4)) {
+		if (sd->bonus.varcastrate != 0)
+			reduce_cast_rate += sd->bonus.varcastrate; // bonus bVariableCastrate
+		if (sd->bonus.fixcastrate != 0)
+			fixcast_r -= sd->bonus.fixcastrate; // bonus bFixedCastrate
+		if (sd->bonus.add_varcast != 0)
+			time += sd->bonus.add_varcast; // bonus bVariableCast
+		if (sd->bonus.add_fixcast != 0)
+			fixed += sd->bonus.add_fixcast; // bonus bFixedCast
+		for (const auto &it : sd->skillfixcast) {
+			if (it.id == skill_id) { // bonus2 bSkillFixedCast
+				fixed += it.val;
+				break;
+			}
+		}
+		for (const auto &it : sd->skillvarcast) {
+			if (it.id == skill_id) { // bonus2 bSkillVariableCast
+				time += it.val;
+				break;
+			}
+		}
+		for (const auto &it : sd->skillcastrate) {
+			if (it.id == skill_id) { // bonus2 bVariableCastrate
+				reduce_cast_rate += it.val;
+				break;
+			}
+		}
+		for (const auto &it : sd->skillfixcastrate) {
+			if (it.id == skill_id) { // bonus2 bFixedCastrate
+				fixcast_r = max(fixcast_r, it.val);
+				break;
+			}
+		}
+	}
+
+	// Adjusted by active statuses
+	if (sc != nullptr && !sc->empty() && !(flag&2)) {
+		// Multiplicative Variable CastTime values
+		if (sc->getSCE(SC_SLOWCAST))
+			VARCAST_REDUCTION(-sc->getSCE(SC_SLOWCAST)->val2);
+		if (sc->getSCE(SC__LAZINESS))
+			VARCAST_REDUCTION(-sc->getSCE(SC__LAZINESS)->val2);
+		if (sc->getSCE(SC_SUFFRAGIUM)) {
+			VARCAST_REDUCTION(sc->getSCE(SC_SUFFRAGIUM)->val2);
+#ifndef RENEWAL
+			status_change_end( bl, SC_SUFFRAGIUM );
+#endif
+		}
+		if (sc->getSCE(SC_MEMORIZE)) {
+			if (!sd || pc_checkskill(sd, skill_id) > 0) { // Foresight only decreases cast times from learned skills, not skills granted by items
+				reduce_cast_rate += 50;
+				if ((--sc->getSCE(SC_MEMORIZE)->val2) <= 0)
+					status_change_end(bl, SC_MEMORIZE);
+			}
+		}
+		if (sc->getSCE(SC_POEMBRAGI))
+			reduce_cast_rate += sc->getSCE(SC_POEMBRAGI)->val2;
+		if (sc->getSCE(SC_IZAYOI))
+			VARCAST_REDUCTION(50);
+		if (sc->getSCE(SC_WATER_INSIGNIA) && sc->getSCE(SC_WATER_INSIGNIA)->val1 == 3 && skill_get_type(skill_id) == BF_MAGIC && skill_get_ele(skill_id, skill_lv) == ELE_WATER)
+			VARCAST_REDUCTION(30); //Reduces 30% Variable Cast Time of magic Water spells.
+		if (sc->getSCE(SC_TELEKINESIS_INTENSE))
+			VARCAST_REDUCTION(sc->getSCE(SC_TELEKINESIS_INTENSE)->val2);
+		if (sc->getSCE(SC_SOULFAIRY))
+			VARCAST_REDUCTION(sc->getSCE(SC_SOULFAIRY)->val3);
+		// Multiplicative Fixed CastTime values
+		if (sc->getSCE(SC_SECRAMENT))
+			fixcast_r = max(fixcast_r, sc->getSCE(SC_SECRAMENT)->val2);
+		if (sd && (skill_lv = pc_checkskill(sd, WL_RADIUS) ) && skill_id >= WL_WHITEIMPRISON && skill_id <= WL_FREEZE_SP)
+			fixcast_r = max(fixcast_r, ((status_get_int(bl) + status_get_lv(bl)) / 15 + skill_lv * 5));
+		if (sc->getSCE(SC_DANCEWITHWUG))
+			fixcast_r = max(fixcast_r, sc->getSCE(SC_DANCEWITHWUG)->val4);
+		if (sc->getSCE(SC_HEAT_BARREL))
+			fixcast_r = max(fixcast_r, sc->getSCE(SC_HEAT_BARREL)->val2);
+		if (sc->getSCE(SC_FREEZING))
+			fixcast_r -= 50;
+		if (sc->getSCE(SC_SWINGDANCE))
+			fixcast_r = max(fixcast_r, skill_lv * 6);
+		// Additive Fixed CastTime values
+		if (sc->getSCE(SC_MANDRAGORA))
+			fixed += sc->getSCE(SC_MANDRAGORA)->val1 * 500;
+		if (sc->getSCE(SC_GUST_OPTION) || sc->getSCE(SC_BLAST_OPTION) || sc->getSCE(SC_WILD_STORM_OPTION))
+			fixed -= 1000;
+		if (sc->getSCE(SC_IZAYOI))
+			fixed = 0;
+		if (sc->getSCE(SC_GLOOMYDAY))
+			fixed += skill_lv * 500;
+	}
+	if (sc && sc->getSCE(SC_SECRAMENT) && skill_id == HW_MAGICPOWER && (flag&2)) // Sacrament lowers Mystical Amplification cast time
+		fixcast_r = max(fixcast_r, sc->getSCE(SC_SECRAMENT)->val2);
+
+	if (varcast_r < 0)
+		time = time * (1 - (float)min(varcast_r, 100) / 100);
+
+	// Apply Variable CastTime calculation by INT & DEX
+	if (!(flag&1))
+		time = time * (1 - sqrt(((float)(status_get_dex(bl) * 2 + status_get_int(bl)) / battle_config.vcast_stat_scale)));
+
+	time = time * (1 - (float)min(reduce_cast_rate, 100) / 100);
+	time = max((int32)time, 0) + (1 - (float)min(fixcast_r, 100) / 100) * max(fixed, 0); //Underflow checking/capping
+
+	return (int32)time;
+}
+#endif
+
+/*==========================================
+ * Does delay reductions based on dex/agi, sc data, item bonuses, ...
+ *------------------------------------------*/
+int32 skill_delayfix(block_list *bl, uint16 skill_id, uint16 skill_lv)
+{
+	nullpo_ret(bl);
+
+	if (skill_id == SA_ABRACADABRA)
+		return 0; //Will use picked skill's delay.
+
+	if (bl->type&battle_config.no_skill_delay)
+		return battle_config.min_skill_delay_limit;
+
+	int32 delaynodex = skill_get_delaynodex(skill_id);
+	double time = skill_get_delay(skill_id, skill_lv);
+
+	if (time < 0)
+		time = -time + status_get_amotion(bl);	// If set to <0, add to attack motion.
+
+	status_change* sc = status_get_sc(bl);
+
+	// Delay reductions
+	switch (skill_id) {	//Monk combo skills have their delay reduced by agi/dex.
+		case MO_TRIPLEATTACK:
+		case MO_CHAINCOMBO:
+		case MO_COMBOFINISH:
+		case CH_TIGERFIST:
+		case CH_CHAINCRUSH:
+		case SR_DRAGONCOMBO:
+		case SR_FALLENEMPIRE:
+		case SJ_PROMINENCEKICK:
+			//If delay not specified, it will be 1000 - 4*agi - 2*dex
+			if (time == 0)
+				time = 1000;
+			time -= (4 * status_get_agi(bl) + 2 * status_get_dex(bl));
+			break;
+#ifndef RENEWAL
+		case HP_BASILICA:
+			if (sc && !sc->getSCE(SC_BASILICA))
+				time = 0; // There is no Delay on Basilica creation, only on cancel
+			break;
+#endif
+		default:
+			if (battle_config.delay_dependon_dex && !(delaynodex&1)) { // if skill delay is allowed to be reduced by dex
+				int32 scale = battle_config.castrate_dex_scale - status_get_dex(bl);
+
+				if (scale > 0)
+					time = time * scale / battle_config.castrate_dex_scale;
+				else //To be capped later to minimum.
+					time = 0;
+			}
+			if (battle_config.delay_dependon_agi && !(delaynodex&1)) { // if skill delay is allowed to be reduced by agi
+				int32 scale = battle_config.castrate_dex_scale - status_get_agi(bl);
+
+				if (scale > 0)
+					time = time * scale / battle_config.castrate_dex_scale;
+				else //To be capped later to minimum.
+					time = 0;
+			}
+	}
+
+	if (sc != nullptr && !sc->empty()) {
+		if (sc->getSCE(SC_SPIRIT)) {
+			switch (skill_id) {
+				case CR_SHIELDBOOMERANG:
+					if (sc->getSCE(SC_SPIRIT)->val2 == SL_CRUSADER)
+						time /= 2;
+					break;
+				case AS_SONICBLOW:
+					if (!map_flag_gvg2(bl->m) && !map_getmapflag(bl->m, MF_BATTLEGROUND) && sc->getSCE(SC_SPIRIT)->val2 == SL_ASSASIN)
+						time /= 2;
+					break;
+			}
+		}
+	}
+
+	int32 delay = 0;
+
+	if (!(delaynodex&2)) {
+		if (sc != nullptr && !sc->empty()) {
+			if (sc->getSCE(SC_POEMBRAGI))
+				delay += sc->getSCE(SC_POEMBRAGI)->val3;
+			if (sc->getSCE(SC_WIND_INSIGNIA) && sc->getSCE(SC_WIND_INSIGNIA)->val1 == 3 && skill_get_type(skill_id) == BF_MAGIC && skill_get_ele(skill_id, skill_lv) == ELE_WIND)
+				delay += 50; // After Delay of Wind element spells reduced by 50%.
+			if (sc->getSCE(SC_MAGICMUSHROOM) && sc->getSCE(SC_MAGICMUSHROOM)->val3 == 0)
+				delay += sc->getSCE(SC_MAGICMUSHROOM)->val2;
+		}
+	}
+
+	if (!(delaynodex&4) && bl->type == BL_PC) {
+		map_session_data* sd = (map_session_data*)bl;
+
+		if (sd->bonus.delayrate != 0) // bonus bDelayRate
+			delay += sd->bonus.delayrate;
+
+		for (auto &it : sd->skilldelay) { // bonus2 bSkillDelay
+			if (it.id == skill_id) {
+				time += it.val;
+				break;
+			}
+		}
+	}
+
+	if (delay != 0)
+		time = time * (1 - (float)min(delay, 100) / 100);
+
+	if (battle_config.delay_rate != 100)
+		time = time * battle_config.delay_rate / 100;
+
+	//ShowInfo("Delay delayfix = %f\n",time);
+
+	return max((int32)time,0);
+}
+
+
+/*==========================================

@@ -1,0 +1,500 @@
+	my0 -= abs( range * diry[( dir + 2 ) % DIR_MAX] );
+	mx1 += abs( range * dirx[( dir + 2 ) % DIR_MAX] );
+	my1 += abs( range * diry[( dir + 2 ) % DIR_MAX] );
+
+	mx0 = max(mx0, 0);
+	my0 = max(my0, 0);
+	mx1 = min(mx1, mapdata->xs - 1);
+	my1 = min(my1, mapdata->ys - 1);
+
+	if (type&~BL_MOB) {
+		for (by = my0 / BLOCK_SIZE; by <= my1 / BLOCK_SIZE; by++) {
+			for (bx = mx0 / BLOCK_SIZE; bx <= mx1 / BLOCK_SIZE; bx++) {
+				for (bl = mapdata->block[bx + by * mapdata->bxs]; bl != nullptr; bl = bl->next) {
+					if (bl->prev && bl->type&type && bl_list_count < BL_LIST_MAX) {
+						//Check if inside search area
+						if (bl->x < mx0 || bl->x > mx1 || bl->y < my0 || bl->y > my1)
+							continue;
+						//What matters now is the relative x and y from the start point
+						rx = (bl->x - x0);
+						ry = (bl->y - y0);
+						//Do not hit source cell
+						if (battle_config.skill_eightpath_same_cell == 0 && rx == 0 && ry == 0)
+							continue;
+						//This turns it so that the area that is hit is always with positive rx and ry
+						rx *= dx;
+						ry *= dy;
+						//These checks only need to be done for diagonal paths
+						if( direction_diagonal( (directions)dir ) ){
+							//Check for length
+							if ((rx + ry < offset) || (rx + ry > 2 * (length + (offset/2) - 1)))
+								continue;
+							//Check for width
+							if (abs(rx - ry) > 2 * range)
+								continue;
+						}
+						//Everything else ok, check for line of sight from source
+						if (!path_search_long(nullptr, m, x0, y0, bl->x, bl->y, CELL_CHKWALL))
+							continue;
+						//All checks passed, add to list
+						bl_list[bl_list_count++] = bl;
+					}
+				}
+			}
+		}
+	}
+	if (type&BL_MOB) {
+		for (by = my0 / BLOCK_SIZE; by <= my1 / BLOCK_SIZE; by++) {
+			for (bx = mx0 / BLOCK_SIZE; bx <= mx1 / BLOCK_SIZE; bx++) {
+				for (bl = mapdata->block_mob[bx + by * mapdata->bxs]; bl != nullptr; bl = bl->next) {
+					if (bl->prev && bl_list_count < BL_LIST_MAX) {
+						//Check if inside search area
+						if (bl->x < mx0 || bl->x > mx1 || bl->y < my0 || bl->y > my1)
+							continue;
+						//What matters now is the relative x and y from the start point
+						rx = (bl->x - x0);
+						ry = (bl->y - y0);
+						//Do not hit source cell
+						if (battle_config.skill_eightpath_same_cell == 0 && rx == 0 && ry == 0)
+							continue;
+						//This turns it so that the area that is hit is always with positive rx and ry
+						rx *= dx;
+						ry *= dy;
+						//These checks only need to be done for diagonal paths
+						if( direction_diagonal( (directions)dir ) ){
+							//Check for length
+							if ((rx + ry < offset) || (rx + ry > 2 * (length + (offset / 2) - 1)))
+								continue;
+							//Check for width
+							if (abs(rx - ry) > 2 * range)
+								continue;
+						}
+						//Everything else ok, check for line of sight from source
+						if (!path_search_long(nullptr, m, x0, y0, bl->x, bl->y, CELL_CHKWALL))
+							continue;
+						//All checks passed, add to list
+						bl_list[bl_list_count++] = bl;
+					}
+				}
+			}
+		}
+	}
+
+	if( bl_list_count >= BL_LIST_MAX )
+		ShowWarning("map_foreachindir: block count too many!\n");
+
+	FreeBlockLock freeLock;
+
+	for( i = blockcount; i < bl_list_count; i++ ) {
+		if( bl_list[ i ]->prev ) { //func() may delete this bl_list[] slot, checking for prev ensures it wasn't queued for deletion.
+			va_start(ap, type);
+			returnCount += func(bl_list[ i ], ap);
+			va_end(ap);
+		}
+	}
+
+	bl_list_count = blockcount;
+	return returnCount;
+}
+
+// Copy of map_foreachincell, but applied to the whole map. [Skotlex]
+int32 map_foreachinmap(int32 (*func)(block_list*,va_list), int16 m, int32 type,...)
+{
+	int32 b, bsize;
+	int32 returnCount = 0;  //total sum of returned values of func() [Skotlex]
+	block_list *bl;
+	int32 blockcount = bl_list_count, i;
+	struct map_data *mapdata = map_getmapdata(m);
+	va_list ap;
+
+	if( mapdata == nullptr || mapdata->block == nullptr ){
+		return 0;
+	}
+
+	bsize = mapdata->bxs * mapdata->bys;
+
+	if( type&~BL_MOB )
+		for( b = 0; b < bsize; b++ )
+			for( bl = mapdata->block[ b ]; bl != nullptr; bl = bl->next )
+				if( bl->type&type && bl_list_count < BL_LIST_MAX )
+					bl_list[ bl_list_count++ ] = bl;
+
+	if( type&BL_MOB )
+		for( b = 0; b < bsize; b++ )
+			for( bl = mapdata->block_mob[ b ]; bl != nullptr; bl = bl->next )
+				if( bl_list_count < BL_LIST_MAX )
+					bl_list[ bl_list_count++ ] = bl;
+
+	if( bl_list_count >= BL_LIST_MAX )
+		ShowWarning("map_foreachinmap: block count too many!\n");
+
+	FreeBlockLock freeLock;
+
+	for( i = blockcount; i < bl_list_count ; i++ ) {
+		if( bl_list[ i ]->prev ) { //func() may delete this bl_list[] slot, checking for prev ensures it wasn't queued for deletion.
+			va_start(ap, type);
+			returnCount += func(bl_list[ i ], ap);
+			va_end(ap);
+		}
+	}
+
+	bl_list_count = blockcount;
+	return returnCount;
+}
+
+
+/// Generates a new flooritem object id from the interval [MIN_FLOORITEM, MAX_FLOORITEM).
+/// Used for floor items, skill units and chatroom objects.
+/// @return The new object id
+int32 map_get_new_object_id(void)
+{
+	static int32 last_object_id = MIN_FLOORITEM - 1;
+	int32 i;
+
+	// find a free id
+	i = last_object_id + 1;
+	while( i != last_object_id ) {
+		if( i == MAX_FLOORITEM )
+			i = MIN_FLOORITEM;
+
+		if( !idb_exists(id_db, i) )
+			break;
+
+		++i;
+	}
+
+	if( i == last_object_id ) {
+		ShowError("map_addobject: no free object id!\n");
+		return 0;
+	}
+
+	// update cursor
+	last_object_id = i;
+
+	return i;
+}
+
+/*==========================================
+ * Timered function to clear the floor (remove remaining item)
+ * Called each flooritem_lifetime ms
+ *------------------------------------------*/
+TIMER_FUNC(map_clearflooritem_timer){
+	flooritem_data* fitem = (flooritem_data*)idb_get(id_db, id);
+
+	if (fitem == nullptr || fitem->type != BL_ITEM || (fitem->cleartimer != tid)) {
+		ShowError("map_clearflooritem_timer : error\n");
+		return 1;
+	}
+
+
+	if (pet_db_search(fitem->item.nameid, PET_EGG))
+		intif_delete_petdata(MakeDWord(fitem->item.card[1], fitem->item.card[2]));
+
+	clif_clearflooritem( *fitem );
+	map_deliddb(fitem);
+	map_delblock(fitem);
+	map_freeblock(fitem);
+	return 0;
+}
+
+/*
+ * clears a single bl item out of the map.
+ */
+void map_clearflooritem(block_list *bl) {
+	flooritem_data* fitem = (flooritem_data*)bl;
+
+	if( fitem->cleartimer != INVALID_TIMER )
+		delete_timer(fitem->cleartimer,map_clearflooritem_timer);
+
+	clif_clearflooritem( *fitem );
+	map_deliddb(fitem);
+	map_delblock(fitem);
+	map_freeblock(fitem);
+}
+
+/**
+ * Returns if a cell is passable and not occupied by given types of block
+ * Cells 5 cells from the SW edge and 4 cells from the NE edge are never considered as free
+ * @param m: Map of cell to check
+ * @param x: X-coordinate of cell to check
+ * @param y: Y-coordinate of cell to check
+ * @param type: Types of block to check for
+ * @return True if cell is passable, not on the edge and not occupied by given types of block
+ */
+bool map_cell_free(int16 m, int16 x, int16 y, int32 type)
+{
+	struct map_data* mapdata = map_getmapdata(m);
+	if (mapdata == nullptr || mapdata->block == nullptr) {
+		return false;
+	}
+
+	// Cells outside the map or within 4-5 cells of the map edge are considered invalid officially
+	// Note that this isn't symmetric (NE - 4 cells, SW - 5 cells)
+	// If for some reason edge size was set to below 5 cells, we consider them as valid
+	int16 edge_valid = std::min(battle_config.map_edge_size, 5);
+	if (x < edge_valid || x > mapdata->xs - edge_valid || y < edge_valid || y > mapdata->ys - edge_valid)
+		return false;
+	if (map_getcell(m, x, y, CELL_CHKNOPASS))
+		return false;
+	if (map_count_oncell(m, x, y, type, 0) > 0)
+		return false;
+
+	return true;
+}
+
+/**
+ * Locates a random available free cell around the given coordinates within a given distance range.
+ * This uses the official algorithm that checks each quadrant and line once.
+ * x and y are modified with the target free cell when successful.
+ * @param m: Map to search
+ * @param x: X-coordinate around which free cell is searched
+ * @param y: Y-coordinate around which free cell is searched
+ * @param distmin: Minimum distance from the given cell
+ * @param distmax: Maximum distance from the given cell
+ * @param type: If the given types of block are present on the cell, it counts as occupied
+ * @return True if free cell could be found
+ */
+bool map_search_freecell_dist(int16 m, int16* x, int16* y, int16 distmin, int16 distmax, int32 type)
+{
+	// This is to prevent that always the same quadrant is checked first 
+	int16 mirrorx = (rnd()%2) ? -1 : 1;
+	int16 mirrory = (rnd()%2) ? -1 : 1;
+
+	for (int16 i = -1; i <= 1; i++) {
+		for (int16 j = -1; j <= 1; j++) {
+			if (i || j)
+			{
+				int16 checkX = *x + mirrorx * i * rnd_value(distmin, distmax);
+				int16 checkY = *y + mirrory * j * rnd_value(distmin, distmax);
+				if (map_cell_free(m, checkX, checkY, type))
+				{
+					*x = checkX;
+					*y = checkY;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+static int32 map_count_sub(block_list *bl,va_list ap)
+{
+	return 1;
+}
+
+/*==========================================
+ * Locates a random spare cell around the object given, using range as max
+ * distance from that spot. Used for warping functions. Use range < 0 for
+ * whole map range.
+ * Returns 1 on success. when it fails and src is available, x/y are set to src's
+ * src can be null as long as flag&1
+ * when ~flag&1, m is not needed.
+ * Flag values:
+ * &1 = random cell must be around given m,x,y, not around src
+ * &2 = the target should be able to walk to the target tile.
+ * &4 = there shouldn't be any players around the target tile (use the no_spawn_on_player setting)
+ *------------------------------------------*/
+int32 map_search_freecell(block_list *src, int16 m, int16 *x, int16 *y, int16 rx, int16 ry, int32 flag, int32 tries)
+{
+	int32 spawn=0;
+	int32 bx, by;
+
+	if( !src && (!(flag&1) || flag&2) )
+	{
+		ShowDebug("map_search_freecell: Incorrect usage! When src is nullptr, flag has to be &1 and can't have &2\n");
+		return 0;
+	}
+
+	if (flag&1) {
+		bx = *x;
+		by = *y;
+	} else {
+		bx = src->x;
+		by = src->y;
+		m = src->m;
+	}
+	if (!rx && !ry) {
+		//No range? Return the target cell then....
+		*x = bx;
+		*y = by;
+		return map_getcell(m,*x,*y,CELL_CHKREACH);
+	}
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if( mapdata == nullptr || mapdata->block == nullptr ){
+		return 0;
+	}
+
+	int16 edge = battle_config.map_edge_size;
+	int16 edge_valid = std::min(edge, (int16)5);
+	// In most situations there are 50 tries officially (default value)
+	while(tries--) {
+		// For map-wide search, the configured tiles from the edge are not considered (default: 15)
+		*x = (rx >= 0) ? rnd_value(bx - rx, bx + rx) : rnd_value<int16>(edge, mapdata->xs - edge - 1);
+		*y = (ry >= 0) ? rnd_value(by - ry, by + ry) : rnd_value<int16>(edge, mapdata->ys - edge - 1);
+
+		if (*x == bx && *y == by)
+			continue; //Avoid picking the same target tile.
+
+		// Cells outside the map or within 4-5 cells of the map edge are considered invalid officially
+		// Note that unlike the other edge, this isn't symmetric (NE - 4 cells, SW - 5 cells)
+		// If for some reason edge size was set to below 5 cells, we consider them as valid
+		if (*x < edge_valid || *x > mapdata->xs - edge_valid || *y < edge_valid || *y > mapdata->ys - edge_valid)
+			continue;
+
+		if (map_getcell(m,*x,*y,CELL_CHKREACH))
+		{
+			if(flag&2 && !unit_can_reach_pos(src, *x, *y, 1))
+				continue;
+			if(flag&4) {
+				if (spawn >= 100) return 0; //Limit of retries reached.
+				if (spawn++ < battle_config.no_spawn_on_player &&
+					map_foreachinallarea(map_count_sub, m,
+						*x - AREA_SIZE, *y - AREA_SIZE,
+						*x + AREA_SIZE, *y + AREA_SIZE, BL_PC)) {
+					tries++; // This failure should not affect the number of official tries
+					continue;
+				}
+			}
+			return 1;
+		}
+	}
+	*x = bx;
+	*y = by;
+	return 0;
+}
+
+/*==========================================
+ * Locates the closest, walkable cell with no blocks of a certain type on it
+ * Returns true on success and sets x and y to cell found.
+ * Otherwise returns false and x and y are not changed.
+ * type: Types of block to count
+ * flag: 
+ *		0x1 - only count standing units
+ *------------------------------------------*/
+bool map_closest_freecell(int16 m, int16 *x, int16 *y, int32 type, int32 flag)
+{
+	uint8 dir = DIR_EAST;
+	int16 tx = *x;
+	int16 ty = *y;
+	int32 costrange = 10;
+
+	if(!map_count_oncell(m, tx, ty, type, flag))
+		return true; //Current cell is free
+
+	//Algorithm only works up to costrange of 34
+	while(costrange <= 34) {
+		int16 dx = dirx[dir];
+		int16 dy = diry[dir];
+
+		//Linear search
+		if( !direction_diagonal( (directions)dir ) && costrange % MOVE_COST == 0 ){
+			tx = *x+dx*(costrange/MOVE_COST);
+			ty = *y+dy*(costrange/MOVE_COST);
+			if(!map_count_oncell(m, tx, ty, type, flag) && map_getcell(m,tx,ty,CELL_CHKPASS)) {
+				*x = tx;
+				*y = ty;
+				return true;
+			}
+		} 
+		//Full diagonal search
+		else if( direction_diagonal( (directions)dir ) && costrange % MOVE_DIAGONAL_COST == 0 ){
+			tx = *x+dx*(costrange/MOVE_DIAGONAL_COST);
+			ty = *y+dy*(costrange/MOVE_DIAGONAL_COST);
+			if(!map_count_oncell(m, tx, ty, type, flag) && map_getcell(m,tx,ty,CELL_CHKPASS)) {
+				*x = tx;
+				*y = ty;
+				return true;
+			}
+		}
+		//One cell diagonal, rest linear (TODO: Find a better algorithm for this)
+		else if( direction_diagonal( (directions)dir ) && costrange % MOVE_COST == 4 ){
+			tx = *x+dx*((dir%4==3)?(costrange/MOVE_COST):1);
+			ty = *y+dy*((dir%4==1)?(costrange/MOVE_COST):1);
+			if(!map_count_oncell(m, tx, ty, type, flag) && map_getcell(m,tx,ty,CELL_CHKPASS)) {
+				*x = tx;
+				*y = ty;
+				return true;
+			}
+			tx = *x+dx*((dir%4==1)?(costrange/MOVE_COST):1);
+			ty = *y+dy*((dir%4==3)?(costrange/MOVE_COST):1);
+			if(!map_count_oncell(m, tx, ty, type, flag) && map_getcell(m,tx,ty,CELL_CHKPASS)) {
+				*x = tx;
+				*y = ty;
+				return true;
+			}
+		}
+
+		//Get next direction
+		if( dir == DIR_SOUTHEAST ){
+			//Diagonal search complete, repeat with higher cost range
+			if(costrange == 14) costrange += 6;
+			else if(costrange == 28 || costrange >= 38) costrange += 2;
+			else costrange += 4;
+			dir = DIR_EAST;
+		}else if( dir == DIR_SOUTH ){
+			//Linear search complete, switch to diagonal directions
+			dir = DIR_NORTHEAST;
+		} else {
+			dir = ( dir + 2 ) % DIR_MAX;
+		}
+	}
+
+	return false;
+}
+
+/*==========================================
+ * Locates a nearby, walkable cell with no blocks of a certain type on it
+ * This one uses the official algorithm the find a free cell
+ * Returns true on success and sets x and y to cell found.
+ * Otherwise returns false and x and y are not changed.
+ * type: Types of block to count
+ * flag: 
+ *		0x1 - only count standing units
+ *------------------------------------------*/
+bool map_nearby_freecell(int16 m, int16 &x, int16 &y, int32 type, int32 flag)
+{
+	int16 tx = x;
+	int16 ty = y;
+
+	if(!map_count_oncell(m, tx, ty, type, flag))
+		return true; //Current cell is free
+
+	// One of two possible orders of direction processing is used at random
+	directions dir[2][DIR_MAX] = {
+		{DIR_NORTHEAST, DIR_EAST, DIR_SOUTHEAST, DIR_SOUTH, DIR_NORTH, DIR_SOUTHWEST, DIR_WEST, DIR_NORTHWEST},
+		{DIR_SOUTHWEST, DIR_WEST, DIR_NORTHWEST, DIR_NORTH, DIR_SOUTH, DIR_NORTHEAST, DIR_EAST, DIR_SOUTHEAST}
+	};
+	uint16 array_idx = rnd_value<decltype(array_idx)>(0, ARRAYLENGTH(dir) - 1);
+
+	// Try each direction in the selected array in order
+	for(uint8 dir_idx = 0; dir_idx < DIR_MAX; dir_idx++) {
+		int16 dx = dirx[dir[array_idx][dir_idx]];
+		int16 dy = diry[dir[array_idx][dir_idx]];
+
+		tx = x + dx;
+		ty = y + dy;
+		if (!map_count_oncell(m, tx, ty, type, flag) && map_getcell(m, tx, ty, CELL_CHKPASS)) {
+			x = tx;
+			y = ty;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/*==========================================
+ * Add an item in floor to location (m,x,y) and add restriction for those who could pickup later
+ * NB : If charids are null their no restriction for pickup
+ * @param item_data : item attributes
+ * @param amount : items quantity
+ * @param m : mapid
+ * @param x : x coordinates
+ * @param y : y coordinates
+ * @param first_charid : 1st player that could loot the item (only charid that could loot for first_get_tick duration)
+ * @param second_charid :  2nd player that could loot the item (2nd charid that could loot for second_get_charid duration)
+ * @param third_charid : 3rd player that could loot the item (3rd charid that could loot for third_get_charid duration)
+ * @param flag: &1 MVP item. &2 search free cell in 5x5 area instead of 3x3. &4 bypass droppable check.

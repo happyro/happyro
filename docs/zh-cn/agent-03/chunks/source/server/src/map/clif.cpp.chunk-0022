@@ -1,0 +1,500 @@
+		if( strncmp( name, sd->status.name, nameLength ) || // the text must start with the speaker's name
+			strncmp( name + nameLength, separator, separatorLength ) ) // followed by the separator
+		{
+			//Hacked message, or infamous "client desynch" issue where they pick one char while loading another.
+			ShowWarning("clif_process_message: Player '%s' sent a message using an incorrect name! Forcing a relog...\n", sd->status.name);
+			set_eof(sd->fd); // Just kick them out to correct it.
+			return false;
+		}
+
+		message = input + nameLength + separatorLength;
+		messageLength = inputLength - nameLength - separatorLength;
+	}
+
+#if PACKETVER < 20151001
+	// the declared length must match real length
+	if( messageLength != strnlen(message, messageLength)+1 ) {
+		ShowWarning("clif_process_message: Received malformed packet from player '%s' (length is incorrect)!\n", sd->status.name);
+		return false;
+	}
+
+	// verify <message> part of the packet
+	if( message[messageLength-1] != '\0' ) {	// message must be zero-terminated
+		ShowWarning("clif_process_message: Player '%s' sent an unterminated message string!\n", sd->status.name);
+		return false;
+	}
+#else
+	// No zero termination anymore
+	messageLength += 1;
+#endif
+
+	// messages mustn't be too long
+	if( messageLength > CHAT_SIZE_MAX-1 ) {
+		// Normally you can only enter CHATBOX_SIZE-1 letters into the chat box, but Frost Joke / Dazzler's text can be longer.
+		// Also, the physical size of strings that use multibyte encoding can go multiple times over the chatbox capacity.
+		// Neither the official client nor server place any restriction on the length of the data in the packet,
+		// but we'll only allow reasonably long strings here. This also makes sure that they fit into the `chatlog` table.
+		ShowWarning("clif_process_message: Player '%s' sent a message too long ('%.*s')!\n", sd->status.name, CHAT_SIZE_MAX-1, message);
+		return false;
+	}
+	
+	// If it is not a whisper message, set the name to the fakename of the player
+	if( whisperFormat == false && sd->fakename[0] != '\0' ){
+		strcpy( out_name, sd->fakename );
+	}else{
+		safestrncpy( out_name, name, nameLength + 1 );
+	}
+	safestrncpy( out_message, message, messageLength );
+
+	if( whisperFormat ){
+		sprintf( out_full_message, "%-24s%s", out_name, out_message );
+		out_full_message[nameLength] = '\0';
+	}else{
+		sprintf( out_full_message, "%s%s%s", out_name, separator, out_message );
+	}
+
+	if( is_atcommand( fd, sd, out_message, 1 )  )
+		return false;
+
+	if (sd->sc.cant.chat || (sd->state.block_action & PCBLOCK_CHAT))
+		return false; //no "chatting" while muted.
+
+	if( battle_config.min_chat_delay ) { //[Skotlex]
+		if (DIFF_TICK(sd->cantalk_tick, gettick()) > 0)
+			return false;
+		sd->cantalk_tick = gettick() + battle_config.min_chat_delay;
+	}
+
+	if (battle_config.idletime_option&IDLE_CHAT)
+		sd->idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_CHAT)
+		sd->idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_CHAT)
+		sd->idletime_mer = last_tick;
+
+	//achievement_update_objective(sd, AG_CHATTING, 1, 1); // !TODO: Confirm how this achievement is triggered
+
+	return true;
+}
+
+/**
+ * Displays a message if the player enters a PK Zone (during pk_mode)
+ * @param sd: Player data
+ */
+inline void clif_pk_mode_message(map_session_data * sd)
+{
+	if (battle_config.pk_mode && battle_config.pk_mode_mes &&
+		sd && map_getmapflag(sd->m, MF_PVP)) {
+		if( (int32)sd->status.base_level < battle_config.pk_min_level ) {
+			char output[CHAT_SIZE_MAX];
+			// 1504: You've entered a PK Zone (safe until level %d).
+			safesnprintf(output, CHAT_SIZE_MAX, msg_txt(sd,1504), 
+						 battle_config.pk_min_level);
+			clif_showscript(sd, output, SELF);
+		} else {
+			// 1503: You've entered a PK Zone.
+			clif_showscript(sd, msg_txt(sd,1503), SELF);
+		}
+	}
+	return;
+}
+
+// ---------------------
+// clif_parse_wanttoconnect
+// ---------------------
+// Parses a WantToConnection packet to try to identify which is the packet version used. [Skotlex]
+// error codes:
+// 0 - Success
+// 1 - Unknown packet_ver
+// 2 - Invalid account_id
+// 3 - Invalid char_id
+// 4 - Invalid login_id1 (reserved)
+// 5 - Invalid client_tick (reserved)
+// 6 - Invalid sex
+// Only the first 'invalid' error that appears is used.
+static int32 clif_parse_WantToConnection_sub(int32 fd)
+{
+	int32 value; //Value is used to temporarily store account/char_id/sex
+
+	//By default, start searching on the default one.
+	uint16 cmd = RFIFOW(fd, 0);
+	int16 packet_len;
+
+	packet_len = static_cast<decltype(packet_len)>( RFIFOREST( fd ) );
+
+	// FIXME: If the packet is not received at once, this will FAIL.
+	// Figure out, when it happens, that only part of the packet is
+	// received, or fix the function to be able to deal with that
+	// case.
+	if( packet_len != packet_db[cmd].len )
+		return 1; /* wrong length */
+	else if( (value=(int32)RFIFOL(fd, packet_db[cmd].pos[0])) < START_ACCOUNT_NUM || value > END_ACCOUNT_NUM )
+		return 2; /* invalid account_id */
+	else if( (value=(int32)RFIFOL(fd, packet_db[cmd].pos[1])) <= 0 )
+		return 3; /* invalid char_id */
+	/*                   RFIFOL(fd, packet_db[cmd].pos[2]) - don't care about login_id1 */
+	/*                   RFIFOL(fd, packet_db[cmd].pos[3]) - don't care about client_tick */
+	else if( (value=(int32)RFIFOB(fd, packet_db[cmd].pos[4])) != 0 && value != 1 )
+		return 6; /* invalid sex */
+	else
+		return 0;
+}
+
+/// Request to connect to map-server.
+/// 0072 <account id>.L <char id>.L <auth code>.L <client time>.L <gender>.B (CZ_ENTER)
+/// 0436 <account id>.L <char id>.L <auth code>.L <client time>.L <gender>.B (CZ_ENTER2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_WantToConnection(int32 fd, map_session_data* sd)
+{
+	block_list* bl;
+	struct auth_node* node;
+	int32 cmd, account_id, char_id, login_id1, sex, err;
+	t_tick client_tick; //The client tick is a tick, therefore it needs be unsigned. [Skotlex]
+
+	if (sd) {
+		ShowError("clif_parse_WantToConnection : invalid request (character already logged in)\n");
+		return;
+	}
+
+	cmd = RFIFOW(fd, 0);
+	// TODO: shuffle packet
+	account_id = RFIFOL(fd, packet_db[cmd].pos[0]);
+	char_id = RFIFOL(fd, packet_db[cmd].pos[1]);
+	login_id1 = RFIFOL(fd, packet_db[cmd].pos[2]);
+	client_tick = RFIFOL(fd, packet_db[cmd].pos[3]);
+	sex = RFIFOB(fd, packet_db[cmd].pos[4]);
+
+	err = clif_parse_WantToConnection_sub(fd);
+
+	if( err ){ // connection rejected
+		ShowInfo("clif_parse: Disconnecting session #%d with unknown connect packet 0x%04x(length:%d)%s\n", fd, cmd, RFIFOREST(fd), (
+				err == 1 ? "." :
+				err == 2 ? ", possibly for having an invalid account_id." :
+				err == 3 ? ", possibly for having an invalid char_id." :
+				/* Uncomment when checks are added in clif_parse_WantToConnection_sub. [FlavioJS]
+				err == 4 ? ", possibly for having an invalid login_id1." :
+				err == 5 ? ", possibly for having an invalid client_tick." :
+				*/
+				err == 6 ? ", possibly for having an invalid sex." :
+				". ERROR invalid error code"));
+		
+		WFIFOHEAD(fd,packet_len(0x6a));
+		WFIFOW(fd,0) = 0x6a;
+		WFIFOB(fd,2) = err;
+		WFIFOSET(fd,packet_len(0x6a));
+
+#ifdef DUMP_INVALID_PACKET
+		ShowDump(RFIFOP(fd, 0), RFIFOREST(fd));
+#endif
+
+		RFIFOSKIP(fd, RFIFOREST(fd));
+
+		set_eof(fd);
+		return;
+	}
+
+	if( !global_core->is_running() ){ // not allowed
+		clif_authfail_fd(fd,1);// server closed
+		return;
+	}
+
+	//Check for double login.
+	bl = map_id2bl(account_id);
+	if(bl && bl->type != BL_PC) {
+		ShowError("clif_parse_WantToConnection: a non-player object already has id %d, please increase the starting account number\n", account_id);
+		WFIFOHEAD(fd,packet_len(0x6a));
+		WFIFOW(fd,0) = 0x6a;
+		WFIFOB(fd,2) = 3; // Rejected by server
+		WFIFOSET(fd,packet_len(0x6a));
+		set_eof(fd);
+		return;
+	}
+
+	if (bl ||
+		((node=chrif_search(account_id)) && //An already existing node is valid only if it is for this login.
+			!(node->account_id == account_id && node->char_id == char_id && node->state == ST_LOGIN)))
+	{
+		clif_authfail_fd(fd, 8); //Still recognizes last connection
+		return;
+	}
+
+	CREATE(sd, TBL_PC, 1);
+	new(sd) map_session_data();
+	sd->fd = fd;
+#ifdef PACKET_OBFUSCATION
+	sd->cryptKey = (((((clif_cryptKey[0] * clif_cryptKey[1]) + clif_cryptKey[2]) & 0xFFFFFFFF) * clif_cryptKey[1]) + clif_cryptKey[2]) & 0xFFFFFFFF;
+#endif
+	session[fd]->session_data = sd;
+
+	pc_setnewpc(sd, account_id, char_id, login_id1, client_tick, sex, fd);
+
+#if PACKETVER < 20070521
+	WFIFOHEAD(fd,4);
+	WFIFOL(fd,0) = sd->id;
+	WFIFOSET(fd,4);
+#else
+	WFIFOHEAD(fd,packet_len(0x283));
+	WFIFOW(fd,0) = 0x283;
+	WFIFOL(fd,2) = sd->id;
+	WFIFOSET(fd,packet_len(0x283));
+#endif
+
+	chrif_authreq(sd,false);
+}
+
+
+/// Notification from the client, that it has finished map loading and is about to display player's character (CZ_NOTIFY_ACTORINIT).
+/// 007d
+void clif_parse_LoadEndAck(int32 fd,map_session_data *sd)
+{
+	bool guild_notice = false;
+
+	if(sd->prev != nullptr)
+		return;
+
+	// Autotraders should ignore this entirely, clif_parse_LoadEndAck is always invoked manually for them
+	if (!sd->state.active || (!sd->state.autotrade && !sd->state.pc_loaded)) { //Character loading is not complete yet!
+		//Let pc_reg_received or pc_scdata_received reinvoke this when ready.
+		sd->state.connect_new = 0;
+		return;
+	}
+
+	if (sd->state.rewarp) { //Rewarp player.
+		sd->state.rewarp = 0;
+		clif_changemap( *sd, sd->m, sd->x, sd->y );
+		return;
+	}
+
+	sd->state.warping = 0;
+
+	// look
+#if PACKETVER < 4
+	clif_changelook(sd,LOOK_WEAPON,sd->status.weapon);
+	clif_changelook(sd,LOOK_SHIELD,sd->status.shield);
+#else
+	clif_changelook(sd,LOOK_WEAPON,0);
+#endif
+	pc_set_costume_view(sd);
+
+	clif_refresh_clothcolor( *sd, SELF );
+
+	// item
+	clif_inventorylist(sd);  // inventory list first, otherwise deleted items in pc_checkitem show up as 'unknown item'
+	pc_checkitem(sd);
+	clif_equipswitch_list(sd);
+
+	// cart
+	if(pc_iscarton(sd)) {
+		clif_cartlist(sd);
+		clif_updatestatus(*sd,SP_CARTINFO);
+	}
+
+	// weight
+	clif_updatestatus(*sd,SP_WEIGHT);
+	clif_updatestatus(*sd,SP_MAXWEIGHT);
+
+	// guild
+	// (needs to go before clif_spawn() to show guild emblems correctly)
+	if(sd->status.guild_id)
+		guild_send_memberinfoshort(sd,1);
+
+	struct map_data *mapdata = map_getmapdata(sd->m);
+
+	pc_setinvincibletimer( *sd );
+
+	if( mapdata->users++ == 0 && battle_config.dynamic_mobs )
+		map_spawnmobs(sd->m);
+	if( !pc_isinvisible(sd) ) { // increment the number of pvp players on the map
+		mapdata->users_pvp++;
+	}
+	sd->state.debug_remove_map = 0; // temporary state to track double remove_map's [FlavioJS]
+
+	// reset the callshop flag if the player changes map
+	sd->state.callshop = 0;
+
+	if(map_addblock(sd))
+		return;
+	clif_spawn(sd);
+
+	// Party
+	// (needs to go after clif_spawn() to show hp bars correctly)
+	if(sd->status.party_id) {
+		party_send_movemap(sd);
+		clif_party_hp( *sd ); // Show hp after displacement [LuzZza]
+	}
+
+	if( sd->bg_id ) clif_bg_hp(sd); // BattleGround System
+
+	if(!pc_isinvisible(sd) && mapdata->getMapFlag(MF_PVP)) {
+		if(!battle_config.pk_mode) { // remove pvp stuff for pk_mode [Valaris]
+			if (!mapdata->getMapFlag(MF_PVP_NOCALCRANK))
+				sd->pvp_timer = add_timer(gettick()+200, pc_calc_pvprank_timer, sd->id, 0);
+			sd->pvp_rank = 0;
+			sd->pvp_lastusers = 0;
+			sd->pvp_point = 5;
+			sd->pvp_won = 0;
+			sd->pvp_lost = 0;
+		}
+		clif_map_property(sd, MAPPROPERTY_FREEPVPZONE, SELF);
+	} else if(sd->duel_group) // set flag, if it's a duel [LuzZza]
+		clif_map_property(sd, MAPPROPERTY_FREEPVPZONE, SELF);
+	else if (mapdata->getMapFlag(MF_GVG_DUNGEON))
+		clif_map_property(sd, MAPPROPERTY_FREEPVPZONE, SELF); //TODO: Figure out the real packet to send here.
+	else if( mapdata_flag_gvg(mapdata) )
+		clif_map_property(sd, MAPPROPERTY_AGITZONE, SELF);
+	else
+		clif_map_property(sd, MAPPROPERTY_NOTHING, SELF);
+
+	// info about nearby objects
+	// must use foreachinarea (CIRCULAR_AREA interferes with foreachinrange)
+	map_foreachinallarea(clif_getareachar, sd->m, sd->x-AREA_SIZE, sd->y-AREA_SIZE, sd->x+AREA_SIZE, sd->y+AREA_SIZE, BL_ALL, sd);
+
+	// pet
+	if( sd->pd ) {
+		if( battle_config.pet_no_gvg && mapdata_flag_gvg(mapdata) ) { //Return the pet to egg. [Skotlex]
+			clif_displaymessage(sd->fd, msg_txt(sd,666));
+			pet_return_egg( sd, sd->pd );
+		} else {
+			if(map_addblock(sd->pd))
+				return;
+			clif_spawn(sd->pd);
+			clif_send_petdata( sd, *sd->pd, CHANGESTATEPET_INIT );
+			clif_send_petstatus( *sd, *sd->pd );
+//			skill_unit_move(&sd->pd->bl,gettick(),1);
+		}
+	}
+
+	//homunculus [blackhole89]
+	if( hom_is_active(sd->hd) ) {
+		if(map_addblock(sd->hd))
+			return;
+		clif_spawn(sd->hd);
+		clif_send_homdata( *sd->hd, SP_ACK );
+		// For some reason, official servers send the homunculus info twice, then update the HP/SP again.
+		clif_hominfo(sd, sd->hd, 1);
+		clif_hominfo(sd, sd->hd, 0);
+		clif_homunculus_updatestatus(*sd, SP_HP);
+		clif_homunculus_updatestatus(*sd, SP_SP);
+		clif_homskillinfoblock( *sd->hd );
+		status_calc_bl(sd->hd, { SCB_SPEED });
+		if( !(battle_config.hom_setting&HOMSET_NO_INSTANT_LAND_SKILL) )
+			skill_unit_move(sd->hd,gettick(),1); // apply land skills immediately
+	}
+
+	if( sd->md ) {
+		if(map_addblock(sd->md))
+			return;
+		clif_spawn(sd->md);
+		clif_mercenary_info(sd);
+		clif_mercenary_skillblock(sd);
+		status_calc_bl(sd->md, { SCB_SPEED }); // Mercenary mimic their master's speed on each map change
+	}
+
+	if( sd->ed ) {
+		if (map_addblock(sd->ed))
+			return;
+		clif_spawn(sd->ed);
+		clif_elemental_info(sd);
+		clif_elemental_updatestatus(*sd, SP_HP);
+		clif_hpmeter_single( *sd, sd->ed->id, sd->ed->battle_status.hp, sd->ed->battle_status.max_hp );
+		clif_elemental_updatestatus(*sd, SP_SP);
+		status_calc_bl(sd->ed, { SCB_SPEED }); //Elemental mimic their master's speed on each map change
+	}
+
+	if(sd->state.connect_new) {
+		int32 lv;
+		guild_notice = true;
+		clif_skillinfoblock(*sd);
+		clif_hotkeys_send(sd,0);
+#if PACKETVER_MAIN_NUM >= 20190522 || PACKETVER_RE_NUM >= 20190508 || PACKETVER_ZERO_NUM >= 20190605
+		clif_hotkeys_send(sd,1);
+#endif
+		clif_updatestatus(*sd,SP_BASEEXP);
+		clif_updatestatus(*sd,SP_NEXTBASEEXP);
+		clif_updatestatus(*sd,SP_JOBEXP);
+		clif_updatestatus(*sd,SP_NEXTJOBEXP);
+		clif_updatestatus(*sd,SP_SKILLPOINT);
+		clif_initialstatus( *sd );
+
+		if (sd->sc.option&OPTION_FALCON)
+			clif_status_load(sd, EFST_FALCON, 1);
+		else if (sd->sc.option&(OPTION_RIDING|OPTION_DRAGON))
+			clif_status_load(sd, EFST_RIDING, 1);
+		else if (sd->sc.option&OPTION_WUGRIDER)
+			clif_status_load(sd, EFST_WUGRIDER, 1);
+		else if (sd->sc.getSCE(SC_ALL_RIDING))
+			clif_status_load(sd, EFST_ALL_RIDING, 1);
+
+		if(sd->status.manner < 0)
+			sc_start(sd,sd,SC_NOCHAT,100,0,0);
+
+		//Auron reported that This skill only triggers when you logon on the map o.O [Skotlex]
+		if ((lv = pc_checkskill(sd,SG_KNOWLEDGE)) > 0) {
+			if(sd->m == sd->feel_map[0].m
+				|| sd->m == sd->feel_map[1].m
+				|| sd->m == sd->feel_map[2].m)
+				sc_start(sd,sd, SC_KNOWLEDGE, 100, lv, skill_get_time(SG_KNOWLEDGE, lv));
+		}
+
+		if(sd->pd && sd->pd->pet.intimate > 900)
+			clif_pet_emotion( *sd->pd, (sd->pd->pet.class_ - 100)*100 + 50 + pet_hungry_val(sd->pd) );
+
+		if(hom_is_active(sd->hd))
+			hom_init_timers(sd->hd);
+
+		if (night_flag && mapdata->getMapFlag(MF_NIGHTENABLED)) {
+			sd->state.night = 1;
+			clif_status_load(sd, EFST_SKE, 1);
+		}
+
+		// Notify everyone that this char logged in.
+		if( battle_config.friend_auto_add ){
+			for( const s_friend& my_friend : sd->status.friends ){
+				// Cancel early
+				if( my_friend.char_id == 0 ){
+					break;
+				}
+
+				if( map_session_data* tsd = map_charid2sd( my_friend.char_id ); tsd != nullptr ){
+					for( const s_friend& their_friend : tsd->status.friends ){
+						// Cancel early
+						if( their_friend.char_id == 0 ){
+							break;
+						}
+
+						if( their_friend.account_id != sd->status.account_id ){
+							continue;
+						}
+
+						if( their_friend.char_id != sd->status.char_id ){
+							continue;
+						}
+
+						clif_friendslist_toggle( *tsd, their_friend, true );
+						break;
+					}
+				}
+			}
+		}else{
+			map_foreachpc( clif_friendslist_toggle_sub, sd->status.account_id, sd->status.char_id, static_cast<int32>( true ) );
+		}
+
+		if (!sd->state.autotrade) { // Don't trigger NPC event or opening vending/buyingstore will be failed
+			npc_script_event( *sd, NPCE_LOGIN );
+		}
+
+		// Set facing direction before check below to update client
+		if (battle_config.spawn_direction)
+			unit_setdir(sd, sd->status.body_direction, false);
+	} else {
+		//For some reason the client "loses" these on warp/map-change.
+		clif_updatestatus(*sd,SP_STR);
+		clif_updatestatus(*sd,SP_AGI);
+		clif_updatestatus(*sd,SP_VIT);
+		clif_updatestatus(*sd,SP_INT);
+		clif_updatestatus(*sd,SP_DEX);
+		clif_updatestatus(*sd,SP_LUK);
+#ifdef RENEWAL
+		clif_updatestatus(*sd,SP_POW);
+		clif_updatestatus(*sd,SP_STA);
+		clif_updatestatus(*sd,SP_WIS);

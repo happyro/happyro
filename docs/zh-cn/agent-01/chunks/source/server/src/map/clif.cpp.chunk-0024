@@ -1,0 +1,500 @@
+	}
+	*/
+
+	clif_name(sd, bl, SELF);
+}
+
+
+/// Validates and processes global messages
+/// 008c <packet len>.W <text>.?B (<name> : <message>) 00 (CZ_REQUEST_CHAT)
+/// There are various variants of this packet.
+void clif_parse_GlobalMessage(int32 fd, map_session_data* sd)
+{
+	char name[NAME_LENGTH], message[CHAT_SIZE_MAX], output[CHAT_SIZE_MAX+NAME_LENGTH*2];
+	size_t length;
+
+	// validate packet and retrieve name and message
+	if( !clif_process_message(sd, false, name, message, output ) )
+		return;
+
+	if( sd->gcbind && ((sd->gcbind->opt&CHAN_OPT_CAN_CHAT) || pc_has_permission(sd, PC_PERM_CHANNEL_ADMIN)) ) {
+		channel_send(sd->gcbind,sd,message);
+		return;
+	}
+
+	// send message to others (using the send buffer for temp. storage)
+	clif_GlobalMessage( *sd, output, sd->chatID ? CHAT_WOS : AREA_CHAT_WOC );
+
+	length = strlen(output) + 1;
+
+	// send back message to the speaker
+	WFIFOHEAD(fd,4+length);
+	WFIFOW(fd,0) = 0x8e;
+	WFIFOW(fd,2) = (uint16)(4+length);
+	safestrncpy(WFIFOCP(fd,4), output, length );
+	WFIFOSET(fd, WFIFOW(fd,2));
+
+#ifdef PCRE_SUPPORT
+	// trigger listening npcs
+	map_foreachinallrange(npc_chat_sub, sd, AREA_SIZE, BL_NPC, output, strlen(output), sd);
+#endif
+
+	// Chat logging type 'O' / Global Chat
+	log_chat(LOG_CHAT_GLOBAL, 0, sd->status.char_id, sd->status.account_id, mapindex_id2name(sd->mapindex), sd->x, sd->y, nullptr, message);
+	//achievement_update_objective(sd, AG_CHAT, 1, sd->m); //! TODO: What's the official use of this achievement type?
+}
+
+
+/// /mm /mapmove (as @rura GM command).
+/// Request to warp to a map on given coordinates.
+/// 0140 <map name>.16B <x>.W <y>.W (CZ_MOVETO_MAP)
+void clif_parse_MapMove( int32 fd, map_session_data* sd){
+	const PACKET_CZ_MOVETO_MAP* p = reinterpret_cast<PACKET_CZ_MOVETO_MAP*>( RFIFOP( fd, 0 ) );
+
+	char map_name[MAP_NAME_LENGTH_EXT];
+
+	safestrncpy( map_name, p->map, sizeof( map_name ) );
+
+	char command[CHAT_SIZE_MAX];
+
+	safesnprintf( command, sizeof( command ),"%cmapmove %s %hu %hu", atcommand_symbol, map_name, p->x, p->y );
+
+	is_atcommand(fd, sd, command, 1);
+}
+
+
+/// Updates body and head direction of an object (ZC_CHANGE_DIRECTION).
+/// 009c <id>.L <head dir>.W <dir>.B
+/// head dir:
+///     0 = straight
+///     1 = turned CW
+///     2 = turned CCW
+/// dir:
+///     0 = north
+///     1 = northwest
+///     2 = west
+///     3 = southwest
+///     4 = south
+///     5 = southeast
+///     6 = east
+///     7 = northeast
+void clif_changed_dir(const block_list& bl, enum send_target target){
+
+	PACKET_ZC_CHANGE_DIRECTION p{};
+
+	p.packetType = HEADER_ZC_CHANGE_DIRECTION;
+	p.srcId = bl.id;
+	if( bl.type == BL_PC ){
+		p.headDir = static_cast<const map_session_data*>(&bl)->head_dir;
+	}else{
+		p.headDir = 0;
+	}
+	p.dir = unit_getdir(&bl);
+
+	clif_send(&p, sizeof(p), &bl, target);
+
+	if (disguised(&bl)) {
+		p.srcId = disguised_bl_id(bl.id);
+		p.headDir = 0;
+
+		clif_send(&p, sizeof(p), &bl, SELF);
+	}
+}
+
+
+/// Request to change own body and head direction.
+/// 009b <head dir>.W <dir>.B (CZ_CHANGE_DIRECTION)
+/// 0361 <head dir>.W <dir>.B (CZ_CHANGE_DIRECTION2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_ChangeDir(int32 fd, map_session_data *sd)
+{
+	unsigned char headdir, dir;
+	// TODO: shuffle packet
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+
+	headdir = RFIFOB(fd,info->pos[0]);
+	dir = RFIFOB(fd,info->pos[1]);
+	pc_setdir(sd, dir, headdir);
+
+	clif_changed_dir(*sd, AREA_WOS);
+}
+
+
+/// Request to show an emotion 
+/// 00bf <type>.B (CZ_REQ_EMOTION).
+void clif_parse_Emotion(int32 fd, map_session_data *sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_EMOTION* p = reinterpret_cast<PACKET_CZ_REQ_EMOTION*>( RFIFOP( fd, 0 ) );
+
+	if( p->emotion_type >= ET_MAX ){
+		return;
+	}
+	
+	emotion_type emoticon = static_cast<emotion_type>( p->emotion_type );
+
+	if (battle_config.basic_skill_check == 0 || pc_checkskill(sd, NV_BASIC) >= 2 || pc_checkskill(sd, SU_BASIC_SKILL) >= 1) {
+		if (emoticon == ET_CHAT_PROHIBIT) {// prevent use of the mute emote [Valaris]
+			clif_skill_fail( *sd, 1, USESKILL_FAIL_LEVEL, 1 );
+			return;
+		}
+		// fix flood of emotion icon (ro-proxy): flood only the hacker player
+		if (sd->emotionlasttime + 1 >= time(nullptr)) { // not more than 1 per second
+			sd->emotionlasttime = time(nullptr);
+			clif_skill_fail( *sd, 1, USESKILL_FAIL_LEVEL, 1 );
+			return;
+		}
+		sd->emotionlasttime = time(nullptr);
+
+		if (battle_config.idletime_option&IDLE_EMOTION)
+			sd->idletime = last_tick;
+		if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_EMOTION)
+			sd->idletime_hom = last_tick;
+		if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_EMOTION)
+			sd->idletime_mer = last_tick;
+
+		if (sd->state.block_action & PCBLOCK_EMOTION) {
+			clif_skill_fail( *sd, 1, USESKILL_FAIL_LEVEL, 1 );
+			return;
+		}
+
+		if(battle_config.client_reshuffle_dice && emoticon>=ET_DICE1 && emoticon<=ET_DICE6) {// re-roll dice
+			emoticon = static_cast<emotion_type>( rnd()%6+ET_DICE1 );
+		}
+
+		clif_emotion( *sd, emoticon );
+	} else
+		clif_skill_fail( *sd, 1, USESKILL_FAIL_LEVEL, 1 );
+}
+
+
+/// Amount of currently online players, reply to /w /who
+/// 00c2 <count>.L (ZC_USER_COUNT)
+static void clif_user_count(map_session_data& sd)
+{
+	PACKET_ZC_USER_COUNT p{};
+
+	p.packetType = HEADER_ZC_USER_COUNT;
+	p.playersCount = map_getusers();
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// /w /who (CZ_REQ_USER_COUNT).
+/// Request to display amount of currently connected players.
+/// 00c1
+void clif_parse_HowManyConnections(int32 fd, map_session_data *sd) {
+	if( sd == nullptr ){
+		return;
+	}
+
+	clif_user_count(*sd);
+}
+
+void clif_parse_ActionRequest_sub( map_session_data& sd, uint8 action_type, int32 target_id, t_tick tick ){
+	if (pc_isdead(&sd)) {
+		clif_clearunit_area(sd, CLR_DEAD);
+		return;
+	}
+
+	// Statuses that don't let the player sit / stand / talk with NPCs (targeted)
+	if (action_type != DMG_NORMAL && action_type != DMG_REPEAT) {
+		if (sd.sc.cant.interact)
+			return;
+
+		unit_stop_walking( &sd, USW_FIXPOS );
+	}
+
+	unit_stop_attack( &sd );
+
+	if(target_id<0 && -target_id == sd.id) // for disguises [Valaris]
+		target_id = sd.id;
+
+	switch(action_type)
+	{
+	case DMG_NORMAL: // once attack
+	case DMG_REPEAT: // continuous attack
+
+		if( pc_cant_act(&sd) )
+			return;
+
+		if (!battle_config.sdelay_attack_enable && pc_checkskill(&sd, SA_FREECAST) <= 0) {
+			if (DIFF_TICK(tick, sd.ud.canact_tick) < 0) {
+				clif_skill_fail( sd, 1, USESKILL_FAIL_SKILLINTERVAL );
+				return;
+			}
+		}
+
+		pc_delinvincibletimer(&sd);
+		if (battle_config.idletime_option&IDLE_ATTACK)
+			sd.idletime = last_tick;
+		if (battle_config.hom_idle_no_share && sd.hd && battle_config.idletime_hom_option&IDLE_ATTACK)
+			sd.idletime_hom = last_tick;
+		if (battle_config.mer_idle_no_share && sd.md && battle_config.idletime_mer_option&IDLE_ATTACK)
+			sd.idletime_mer = last_tick;
+		unit_attack(&sd, target_id, action_type != 0);
+		break;
+	case DMG_SIT_DOWN: // sitdown
+		if (battle_config.basic_skill_check && pc_checkskill(&sd, NV_BASIC) < 3 && pc_checkskill(&sd, SU_BASIC_SKILL) < 1) {
+			clif_skill_fail( sd, 1, USESKILL_FAIL_LEVEL, 2 );
+			break;
+		}
+
+		if(pc_issit(&sd)) {
+			//Bugged client? Just refresh them.
+			clif_sitting(sd);
+			return;
+		}
+
+		if (sd.ud.skilltimer != INVALID_TIMER || (sd.sc.opt1 && sd.sc.opt1 != OPT1_STONEWAIT && sd.sc.opt1 != OPT1_BURNING))
+			break;
+
+		if (!sd.sc.empty() && (
+			sd.sc.getSCE(SC_DANCING) ||
+			(sd.sc.getSCE(SC_GRAVITATION) && sd.sc.getSCE(SC_GRAVITATION)->val3 == BCT_SELF)
+		)) //No sitting during these states either.
+			break;
+
+		if (sd.state.block_action & PCBLOCK_SITSTAND) {
+			clif_displaymessage(sd.fd, msg_txt(&sd,794)); // This action is currently blocked.
+			break;
+		}
+
+		if (battle_config.idletime_option&IDLE_SIT)
+			sd.idletime = last_tick;
+		if (battle_config.hom_idle_no_share && sd.hd && battle_config.idletime_hom_option&IDLE_SIT)
+			sd.idletime_hom = last_tick;
+		if (battle_config.mer_idle_no_share && sd.md && battle_config.idletime_mer_option&IDLE_SIT)
+			sd.idletime_mer = last_tick;
+
+		pc_setsit(&sd);
+		skill_sit(&sd, true);
+		clif_sitting(sd);
+		break;
+	case DMG_STAND_UP: // standup
+		if (!pc_issit(&sd)) {
+			//Bugged client? Just refresh them.
+			clif_standing(sd);
+			return;
+		}
+
+		if (sd.sc.opt1 && sd.sc.opt1 != OPT1_STONEWAIT && sd.sc.opt1 != OPT1_BURNING)
+			break;
+
+		if (sd.state.block_action & PCBLOCK_SITSTAND) {
+			clif_displaymessage(sd.fd, msg_txt(&sd,794)); // This action is currently blocked.
+			break;
+		}
+
+		if (pc_setstand(&sd, false)) {
+			if (battle_config.idletime_option&IDLE_SIT)
+				sd.idletime = last_tick;
+			if (battle_config.hom_idle_no_share && sd.hd && battle_config.idletime_hom_option&IDLE_SIT)
+				sd.idletime_hom = last_tick;
+			if (battle_config.mer_idle_no_share && sd.md && battle_config.idletime_mer_option&IDLE_SIT)
+				sd.idletime_mer = last_tick;
+			skill_sit(&sd, false);
+			clif_standing(sd);
+		}
+		break;
+	}
+}
+
+
+/// Request for an action.
+/// 0089 <target id>.L <action>.B (CZ_REQUEST_ACT)
+/// 0437 <target id>.L <action>.B (CZ_REQUEST_ACT2)
+/// action:
+///     0 = attack
+///     1 = pick up item
+///     2 = sit down
+///     3 = stand up
+///     7 = continous attack
+///     12 = (touch skill?)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_ActionRequest(int32 fd, map_session_data *sd)
+{
+	if( sd == nullptr ){
+		return;
+	}
+
+	// TODO: shuffle packet
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	clif_parse_ActionRequest_sub( *sd,
+		RFIFOB(fd,info->pos[1]),
+		RFIFOL(fd,info->pos[0]),
+		gettick()
+	);
+}
+
+
+/// Response to the death/system menu (CZ_RESTART).
+/// 00b2 <type>.B
+/// type:
+///     0 = restart (respawn)
+///     1 = char-select (disconnect)
+void clif_parse_Restart(int32 fd, map_session_data *sd)
+{
+	switch(RFIFOB(fd,packet_db[RFIFOW(fd,0)].pos[0])) {
+	case 0x00:
+		pc_respawn(sd,CLR_OUTSIGHT);
+		break;
+	case 0x01:
+		/*	Rovert's Prevent logout option - Fixed [Valaris]	*/
+		if( !sd->sc.getSCE(SC_CLOAKING) && !sd->sc.getSCE(SC_HIDING) && !sd->sc.getSCE(SC_CHASEWALK) && !sd->sc.getSCE(SC_CLOAKINGEXCEED) && !sd->sc.getSCE(SC_SUHIDE) && !sd->sc.getSCE(SC_NEWMOON) &&
+			(!battle_config.prevent_logout || sd->canlog_tick == 0 || DIFF_TICK(gettick(), sd->canlog_tick) > battle_config.prevent_logout) )
+		{	//Send to char-server for character selection.
+			chrif_charselectreq(sd, session[fd]->client_addr);
+		} else {
+			clif_disconnect_ack(sd, 1);
+		}
+		break;
+	}
+}
+
+
+/// Validates and processes whispered messages (CZ_WHISPER).
+/// 0096 <packet len>.W <nick>.24B <message>.?B
+void clif_parse_WisMessage(int32 fd, map_session_data* sd)
+{
+	map_session_data* dstsd;
+	int32 i;
+	char target[NAME_LENGTH], message[CHAT_SIZE_MAX], output[CHAT_SIZE_MAX+NAME_LENGTH*2];
+
+	// validate packet and retrieve name and message
+	if( !clif_process_message( sd, true, target, message, output ) )
+		return;
+
+	// Chat logging type 'W' / Whisper
+	log_chat(LOG_CHAT_WHISPER, 0, sd->status.char_id, sd->status.account_id, mapindex_id2name(sd->mapindex), sd->x, sd->y, target, message);
+
+	//-------------------------------------------------------//
+	//   Lordalfa - Paperboy - To whisper NPC commands       //
+	//-------------------------------------------------------//
+	if (target[0] && (strncasecmp(target,"NPC:",4) == 0) && (strlen(target) > 4))
+	{
+		char* str = target+4; //Skip the NPC: string part.
+		npc_data* npc;
+		if ((npc = npc_name2id(str))) {
+			char split_data[NUM_WHISPER_VAR][CHAT_SIZE_MAX];
+			char *split;
+			char event[EVENT_NAME_LENGTH];
+
+			str = message;
+			// skip codepage indicator, if detected
+			if( str[0] == '|' && strlen(str) >= 4 )
+				str += 3;
+			for( i = 0; i < NUM_WHISPER_VAR; ++i ) {// Splits the message using '#' as separators
+				split = strchr(str,'#');
+				if( split == nullptr ) { // use the remaining string
+					safestrncpy(split_data[i], str, ARRAYLENGTH(split_data[i]));
+					for( ++i; i < NUM_WHISPER_VAR; ++i )
+						split_data[i][0] = '\0';
+					break;
+				}
+				*split = '\0';
+				safestrncpy(split_data[i], str, ARRAYLENGTH(split_data[i]));
+				str = split+1;
+			}
+
+			for( i = 0; i < NUM_WHISPER_VAR; ++i ) {
+				char variablename[CHAT_SIZE_MAX];
+				safesnprintf(variablename,sizeof(variablename),"@whispervar%d$", i);
+				set_var_str( sd, variablename, split_data[i] );
+			}
+
+			safesnprintf(event,sizeof(event),"%s::%s", npc->exname,script_config.onwhisper_event_name);
+			npc_event(sd,event,0); // Calls the NPC label
+
+			return;
+		}
+	} else if( target[0] == '#' ) {
+		struct Channel *channel = nullptr;
+		char* chname = target;
+
+		channel = channel_name2channel(chname,sd,3);
+		if(channel && (pc_has_permission(sd, PC_PERM_CHANNEL_ADMIN) || ((channel->opt&CHAN_OPT_CAN_CHAT) && channel_pccheckgroup(channel,sd->group_id)))){
+			if(channel_pc_haschan(sd,channel)>=0){ //we are in the chan
+				channel_send(channel,sd,message);
+			}
+			else if( channel->pass[0] == '\0') { //no pass needed
+				if (channel_join(channel,sd)==0)
+					channel_send(channel,sd,message); //join success
+			}
+			else {
+				clif_displaymessage(fd, msg_txt(sd,1402)); //You're not in that channel, type '@join <#channel_name>'
+			}
+			return;
+		}
+	}
+
+	// searching destination character
+	dstsd = map_nick2sd(target,false);
+
+	if (dstsd == nullptr || strcmp(dstsd->status.name, target) != 0) {
+		// player is not on this map-server
+		// At this point, don't send wisp/page if it's not exactly the same name, because (example)
+		// if there are 'Test' player on an other map-server and 'test' player on this map-server,
+		// and if we ask for 'Test', we must not contact 'test' player
+		// so, we send information to inter-server, which is the only one which decide (and copy correct name).
+		intif_wis_message(sd, target, message, strlen(message) + 1);
+		return;
+	}
+
+	// if player ignores everyone
+	if (dstsd->state.ignoreAll && pc_get_group_level(sd) <= pc_get_group_level(dstsd)) {
+		if (pc_isinvisible(dstsd) && pc_get_group_level(sd) < pc_get_group_level(dstsd))
+			clif_wis_end( *sd, ACKWHISPER_TARGET_OFFLINE );
+		else
+			clif_wis_end( *sd, ACKWHISPER_ALL_IGNORED );
+		return;
+	}
+
+	// if player is autotrading
+	if (dstsd->state.autotrade == 1){
+		safesnprintf(output,sizeof(output),"%s is in autotrade mode and cannot receive whispered messages.", dstsd->status.name);
+		clif_wis_message(sd, wisp_server_name, output, strlen(output) + 1, 0);
+		return;
+	}
+
+	if (pc_get_group_level(sd) <= pc_get_group_level(dstsd)) {
+		// if player ignores the source character
+		ARR_FIND(0, MAX_IGNORE_LIST, i, dstsd->ignore[i].name[0] == '\0' || strcmp(dstsd->ignore[i].name, sd->status.name) == 0);
+		if(i < MAX_IGNORE_LIST && dstsd->ignore[i].name[0] != '\0') { // source char present in ignore list
+			clif_wis_end( *sd, ACKWHISPER_IGNORED );
+			return;
+		}
+	}
+
+	// notify sender of success
+	clif_wis_end( *sd, ACKWHISPER_SUCCESS );
+
+	// Normal message
+	clif_wis_message(dstsd, sd->status.name, message, strlen(message)+1, 0);
+}
+
+
+/// /b /nb.
+/// Request to broadcast a message on whole server.
+/// 0099 <packet len>.W <text>.?B 00 (CZ_BROADCAST)
+void clif_parse_Broadcast(int32 fd, map_session_data* sd) {
+	const PACKET_CZ_BROADCAST* p = reinterpret_cast<PACKET_CZ_BROADCAST*>( RFIFOP( fd, 0 ) );
+
+	if( p->packetSize < sizeof( *p ) ){
+		return;
+	}
+
+	char message[CHAT_SIZE_MAX];
+
+	safestrncpy( message, p->message, std::min<size_t>( sizeof( message ), p->packetSize - sizeof( *p ) + 1 ) );
+
+	char command[CHAT_SIZE_MAX];
+
+	safesnprintf( command, sizeof( command ),"%ckami %s", atcommand_symbol, message );
+
+	is_atcommand(fd, sd, command, 1);
+}
+

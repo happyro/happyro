@@ -1,0 +1,500 @@
+							effect.free(gl);
+						}
+						list.splice(j, 1);
+						j--;
+						size--;
+					}
+				}
+
+				constructor.afterRender(gl);
+
+				if (size === 0) {
+					if (constructor.free) {
+						constructor.free(gl);
+					}
+					delete _list[keys[i]];
+				}
+			}
+		}
+	}
+
+	/**
+	 * Spam an effect to the scene
+	 *
+	 * @param {object} Effect initial parameters {
+	 *     @param effectId {number} effect id
+	 *     @param ownerAID {number} owner actor id
+	 *     @param position {Array} position
+	 *     @param startTick {number} tick
+	 *     @param persistent {boolean} is persistent?
+	 *     @param repeatEnd {repeatEnd} for how long to repeat
+	 *     @param otherAID {number} target/source (other) actor id
+	 *     @param otherPosition {Array} target/source (other) position
+	 * }
+	 */
+	static spam(EF_Init_Par) {
+		// Empty call
+		if (!EF_Init_Par) {
+			return;
+		}
+
+		// No effect mode (/effect)
+		if (!Preferences.effect) {
+			return;
+		}
+
+		// Prepare params
+		EF_Init_Par = PrepareInit(EF_Init_Par);
+
+		// Not found
+		if (!(EF_Init_Par.effectId in EffectDB)) {
+			return;
+		}
+
+		const effects = EffectDB[EF_Init_Par.effectId];
+		let EF_Inst_Par;
+		let Params;
+		let i, j, count;
+
+		for (i = 0, count = effects.length; i < count; ++i) {
+			if (effects[i].duplicate == -1) {
+				effects[i].duplicate = 999;
+			} else {
+				effects[i].duplicate = effects[i].duplicate ? Math.min(effects[i].duplicate, 999) : 1;
+			}
+
+			effects[i].timeBetweenDupli = !isNaN(effects[i].timeBetweenDupli) ? effects[i].timeBetweenDupli : 200;
+
+			for (j = 0; j < effects[i].duplicate; ++j) {
+				EF_Inst_Par = {
+					effectID: EF_Init_Par.effectId,
+					duplicateID: j,
+					startTick: EF_Init_Par.startTick + effects[i].timeBetweenDupli * j
+				};
+
+				Params = {
+					effect: effects[i],
+					Inst: EF_Inst_Par,
+					Init: EF_Init_Par
+				};
+
+				EffectManager.spamEffect(Params);
+			}
+		}
+	}
+
+	/**
+	 * Spam an effect
+	 *
+	 * @param {object} effect params
+	 */
+	static spamEffect(Params) {
+		let filename;
+
+		Params.Inst.position = Params.Init.position;
+		Params.Inst.otherPosition = Params.Init.otherPosition;
+
+		// Propagate per-instance render ordering from effect definition
+		if (typeof Params.effect.renderBeforeEntities !== 'undefined') {
+			Params.Inst.renderBeforeEntities = !!Params.effect.renderBeforeEntities;
+		}
+
+		if (!Params.Inst.position) {
+			if (!Params.Init.ownerEntity) {
+				return;
+			}
+			Params.Inst.position = Params.Init.ownerEntity.position;
+		}
+
+		if (!Params.Inst.otherPosition) {
+			if (Params.Init.otherEntity) {
+				Params.Inst.otherPosition = Params.Init.otherEntity.position;
+			} else {
+				Params.Inst.otherPosition = [
+					Params.Inst.position[0] - 5,
+					Params.Inst.position[1] + 5,
+					Params.Inst.position[2]
+				];
+			}
+		}
+
+		// Copy instead of get reference
+		Params.Inst.position = Params.effect.attachedEntity
+			? Params.Inst.position
+			: [Params.Inst.position[0], Params.Inst.position[1], Params.Inst.position[2]];
+
+		// Repeat
+		Params.Inst.persistent = Params.Init.persistent || false;
+
+		if (typeof Params.effect.repeat !== 'undefined' && Params.effect.repeat !== null) {
+			Params.Inst.persistent = Params.effect.repeat; // Effect conf overrides. We can selecively enable/disable repeat on parts using this.
+		}
+
+		Params.Inst.repeatEnd = Params.Init.repeatEnd ? Params.Init.repeatEnd : Params.effect.repeatEnd || 0; // Main has priority
+		Params.Inst.repeatDelay = Params.effect.repeatDelay ? Params.effect.repeatDelay : Params.Init.repeatDelay; // Instance has priority
+
+		// Play sound
+		if (Params.effect.wav) {
+			filename = Params.effect.wav;
+
+			if (Params.effect.rand) {
+				filename = filename.replace(
+					'%d',
+					Math.round(Params.effect.rand[0] + (Params.effect.rand[1] - Params.effect.rand[0]) * Math.random())
+				);
+			}
+
+			Events.setTimeout(
+				function () {
+					//calculate the sound volume from distance
+					Sound.playPosition(filename + '.wav', Params.Inst.position);
+				},
+				Params.Inst.startTick + (!isNaN(Params.effect.delayWav) ? Params.effect.delayWav : 0) - Renderer.tick
+			);
+		}
+
+		Params.Inst.direction =
+			Params.effect.attachedEntity && Params.Init.ownerEntity ? Params.Init.ownerEntity.direction : 0;
+
+		//Set delays
+		Params.Inst.duration = !isNaN(Params.effect.duration) ? Params.effect.duration : Params.Init.duration;
+
+		Params.Inst.delayOffsetDelta = !isNaN(Params.effect.delayOffsetDelta)
+			? Params.effect.delayOffsetDelta * Params.Inst.duplicateID
+			: 0;
+		Params.Inst.delayLateDelta = !isNaN(Params.effect.delayLateDelta)
+			? Params.effect.delayLateDelta * Params.Inst.duplicateID
+			: 0;
+
+		Params.Inst.delayOffset = !isNaN(Params.effect.delayOffset)
+			? Params.effect.delayOffset + Params.Inst.delayOffsetDelta
+			: 0;
+		Params.Inst.delayLate = !isNaN(Params.effect.delayLate)
+			? Params.effect.delayLate + Params.Inst.delayLateDelta
+			: 0;
+
+		//Start and End
+		Params.Inst.startTick =
+			Params.Inst.startTick +
+			(Params.Inst.noDelay ? Params.Inst.delayOffset + Params.Inst.delayLate : Params.effect.delayStart || 0);
+		Params.Inst.endTick =
+			Params.Inst.duration > 0
+				? Params.Inst.startTick + (Params.Inst.noDelay ? Params.Inst.delayOffset : 0) + Params.Inst.duration
+				: -1;
+
+		switch (Params.effect.type) {
+			case 'SPR':
+				spamSprite(Params);
+				break;
+
+			case 'STR':
+				spamSTR(Params);
+				break;
+
+			case 'CYLINDER':
+				EffectManager.add(new Cylinder(Params.effect, Params.Inst, Params.Init), Params);
+				break;
+
+			case '2D':
+				EffectManager.add(new TwoDEffect(Params.effect, Params.Inst, Params.Init), Params);
+				break;
+
+			case '3D':
+				EffectManager.add(new ThreeDEffect(Params.effect, Params.Inst, Params.Init), Params);
+				break;
+
+			case 'RSM':
+			case 'RSM2':
+				EffectManager.add(new RsmEffect(Params), Params);
+				break;
+
+			case 'QuadHorn':
+				EffectManager.add(new QuadHorn(Params.effect, Params.Inst, Params.Init), Params);
+				break;
+
+			case 'FUNC':
+				if (Params.effect.func) {
+					if (Params.effect.attachedEntity) {
+						if (Params.Init.ownerEntity) {
+							Params.effect.func.call(this, Params);
+						}
+					} else {
+						Params.effect.func.call(this, Params);
+					}
+				}
+				break;
+		}
+	}
+
+	/**
+	 * Spam effect on ground
+	 *
+	 * @param {number} unit id
+	 * @param {number} position x
+	 * @param {number} position y
+	 * @param {number} skill unique id
+	 */
+	static spamSkillZone(unit_id, xPos, yPos, uid, creatorUid) {
+		// No effect mode (/effect)
+		if (!Preferences.effect) {
+			return;
+		}
+
+		if (!(unit_id in SkillUnit)) {
+			return;
+		}
+
+		const effectId = SkillUnit[unit_id];
+
+		if (!(effectId in EffectDB)) {
+			return;
+		}
+
+		// Remove old version if present (effect & entity)
+		EffectManager.remove(null, uid);
+
+		// New Entity
+		const entity = new Entity();
+		entity.GID = uid;
+		entity.position = [xPos, yPos, Altitude.getCellHeight(xPos, yPos)];
+		entity.hideShadow = true;
+		entity.objecttype = traps.includes(unit_id)
+			? entity.constructor.TYPE_TRAP
+			: targetableUnits.includes(unit_id)
+				? entity.constructor.TYPE_UNIT
+				: entity.constructor.TYPE_EFFECT;
+		entity.creatorGID = creatorUid;
+
+		EntityManager.add(entity);
+
+		// Effect
+		const EF_Init_Par = {
+			effectId: effectId,
+			ownerAID: uid,
+			position: [xPos, yPos, Altitude.getCellHeight(xPos, yPos)],
+			startTick: Renderer.tick,
+			persistent: true,
+			duration: -1, // Infinite by default but the effect param can have a duration that overrides this
+			otherAID: creatorUid
+		};
+
+		EffectManager.spam(EF_Init_Par);
+	}
+
+	/**
+	 * Spam a skill on a target
+	 *
+	 * @param {number} skill id
+	 * @param {number} target aid
+	 * @param {Array} position
+	 * @param {number} tick
+	 */
+	static spamSkill(skillId, destAID, position, tick, srcAID) {
+		let effects, EF_Init_Par;
+		if (!(skillId in SkillEffect)) {
+			return;
+		}
+
+		if (SkillEffect[skillId].effectId) {
+			if (typeof SkillEffect[skillId].effectId === 'function') effects = SkillEffect[skillId].effectId(srcAID);
+			else effects = SkillEffect[skillId].effectId;
+			effects = Array.isArray(effects) ? effects : [effects];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: destAID,
+					position: position,
+					startTick: tick,
+					otherAID: srcAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+
+		if (SkillEffect[skillId].effectIdOnCaster && srcAID) {
+			effects = Array.isArray(SkillEffect[skillId].effectIdOnCaster)
+				? SkillEffect[skillId].effectIdOnCaster
+				: [SkillEffect[skillId].effectIdOnCaster];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: srcAID,
+					position: position,
+					startTick: tick,
+					otherAID: destAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+	}
+
+	/**
+	 * Spam skill effect on success
+	 *
+	 * @param {number} skill id
+	 * @param {number} target aid
+	 * @param {number} tick
+	 */
+	static spamSkillSuccess(skillId, destAID, tick, srcAID) {
+		let effects, EF_Init_Par;
+		if (!(skillId in SkillEffect)) {
+			return;
+		}
+
+		if (SkillEffect[skillId].successEffectId) {
+			effects = Array.isArray(SkillEffect[skillId].successEffectId)
+				? SkillEffect[skillId].successEffectId
+				: [SkillEffect[skillId].successEffectId];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: destAID,
+					startTick: tick,
+					otherAID: srcAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+
+		if (SkillEffect[skillId].successEffectIdOnCaster) {
+			effects = Array.isArray(SkillEffect[skillId].successEffectIdOnCaster)
+				? SkillEffect[skillId].successEffectIdOnCaster
+				: [SkillEffect[skillId].successEffectIdOnCaster];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: srcAID,
+					startTick: tick,
+					otherAID: destAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+	}
+
+	/**
+	 * Spam skill effect on hit with damage
+	 *
+	 * @param {number} skill id
+	 * @param {number} target aid
+	 * @param {number} tick
+	 */
+	static spamSkillHit(skillId, destAID, tick, srcAID) {
+		let effects, EF_Init_Par;
+		if (!(skillId in SkillEffect)) {
+			return;
+		}
+
+		if (SkillEffect[skillId].hitEffectId) {
+			effects = Array.isArray(SkillEffect[skillId].hitEffectId)
+				? SkillEffect[skillId].hitEffectId
+				: [SkillEffect[skillId].hitEffectId];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: destAID,
+					startTick: tick,
+					otherAID: srcAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+
+		if (SkillEffect[skillId].hitEffectIdOnCaster) {
+			effects = Array.isArray(SkillEffect[skillId].hitEffectIdOnCaster)
+				? SkillEffect[skillId].hitEffectIdOnCaster
+				: [SkillEffect[skillId].hitEffectIdOnCaster];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: srcAID,
+					startTick: tick,
+					otherAID: destAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+	}
+
+	/**
+	 * Spam skill before the hit lands (regardless of damage)
+	 *
+	 * @param {number} skill id
+	 * @param {number} target aid
+	 * @param {number} tick
+	 */
+	static spamSkillBeforeHit(skillId, destAID, tick, srcAID) {
+		let effects, EF_Init_Par;
+		if (!(skillId in SkillEffect)) {
+			return;
+		}
+
+		if (SkillEffect[skillId].beforeHitEffectId) {
+			effects = Array.isArray(SkillEffect[skillId].beforeHitEffectId)
+				? SkillEffect[skillId].beforeHitEffectId
+				: [SkillEffect[skillId].beforeHitEffectId];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: destAID,
+					startTick: tick,
+					otherAID: srcAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+
+		if (SkillEffect[skillId].beforeHitEffectIdOnCaster) {
+			effects = Array.isArray(SkillEffect[skillId].beforeHitEffectIdOnCaster)
+				? SkillEffect[skillId].beforeHitEffectIdOnCaster
+				: [SkillEffect[skillId].beforeHitEffectIdOnCaster];
+
+			// var EF_Init_Par = { // Unused
+			// 	effectId: effectId,
+			// 	ownerAID: srcAID,
+			// 	startTick: tick,
+			// 	otherAID: destAID
+			// };
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: srcAID,
+					startTick: tick,
+					otherAID: destAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+	}
+
+	/**
+	 * Spam skill cast effect
+	 *
+	 * @param {number} skill id
+	 * @param {number} target aid
+	 * @param {number} tick
+	 */
+	static spamSkillCast(skillId, destAID, tick, srcAID) {
+		let effects, EF_Init_Par;
+		if (!(skillId in SkillEffect)) {
+			return;
+		}
+
+		if (SkillEffect[skillId].beginCastEffectId) {
+			effects = Array.isArray(SkillEffect[skillId].beginCastEffectId)

@@ -1,0 +1,301 @@
+
+						// Delete the NPC
+						npc_unload( nd, true );
+					}
+				}
+				// Update NPC event database
+				npc_read_event_script();
+
+				sd->npc_id_dynamic.clear();
+			}
+
+			sd->combos.clear();
+
+			if( sd->sc_display_count ) { /* [Ind] */
+				for( i = 0; i < sd->sc_display_count; i++ )
+					ers_free(pc_sc_display_ers, sd->sc_display[i]);
+
+				sd->sc_display_count = 0;
+				aFree(sd->sc_display);
+				sd->sc_display = nullptr;
+			}
+
+			if( sd->quest_log != nullptr ) {
+				aFree(sd->quest_log);
+				sd->quest_log = nullptr;
+				sd->num_quests = sd->avail_quests = 0;
+			}
+
+			sd->qi_display.clear();
+
+			if (sd->achievement_data.achievements)
+				achievement_free(sd);
+
+			// Clearing...
+			if (sd->bonus_script.head)
+				pc_bonus_script_clear(sd, BSF_REM_ALL);
+
+			skill_clear_unitgroup(bl);
+			status_change_clear(bl,1);
+			break;
+		}
+		case BL_PET: {
+			pet_data *pd = (pet_data*)bl;
+			map_session_data *sd = pd->master;
+
+			pet_delautobonus(*sd, pd->autobonus, false);
+			pet_delautobonus(*sd, pd->autobonus2, false);
+			pet_delautobonus(*sd, pd->autobonus3, false);
+
+			pet_hungry_timer_delete(pd);
+			pet_clear_support_bonuses(sd);
+
+			if( pd->pet.intimate > PET_INTIMATE_NONE )
+				intif_save_petdata(pd->pet.account_id,&pd->pet);
+			else { // Remove pet.
+				intif_delete_petdata(pd->pet.pet_id);
+
+				if (sd)
+					sd->status.pet_id = 0;
+			}
+
+			if( sd )
+				sd->pd = nullptr;
+			pd->master = nullptr;
+
+			skill_clear_unitgroup(bl);
+			status_change_clear(bl,1);
+			break;
+		}
+		case BL_MOB: {
+			mob_data *md = (mob_data*)bl;
+
+			mob_free_dynamic_viewdata( md );
+
+			if( md->spawn_timer != INVALID_TIMER ) {
+				delete_timer(md->spawn_timer,mob_delayspawn);
+				md->spawn_timer = INVALID_TIMER;
+			}
+
+			if( md->deletetimer != INVALID_TIMER ) {
+				delete_timer(md->deletetimer,mob_timer_delete);
+				md->deletetimer = INVALID_TIMER;
+			}
+
+			if (md->lootitems) {
+				aFree(md->lootitems);
+				md->lootitems = nullptr;
+			}
+
+			if( md->guardian_data ) {
+				std::shared_ptr<guild_castle> gc = md->guardian_data->castle;
+
+				if( md->guardian_data->number >= 0 && md->guardian_data->number < MAX_GUARDIANS )
+					gc->guardian[md->guardian_data->number].id = 0;
+				else {
+					int32 i;
+
+					ARR_FIND(0, gc->temp_guardians_max, i, gc->temp_guardians[i] == md->id);
+					if( i < gc->temp_guardians_max )
+						gc->temp_guardians[i] = 0;
+				}
+
+				md->guardian_data->~guardian_data();
+				aFree(md->guardian_data);
+				md->guardian_data = nullptr;
+			}
+
+			if( md->spawn ) {
+				md->spawn->active--;
+
+				if( !md->spawn->state.dynamic ) { // Permanently remove the mob
+					if( --md->spawn->num == 0 ) { // Last freed mob is responsible for deallocating the group's spawn data.
+						aFree(md->spawn);
+						md->spawn = nullptr;
+					}
+				}
+			}
+
+			if( md->base_status) {
+				aFree(md->base_status);
+				md->base_status = nullptr;
+			}
+
+			skill_clear_unitgroup(bl);
+			status_change_clear(bl,1);
+
+			if( mob_is_clone(md->mob_id) )
+				mob_clone_delete(md);
+
+			if( md->tomb_nid )
+				mvptomb_destroy(md);
+			break;
+		}
+		case BL_HOM:
+		{
+			homun_data *hd = (TBL_HOM*)bl;
+			map_session_data *sd = hd->master;
+
+			hom_hungry_timer_delete(hd);
+
+			if( hd->homunculus.intimacy > 0 )
+				hom_save(hd);
+			else {
+				intif_homunculus_requestdelete(hd->homunculus.hom_id);
+
+				if( sd )
+					sd->status.hom_id = 0;
+
+#ifdef RENEWAL
+				status_change_end(sd, SC_HOMUN_TIME);
+#endif
+			}
+
+			skill_blockhomun_clear(*hd); // Clear all skill cooldown related
+
+			if( sd )
+				sd->hd = nullptr;
+			hd->master = nullptr;
+
+			skill_clear_unitgroup(bl);
+			status_change_clear(bl,1);
+			break;
+		}
+		case BL_MER: {
+			s_mercenary_data *md = (TBL_MER*)bl;
+			map_session_data *sd = md->master;
+
+			if( mercenary_get_lifetime(md) > 0 )
+				mercenary_save(md);
+			else {
+				intif_mercenary_delete(md->mercenary.mercenary_id);
+
+				if( sd )
+					sd->status.mer_id = 0;
+			}
+
+			if( sd )
+				sd->md = nullptr;
+
+			skill_blockmerc_clear(*md); // Clear all skill cooldown related
+			mercenary_contract_stop(md);
+			md->master = nullptr;
+
+			skill_clear_unitgroup(bl);
+			status_change_clear(bl,1);
+			break;
+		}
+		case BL_ELEM: {
+			s_elemental_data *ed = (TBL_ELEM*)bl;
+			map_session_data *sd = ed->master;
+
+			if( elemental_get_lifetime(ed) > 0 )
+				elemental_save(ed);
+			else {
+				intif_elemental_delete(ed->elemental.elemental_id);
+
+				if( sd )
+					sd->status.ele_id = 0;
+			}
+
+			if( sd )
+				sd->ed = nullptr;
+
+			elemental_summon_stop(ed);
+			ed->master = nullptr;
+
+			skill_clear_unitgroup(bl);
+			status_change_clear(bl,1);
+			break;
+		}
+	}
+
+	if( ud != nullptr ){
+		ud->hatEffects.clear();
+	}
+
+	map_deliddb(bl);
+
+	if( bl->type != BL_PC ) // Players are handled by map_quit
+		map_freeblock(bl);
+
+	return 0;
+}
+
+static TIMER_FUNC(unit_shadowscar_timer) {
+	block_list *bl = map_id2bl(id);
+
+	if (bl == nullptr)
+		return 1;
+
+	unit_data *ud = unit_bl2ud(bl);
+
+	if (ud == nullptr)
+		return 1;
+
+	std::vector<int32>::iterator it = ud->shadow_scar_timer.begin();
+
+	while (it != ud->shadow_scar_timer.end()) {
+		if (*it == tid) {
+			ud->shadow_scar_timer.erase(it);
+			break;
+		}
+
+		it++;
+	}
+
+	if (ud->shadow_scar_timer.empty())
+		status_change_end( bl, SC_SHADOW_SCAR );
+
+	return 0;
+}
+
+/**
+ * Adds a Shadow Scar to unit for 'interval' ms.
+ * @param ud: Unit data
+ * @param interval: Duration
+ */
+void unit_addshadowscar(unit_data &ud, int32 interval) {
+	if (ud.shadow_scar_timer.size() >= MAX_SHADOW_SCAR) {
+		ShowWarning("unit_addshadowscar: Unit %s (%d) has reached the maximum amount of Shadow Scars (%d).\n", status_get_name(*ud.bl), ud.bl->id, MAX_SHADOW_SCAR);
+		return;
+	}
+
+	ud.shadow_scar_timer.push_back(add_timer(gettick() + interval, unit_shadowscar_timer, ud.bl->id, 0));
+
+	status_change *sc = status_get_sc(ud.bl);
+
+	if (sc != nullptr) {
+		if (sc->getSCE(SC_SHADOW_SCAR) != nullptr) {
+			sc->getSCE(SC_SHADOW_SCAR)->val1 = static_cast<int32>(ud.shadow_scar_timer.size());
+		} else {
+			sc_start(ud.bl, ud.bl, SC_SHADOW_SCAR, 100, 1, INFINITE_TICK);
+		}
+
+		clif_enchantingshadow_spirit(ud);
+	}
+}
+
+/**
+ * Initialization function for unit on map start
+ * called in map::do_init
+ */
+void do_init_unit(void){
+	add_timer_func_list(unit_attack_timer,  "unit_attack_timer");
+	add_timer_func_list(unit_walktoxy_timer,"unit_walktoxy_timer");
+	add_timer_func_list(unit_walktobl_sub, "unit_walktobl_sub");
+	add_timer_func_list(unit_delay_walktoxy_timer,"unit_delay_walktoxy_timer");
+	add_timer_func_list(unit_delay_walktobl_timer,"unit_delay_walktobl_timer");
+	add_timer_func_list(unit_teleport_timer,"unit_teleport_timer");
+	add_timer_func_list(unit_step_timer,"unit_step_timer");
+	add_timer_func_list(unit_shadowscar_timer, "unit_shadowscar_timer");
+}
+
+/**
+ * Unit module destructor, (thing to do before closing the module)
+ * called in map::do_final
+ * @return 0
+ */
+void do_final_unit(void){
+	// Nothing to do
+}

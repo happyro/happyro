@@ -1,0 +1,500 @@
+	map_session_data* sd;
+
+	iter = db_iterator(pc_db);
+	for( sd = (map_session_data*)dbi_first(iter); dbi_exists(iter); sd = (map_session_data*)dbi_next(iter) )
+	{
+		va_list args;
+		int32 ret;
+
+		va_start(args, func);
+		ret = func(sd, args);
+		va_end(args);
+		if( ret == -1 )
+			break;// stop iterating
+	}
+	dbi_destroy(iter);
+}
+
+/// Applies func to all the mobs in the db.
+/// Stops iterating if func returns -1.
+void map_foreachmob(int32 (*func)(mob_data* md, va_list args), ...)
+{
+	DBIterator* iter;
+	mob_data* md;
+
+	iter = db_iterator(mobid_db);
+	for( md = (mob_data*)dbi_first(iter); dbi_exists(iter); md = (mob_data*)dbi_next(iter) )
+	{
+		va_list args;
+		int32 ret;
+
+		va_start(args, func);
+		ret = func(md, args);
+		va_end(args);
+		if( ret == -1 )
+			break;// stop iterating
+	}
+	dbi_destroy(iter);
+}
+
+/// Applies func to all the npcs in the db.
+/// Stops iterating if func returns -1.
+void map_foreachnpc(int32 (*func)(npc_data* nd, va_list args), ...)
+{
+	DBIterator* iter;
+	block_list* bl;
+
+	iter = db_iterator(id_db);
+	for( bl = (block_list*)dbi_first(iter); dbi_exists(iter); bl = (block_list*)dbi_next(iter) )
+	{
+		if( bl->type == BL_NPC )
+		{
+			npc_data* nd = (npc_data*)bl;
+			va_list args;
+			int32 ret;
+
+			va_start(args, func);
+			ret = func(nd, args);
+			va_end(args);
+			if( ret == -1 )
+				break;// stop iterating
+		}
+	}
+	dbi_destroy(iter);
+}
+
+/// Applies func to everything in the db.
+/// Stops iterating if func returns -1.
+void map_foreachregen(int32 (*func)(block_list* bl, va_list args), ...)
+{
+	DBIterator* iter;
+	block_list* bl;
+
+	iter = db_iterator(regen_db);
+	for( bl = (block_list*)dbi_first(iter); dbi_exists(iter); bl = (block_list*)dbi_next(iter) )
+	{
+		va_list args;
+		int32 ret;
+
+		va_start(args, func);
+		ret = func(bl, args);
+		va_end(args);
+		if( ret == -1 )
+			break;// stop iterating
+	}
+	dbi_destroy(iter);
+}
+
+/// Applies func to everything in the db.
+/// Stops iterating if func returns -1.
+void map_foreachiddb(int32 (*func)(block_list* bl, va_list args), ...)
+{
+	DBIterator* iter;
+	block_list* bl;
+
+	iter = db_iterator(id_db);
+	for( bl = (block_list*)dbi_first(iter); dbi_exists(iter); bl = (block_list*)dbi_next(iter) )
+	{
+		va_list args;
+		int32 ret;
+
+		va_start(args, func);
+		ret = func(bl, args);
+		va_end(args);
+		if( ret == -1 )
+			break;// stop iterating
+	}
+	dbi_destroy(iter);
+}
+
+/// Iterator.
+/// Can filter by bl type.
+struct s_mapiterator
+{
+	enum e_mapitflags flags;// flags for special behaviour
+	enum bl_type types;// what bl types to return
+	DBIterator* dbi;// database iterator
+};
+
+/// Returns true if the block_list matches the description in the iterator.
+///
+/// @param _mapit_ Iterator
+/// @param _bl_ block_list
+/// @return true if it matches
+#define MAPIT_MATCHES(_mapit_,_bl_) \
+	( \
+		( (_bl_)->type & (_mapit_)->types /* type matches */ ) \
+	)
+
+/// Allocates a new iterator.
+/// Returns the new iterator.
+/// types can represent several BL's as a bit field.
+/// TODO should this be expanded to allow filtering of map/guild/party/chat/cell/area/...?
+///
+/// @param flags Flags of the iterator
+/// @param type Target types
+/// @return Iterator
+struct s_mapiterator* mapit_alloc(enum e_mapitflags flags, enum bl_type types)
+{
+	struct s_mapiterator* mapit;
+
+	CREATE(mapit, struct s_mapiterator, 1);
+	mapit->flags = flags;
+	mapit->types = types;
+	if( types == BL_PC )       mapit->dbi = db_iterator(pc_db);
+	else if( types == BL_MOB ) mapit->dbi = db_iterator(mobid_db);
+	else                       mapit->dbi = db_iterator(id_db);
+	return mapit;
+}
+
+/// Frees the iterator.
+///
+/// @param mapit Iterator
+void mapit_free(struct s_mapiterator* mapit)
+{
+	nullpo_retv(mapit);
+
+	dbi_destroy(mapit->dbi);
+	aFree(mapit);
+}
+
+/// Returns the first block_list that matches the description.
+/// Returns nullptr if not found.
+///
+/// @param mapit Iterator
+/// @return first block_list or nullptr
+block_list* mapit_first(struct s_mapiterator* mapit)
+{
+	block_list* bl;
+
+	nullpo_retr(nullptr,mapit);
+
+	for( bl = (block_list*)dbi_first(mapit->dbi); bl != nullptr; bl = (block_list*)dbi_next(mapit->dbi) )
+	{
+		if( MAPIT_MATCHES(mapit,bl) )
+			break;// found match
+	}
+	return bl;
+}
+
+/// Returns the last block_list that matches the description.
+/// Returns nullptr if not found.
+///
+/// @param mapit Iterator
+/// @return last block_list or nullptr
+block_list* mapit_last(struct s_mapiterator* mapit)
+{
+	block_list* bl;
+
+	nullpo_retr(nullptr,mapit);
+
+	for( bl = (block_list*)dbi_last(mapit->dbi); bl != nullptr; bl = (block_list*)dbi_prev(mapit->dbi) )
+	{
+		if( MAPIT_MATCHES(mapit,bl) )
+			break;// found match
+	}
+	return bl;
+}
+
+/// Returns the next block_list that matches the description.
+/// Returns nullptr if not found.
+///
+/// @param mapit Iterator
+/// @return next block_list or nullptr
+block_list* mapit_next(struct s_mapiterator* mapit)
+{
+	block_list* bl;
+
+	nullpo_retr(nullptr,mapit);
+
+	for( ; ; )
+	{
+		bl = (block_list*)dbi_next(mapit->dbi);
+		if( bl == nullptr )
+			break;// end
+		if( MAPIT_MATCHES(mapit,bl) )
+			break;// found a match
+		// try next
+	}
+	return bl;
+}
+
+/// Returns the previous block_list that matches the description.
+/// Returns nullptr if not found.
+///
+/// @param mapit Iterator
+/// @return previous block_list or nullptr
+block_list* mapit_prev(struct s_mapiterator* mapit)
+{
+	block_list* bl;
+
+	nullpo_retr(nullptr,mapit);
+
+	for( ; ; )
+	{
+		bl = (block_list*)dbi_prev(mapit->dbi);
+		if( bl == nullptr )
+			break;// end
+		if( MAPIT_MATCHES(mapit,bl) )
+			break;// found a match
+		// try prev
+	}
+	return bl;
+}
+
+/// Returns true if the current block_list exists in the database.
+///
+/// @param mapit Iterator
+/// @return true if it exists
+bool mapit_exists(struct s_mapiterator* mapit)
+{
+	nullpo_retr(false,mapit);
+
+	return dbi_exists(mapit->dbi);
+}
+
+/*==========================================
+ * Add npc-bl to id_db, basically register npc to map
+ *------------------------------------------*/
+bool map_addnpc(int16 m,npc_data *nd)
+{
+	nullpo_ret(nd);
+
+	if( m < 0 )
+		return false;
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if( mapdata->npc_num == MAX_NPC_PER_MAP )
+	{
+		ShowWarning("too many NPCs in one map %s\n",mapdata->name);
+		return false;
+	}
+
+	int32 xs = -1, ys = -1;
+
+	switch (nd->subtype) {
+	case NPCTYPE_WARP:
+		xs = nd->u.warp.xs;
+		ys = nd->u.warp.ys;
+		break;
+	case NPCTYPE_SCRIPT:
+		xs = nd->u.scr.xs;
+		ys = nd->u.scr.ys;
+		break;
+	default:
+		break;
+	}
+	// npcs with trigger area are grouped
+	// 0 < npc_num_warp < npc_num_area < npc_num
+	if (xs < 0 || ys < 0)
+		mapdata->npc[ mapdata->npc_num ] = nd;
+	else {
+		switch (nd->subtype) {
+		case NPCTYPE_WARP:
+			mapdata->npc[ mapdata->npc_num ] = mapdata->npc[ mapdata->npc_num_area ];
+			mapdata->npc[ mapdata->npc_num_area ] = mapdata->npc[ mapdata->npc_num_warp ];
+			mapdata->npc[ mapdata->npc_num_warp ] = nd;
+			mapdata->npc_num_warp++;
+			mapdata->npc_num_area++;
+			break;
+		case NPCTYPE_SCRIPT:
+			mapdata->npc[ mapdata->npc_num ] = mapdata->npc[ mapdata->npc_num_area ];
+			mapdata->npc[ mapdata->npc_num_area ] = nd;
+			mapdata->npc_num_area++;
+			break;
+		default:
+			mapdata->npc[ mapdata->npc_num ] = nd;
+			break;
+		}
+	}
+	mapdata->npc_num++;
+	idb_put(id_db,nd->id,nd);
+	return true;
+}
+
+/*==========================================
+ * Add an instance map
+ *------------------------------------------*/
+int32 map_addinstancemap(int32 src_m, int32 instance_id, bool no_mapflag)
+{
+	if(src_m < 0)
+		return -1;
+
+	const char *name = map_mapid2mapname(src_m);
+
+	if(strlen(name) > 20) {
+		// against buffer overflow
+		ShowError("map_addinstancemap: Map name \"%s\" is too long.\n", name);
+		return -2;
+	}
+
+	int16 dst_m = -1, i;
+
+	for (i = instance_start; i < MAX_MAP_PER_SERVER; i++) {
+		if (!map[i].name[0])
+			break;
+	}
+	if (i < map_num) // Destination map value overwrites another
+		dst_m = i;
+	else if (i < MAX_MAP_PER_SERVER) // Destination map value increments to new map
+		dst_m = map_num++;
+	else {
+		// Out of bounds
+		ShowError("map_addinstancemap failed. map_num(%d) > map_max(%d)\n", map_num, MAX_MAP_PER_SERVER);
+		return -3;
+	}
+
+	struct map_data *src_map = map_getmapdata(src_m);
+	struct map_data *dst_map = map_getmapdata(dst_m);
+
+	// Alter the name
+	// This also allows us to maintain complete independence with main map functions
+	instance_generate_mapname(src_m, instance_id, dst_map->name);
+
+	dst_map->m = dst_m;
+	dst_map->instance_id = instance_id;
+	dst_map->instance_src_map = src_m;
+	dst_map->users = 0;
+	dst_map->xs = src_map->xs;
+	dst_map->ys = src_map->ys;
+	dst_map->bxs = src_map->bxs;
+	dst_map->bys = src_map->bys;
+	dst_map->iwall_num = src_map->iwall_num;
+
+	memset(dst_map->npc, 0, sizeof(dst_map->npc));
+	dst_map->npc_num = 0;
+	dst_map->npc_num_area = 0;
+	dst_map->npc_num_warp = 0;
+
+	// Reallocate cells
+	size_t num_cell = dst_map->xs * dst_map->ys;
+
+	CREATE( dst_map->cell, struct mapcell, num_cell );
+	memcpy( dst_map->cell, src_map->cell, num_cell * sizeof(struct mapcell) );
+
+	size_t size = dst_map->bxs * dst_map->bys * sizeof(block_list*);
+
+	dst_map->block = (block_list **)aCalloc(1,size);
+	dst_map->block_mob = (block_list **)aCalloc(1,size);
+
+	dst_map->index = mapindex_addmap(-1, dst_map->name);
+	dst_map->channel = nullptr;
+	dst_map->mob_delete_timer = INVALID_TIMER;
+
+	if(!no_mapflag)
+		map_data_copy(dst_map, src_map);
+
+	ShowInfo("[Instance] Created map '%s' (%d) from '%s' (%d).\n", dst_map->name, dst_map->m, name, src_map->m);
+
+	map_addmap2db(dst_map);
+
+	return dst_m;
+}
+
+/*==========================================
+ * Set player to save point when they leave
+ *------------------------------------------*/
+static int32 map_instancemap_leave(block_list *bl, va_list ap)
+{
+	map_session_data* sd;
+
+	nullpo_retr(0, bl);
+	nullpo_retr(0, sd = (map_session_data *)bl);
+
+	pc_setpos_savepoint( *sd );
+
+	return 1;
+}
+
+/*==========================================
+ * Remove all units from instance
+ *------------------------------------------*/
+static int32 map_instancemap_clean(block_list *bl, va_list ap)
+{
+	nullpo_retr(0, bl);
+	switch(bl->type) {
+		/*case BL_PC:
+		// BL_PET, BL_HOM, BL_MER, and BL_ELEM are moved when BL_PC warped out in map_instancemap_leave
+			map_quit((map_session_data *) bl);
+			break;*/
+		case BL_NPC:
+			npc_unload((npc_data *)bl,true);
+			break;
+		case BL_MOB:
+			unit_free(bl,CLR_OUTSIGHT);
+			break;
+		case BL_ITEM:
+			map_clearflooritem(bl);
+			break;
+		case BL_SKILL:
+			skill_delunit((skill_unit *) bl);
+			break;
+	}
+
+	return 1;
+}
+
+static void map_free_questinfo(struct map_data *mapdata);
+
+/*==========================================
+ * Deleting an instance map
+ *------------------------------------------*/
+int32 map_delinstancemap(int32 m)
+{
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if(m < 0 || mapdata->instance_id <= 0)
+		return 0;
+
+	// Kick everyone out
+	map_foreachinmap(map_instancemap_leave, m, BL_PC);
+
+	// Do the unit cleanup
+	map_foreachinmap(map_instancemap_clean, m, BL_ALL);
+
+	if( mapdata->mob_delete_timer != INVALID_TIMER )
+		delete_timer(mapdata->mob_delete_timer, map_removemobs_timer);
+	mapdata->mob_delete_timer = INVALID_TIMER;
+
+	// Free memory
+	if (mapdata->cell)
+		aFree(mapdata->cell);
+	mapdata->cell = nullptr;
+	if (mapdata->block)
+		aFree(mapdata->block);
+	mapdata->block = nullptr;
+	if (mapdata->block_mob)
+		aFree(mapdata->block_mob);
+	mapdata->block_mob = nullptr;
+
+	map_free_questinfo(mapdata);
+	mapdata->damage_adjust = {};
+	mapdata->initMapFlags();
+	mapdata->skill_damage.clear();
+	mapdata->instance_id = 0;
+
+	mapindex_removemap(mapdata->index);
+	map_removemapdb(mapdata);
+
+	mapdata->index = 0;
+	memset(&mapdata->name, '\0', sizeof(map[0].name)); // just remove the name
+	return 1;
+}
+
+/*=========================================
+ * Dynamic Mobs [Wizputer]
+ *-----------------------------------------*/
+// Stores the spawn data entry in the mob list.
+// Returns the index of successful, or -1 if the list was full.
+int32 map_addmobtolist(uint16 m, struct spawn_data *spawn)
+{
+	size_t i;
+	struct map_data *mapdata = map_getmapdata(m);
+
+	ARR_FIND( 0, MAX_MOB_LIST_PER_MAP, i, mapdata->moblist[i] == nullptr );
+	if( i < MAX_MOB_LIST_PER_MAP )
+	{
+		mapdata->moblist[i] = spawn;
+		return static_cast<int32>(i);
+	}

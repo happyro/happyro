@@ -1,0 +1,500 @@
+/**
+ * Engine/LoginEngine.js
+ *
+ * Login Engine
+ * Manage login server, connexion
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+// Load dependencies
+import TextEncoding from 'Utils/CodepageManager.js';
+import DB from 'DB/DBManager.js';
+import BGM from 'Audio/BGM.js';
+import Sound from 'Audio/SoundManager.js';
+import Configs from 'Core/Configs.js';
+import Thread from 'Core/Thread.js';
+import Session from 'Engine/SessionStorage.js';
+import CharEngine from 'Engine/CharEngine.js';
+import Network from 'Network/NetworkManager.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import PluginManager from 'Plugins/PluginManager.js';
+import Renderer from 'Renderer/Renderer.js';
+import UIManager from 'UI/UIManager.js';
+import WinList from 'UI/Components/WinList/WinList.js';
+import WinPopup from 'UI/Components/WinPopup/WinPopup.js';
+import Queue from 'Utils/Queue.js';
+import Background from 'UI/Background.js';
+import MD5 from 'Vendors/spark-md5.min.js';
+import Rijndael from 'Utils/Rijndael.js';
+
+// Version Dependent UIs
+import WinLogin from 'UI/Components/WinLogin/WinLogin.js';
+
+/**
+ * Creating WinLoading
+ */
+const WinLoading = WinPopup.clone('WinLoading');
+WinLoading.init = function () {
+	Object.assign(this._host.style, {
+		top: (Renderer.height - 120) / 1.5 + 'px',
+		left: (Renderer.width - 280) / 2.0 + 'px'
+	});
+	this._shadow.querySelector('.text').textContent = DB.getMessage(121);
+};
+UIManager.addComponent(WinLoading);
+
+/**
+ * @var {object} server object stored in clientinfo.xml
+ */
+let _server = null;
+
+/**
+ * @var {array} char-servers list
+ */
+let _charServers = [];
+
+/**
+ * @var {string} Stored username to send as ping
+ */
+let _loginID = '';
+
+class LoginEngine {
+	/**
+	 * Init Game
+	 */
+	static init(server) {
+		const q = new Queue();
+		const old_server = _server;
+
+		Configs.setServer(server);
+		UIManager.removeComponents();
+		Session.LangType = 'langtype' in server ? parseInt(server.langtype, 10) : 1; // default to SERVICETYPE_AMERICA
+
+		// Renewal switch
+		Session.isRenewal = Configs.get('renewal', false);
+		console.log('%c[LOGIN] Game Mode: ', 'color:#007000', Session.isRenewal ? 'RENEWAL' : 'PRE-RENEWAL');
+
+		// Setup Default Charset based on LangType
+		const charset = TextEncoding.detectEncodingByLangtype(Session.LangType, Configs.get('disableKorean'));
+
+		console.log('%c[LOGIN] Language Type: ', 'color:#007000', Session.LangType);
+		console.log('%c[LOGIN] Encoding: ', 'color:#007000', charset);
+
+		_server = server;
+
+		// Add support for "packetver" definition in Server listing
+		const packetver = String(Configs.get('packetver'));
+		const remoteClient = Configs.get('remoteClient');
+		const autoLogin = Configs.get('autoLogin');
+		const audioExt = Configs.get('BGMFileExtension');
+
+		// Server packetver
+		if (packetver) {
+			if (packetver.match(/^\d+$/)) {
+				PACKETVER.value = parseInt(packetver, 10);
+			}
+		}
+
+		if (!PACKETVER.value) {
+			UIManager.showErrorBox('Sorry, no PACKETVER configs found.');
+			return;
+		}
+
+		// Add support for remote client in server definition
+		if (remoteClient) {
+			Thread.send('SET_HOST', remoteClient);
+
+			// Check if the selected server changed.
+			if (old_server != null && (old_server.address != _server.address || old_server.port != _server.port)) {
+				// Re-Loading game data with server specific files (txt, lua, lub)
+				q.add(() => {
+					DB.onReady = () => {
+						Background.setLoginBackground(); // remove loading
+						q._next();
+					};
+					DB.onProgress = (i, count) => {
+						Background.setPercent(Math.floor((i / count) * 100));
+					};
+					UIManager.removeComponents();
+					Background.init();
+					Background.resize(Renderer.width, Renderer.height);
+					Background.setLoginBackground(() => {
+						DB.isLoaded = false;
+						DB.init();
+					});
+				});
+			}
+		}
+
+		// Server audio configuration
+		if (audioExt) {
+			BGM.setAvailableExtensions(audioExt);
+		}
+
+		// GMs account list from server
+		Session.AdminList = server.adminList || [];
+
+		// Init per server plugins
+		PluginManager.init();
+
+		// Hooking win_login
+		WinLogin.selectUIVersion();
+		Background.setLoginBackground();
+
+		WinLogin.getUI().onConnectionRequest = onConnectionRequest;
+		WinLogin.getUI().onExitRequest = onExitRequest;
+
+		// Handle unexpected disconnects during login phase
+		Network.onDisconnect = () => {
+			UIManager.showMessageBox(
+				DB.getMessage(1),
+				'ok',
+				() => {
+					UIManager.removeComponents();
+					WinLogin.getUI().append();
+				},
+				true
+			);
+		};
+
+		// Autologin features
+		if (autoLogin instanceof Array && autoLogin[0] && autoLogin[1]) {
+			onConnectionRequest.apply(null, autoLogin);
+			Configs.set('autoLogin', null);
+		} else {
+			q.add(function () {
+				WinLogin.getUI().append();
+			});
+		}
+
+		// Hook packets
+		if (PACKETVER.value < 20170315) {
+			Network.hookPacket(PACKET.AC.ACCEPT_LOGIN, onConnectionAccepted);
+		} else {
+			Network.hookPacket(PACKET.AC.ACCEPT_LOGIN3, onConnectionAccepted);
+		}
+
+		// Refuse login packets
+		Network.hookPacket(PACKET.AC.REFUSE_LOGIN, onConnectionRefused);
+		Network.hookPacket(PACKET.AC.REFUSE_LOGIN_R2, onConnectionRefused);
+		Network.hookPacket(PACKET.AC.REFUSE_LOGIN3, onConnectionRefused);
+		Network.hookPacket(PACKET.AC.REFUSE_LOGIN_EX, onConnectionRefused);
+
+		// international refuse packets
+		Network.hookPacket(PACKET.AC.REFUSE_LOGIN_USA, onInternationalConnectionRefused);
+
+		// Taren refuse packets
+		Network.hookPacket(PACKET.AC.LOGIN_TAREN_REFUSE, onTarenConnectionRefused);
+		Network.hookPacket(PACKET.AC.LOGIN_TAREN_REFUSE2, onTarenConnectionRefused2);
+
+		// forced disconnect
+		Network.hookPacket(PACKET.SC.NOTIFY_BAN, onServerClosed);
+
+		// Execute
+		q.run();
+	}
+
+	/**
+	 * Reload WinLogin
+	 */
+	static reload() {
+		UIManager.removeComponents();
+		WinLogin.getUI().onConnectionRequest = onConnectionRequest;
+		WinLogin.getUI().onExitRequest = onExitRequest;
+		WinLogin.getUI().append();
+
+		Network.close();
+	}
+
+	/**
+	 * setLoadedServer()
+	 *
+	 * Called by GameEngine when it reloads files due to a service change
+	 * so we don't wind up trying to load the db twice. (Or concurrently.)
+	 */
+	static setLoadedServer(server) {
+		_server = server;
+	}
+}
+
+/**
+ * Trying to connect to Login server
+ *
+ * @param {string} username
+ * @param {string} password
+ */
+function onConnectionRequest(username, password) {
+	// Play "¹öÆ°¼Ò¸®.wav" (possible problem with charset)
+	Sound.play('\xB9\xF6\xC6\xB0\xBC\xD2\xB8\xAE.wav');
+
+	// Add the loading screen
+	// Store the ID to use for the ping
+	WinLogin.getUI().remove();
+	WinLoading.append();
+	_loginID = username;
+
+	// Try to connect
+	Network.connect(_server.address, _server.port, success => {
+		// Fail to connect...
+		if (!success) {
+			UIManager.showMessageBox(
+				DB.getMessage(1),
+				'ok',
+				() => {
+					UIManager.removeComponents();
+					WinLogin.getUI().append();
+				},
+				true
+			);
+			return;
+		}
+
+		let pkt;
+		let hash = false;
+
+		// Get client hash
+		if (Configs.get('calculateHash') && !Configs.get('development')) {
+			// Calucalte hash from files (slower, more "secure")
+			const files = Configs.get('hashFiles');
+			let fileStatus = 0;
+			const fileContents = [];
+
+			for (let i = 0; i < files.length; i++) {
+				const jsonFile = new XMLHttpRequest();
+				jsonFile.open('GET', files[i], true);
+				jsonFile.send();
+
+				jsonFile.onreadystatechange = function () {
+					if (jsonFile.readyState == 4 && jsonFile.status == 200) {
+						fileContents[i] = jsonFile.responseText;
+						fileStatus++;
+					}
+
+					if (fileStatus == files.length) {
+						const contentString = fileContents.join('\r\n'); // Join strings with carrige return & newline
+						hash = MD5.hash(contentString); // Just hash the whole array
+						sendLogin();
+					}
+				};
+			}
+		} else {
+			// Just use the predefined value (faster, less "secure")
+			hash = Configs.get('clientHash');
+			sendLogin();
+		}
+
+		function sendLogin() {
+			if (hash) {
+				// Convert hexadecimal hash to binary
+				if (/^[a-f0-9]+$/i.test(hash)) {
+					let str = '';
+					let i;
+					const count = hash.length;
+
+					for (i = 0; i < count; i += 2) {
+						str += String.fromCharCode(parseInt(hash.substr(i, 2), 16));
+					}
+
+					hash = str;
+				}
+
+				pkt = new PACKET.CA.EXE_HASHCHECK();
+				pkt.HashValue = hash;
+				Network.sendPacket(pkt);
+			}
+
+			if (Configs.get('loginMode') == 'han') {
+				// password is encrypted with rijndael
+				const paddedPassword = new Uint8Array(24);
+				for (let i = 0; i < password.length; i++) {
+					paddedPassword[i] = password.charCodeAt(i);
+				}
+				const encryptedPassword = Rijndael.encrypt(
+					paddedPassword,
+					Configs.get('rijndaelKey'),
+					Configs.get('rijndaelChain'),
+					24,
+					'ecb'
+				);
+
+				if (!encryptedPassword) {
+					UIManager.showErrorBox('Rijndael encryption failed. Check rijndaelKey and rijndaelChain config.');
+					return;
+				}
+
+				pkt = new PACKET.CA.LOGIN_HAN();
+				pkt.ID = username;
+				pkt.Passwd = String.fromCharCode(...encryptedPassword);
+				pkt.Version = parseInt(_server.version, 10);
+				pkt.clienttype = parseInt(_server.langtype, 10);
+				pkt.m_szIP = '192.168.0.1'; // dummy
+				pkt.m_szMacAddr = '00:1A:2B:3C:4D:5E'; // dummy
+				pkt.isHanGameUser = 0;
+				Network.sendPacket(pkt);
+			} else {
+				// Try to connect
+				pkt = new PACKET.CA.LOGIN();
+				pkt.ID = username;
+				pkt.Passwd = password;
+				pkt.Version = parseInt(_server.version, 10);
+				pkt.clienttype = parseInt(_server.langtype, 10);
+				Network.sendPacket(pkt);
+			}
+		}
+	});
+}
+
+/**
+ * Go back to intro window
+ */
+function onExitRequest() {
+	import('Engine/GameEngine.js').then(GameEngine => {
+		GameEngine.default.reload();
+	});
+}
+
+/**
+ * User selected a char-server
+ *
+ * @param {number} index in server list
+ */
+function onCharServerSelected(index) {
+	// Play "¹öÆ°¼Ò¸®.wav" (encode to avoid problem with charset)
+	Sound.play('\xB9\xF6\xC6\xB0\xBC\xD2\xB8\xAE.wav');
+
+	WinList.remove();
+	WinLoading.append();
+
+	Session.ServerName = _charServers[index].name; // Save server name
+	Network.onDisconnect = null; // Let CharEngine handle its own disconnects
+	CharEngine.init(_charServers[index]);
+}
+
+/**
+ * Accepted connection from char-server
+ *
+ * @param {object} pkt - PACKET.AC.ACCEPT_LOGIN
+ */
+function onConnectionAccepted(pkt) {
+	UIManager.removeComponents();
+
+	Session.AuthCode = pkt.AuthCode;
+	Session.AID = pkt.AID;
+	Session.UserLevel = pkt.userLevel;
+	Session.Sex = pkt.Sex;
+
+	if (PACKETVER.value >= 20170315) {
+		Session.WebToken = pkt.webAuthToken;
+	}
+
+	_charServers = pkt.ServerList;
+
+	// Build list of servers
+	let i;
+	const count = _charServers.length;
+	const list = new Array(count);
+	for (i = 0; i < count; ++i) {
+		list[i] = _charServers[i].property ? DB.getMessage(482) + ' ' : '';
+		list[i] += _charServers[i].name;
+		list[i] += _charServers[i].state
+			? DB.getMessage(484)
+			: ' ' + DB.getMessage(483).replace('%d', _charServers[i].usercount);
+	}
+
+	// No choice, connect directly to the server
+	if (count === 1 && Configs.get('skipServerList')) {
+		WinLoading.append();
+		Session.ServerName = _charServers[0].name; // Save server name
+		Network.onDisconnect = null; // Let CharEngine handle its own disconnects
+		CharEngine.init(_charServers[0]);
+	}
+
+	// Have to select server in the list
+	else {
+		// Show window
+		WinList.onIndexSelected = onCharServerSelected;
+		WinList.onExitRequest = () => {
+			Network.close();
+			WinList.remove();
+			WinLogin.getUI().append();
+		};
+		WinList.append();
+		WinList.setList(list);
+	}
+
+	// Set ping
+	const ping = new PACKET.CA.CONNECT_INFO_CHANGED();
+	ping.ID = _loginID;
+	Network.setPing(() => {
+		Network.sendPacket(ping);
+	});
+
+	if (PACKETVER.value >= 20170315 && Session.WebToken) {
+		import('UI/Components/ShortCut/ShortCut.js').then(ShortCut => {
+			ShortCut.default.loadFromServer();
+		});
+	}
+}
+
+/**
+ * Received data from server, connection refused (Taren)
+ *
+ * @param {object} pkt - PACKET.AC.LOGIN_TAREN_REFUSE
+ */
+function onTarenConnectionRefused(pkt) {
+	let msg_id;
+
+	switch (pkt.ErrorCode) {
+		case 1:
+			msg_id = 3196;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_ACCOUNT_NOTEXIST = This account does not exist
+		case 2:
+			msg_id = 3197;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_PASSWORD = Passwords does not match
+		case 3:
+			msg_id = 3198;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_IP = Failed to pass IP authentication
+		case 4:
+			msg_id = 3199;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_PERSONALNUMBER = No identification number, supplement your registration information
+		case 5:
+			msg_id = 3200;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_ACCOUNT_BLOCK = Account block
+		case 6:
+			msg_id = 3201;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_SYSTEM = System error
+		case 7:
+			msg_id = 3214;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_NOTACTIVATED = Account is not active
+		case 9:
+			msg_id = 3911;
+			break; // MSI_BAN_TEENAGER = Youth access is restricted
+		default:
+			msg_id = 3202;
+			break; // MSI_TAREN_LOGINREFUSE_FAIL_UNKNOWN = unknown error found
+	}
+
+	UIManager.showMessageBox(
+		DB.getMessage(msg_id),
+		'ok',
+		() => {
+			UIManager.removeComponents();
+			WinLogin.getUI().append();
+		},
+		true
+	);
+
+	Network.close();
+}
+
+/**
+ * Received data from server, connection refused (Taren)
+ *
+ * @param {object} pkt - PACKET.AC.LOGIN_TAREN_REFUSE2
+ */
+function onTarenConnectionRefused2(pkt) {
+	let msg_id;

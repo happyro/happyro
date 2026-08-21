@@ -1,0 +1,500 @@
+/**
+ * UI/Components/Refine/Refine.js
+ *
+ * Refine Window
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ */
+
+import DB from 'DB/DBManager.js';
+import Configs from 'Core/Configs.js';
+import Network from 'Network/NetworkManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import Client from 'Core/Client.js';
+import Session from 'Engine/SessionStorage.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import Announce from 'UI/Components/Announce/Announce.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Equipment from 'UI/Components/Equipment/Equipment.js';
+import Inventory from 'UI/Components/Inventory/Inventory.js';
+import ItemCompare from 'UI/Components/ItemCompare/ItemCompare.js';
+import ItemInfo from 'UI/Components/ItemInfo/ItemInfo.js';
+import 'UI/Elements/Elements.js';
+import htmlText from './Refine.html?raw';
+import cssText from './Refine.css?raw';
+
+/**
+ * Create Component
+ */
+const Refine = new GUIComponent('Refine', cssText);
+
+/**
+ * Blacksmtith's Blessing ItemID
+ */
+const BSB_ITID = 6635;
+
+/**
+ * Variables for current Refine Session
+ */
+let refiningMaterials = [];
+let blacksmithBlessing = 0;
+let refine_item_index = 0;
+let refine_item_mat = 0;
+let refine_fee = 0;
+let refine_bsb = 0;
+let refine_result = 0;
+let refine_result_div = '';
+let refine_can_cont = 0;
+let refine_no_mats = 0;
+let refine_no_zeny = 0;
+let refine_no_bsb = 0;
+let refine_item_broken = 0;
+let refine_new_mats = 0;
+let refine_ongoing = 0;
+let refine_current_chance = 0;
+let refine_current_zeny = 0;
+let initialsuccess;
+let currentLoopHandle;
+Refine.imageLoopTimeout = 0;
+Refine.messageTimeOut = 0;
+Refine.hammer = 0;
+
+/**
+ * Mapping for messageID and ItemID for Refine Info
+ */
+const itemMessageMapping = {
+	2988: [1000336, 1000355, 1000368, 1000369, 1000370, 1000371],
+	2989: [6225, 6226, 1000331, 1000333],
+	2990: [6223, 6624]
+};
+
+/**
+ * Variables for images to play in between phases
+ */
+const images = {
+	waiting: [
+		'bg_refining_wait_00.bmp',
+		'bg_refining_wait_01.bmp',
+		'bg_refining_wait_02.bmp',
+		'bg_refining_wait_03.bmp'
+	],
+	readya: ['bg_refininga_ready_00.bmp', 'bg_refininga_ready_01.bmp', 'bg_refininga_ready_02.bmp'],
+	readyb: ['bg_refiningb_ready_00.bmp', 'bg_refiningb_ready_01.bmp', 'bg_refiningb_ready_02.bmp'],
+	processa: [
+		'bg_refininga_process_00.bmp',
+		'bg_refininga_process_01.bmp',
+		'bg_refininga_process_02.bmp',
+		'bg_refininga_process_03.bmp',
+		'bg_refininga_process_04.bmp',
+		'bg_refininga_process_05.bmp',
+		'bg_refininga_process_06.bmp',
+		'bg_refininga_process_07.bmp',
+		'bg_refininga_process_08.bmp',
+		'bg_refining_process_09.bmp',
+		'bg_refining_process_10.bmp',
+		'bg_refining_process_11.bmp',
+		'bg_refining_process_12.bmp',
+		'bg_refining_process_13.bmp'
+	],
+	processb: [
+		'bg_refiningb_process_00.bmp',
+		'bg_refiningb_process_01.bmp',
+		'bg_refiningb_process_02.bmp',
+		'bg_refiningb_process_03.bmp',
+		'bg_refiningb_process_04.bmp',
+		'bg_refiningb_process_05.bmp',
+		'bg_refiningb_process_06.bmp',
+		'bg_refiningb_process_07.bmp',
+		'bg_refiningb_process_08.bmp',
+		'bg_refining_process_09.bmp',
+		'bg_refining_process_10.bmp',
+		'bg_refining_process_11.bmp',
+		'bg_refining_process_12.bmp',
+		'bg_refining_process_13.bmp'
+	],
+	success: [
+		'bg_refining_success_00.bmp',
+		'bg_refining_success_01.bmp',
+		'bg_refining_success_02.bmp',
+		'bg_refining_success_03.bmp',
+		'bg_refining_success_04.bmp',
+		'bg_refining_success_05.bmp',
+		'bg_refining_success_06.bmp',
+		'bg_refining_success_07.bmp',
+		'bg_refining_success_08.bmp'
+	],
+	fail: [
+		'bg_refining_fail_00.bmp',
+		'bg_refining_fail_01.bmp',
+		'bg_refining_fail_02.bmp',
+		'bg_refining_fail_03.bmp',
+		'bg_refining_fail_04.bmp',
+		'bg_refining_fail_05.bmp',
+		'bg_refining_fail_06.bmp',
+		'bg_refining_fail_07.bmp',
+		'bg_refining_fail_08.bmp',
+		'bg_refining_fail_09.bmp',
+		'bg_refining_fail_10.bmp',
+		'bg_refining_fail_11.bmp',
+		'bg_refining_fail_12.bmp',
+		'bg_refining_fail_13.bmp',
+		'bg_refining_fail_14.bmp'
+	],
+	success_wait: [
+		'bg_refining_success_09.bmp',
+		'bg_refining_success_10.bmp',
+		'bg_refining_success_11.bmp',
+		'bg_refining_success_12.bmp',
+		'bg_refining_success_13.bmp',
+		'bg_refining_success_14.bmp',
+		'bg_refining_success_15.bmp',
+		'bg_refining_success_16.bmp'
+	],
+	fail_wait: [
+		'bg_refining_fail_15.bmp',
+		'bg_refining_fail_16.bmp',
+		'bg_refining_fail_17.bmp',
+		'bg_refining_fail_18.bmp',
+		'bg_refining_fail_19.bmp'
+	]
+};
+
+/**
+ * Helper: query inside shadow root
+ */
+function _root() {
+	return Refine._shadow || Refine._host;
+}
+
+/**
+ * Render HTML
+ */
+Refine.render = () => htmlText;
+
+/**
+ * Initialize UI
+ */
+Refine.init = function init() {
+	const root = _root();
+
+	this._host.style.top = '200px';
+	this._host.style.left = '300px';
+
+	const titlebarBase = root.querySelector('.titlebar .base');
+	if (titlebarBase) {
+		titlebarBase.addEventListener('mousedown', event => {
+			event.stopImmediatePropagation();
+		});
+	}
+
+	const closeBtn = root.querySelector('.titlebar .close');
+	if (closeBtn) {
+		closeBtn.addEventListener('click', onRefineClose);
+	}
+
+	const cancelBtn = root.querySelector('.cancel');
+	if (cancelBtn) {
+		cancelBtn.addEventListener('click', onRefineClose);
+	}
+
+	this.draggable('.titlebar');
+
+	// Update success div text
+	const successdiv = root.querySelector('.success');
+	const initialValue = 0;
+	const successtext = DB.getMessage(3724);
+	initialsuccess = successtext.replace('%d%', `<span class="number">${initialValue}</span>`);
+	if (successdiv) {
+		successdiv.innerHTML = initialsuccess;
+	}
+
+	// Item drop/drag on .item_to_refine
+	const itemToRefine = root.querySelector('.item_to_refine');
+	if (itemToRefine) {
+		itemToRefine.addEventListener('drop', onItemDrop);
+		itemToRefine.addEventListener('dragover', event => {
+			event.preventDefault();
+			event.stopImmediatePropagation();
+		});
+		itemToRefine.addEventListener('dragstart', event => {
+			const item = event.target.closest('.item');
+			if (item) {
+				onItemDragStart(event);
+			}
+		});
+		itemToRefine.addEventListener('dragend', event => {
+			const item = event.target.closest('.item');
+			if (item) {
+				onItemDragEnd(event);
+			}
+		});
+		itemToRefine.addEventListener('dblclick', event => {
+			const item = event.target.closest('.item');
+			if (item && refine_ongoing === 0) {
+				onRemoveItem(true);
+			}
+		});
+		itemToRefine.addEventListener('contextmenu', event => {
+			const item = event.target.closest('.item');
+			if (item) {
+				onItemInfo.call(item, event);
+			}
+		});
+	}
+
+	// Materials hover/contextmenu
+	const materials = root.querySelector('.materials');
+	if (materials) {
+		materials.addEventListener('mouseover', event => {
+			const item = event.target.closest('.item');
+			if (item) {
+				onItemOver.call(item, event);
+			}
+		});
+		materials.addEventListener('mouseout', () => {
+			onItemOut();
+		});
+		materials.addEventListener('contextmenu', event => {
+			const item = event.target.closest('.item');
+			if (item) {
+				onItemInfo.call(item, event);
+			}
+		});
+	}
+
+	// Refine_cont hover
+	const refineCont = root.querySelector('.refine_cont');
+	if (refineCont) {
+		refineCont.addEventListener('mouseover', event => {
+			onItemOver.call(refineCont, event);
+		});
+		refineCont.addEventListener('mouseout', () => {
+			onItemOut();
+		});
+	}
+
+	// Refine buttons
+	const refineEnabled = root.querySelector('.refine_enabled');
+	if (refineEnabled) {
+		refineEnabled.addEventListener('click', onRequestRefine);
+	}
+
+	const successContEnabled = root.querySelector('.success_refine_cont_enabled');
+	if (successContEnabled) {
+		successContEnabled.addEventListener('click', onRequestRefine);
+	}
+
+	const failContEnabled = root.querySelector('.fail_refine_cont_enabled');
+	if (failContEnabled) {
+		failContEnabled.addEventListener('click', onRequestRefine);
+	}
+
+	const backButton = root.querySelector('.back_button');
+	if (backButton) {
+		backButton.addEventListener('click', onCancelContRefine);
+	}
+
+	// Hide buttons
+	if (refineEnabled) {
+		refineEnabled.style.display = 'none';
+	}
+
+	const someNotifs = root.querySelector('.some_notifs');
+	if (someNotifs) {
+		someNotifs.style.display = 'none';
+	}
+
+	onHideContRefineButtons();
+};
+
+/**
+ * Append to body
+ */
+Refine.onAppend = function onAppend() {
+	const root = _root();
+
+	Refine.hammer = 0;
+	const refineButton = root.querySelector('.refine_button');
+	if (refineButton) {
+		refineButton.style.display = 'block';
+	}
+
+	clearTimeout(Refine.imageLoopTimeout);
+	controlPhase('waiting', true, 250);
+};
+
+/**
+ * Remove Refine Window (and so clean up items)
+ */
+Refine.onRemove = function onRemove() {
+	clearTimeout(Refine.imageLoopTimeout);
+	clearTimeout(currentLoopHandle);
+	onRemoveItem(true);
+	onHideContRefineButtons();
+	clearRefineStates();
+};
+
+/**
+ * Completely clean-up variables for refining
+ */
+function clearRefineStates() {
+	Refine.hammer = 0;
+	Refine.imageLoopTimeout = 0;
+	Refine.messageTimeOut = 0;
+	currentLoopHandle = null;
+	refiningMaterials = [];
+	blacksmithBlessing = 0;
+	refine_item_index = 0;
+	refine_item_mat = 0;
+	refine_fee = 0;
+	refine_bsb = 0;
+	refine_result = 0;
+	refine_result_div = '';
+	refine_can_cont = 0;
+	refine_no_mats = 0;
+	refine_no_zeny = 0;
+	refine_no_bsb = 0;
+	refine_new_mats = 0;
+	refine_current_chance = 0;
+	refine_current_zeny = 0;
+}
+
+/**
+ * Handles packet received from server to open Refine UI
+ * PACKET.ZC.OPEN_REFINING_UI
+ */
+function onOpenRefineUI() {
+	if (!Configs.get('enableRefineUI') || PACKETVER.value < 20161012) {
+		console.warn('Renewal Refine is enabled in your server. Please enable refine UI in your configs.');
+		return false;
+	}
+
+	Refine.append();
+
+	const isInventoryOpen = Inventory.getUI().ui ? Inventory.getUI().ui.is(':visible') : false;
+
+	if (!isInventoryOpen) {
+		Inventory.getUI().toggle();
+	}
+
+	const refineRect = Refine._host.getBoundingClientRect();
+	const refineWidth = Refine._host.offsetWidth;
+	const refineHeight = Refine._host.offsetHeight - Inventory.getUI().ui.height();
+
+	Inventory.getUI().ui.css({
+		position: 'absolute',
+		top: refineRect.top ? refineRect.top + refineHeight : 200,
+		left: refineRect.left ? refineRect.left + refineWidth : 300
+	});
+
+	return false;
+}
+
+/**
+ * Handles sending request to server to close Refine UI
+ */
+function onRefineClose() {
+	Refine.remove();
+
+	const pkt = new PACKET.CZ.CLOSE_REFINING_UI();
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Function to control phases and image looping
+ * @param {string} phase - The phase to control
+ * @param {boolean} shouldLoop - Whether the phase should loop
+ * @param {number} interval - Interval between image changes in milliseconds
+ * @param {function} callback - A callback function to execute after the phase completes
+ */
+function controlPhase(phase, shouldLoop, interval, callback) {
+	let currentImageIndex = 0;
+	const imageArray = images[phase];
+
+	if (!imageArray) {
+		console.error('Invalid phase:', phase);
+		return;
+	}
+
+	function showImages() {
+		Client.loadFile(DB.INTERFACE_PATH + 'refining_renewal/' + imageArray[currentImageIndex], function (data) {
+			const container = _root().querySelector('.image-container');
+			if (container) {
+				container.style.backgroundImage = `url(${data})`;
+			}
+			currentImageIndex++;
+
+			if (currentImageIndex >= imageArray.length) {
+				if (shouldLoop) {
+					currentImageIndex = 0;
+				} else {
+					if (callback && typeof callback === 'function') {
+						callback();
+					}
+					return;
+				}
+			}
+
+			Refine.imageLoopTimeout = setTimeout(showImages, interval);
+		});
+	}
+
+	showImages();
+}
+
+/**
+ * Drop an item from inventory to Refine UI
+ */
+function onItemDrop(event) {
+	let item, data;
+	event.stopImmediatePropagation();
+	event.preventDefault();
+
+	try {
+		data = JSON.parse(event.dataTransfer.getData('Text'));
+		item = data.data;
+	} catch (_e) {
+		return;
+	}
+
+	if (data.type !== 'item' || data.from !== 'Inventory') {
+		return;
+	}
+
+	if (item) {
+		Refine.onRequestItemRefine(item);
+	}
+}
+
+/**
+ * Handles sending the server packet request to refine an item
+ */
+Refine.onRequestItemRefine = function onRequestItemRefine(item) {
+	const pkt = new PACKET.CZ.REFINING_SELECT_ITEM();
+	pkt.index = item.index;
+	Network.sendPacket(pkt);
+};
+
+/**
+ * Handles the packet received from the server
+ * @param {pkt} - PACKET.ZC.REFINING_MATERIAL_LIST
+ */
+function onRefineUIUpdateMaterials(pkt) {
+	if (!Configs.get('enableRefineUI') || PACKETVER.value < 20161012) {
+		console.warn('Renewal Refine is enabled in your server. Please enable refine UI in your configs.');
+		return false;
+	}
+
+	const root = _root();
+
+	if (pkt && pkt.MaterialInfo.length > 0) {
+		const existingItem = root.querySelector('.item_to_refine .item');
+		if (existingItem) {
+			onRemoveItem(false);
+		}
+
+		refine_item_index = pkt.itemIndex;
+		const item = Inventory.getUI().getItemByIndex(pkt.itemIndex);
+

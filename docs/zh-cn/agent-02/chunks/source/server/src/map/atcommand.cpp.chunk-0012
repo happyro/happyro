@@ -1,0 +1,500 @@
+				clif_displaymessage(fd, msg_txt(sd,234)); // Game time: After, the game will be in permanent daylight.
+			} else
+				clif_displaymessage(fd, msg_txt(sd,232)); // Game time: The game is in permanent night.
+		} else
+			clif_displaymessage(fd, msg_txt(sd,231)); // Game time: The game is in permanent daylight.
+	else if (battle_config.day_duration == 0)
+		if (night_flag == 0) { // we start with day
+			if ((timer_data = get_timer(night_timer_tid)) != nullptr) {
+				sprintf(temp, msg_txt(sd,235), txt_time(DIFF_TICK(timer_data->tick,gettick())/1000)); // Game time: The game is in daylight for %s.
+				clif_displaymessage(fd, temp);
+				clif_displaymessage(fd, msg_txt(sd,236)); // Game time: After, the game will be in permanent night.
+			} else
+				clif_displaymessage(fd, msg_txt(sd,231)); // Game time: The game is in permanent daylight.
+		} else
+			clif_displaymessage(fd, msg_txt(sd,232)); // Game time: The game is in permanent night.
+	else {
+		const struct TimerData * timer_data2;
+		if (night_flag == 0) {
+			if ((timer_data = get_timer(night_timer_tid)) != nullptr && (timer_data2 = get_timer(day_timer_tid)) != nullptr) {
+				sprintf(temp, msg_txt(sd,235), txt_time(DIFF_TICK(timer_data->tick,gettick())/1000)); // Game time: The game is in daylight for %s.
+				clif_displaymessage(fd, temp);
+				if (DIFF_TICK(timer_data->tick, timer_data2->tick) > 0)
+					sprintf(temp, msg_txt(sd,237), txt_time(DIFF_TICK(timer_data->interval,DIFF_TICK(timer_data->tick,timer_data2->tick)) / 1000)); // Game time: After, the game will be in night for %s.
+				else
+					sprintf(temp, msg_txt(sd,237), txt_time(DIFF_TICK(timer_data2->tick,timer_data->tick)/1000)); // Game time: After, the game will be in night for %s.
+				clif_displaymessage(fd, temp);
+				sprintf(temp, msg_txt(sd,238), txt_time(timer_data->interval / 1000)); // Game time: A day cycle has a normal duration of %s.
+				clif_displaymessage(fd, temp);
+			} else
+				clif_displaymessage(fd, msg_txt(sd, 231)); // Game time: The game is in permanent daylight.
+		} else {
+			if ((timer_data = get_timer(day_timer_tid)) != nullptr && (timer_data2 = get_timer(night_timer_tid)) != nullptr) {
+				sprintf(temp, msg_txt(sd,233), txt_time(DIFF_TICK(timer_data->tick,gettick()) / 1000)); // Game time: The game is in night for %s.
+				clif_displaymessage(fd, temp);
+				if (DIFF_TICK(timer_data->tick,timer_data2->tick) > 0)
+					sprintf(temp, msg_txt(sd,239), txt_time((timer_data->interval - DIFF_TICK(timer_data->tick, timer_data2->tick)) / 1000)); // Game time: After, the game will be in daylight for %s.
+				else
+					sprintf(temp, msg_txt(sd,239), txt_time(DIFF_TICK(timer_data2->tick, timer_data->tick) / 1000)); // Game time: After, the game will be in daylight for %s.
+				clif_displaymessage(fd, temp);
+				sprintf(temp, msg_txt(sd,238), txt_time(timer_data->interval / 1000)); // Game time: A day cycle has a normal duration of %s.
+				clif_displaymessage(fd, temp);
+			} else
+				clif_displaymessage(fd, msg_txt(sd,232)); // Game time: The game is in permanent night.
+		}
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * @jail <char_name> by [Yor]
+ * Special warp! No check with nowarp and nowarpto flag
+ *------------------------------------------*/
+ACMD_FUNC(jail)
+{
+	map_session_data *pl_sd;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1134)); // Please enter a player name (usage: @jail <char_name>).
+		return -1;
+	}
+
+	if ((pl_sd = map_nick2sd(atcmd_player_name,false)) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	if (pc_get_group_level(sd) < pc_get_group_level(pl_sd)) { // you can jail only lower or same GM
+		clif_displaymessage(fd, msg_txt(sd,81)); // Your GM level don't authorise you to do this action on this player.
+		return -1;
+	}
+
+	if (pl_sd->sc.getSCE(SC_JAILED)) {
+		clif_displaymessage(fd, msg_txt(sd,118)); // Player warped in jails.
+		return -1;
+	}
+
+	pc_jail(*pl_sd);
+	clif_displaymessage(pl_sd->fd, msg_txt(sd,117)); // GM has send you in jails.
+	clif_displaymessage(fd, msg_txt(sd,118)); // Player warped in jails.
+	return 0;
+}
+
+/*==========================================
+ * @unjail/@discharge <char_name> by [Yor]
+ * Special warp! No check with nowarp and nowarpto flag
+ *------------------------------------------*/
+ACMD_FUNC(unjail)
+{
+	map_session_data *pl_sd;
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1135)); // Please enter a player name (usage: @unjail/@discharge <char_name>).
+		return -1;
+	}
+
+	if ((pl_sd = map_nick2sd(atcmd_player_name,false)) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	if (pc_get_group_level(sd) < pc_get_group_level(pl_sd)) { // you can jail only lower or same GM
+
+		clif_displaymessage(fd, msg_txt(sd,81)); // Your GM level don't authorise you to do this action on this player.
+		return -1;
+	}
+
+	if (!pl_sd->sc.getSCE(SC_JAILED)) {
+		clif_displaymessage(fd, msg_txt(sd,119)); // This player is not in jails.
+		return -1;
+	}
+
+	//Reset jail time to 1 sec.
+	pc_jail(*pl_sd, 0);
+	clif_displaymessage(pl_sd->fd, msg_txt(sd,120)); // A GM has discharged you from jail.
+	clif_displaymessage(fd, msg_txt(sd,121)); // Player unjailed.
+	return 0;
+}
+
+ACMD_FUNC(jailfor) {
+	map_session_data* pl_sd = nullptr;
+	char * modif_p;
+	int32 jailtime = 0;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	
+	if (!message || !*message || sscanf(message, "%255s %23[^\n]",atcmd_output,atcmd_player_name) < 2) {
+		clif_displaymessage(fd, msg_txt(sd,400));	//Usage: @jailfor <time> <character name>
+		return -1;
+	}
+
+	atcmd_output[sizeof(atcmd_output)-1] = '\0';
+
+	modif_p = atcmd_output;
+	jailtime = (int32)solve_time(modif_p)/60; // Change to minutes
+
+	if (jailtime == 0) {
+		clif_displaymessage(fd, msg_txt(sd,1136)); // Invalid time for jail command.
+		clif_displaymessage(fd, msg_txt(sd,702)); // Time parameter format is +/-<value> to alter. y/a = Year, m = Month, d/j = Day, h = Hour, n/mn = Minute, s = Second.
+		return -1;
+	}
+
+	if ((pl_sd = map_nick2sd(atcmd_player_name,false)) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	if (pc_get_group_level(pl_sd) > pc_get_group_level(sd)) {
+		clif_displaymessage(fd, msg_txt(sd,81)); // Your GM level don't authorise you to do this action on this player.
+		return -1;
+	}
+
+	// Added by Coltaro
+	if(pl_sd->sc.getSCE(SC_JAILED) && pl_sd->sc.getSCE(SC_JAILED)->val1 != INT_MAX) { // Update the player's jail time
+		jailtime += pl_sd->sc.getSCE(SC_JAILED)->val1;
+		if (jailtime <= 0) {
+			jailtime = 0;
+			clif_displaymessage(pl_sd->fd, msg_txt(sd,120)); // GM has discharge you.
+			clif_displaymessage(fd, msg_txt(sd,121)); // Player unjailed
+		} else {
+			int32 year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+			char timestr[21];
+			time_t now=time(nullptr);
+			split_time(jailtime*60,&year,&month,&day,&hour,&minute,&second);
+			sprintf(atcmd_output,msg_txt(sd,402),msg_txt(sd,1137),year,month,day,hour,minute); // %s in jail for %d years, %d months, %d days, %d hours and %d minutes
+			clif_displaymessage(pl_sd->fd, atcmd_output);
+			sprintf(atcmd_output,msg_txt(sd,402),msg_txt(sd,1138),year,month,day,hour,minute); // This player is now in jail for %d years, %d months, %d days, %d hours and %d minutes
+			clif_displaymessage(fd, atcmd_output);
+			timestamp2string(timestr,20,now+jailtime*60,"%Y-%m-%d %H:%M");
+			sprintf(atcmd_output,"Release date is: %s",timestr);
+			clif_displaymessage(pl_sd->fd, atcmd_output);
+			clif_displaymessage(fd, atcmd_output);
+		}
+	} else if (jailtime < 0) {
+		clif_displaymessage(fd, msg_txt(sd,1136)); // Invalid time for jail command.
+		return -1;
+	}
+
+	pc_jail(*pl_sd, jailtime);
+
+	return 0;
+}
+
+//By Coltaro
+ACMD_FUNC(jailtime){
+	int32 year, month, day, hour, minute, second;
+	char timestr[21];
+	time_t now = time(nullptr);
+
+	nullpo_retr(-1, sd);
+
+	if (!sd->sc.getSCE(SC_JAILED)) {
+		clif_displaymessage(fd, msg_txt(sd,1139)); // You are not in jail.
+		return -1;
+	}
+
+	if (sd->sc.getSCE(SC_JAILED)->val1 == INT_MAX) {
+		clif_displaymessage(fd, msg_txt(sd,1140)); // You have been jailed indefinitely.
+		return 0;
+	}
+
+	if (sd->sc.getSCE(SC_JAILED)->val1 <= 0) { // Was not jailed with @jailfor (maybe @jail? or warped there? or got recalled?)
+		clif_displaymessage(fd, msg_txt(sd,1141)); // You have been jailed for an unknown amount of time.
+		return -1;
+	}
+
+	// Get remaining jail time
+	split_time(sd->sc.getSCE(SC_JAILED)->val1*60,&year,&month,&day,&hour,&minute,&second);
+	sprintf(atcmd_output,msg_txt(sd,402),msg_txt(sd,1142),year,month,day,hour,minute); // You will remain in jail for %d years, %d months, %d days, %d hours and %d minutes
+	clif_displaymessage(fd, atcmd_output);
+	timestamp2string(timestr,20,now+sd->sc.getSCE(SC_JAILED)->val1*60,"%Y-%m-%d %H:%M");
+	sprintf(atcmd_output,"Release date is: %s",timestr);
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/*==========================================
+ * @disguise <mob_id> by [Valaris] (simplified by [Yor])
+ *------------------------------------------*/
+ACMD_FUNC(disguise)
+{
+	int32 id = 0;
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1143)); // Please enter a Monster/NPC name/ID (usage: @disguise <name/ID>).
+		return -1;
+	}
+
+	if ((id = atoi(message)) > 0)
+	{	//Acquired an ID
+		if (!mobdb_checkid(id) && !npcdb_checkid(id))
+			id = 0; //Invalid id for either mobs or npcs.
+	}	else	{ //Acquired a Name
+		if ((id = mobdb_searchname(message)) == 0)
+		{
+			npc_data* nd = npc_name2id(message);
+			if (nd != nullptr)
+				id = nd->class_;
+		}
+	}
+
+	if (id == 0)
+	{
+		clif_displaymessage(fd, msg_txt(sd,123));	// Invalid Monster/NPC name/ID specified.
+		return -1;
+	}
+
+	if(pc_isriding(sd))
+	{
+		clif_displaymessage(fd, msg_txt(sd,1144)); // Character cannot be disguised while mounted.
+		return -1;
+	}
+
+	if (sd->sc.getSCE(SC_MONSTER_TRANSFORM) || sd->sc.getSCE(SC_ACTIVE_MONSTER_TRANSFORM)) {
+		clif_displaymessage(fd, msg_txt(sd,730)); // Character cannot be disguised while in monster transform.
+		return -1;
+	}
+
+	pc_disguise(sd, id);
+	clif_displaymessage(fd, msg_txt(sd,122)); // Disguise applied.
+
+	return 0;
+}
+
+/*==========================================
+ * DisguiseAll
+ *------------------------------------------*/
+ACMD_FUNC(disguiseall)
+{
+	int32 mob_id=0;
+	map_session_data *pl_sd;
+	struct s_mapiterator* iter;
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1145)); // Please enter a Monster/NPC name/ID (usage: @disguiseall <name/ID>).
+		return -1;
+	}
+
+	if ((mob_id = mobdb_searchname(message)) == 0) // check name first (to avoid possible name beginning by a number)
+		mob_id = atoi(message);
+
+	if (!mobdb_checkid(mob_id) && !npcdb_checkid(mob_id)) { //if mob or npc...
+		clif_displaymessage(fd, msg_txt(sd,123)); // Monster/NPC name/id not found.
+		return -1;
+	}
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+		pc_disguise(pl_sd, mob_id);
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,122)); // Disguise applied.
+	return 0;
+}
+
+/*==========================================
+ * DisguiseGuild
+ *------------------------------------------*/
+ACMD_FUNC(disguiseguild)
+{
+	int32 id = 0, i;
+	char monster[NAME_LENGTH], guild[NAME_LENGTH];
+
+	memset(monster, '\0', sizeof(monster));
+	memset(guild, '\0', sizeof(guild));
+
+	if( !message || !*message || sscanf(message, "%23[^,], %23[^\r\n]", monster, guild) < 2 ) {
+		clif_displaymessage(fd, msg_txt(sd,1146)); // Please enter a mob name/ID and guild name/ID (usage: @disguiseguild <mob name/ID>, <guild name/ID>).
+		return -1;
+	}
+
+	if( (id = atoi(monster)) > 0 ) {
+		if( !mobdb_checkid(id) && !npcdb_checkid(id) )
+			id = 0;
+	} else {
+		if( (id = mobdb_searchname(monster)) == 0 ) {
+			npc_data* nd = npc_name2id(monster);
+			if( nd != nullptr )
+				id = nd->class_;
+		}
+	}
+
+	if( id == 0 ) {
+		clif_displaymessage(fd, msg_txt(sd,123));	// Monster/NPC name/id hasn't been found.
+		return -1;
+	}
+
+	auto g = guild_searchnameid(guild);
+	if (!g) {
+		clif_displaymessage(fd, msg_txt(sd,94)); // Incorrect name/ID, or no one from the guild is online.
+		return -1;
+	}
+
+	for( i = 0; i < g->guild.max_member; i++ ){
+		map_session_data *pl_sd;
+		if( (pl_sd = g->guild.member[i].sd) && !pc_isriding(pl_sd) )
+			pc_disguise(pl_sd, id);
+	}
+
+	clif_displaymessage(fd, msg_txt(sd,122)); // Disguise applied.
+	return 0;
+}
+
+
+/*==========================================
+ * @undisguise by [Yor]
+ *------------------------------------------*/
+ACMD_FUNC(undisguise)
+{
+	nullpo_retr(-1, sd);
+	if (sd->disguise) {
+		pc_disguise(sd, 0);
+		clif_displaymessage(fd, msg_txt(sd,124)); // Undisguise applied.
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,125)); // You're not disguised.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * UndisguiseAll
+ *------------------------------------------*/
+ACMD_FUNC(undisguiseall)
+{
+	map_session_data *pl_sd;
+	struct s_mapiterator* iter;
+	nullpo_retr(-1, sd);
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+		if( pl_sd->disguise )
+			pc_disguise(pl_sd, 0);
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,124)); // Undisguise applied.
+
+	return 0;
+}
+
+/*==========================================
+ * UndisguiseGuild
+ *------------------------------------------*/
+ACMD_FUNC(undisguiseguild)
+{
+	char guild_name[NAME_LENGTH];
+	int32 i;
+	nullpo_retr(-1, sd);
+
+	memset(guild_name, '\0', sizeof(guild_name));
+
+	if(!message || !*message || sscanf(message, "%23[^\n]", guild_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1147)); // Please enter guild name/ID (usage: @undisguiseguild <guild name/ID>).
+		return -1;
+	}
+
+	auto g = guild_searchnameid(guild_name);
+	if (!g) {
+		clif_displaymessage(fd, msg_txt(sd,94)); // Incorrect name/ID, or no one from the guild is online.
+		return -1;
+	}
+
+	for(i = 0; i < g->guild.max_member; i++){
+		map_session_data *pl_sd;
+		if( (pl_sd = g->guild.member[i].sd) && pl_sd->disguise )
+			pc_disguise(pl_sd, 0);
+	}
+
+	clif_displaymessage(fd, msg_txt(sd,124)); // Undisguise applied.
+
+	return 0;
+}
+
+/*==========================================
+ * @exp by [Skotlex]
+ *------------------------------------------*/
+ACMD_FUNC(exp)
+{
+	char output[CHAT_SIZE_MAX];
+	double nextb, nextj;
+	nullpo_retr(-1, sd);
+	memset(output, '\0', sizeof(output));
+
+	nextb = (double)pc_nextbaseexp(sd);
+	if (nextb)
+		nextb = sd->status.base_exp*100.0/nextb;
+
+	nextj = (double)pc_nextjobexp(sd);
+	if (nextj)
+		nextj = sd->status.job_exp*100.0/nextj;
+
+	sprintf(output, msg_txt(sd,1148), sd->status.base_level, nextb, sd->status.job_level, nextj); // Base Level: %d (%.3f%%) | Job Level: %d (%.3f%%)
+	clif_displaymessage(fd, output);
+	return 0;
+}
+
+
+/*==========================================
+ * @broadcast by [Valaris]
+ *------------------------------------------*/
+ACMD_FUNC(broadcast)
+{
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1149)); // Please enter a message (usage: @broadcast <message>).
+		return -1;
+	}
+
+	sprintf(atcmd_output, "%s: %s", sd->status.name, message);
+	intif_broadcast(atcmd_output, strlen(atcmd_output) + 1, BC_DEFAULT);
+
+	return 0;
+}
+
+/*==========================================
+ * @localbroadcast by [Valaris]
+ *------------------------------------------*/
+ACMD_FUNC(localbroadcast)
+{
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1150)); // Please enter a message (usage: @localbroadcast <message>).
+		return -1;
+	}
+
+	sprintf(atcmd_output, "%s: %s", sd->status.name, message);
+
+	clif_broadcast(sd, atcmd_output, strlen(atcmd_output) + 1, BC_DEFAULT, ALL_SAMEMAP);
+
+	return 0;
+}
+
+/*==========================================
+ * @email <actual@email> <new@email> by [Yor]
+ *------------------------------------------*/
+ACMD_FUNC(email)
+{
+	char actual_email[100];
+	char new_email[100];
+	nullpo_retr(-1, sd);
+
+	memset(actual_email, '\0', sizeof(actual_email));

@@ -1,0 +1,500 @@
+					mes "Kafra Employee because";
+					mes "you have not yet attained";
+					mes "the ^FF0000Contract with Kafra^000000";
+					mes "guild skill.";
+					close;
+				}
+				if (Zeny < 10000) {
+					mes "[ Steward ]";
+					mes "Master, we cannot hire a";
+					mes "Kafra Employee because";
+					mes "we do not have enough";
+					mes "funds to pay the contract fee.";
+					close;
+				}
+				set Zeny, Zeny-10000;
+				enablenpc "Kafra Employee#"+strnpcinfo(2);
+				setcastledata strnpcinfo(4),CD_ENABLED_KAFRA,1;
+				mes "[ Steward ]";
+				mes "Very well. We have formed";
+				mes "a contract with the Kafra";
+				mes "Head Office, and hired a";
+				mes "Kafra Employee for our";
+				mes "stronghold. Here she is~";
+				next;
+				cutin "kafra_01",2;
+				mes "[ Hired Kafra Employee ]";
+				mes "How do you do? I've";
+				mes "been dispatched by the";
+				mes "Kafra Head Office to";
+				mes "serve your guild's needs.";
+				mes "I'll do my best to follow";
+				mes "your every command, Master.";
+				next;
+				cutin "kafra_01",255;
+				mes "[ Steward ]";
+				mes "Our contract will expire";
+				mes "after one month, so we must";
+				mes "pay additional fees to keep";
+				mes "this Kafra Employee in";
+				mes "the service of our guild.";
+				close;
+			case 2:
+				mes "[ Steward ]";
+				mes "As you command, Master.";
+				mes "However, I suggest hiring";
+				mes "a Kafra Employee as soon";
+				mes "as possible since our guild";
+				mes "would greatly benefit from";
+				mes "the convenient Kafra services.";
+				close;
+			}
+		}
+	case 5:
+		mes "[ Steward ]";
+		mes "Do you wish to enter the";
+		mes "Guild Treasure Room?";
+		mes "Only you, the Guild Master,";
+		mes "are permitted to enter.";
+		next;
+		mes "[ Steward ]";
+		mes "Please remember to open";
+		mes "the Treasure Boxes at the";
+		mes "proper time. Otherwise, the";
+		mes "treasure may disappear if";
+		mes "something unexpected happens.";
+		next;
+		switch(select("Go to Treasure Room:Cancel")) {
+		case 1:
+			mes "[ Steward ]";
+			mes "Allow me to guide you";
+			mes "on the secret path to";
+			mes "the Treasure Room.";
+			mes "Press the secret switch";
+			mes "when you wish to return here.";
+			close2;
+			if (compare(strnpcinfo(4),"arug")) {
+				if (strnpcinfo(4) == "arug_cas01") setarray .@i[0],250,363;
+				else if (strnpcinfo(4) == "arug_cas02") setarray .@i[0],382,227;
+				else setarray .@i[0],292,266;	// Castles 3,4,5 are identical.
+			}
+			else {
+				if (strnpcinfo(4) == "schg_cas02") setarray .@i[0],249,373;
+				else if (strnpcinfo(4) == "schg_cas03") setarray .@i[0],190,16;
+				else setarray .@i[0],381,381;	// Castles 1,4,5 are identical.
+			}
+			warp strnpcinfo(4),.@i[0],.@i[1];
+			end;
+		case 2:
+			mes "[ Steward ]";
+			mes "Items in the Treasure Room";
+			mes "are produced once each day.";
+			mes "Therefore, you must obtain";
+			mes "the treasure items everyday.";
+			mes "For the sake of the guild,";
+			mes "prioritize treasure harvesting!";
+			close;
+		}
+	}
+
+OnStop:
+	awake strnpcinfo(0);
+	end;
+
+OnStartArena:
+	set .@GID,getcharid(2);
+	set .@region$, (compare(strnpcinfo(4),"arug"))?"Valfreyja":"Nithafjoll";
+	// Lower castle Economy
+	set .@Economy,getcastledata(strnpcinfo(4),CD_CURRENT_ECONOMY)-5;
+	if (.@Economy < 0) set .@Economy, 0;
+	setcastledata strnpcinfo(4),CD_CURRENT_ECONOMY,.@Economy;
+	// Lower Castle Defence
+	set .@Defence,getcastledata(strnpcinfo(4),CD_CURRENT_DEFENSE)-5;
+	if (.@Defence < 0) set .@Defence, 0;
+	setcastledata strnpcinfo(4),CD_CURRENT_DEFENSE,.@Defence;
+	// Set new owner
+	setcastledata strnpcinfo(4),CD_GUILD_ID,.@GID;
+	// Clear castle's data.
+	for(set .@i,CD_INVESTED_ECONOMY; .@i<CD_ENABLED_GUARDIAN00; set .@i,.@i+1)
+		setcastledata strnpcinfo(4),.@i,0;
+	// Disable Kafra
+	disablenpc "Kafra Employee#"+strnpcinfo(2);
+
+	announce "The ["+getguildname(.@GID)+"] guild conquered the ["+.@region$+" "+charat(strnpcinfo(2),3)+"] stronghold of "+getcastlename(strnpcinfo(4))+"!",bc_all|bc_woe;
+	mapannounce strnpcinfo(4),"The emperium has been shattered!",bc_map,"0x00FF00",FW_NORMAL,20,0,40;
+	donpcevent "Manager#"+strnpcinfo(4)+"::OnReset";
+	maprespawnguildid strnpcinfo(4),getcastledata(strnpcinfo(4),CD_GUILD_ID),2;
+	donpcevent "Manager#"+strnpcinfo(4)+"::OnRecvCastle2";
+	donpcevent "::OnRecvCastle"+strnpcinfo(2);
+	sleep 10000;
+	if (agitcheck2()) {
+		donpcevent "Manager#"+strnpcinfo(4)+"::OnChange";
+		mapannounce strnpcinfo(4),"Rebuild this stronghold's Guardian Stones and Fortress Gates to secure your guild's new aquisition!",bc_map,"0x00FF00",FW_NORMAL,20,0,40;
+	}
+	end;
+}
+
+// Castle Guardians
+//============================================================
+-	script	Guardian#template	-1,{
+	set .@GID, getcastledata(strnpcinfo(4),CD_GUILD_ID);
+	set .@n$, "["+strnpcinfo(1)+"]";
+	if (!.@GID) {
+		mes .@n$;
+		mes "Great job. Now, all you";
+		mes "need to do is destroy this";
+		mes "Emperium to gain ownership";
+		mes "over this stronghold.";
+		close;
+	}
+	if (getcharid(2) == .@GID) {
+		if (is_guild_leader() == false) {
+			mes .@n$;
+			mes "As guardian of this";
+			mes "stronghold, I answer only";
+			mes "to the master of the guild";
+			mes "that controls this place.";
+			close;
+		}
+		else {
+			if (!agitcheck2()) {
+				mes .@n$;
+				mes "I am "+strnpcinfo(1)+", guardian of";
+				mes "this stronghold. For now,";
+				mes "all is quiet in this place.";
+				next;
+				switch(select("Converse:Cancel")) {
+				case 1:
+					mes .@n$;
+					mes "Do you have any questions";
+					mes "about this stronghold?";
+					next;
+					switch(select("Guardian Stones:Fortress Gates:Link Flags:Battle Strategy:Cancel")) {
+					case 1:
+						mes .@n$;
+						mes "There is one Emperium";
+						mes "and two Guardian Stones in";
+						mes "each fortress. These stones";
+						mes "are the first line of defense,";
+						mes "and must be destroyed before";
+						mes "enemies can even enter.";
+						next;
+						mes .@n$;
+						mes "The stones are located in";
+						mes "^4D4DFFGate Houses^000000 which must be";
+						mes "protected to prevent enemies";
+						mes "from reaching the Emperium.";
+						mes "Guardian Stones can ^4D4DFFrecall";
+						mes "your Guardians^000000 for protection.";
+						next;
+						mes .@n$;
+						mes "Fortresses with higher levels";
+						mes "of defense can summon more";
+						mes "Guardians: this is why it is";
+						mes "so important for guilds to";
+						mes "invest in Defense Growth.";
+						next;
+						mes .@n$;
+						mes "Guardian Stones that have";
+						mes "been destroyed can be revived";
+						mes "after a certain time, but one of the guild members must give";
+						mes "me the order. I can also report the status of the Guardian Stones.";
+						close;
+					case 2:
+						mes .@n$;
+						mes "^4D4DFFFortress Gates^000000 are the second line of guild stronghold defense,";
+						mes "and are protected by extra barricades activated by the Guardian Stones.";
+						mes "These gates are located in three different parts of the fortress.";
+						next;
+						mes .@n$;
+						mes "Barricades are protected by";
+						mes "Guardian Stones, and are";
+						mes "restored when the Guardian";
+						mes "Stones are retrieved. However,";
+						mes "it is not as easy to restore";
+						mes "destroyed Fortress Gates.";
+						next;
+						mes .@n$;
+						mes "Fortress Gates can only be";
+						mes "restored when the ^4D4DFFguild";
+						mes "master of a stronghold";
+						mes "changes^000000, or if ^4D4DFFrestoration";
+						mes "is requested by the guild";
+						mes "master of the stronghold^000000.";
+						close;
+					case 3:
+						mes .@n$;
+						mes "Strongholds have many";
+						mes "Link Flags that allow you";
+						mes "to access vital areas within";
+						mes "restrictions placed by the";
+						mes "Barricades. Usually, ^4D4DFFFlag 1";
+						mes "links to the Gate House^000000.";
+						next;
+						mes .@n$;
+						mes "Many flags link directly to";
+						mes "the flag near the Emperium.";
+						mes "The final numbered flag is";
+						mes "linked to the Convenience";
+						mes "Facility of the stronghold's";
+						mes "owner. Keep this in mind.";
+						close;
+					case 4:
+						mes .@n$;
+						mes "Strategy? It would be better";
+						mes "to develop your battle plan to";
+						mes "exploit your guild's advantages";
+						mes "and your enemies' weaknesses.";
+						mes "Use the Gate Houses and Barricades, and rebuild as quickly as you can!";
+						close;
+					case 5:
+						mes .@n$;
+						mes "You have no questions";
+						mes "to ask of me? Well, I'm";
+						mes "here to serve your needs.";
+						close;
+					}
+				case 2:
+					mes .@n$;
+					mes "I'm always here, so";
+					mes "feel free to request my";
+					mes "assistance whenever";
+					mes "the need arises.";
+					close;
+				}
+			}
+			else {
+				mes .@n$;
+				mes "Greetings, "+strcharinfo(0)+".";
+				mes "What are your orders?";
+				next;
+				switch(select("Increase Stronghold Defense:Situational Briefing:Cancel")) {
+				case 1:
+					if (!getd("$agit_"+strnpcinfo(2)+"[5]")) {
+						if (getgdskilllv(.@GID,10002) == 0) {
+							mes .@n$;
+							mes "I'm sorry, but the Guardian";
+							mes "Stones aren't powerful enough";
+							mes "to summon Guardians yet. We";
+							mes "need to accumulate more";
+							mes "knowledge before they can";
+							mes "summon any Guardians.";
+							close;
+						}
+						else {
+							mes .@n$;
+							mes "I shall endeavor to summon";
+							mes "a Guardian through a Guardian";
+							mes "Stone. However, keep in mind";
+							mes "that this will not work if the";
+							mes "Guardian Stone is destroyed.";
+							setd "$agit_"+strnpcinfo(2)+"[5]",1;
+							if (!getd("$agit_"+strnpcinfo(2)+"[0]"))
+								donpcevent "gard1#"+strnpcinfo(4)+"::OnEnable";
+							if (!getd("$agit_"+strnpcinfo(2)+"[1]"))
+								donpcevent "gard2#"+strnpcinfo(4)+"::OnEnable";
+							close;
+						}
+					}
+					else {
+						mes .@n$;
+						mes "You've already commanded";
+						mes "me to summon a Guardian";
+						mes "to defend the stronghold.";
+						close;
+					}
+				case 2:
+					mes .@n$;
+					mes "Our defense status is...";
+					setarray .@status$[0],"^4D4DFFOperational","^FF0000Destroyed","^008000Repairing";
+					mes "1st Guardian Stone: "+.@status$[getd("$agit_"+strnpcinfo(2)+"[0]")]+"^000000";
+					mes "2nd Guardian Stone: "+.@status$[getd("$agit_"+strnpcinfo(2)+"[1]")]+"^000000";
+					mes "1st Fortress Gate: "+.@status$[getd("$agit_"+strnpcinfo(2)+"[2]")]+"^000000";
+					mes "2nd Fortress Gate: "+.@status$[getd("$agit_"+strnpcinfo(2)+"[3]")]+"^000000";
+					mes "3rd Fortress Gate: "+.@status$[getd("$agit_"+strnpcinfo(2)+"[4]")]+"^000000";
+					close;
+				case 3:
+					mes .@n$;
+					mes "I'll be standing by,";
+					mes "awaiting your orders.";
+					close;
+				}
+			}
+		}
+	}
+	else {
+		mes .@n$;
+		mes "Who are you? Scoundrel!";
+		mes "Leave this stronghold now!";
+		close;
+	}
+
+OnInit:
+	setarray getd("$agit_"+strnpcinfo(2)+"[0]"),0,0,0,0,0,0;
+	end;
+}
+
+// Guild Kafras
+//============================================================
+-	script	Kafra#template	-1,{
+	cutin "kafra_01",2;
+	set .@GID, getcastledata(strnpcinfo(4),CD_GUILD_ID);
+	if (getcharid(2) == .@GID && getgdskilllv(.@GID,10001)) {
+		mes "[Kafra Employee]";
+		mes "Welcome, proud member";
+		mes "of the ^FF0000"+GetGuildName(.@GID)+"^000000 Guild!";
+		mes "The Kafra Corporation is ready";
+		mes "to assist you wherever you go!";
+		next;
+		switch(select("Use Storage:Use Warp Service:Rent Pushcart:Cancel")) {
+		case 1:
+			if(!callfunc("F_CanOpenStorage")){
+				mes "[Kafra Employee]";
+				mes "I'm so sorry, but you must";
+				mes "have at least Novice Skill";
+				mes "Lv.6 to use the Storage.";
+			}
+			else openstorage;
+			break;
+		case 2:
+			mes "[Kafra Employee]";
+			mes "Please tell me your";
+			mes "Warp destination.";
+			next;
+			switch(select("Rachel -> 200 z:Cancel")) {
+			case 1:
+				if (Zeny < 200) {
+					mes "[Kafra Employee]";
+					mes "I'm sorry, but you don't";
+					mes "have enough Zeny to pay";
+					mes "the warp fee. Would you";
+					mes "please check your funds again?";
+					close2;
+					cutin "kafra_01",255;
+					end;
+				}
+				set Zeny, Zeny-200;
+				warp "rachel",115,125;
+				end;
+			case 2:
+				cutin "kafra_01",255;
+				break;
+			}
+			break;
+		case 3:
+			if (BaseClass != Job_Merchant) {
+				mes "[Kafra Employee]";
+				mes "I'm sorry, but the Pushcart";
+				mes "rental service can only be";
+				mes "used by Merchant, Blacksmith,";
+				mes "and Alchemist class characters.";
+			}
+			else if (checkcart() == 1) {
+				mes "[Kafra Employee]";
+				mes "Hm? You've already";
+				mes "rented a Pushcart.";
+			}
+			else {
+				mes "[Kafra Employee]";
+				mes "The Pushcart rental fee";
+				mes "is 800 Zeny. Would you";
+				mes "like to rent a Pushcart?";
+				next;
+				switch(select("Rent Pushcart:Cancel")) {
+				case 1:
+					if (Zeny < 800) {
+						mes "[Kafra Employee]";
+						mes "I'm sorry, but you don't";
+						mes "have enough Zeny to rent";
+						mes "one of our Pushcarts.";
+						close2;
+						cutin "kafra_01",255;
+						end;
+					}
+					set Zeny, Zeny-800;
+					setcart;
+					break;
+				case 2:
+					break;
+				}
+			}
+			break;
+		case 4:
+			mes "[Kafra Employee]";
+			mes "Thank you for using the";
+			mes "Kafra Service. Wherever";
+			mes "you go, Kafra will be";
+			mes "there to support you!";
+			close2;
+			cutin "kafra_01",255;
+			end;
+		}
+		close2;
+		cutin "kafra_01",255;
+		end;
+	}
+	else {
+		mes "[Kafra Employee]";
+		mes "I'm sorry, but I've been";
+		mes "exclusively contracted";
+		mes "to the members of the";
+		mes "^FF0000"+getguildname(.@GID)+"^000000 Guild.";
+		mes "You'll have to ask another";
+		mes "Kafra Employee to help you...";
+		close2;
+		cutin "kafra_01",255;
+		end;
+	}
+}
+
+// Guardian Stones (2)
+//============================================================
+-	script	Guardian Stone#template	-1,{
+	set .@GID, getcastledata(strnpcinfo(4),CD_GUILD_ID);
+	set .@num, atoi(charat(strnpcinfo(1),0));
+	set .@var$,"$agit_"+strnpcinfo(2);
+	if (getcharid(2) == .@GID) {
+		mes "^3355FFYou will need the";
+		mes "following materials to";
+		mes "rebuild a destroyed";
+		mes "Guardian Stone.^000000";
+		next;
+		mes "1 Oridecon";
+		mes "1 Elunium";
+		mes "30 Stones";
+		mes "5 Blue Gemstones";
+		mes "5 Yellow Gemstones";
+		mes "5 Red Gemstones";
+		next;
+		mes "^3355FFDo you want to continue?^000000";
+		next;
+		if(select("No:Continue") == 1) {
+			mes "^3355FFWork canceled.^000000";
+			close;
+		}
+		if ((countitem(984) > 0) && (countitem(985) > 0) && (countitem(7049) > 29) && (countitem(717) > 4) && (countitem(715) > 4) && (countitem(716) > 4)) {
+			mes "^3355FFArrange Stones, Elunium, and";
+			mes "Oridecon, in that order, in the";
+			mes "center. Then you must arrange";
+			mes "the enchanted Gemstones to";
+			mes "rebuild the Guardian Stone.^000000";
+			next;
+			setarray .@stone$[0],"Elunium","Oridecon","Stones";
+			set .@i, select("Elunium:Oridecon:Stone")-1;
+			if (.@i == 2) set .@nice,.@nice+10;
+			mes "^3355FF"+.@stone$[.@i]+" has been";
+			mes "placed in the center.^000000";
+			next;
+			set .@i, select("Elunium:Oridecon:Stone")-1;
+			if (.@i == 0) set .@nice,.@nice+10;
+			mes "^3355FFYou have lined the";
+			mes "outside of the center";
+			mes "with some "+.@stone$[.@i]+".^000000";
+			next;
+			set .@i, select("Elunium:Oridecon:Stone")-1;
+			if (.@i == 1) set .@nice,.@nice+10;
+			mes "^3355FFYou covered the";
+			mes "rest of the materials";
+			mes "with some "+.@stone$[.@i]+".^000000";
+			next;
+			mes "^3355FFNow you need to arrange";

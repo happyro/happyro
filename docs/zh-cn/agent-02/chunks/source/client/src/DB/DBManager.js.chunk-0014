@@ -1,0 +1,500 @@
+								local resName = skillData[1] or "" 
+								local skillName = skillData.SkillName or ""  
+								local maxLv = skillData.MaxLv or 1  
+								local spAmount = skillData.SpAmount or {}  
+								local bSeperateLv = skillData.bSeperateLv or false  
+								local attackRange = skillData.AttackRange or {}  
+								local skillScale = skillData.SkillScale or {}  
+
+								result, msg = AddSkillInfo(skillId, resName, skillName, maxLv, spAmount, bSeperateLv, attackRange, skillScale)  
+								if not result then  
+									return false, msg  
+								end
+								
+								if skillData._NeedSkillList then  
+									for _, req in ipairs(skillData._NeedSkillList) do  
+										if req[1] and req[2] then  
+											AddSkillRequirement(skillId, req[1], req[2])  
+										end  
+									end  
+								end  
+								
+								if skillData.NeedSkillList then  
+									for jobId, reqList in pairs(skillData.NeedSkillList) do  
+										if reqList then  
+											for _, req in ipairs(reqList) do  
+												if req[1] and req[2] then  
+													AddJobSkillRequirement(skillId, jobId, req[1], req[2])  
+												end  
+											end  
+										end  
+									end  
+								end 
+
+							end  
+							return true, "good"  
+							end
+						main_skillInfoList()  
+					`);
+			} catch (error) {
+				console.error('[loadSkillInfoList] Error: ', error);
+			} finally {
+				// release file from memory
+				lua.unmountFile('skillinfolist.lub');
+				// call onEnd
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ * Loads jobinheritlist.lub and skilltreeview.lub which replaces DB/Skills/SkillTreeView.js
+ *
+ * @param {string} filename - The name of the file to load.
+ * @param {function} callback - The function to invoke with the loaded data.
+ * @param {function} onEnd - The function to invoke when loading is complete.
+ * @return {void}
+ */
+function loadSkillTreeView(filename, callback, onEnd) {
+	// First load jobinheritlist.lub
+	Client.loadFile(
+		DB.LUA_PATH + 'skillinfoz/jobinheritlist.lub',
+		async function (file) {
+			try {
+				console.log(`Loading file "${DB.LUA_PATH}skillinfoz/jobinheritlist.lub"...`);
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// Mount and execute jobinheritlist.lub
+				lua.mountFile('jobinheritlist.lub', buffer);
+				await lua.doFile('jobinheritlist.lub');
+
+				// Now load skilltreeview.lub
+				loadSkillTreeViewData(filename, callback, onEnd);
+			} catch (error) {
+				console.error('[loadSkillTreeView - jobinheritlist] Error: ', error);
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+function loadSkillTreeViewData(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+				const ctx = lua.ctx;
+				// Create automatic JT_ mappings
+				const jobIdWithJT = { ...JobId };
+				for (const [key, value] of Object.entries(JobId)) {
+					jobIdWithJT[`JT_${key}`] = value;
+				}
+				ctx.JOBID = jobIdWithJT;
+
+				// Function to add skill tree data using job hierarchy from jobinheritlist.lub
+				ctx.AddSkillTreeView = function (jobId, beforeJob) {
+					// Calculate list and beforeJob from inheritance chain
+					let list = 1;
+					// TODO: Find another way to do that
+					if (jobId === JobId.NOVICE) {
+						list = 1;
+					} else if (
+						jobId < JobId.KNIGHT ||
+						jobId === JobId.TAEKWON ||
+						(jobId >= JobId.SUPERNOVICE && jobId <= JobId.NINJA) ||
+						jobId == JobId.DO_SUMMONER ||
+						jobId == JobId.DRUID
+					) {
+						list = 1;
+					} else if (
+						jobId < JobId.NOVICE_H ||
+						jobId == JobId.STAR ||
+						jobId == JobId.LINKER ||
+						(jobId >= JobId.KAGEROU && jobId <= JobId.REBELLION) ||
+						jobId == JobId.SUPERNOVICE2 ||
+						jobId == JobId.SPIRIT_HANDLER ||
+						jobId == JobId.KARNOS
+					) {
+						list = 2;
+					} else if (
+						(jobId <= JobId.THIEF_H && jobId >= JobId.NOVICE_H) ||
+						(jobId >= JobId.NOVICE_B && jobId <= JobId.THIEF_B) ||
+						jobId == JobId.DO_SUMMONER_B ||
+						jobId == JobId.NINJA_B ||
+						jobId == JobId.TAEKWON_B ||
+						jobId == JobId.GUNSLINGER_B
+					) {
+						list = 1;
+					} else if (
+						jobId < JobId.RUNE_KNIGHT ||
+						(jobId >= JobId.KNIGHT_B && jobId <= JobId.DANCER_B) ||
+						(jobId >= JobId.KAGEROU_B && jobId <= JobId.REBELLION_B)
+					) {
+						list = 2;
+					} else if (
+						jobId < JobId.DRAGON_KNIGHT ||
+						jobId == JobId.STAR_EMPEROR ||
+						jobId == JobId.SOUL_REAPER ||
+						(jobId >= JobId.RUNE_KNIGHT_B && jobId <= JobId.SHADOW_CHASER_B) ||
+						jobId === JobId.EMPEROR_B ||
+						jobId === JobId.REAPER_B ||
+						jobId == JobId.ALITEA
+					) {
+						list = 3;
+					} else if (jobId <= JobId.TROUVERE || (jobId >= JobId.SKY_EMPEROR && jobId <= JobId.HYPER_NOVICE)) {
+						list = 4;
+					} else {
+						list = 1;
+						console.error(`[loadSkillTreeViewData] Failed to find inherith list job: (${jobId})`);
+					}
+					// Create the skill tree entry
+					const entry = {
+						list: list,
+						beforeJob: beforeJob
+					};
+
+					SkillTreeView[jobId] = entry;
+					return 1;
+				};
+
+				ctx.AddSkillToJob = function (jobId, pos, skillId) {
+					if (SkillTreeView[jobId]) {
+						SkillTreeView[jobId][skillId] = Number(pos);
+					}
+					return 1;
+				};
+
+				lua.doStringSync(`
+						JobSkillTab = {}
+					
+						function JobSkillTab.ChangeSkillTabName(in_job, in_1sttab, in_2ndtab, in_3rdtab, in_4thtab)
+							local tbl = {
+								job = in_job,
+								TabName1st = in_1sttab,
+								TabName2nd = in_2ndtab,
+								TabName3rd = in_3rdtab,
+								TabName4th = in_4thtab
+							}
+							JobSkillTab[#JobSkillTab + 1] = tbl
+							return true
+						end
+					`);
+
+				ctx.SKID = SKID;
+				await lua.doString(`
+						if SKID then
+							__SKID_ORIGINAL = SKID 
+
+							SKID = setmetatable({}, {
+								__index = function(t, k)
+								local id = __SKID_ORIGINAL[k]
+								return id ~= nil and id or 0 
+								end
+							})
+						end
+					`);
+
+				lua.mountFile('skilltreeview.lub', buffer);
+				await lua.doFile('skilltreeview.lub');
+
+				lua.doStringSync(`    
+						function main_skillTreeView()    
+							if not SKILL_TREEVIEW_FOR_JOB then    
+								return false, "Error: SKILL_TREEVIEW_FOR_JOB is nil or not a table"    
+							end    
+					
+							for jobId, skillData in pairs(SKILL_TREEVIEW_FOR_JOB) do      
+								local beforeJob = JOB_INHERIT_LIST[jobId] or nil  
+								result, msg = AddSkillTreeView(jobId, beforeJob)      
+								if not result then      
+									return false, msg      
+								end   
+								
+								for pos, skillId in pairs(skillData) do    
+									result, msg = AddSkillToJob(jobId, pos, skillId)    
+									if not result then    
+										return false, msg    
+									end    
+								end  
+							end    
+							return true, "good"    
+						end    
+						
+						main_skillTreeView()    
+					`);
+			} catch (error) {
+				console.error('[loadSkillTreeView] Error: ', error);
+			} finally {
+				lua.unmountFile('skilltreeview.lub');
+				lua.unmountFile('jobinheritlist.lub');
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ * Load State Icon Info (StatusInfo) from Lua files
+ * Loads efstids.lub, stateiconimginfo.lub, and stateiconinfo.lub sequentially,
+ * synchronizing EFST_IDs with StatusConst and populating the StatusInfo table.
+ *
+ * @param {string} basePath - Directory path (e.g., DB.LUA_PATH + 'stateicon/')
+ * @param {function} callback - (Unused/Legacy)
+ * @param {function} onEnd - Function to run when done
+ */
+function loadStateIconInfo(basePath, callback, onEnd) {
+	const files = ['efstids.lub', 'stateiconimginfo.lub', 'stateiconinfo.lub'];
+
+	const loadedBuffers = [];
+
+	const dirPath = basePath.endsWith('/') ? basePath : basePath + '/';
+
+	function loadNext(index) {
+		if (index >= files.length) {
+			processLuaData();
+			return;
+		}
+
+		const fullPath = dirPath + files[index];
+		console.log('Loading file "' + fullPath + '"...');
+
+		Client.loadFile(
+			fullPath,
+			function (data) {
+				loadedBuffers.push({ name: files[index], data: data });
+				loadNext(index + 1);
+			},
+			function () {
+				console.error('[loadStateIconInfo] - Failed to load ' + fullPath);
+				if (onEnd) {
+					onEnd();
+				}
+			}
+		);
+	}
+
+	async function processLuaData() {
+		try {
+			const ctx = lua.ctx;
+
+			ctx.mergeSC = (key, value) => {
+				// Keys might be passed as Uint8Array from Lua by Wasmoon
+				const safeKey =
+					typeof key === 'string' ? key : key instanceof Uint8Array ? userStringDecoder.decode(key) : key;
+
+				if (
+					typeof safeKey === 'string' &&
+					typeof value === 'number' &&
+					value >= 0 &&
+					safeKey.startsWith('EFST_')
+				) {
+					const jsKey = safeKey.replace('EFST_', '');
+					SC[jsKey] = value;
+				}
+
+				// Add BLANK back if it was cleared and not defined in LUB
+				if (!SC.BLANK) {
+					SC.BLANK = -1;
+				}
+				return 1;
+			};
+
+			ctx.SetStatusInfo = (id, haveTimeLimit, posTimeLimitStr) => {
+				if (!StatusInfo[id]) {
+					StatusInfo[id] = {};
+				}
+				StatusInfo[id].haveTimeLimit = haveTimeLimit;
+				StatusInfo[id].posTimeLimitStr = posTimeLimitStr;
+				StatusInfo[id].descript = [];
+				return 1;
+			};
+
+			ctx.AddStatusDesc = (id, desc, r, g, b) => {
+				if (!StatusInfo[id]) {
+					return 0;
+				}
+				const text = userStringDecoder.decode(desc, userCharpage);
+				let color = null;
+				if (r >= 0 && g >= 0 && b >= 0) {
+					color = `rgb(${r}, ${g}, ${b})`;
+				}
+				StatusInfo[id].descript.push([text, color]);
+				return 1;
+			};
+
+			ctx.SetStatusIcon = (id, iconName) => {
+				const icon = userStringDecoder.decode(iconName);
+				if (!StatusInfo[id]) {
+					StatusInfo[id] = { descript: [] };
+				}
+				StatusInfo[id].icon = icon;
+				return 1;
+			};
+
+			for (let i = 0; i < loadedBuffers.length; i++) {
+				const f = loadedBuffers[i];
+				const buffer = f.data instanceof ArrayBuffer ? new Uint8Array(f.data) : f.data;
+				lua.mountFile(f.name, buffer);
+				await lua.doFile(f.name);
+
+				// This prevents the 'table index is nil' crash in stateiconimginfo.lub.
+				// return SC.BLANK on nil
+				if (f.name === 'efstids.lub') {
+					await lua.doString(`
+							if EFST_IDs then
+								__EFST_IDS_ORIGINAL = EFST_IDs 
+
+								EFST_IDs = setmetatable({}, {
+									__index = function(t, k)
+										local id = __EFST_IDS_ORIGINAL[k]
+										return id ~= nil and id or -1
+									end
+								})
+							end
+						`);
+				}
+			}
+
+			lua.doStringSync(`
+					function extract_status_info()
+						-- Sync StatusConst (SC) with the full list of EFST_IDs from the original table
+						if type(__EFST_IDS_ORIGINAL) == "table" then
+							for k, v in pairs(__EFST_IDS_ORIGINAL) do
+								if type(k) == "string" and type(v) == "number" then
+									mergeSC(k, v)
+								end
+							end
+							
+							local mt = getmetatable(__EFST_IDS_ORIGINAL)
+							if mt and type(mt.__index) == "table" then
+								for k, v in pairs(mt.__index) do
+									if type(k) == "string" and type(v) == "number" then
+										mergeSC(k, v)
+									end
+								end
+							end
+						end
+
+						-- Process Basic Info & Descriptions
+						if StateIconList ~= nil then
+							for id, info in pairs(StateIconList) do
+								SetStatusInfo(id, info.haveTimeLimit, info.posTimeLimitStr)
+
+								if info.descript ~= nil then
+									for _, descLine in ipairs(info.descript) do
+										local text = descLine[1]
+										local colorData = descLine[2]
+										local r, g, b = -1, -1, -1
+
+										if type(colorData) == "table" and #colorData >= 3 then
+											r = colorData[1]
+											g = colorData[2]
+											b = colorData[3]
+										end
+
+										AddStatusDesc(id, text, r, g, b)
+									end
+								end
+							end
+						end
+
+						-- Process Icons 
+						if StateIconImgList ~= nil then
+							for priorityId, list in pairs(StateIconImgList) do 
+								if type(list) == "table" then
+									for id, iconName in pairs(list) do
+										SetStatusIcon(id, iconName)
+									end
+								end
+							end
+						end
+					end
+
+					extract_status_info()
+				`);
+		} catch (e) {
+			console.error('[loadStateIconInfo] Lua Error:', e);
+		} finally {
+			loadedBuffers.forEach(f => lua.unmountFile(f.name));
+			if (onEnd) {
+				onEnd();
+			}
+		}
+	}
+
+	loadNext(0);
+}
+
+/* Load Ragnarok Lua table to object
+ * A lot of ragnarok lua tables are splited in 2 files ( 1 - ID table, 2 - Table of values )
+ * @param {Array} list of files to be load (must be 2 files)
+ * @param {String} name of table in lua file
+ * @param {function} callback to run once the file is loaded
+ * @param {function} onEnd to run once the file is loaded
+ * @param {function?} contextFunc - Function to execute after parsing but before unmounting
+ *
+ * @author alisonrag
+ */
+function loadLuaTable(file_list, table_name, callback, onEnd, contextFunc) {
+	const id_filename = file_list[0];
+	const value_table_filename = file_list[1];
+
+	try {
+		console.log('Loading file "' + id_filename + '"...');
+		Client.loadFile(id_filename, async function (file) {
+			try {
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+				// mount file
+				lua.mountFile(id_filename, buffer);
+				// execute file
+				await lua.doFile(id_filename);
+				loadValueTable();
+			} catch (hException) {
+				console.error(`(${id_filename}) error: `, hException);
+			}
+		});
+
+		function loadValueTable() {
+			console.log('Loading file "' + value_table_filename + '"...');
+			Client.loadFile(value_table_filename, async function (file) {
+				try {
+					// check if file is ArrayBuffer and convert to Uint8Array if necessary
+					const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+					// mount file
+					lua.mountFile(value_table_filename, buffer);
+					// execute file
+					await lua.doFile(value_table_filename);
+					parseTable();
+				} catch (hException) {
+					console.error(`(${value_table_filename}) error: `, hException);
+				}
+			});
+		}
+
+		function parseTable() {
+			// declare the table object
+			const table = {};
+
+			// get context
+			const ctx = lua.ctx;
+
+			// create context function
+			ctx.addKeyAndValueToTable = (key, value) => {
+				table[key] = userStringDecoder.decode(value, userCharpage);
+				return 1;
+			};
+
+			// used in some specific cases like skilldescript.lub
+			ctx.addKeyAndMoreValuesToTable = (key, value) => {
+				if (!table[key]) {
+					table[key] = '';
+				}
+				table[key] += userStringDecoder.decode(value, userCharpage) + '\n';
+				return 1;

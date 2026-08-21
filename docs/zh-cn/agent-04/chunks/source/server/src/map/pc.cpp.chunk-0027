@@ -1,0 +1,500 @@
+ *------------------------------------------*/
+static TIMER_FUNC(pc_autosave){
+	int32 interval;
+	struct s_mapiterator* iter;
+	map_session_data* sd;
+	static int32 last_save_id = 0, save_flag = 0;
+
+	if(save_flag == 2) //Someone was saved on last call, normal cycle
+		save_flag = 0;
+	else
+		save_flag = 1; //Noone was saved, so save first found char.
+
+	iter = mapit_getallusers();
+	for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if (!sd->state.pc_loaded) // Player data hasn't fully loaded
+			continue;
+		if(sd->id == last_save_id && save_flag != 1) {
+			save_flag = 1;
+			continue;
+		}
+
+		if(save_flag != 1) //Not our turn to save yet.
+			continue;
+
+		//Save char.
+		last_save_id = sd->id;
+		save_flag = 2;
+
+		chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART);
+		break;
+	}
+	mapit_free(iter);
+
+	interval = autosave_interval/(map_usercount()+1);
+	if(interval < minsave_interval)
+		interval = minsave_interval;
+	add_timer(gettick()+interval,pc_autosave,0,0);
+
+	return 0;
+}
+
+static int32 pc_daynight_timer_sub(map_session_data *sd,va_list ap)
+{
+	if (sd->state.night != night_flag && map_getmapflag(sd->m, MF_NIGHTENABLED))
+	{	//Night/day state does not match.
+		clif_status_load(sd, EFST_SKE, night_flag); //New night effect by dynamix [Skotlex]
+		sd->state.night = night_flag;
+		return 1;
+	}
+	return 0;
+}
+/*================================================
+ * timer to do the day [Yor]
+ * data: 0 = called by timer, 1 = gmcommand/script
+ *------------------------------------------------*/
+TIMER_FUNC(map_day_timer){
+	char tmp_soutput[1024];
+
+	if (data == 0 && battle_config.day_duration <= 0)	// if we want a day
+		return 0;
+
+	if (!night_flag)
+		return 0; //Already day.
+
+	night_flag = 0; // 0=day, 1=night [Yor]
+	map_foreachpc(pc_daynight_timer_sub);
+	strcpy(tmp_soutput, (data == 0) ? msg_txt(nullptr,502) : msg_txt(nullptr,60)); // The day has arrived!
+	intif_broadcast(tmp_soutput, strlen(tmp_soutput) + 1, BC_DEFAULT);
+	return 0;
+}
+
+/*================================================
+ * timer to do the night [Yor]
+ * data: 0 = called by timer, 1 = gmcommand/script
+ *------------------------------------------------*/
+TIMER_FUNC(map_night_timer){
+	char tmp_soutput[1024];
+
+	if (data == 0 && battle_config.night_duration <= 0)	// if we want a night
+		return 0;
+
+	if (night_flag)
+		return 0; //Already nigth.
+
+	night_flag = 1; // 0=day, 1=night [Yor]
+	map_foreachpc(pc_daynight_timer_sub);
+	strcpy(tmp_soutput, (data == 0) ? msg_txt(nullptr,503) : msg_txt(nullptr,59)); // The night has fallen...
+	intif_broadcast(tmp_soutput, strlen(tmp_soutput) + 1, BC_DEFAULT);
+	return 0;
+}
+
+/**
+* Attempt to stand up a player
+* @param sd
+* @param force Ignore the check, ask player to stand up. Used in some cases like pc_damage(), pc_revive(), etc
+* @return True if success, Fals if failed
+*/
+bool pc_setstand(map_session_data *sd, bool force){
+	nullpo_ret(sd);
+
+	// Cannot stand yet
+	// TODO: Move to SCS_NOSTAND [Cydh]
+	if (!force && (sd->sc.getSCE(SC_SITDOWN_FORCE) || sd->sc.getSCE(SC_BANANA_BOMB_SITDOWN)))
+		return false;
+
+	status_change_end(sd, SC_TENSIONRELAX);
+	clif_status_load(sd,EFST_SIT,0);
+	clif_standing(*sd); //Inform area PC is standing
+	//Reset sitting tick.
+	sd->ssregen.tick.hp = sd->ssregen.tick.sp = 0;
+	if( pc_isdead( sd ) ){
+		sd->state.dead_sit = sd->vd.dead_sit = 0;
+		clif_party_dead( *sd );
+	}else{
+		sd->state.dead_sit = sd->vd.dead_sit = 0;
+	}
+	return true;
+}
+
+/**
+ * Calculate Overheat value
+ * @param sd: Player data
+ * @param heat: Amount of Heat to adjust
+ **/
+void pc_overheat(map_session_data &sd, int16 heat) {
+	status_change_entry *sce = sd.sc.getSCE(SC_OVERHEAT_LIMITPOINT);
+
+	if (sce) {
+		sce->val1 += heat;
+		sce->val1 = cap_value(sce->val1, 0, 1000);
+
+		if (heat < 0 && sce->val1 == 0) { // Cooling device used.
+			status_change_end(&sd, SC_OVERHEAT_LIMITPOINT);
+			status_change_end(&sd, SC_OVERHEAT);
+		}
+	} else if (heat > 0)
+		sc_start(&sd, &sd, SC_OVERHEAT_LIMITPOINT, 100, heat, 1000);
+}
+
+/**
+ * Check if player is autolooting given itemID.
+ */
+bool pc_isautolooting(map_session_data *sd, t_itemid nameid)
+{
+	uint8 i = 0;
+
+	if (sd->state.autoloottype && sd->state.autoloottype&(1<<itemdb_type(nameid)))
+		return true;
+
+	if (!sd->state.autolooting)
+		return false;
+
+	if (sd->state.autolooting)
+		ARR_FIND(0, AUTOLOOTITEM_SIZE, i, sd->state.autolootid[i] == nameid);
+
+	return (i != AUTOLOOTITEM_SIZE);
+}
+
+/**
+ * Checks if player can use @/#command
+ * @param sd Player map session data
+ * @param command Command name without @/# and params
+ * @param type is it atcommand or charcommand
+ */
+bool pc_can_use_command( const map_session_data* sd, const char *command, AtCommandType type ){
+	return sd->group->can_use_command( command, type );
+}
+
+bool pc_has_permission( const map_session_data* sd, e_pc_permission permission ){
+	return sd->permissions.test( permission );
+}
+
+/**
+ * Checks if commands used by a player should be logged
+ * according to their group setting.
+ * @param sd Player map session data
+ */
+bool pc_should_log_commands( const map_session_data* sd ){
+	return sd->group->log_commands;
+}
+
+/**
+ * Spirit Charm expiration timer.
+ * @see TimerFunc
+ */
+static TIMER_FUNC(pc_spiritcharm_timer){
+	map_session_data *sd;
+	int32 i;
+
+	if ((sd = (map_session_data *)map_id2sd(id)) == nullptr || sd->type != BL_PC)
+		return 1;
+
+	if (sd->spiritcharm <= 0) {
+		ShowError("pc_spiritcharm_timer: %d spiritcharm's available. (aid=%d cid=%d tid=%d)\n", sd->spiritcharm, sd->status.account_id, sd->status.char_id, tid);
+		sd->spiritcharm = 0;
+		sd->spiritcharm_type = CHARM_TYPE_NONE;
+		return 0;
+	}
+
+	ARR_FIND(0, sd->spiritcharm, i, sd->spiritcharm_timer[i] == tid);
+
+	if (i == sd->spiritcharm) {
+		ShowError("pc_spiritcharm_timer: timer not found (aid=%d cid=%d tid=%d)\n", sd->status.account_id, sd->status.char_id, tid);
+		return 0;
+	}
+
+	sd->spiritcharm--;
+
+	if (i != sd->spiritcharm)
+		memmove(sd->spiritcharm_timer + i, sd->spiritcharm_timer + i + 1, (sd->spiritcharm - i) * sizeof(int32));
+
+	sd->spiritcharm_timer[sd->spiritcharm] = INVALID_TIMER;
+
+	if (sd->spiritcharm <= 0)
+		sd->spiritcharm_type = CHARM_TYPE_NONE;
+
+	clif_spiritcharm( *sd );
+
+	return 0;
+}
+
+/**
+ * Adds a spirit charm.
+ * @param sd: Target character
+ * @param interval: Duration
+ * @param max: Maximum amount of charms to add
+ * @param type: Charm type (@see spirit_charm_types)
+ */
+void pc_addspiritcharm(map_session_data *sd, int32 interval, int32 max, int32 type)
+{
+	int32 tid, i;
+
+	nullpo_retv(sd);
+
+	if (sd->spiritcharm_type != CHARM_TYPE_NONE && type != sd->spiritcharm_type)
+		pc_delspiritcharm(sd, sd->spiritcharm, sd->spiritcharm_type);
+
+	if (max > MAX_SPIRITCHARM)
+		max = MAX_SPIRITCHARM;
+
+	if (sd->spiritcharm < 0)
+		sd->spiritcharm = 0;
+
+	if (sd->spiritcharm && sd->spiritcharm >= max) {
+		if (sd->spiritcharm_timer[0] != INVALID_TIMER)
+			delete_timer(sd->spiritcharm_timer[0], pc_spiritcharm_timer);
+		sd->spiritcharm--;
+		if (sd->spiritcharm != 0)
+			memmove(sd->spiritcharm_timer + 0, sd->spiritcharm_timer + 1, (sd->spiritcharm) * sizeof(int32));
+		sd->spiritcharm_timer[sd->spiritcharm] = INVALID_TIMER;
+	}
+
+	tid = add_timer(gettick() + interval, pc_spiritcharm_timer, sd->id, 0);
+	ARR_FIND(0, sd->spiritcharm, i, sd->spiritcharm_timer[i] == INVALID_TIMER || DIFF_TICK(get_timer(tid)->tick, get_timer(sd->spiritcharm_timer[i])->tick) < 0);
+
+	if (i != sd->spiritcharm)
+		memmove(sd->spiritcharm_timer + i + 1, sd->spiritcharm_timer + i, (sd->spiritcharm - i) * sizeof(int32));
+
+	sd->spiritcharm_timer[i] = tid;
+	sd->spiritcharm++;
+	sd->spiritcharm_type = type;
+
+	clif_spiritcharm( *sd );
+}
+
+/**
+ * Removes one or more spirit charms.
+ * @param sd: The target character
+ * @param count: Amount of charms to remove
+ * @param type: Type of charm to remove
+ */
+void pc_delspiritcharm(map_session_data *sd, int32 count, int32 type)
+{
+	int32 i;
+
+	nullpo_retv(sd);
+
+	if (sd->spiritcharm_type != type)
+		return;
+
+	if (sd->spiritcharm <= 0) {
+		sd->spiritcharm = 0;
+		return;
+	}
+
+	if (count <= 0)
+		return;
+
+	if (count > sd->spiritcharm)
+		count = sd->spiritcharm;
+
+	sd->spiritcharm -= count;
+
+	if (count > MAX_SPIRITCHARM)
+		count = MAX_SPIRITCHARM;
+
+	for (i = 0; i < count; i++) {
+		if (sd->spiritcharm_timer[i] != INVALID_TIMER) {
+			delete_timer(sd->spiritcharm_timer[i], pc_spiritcharm_timer);
+			sd->spiritcharm_timer[i] = INVALID_TIMER;
+		}
+	}
+
+	for (i = count; i < MAX_SPIRITCHARM; i++) {
+		sd->spiritcharm_timer[i - count] = sd->spiritcharm_timer[i];
+		sd->spiritcharm_timer[i] = INVALID_TIMER;
+	}
+
+	if (sd->spiritcharm <= 0)
+		sd->spiritcharm_type = CHARM_TYPE_NONE;
+
+	clif_spiritcharm( *sd );
+}
+
+#if defined(RENEWAL_DROP) || defined(RENEWAL_EXP)
+/**
+ * Renewal EXP/Item Drop rate modifier based on level penalty
+ * @param level_diff: Monster and Player level difference
+ * @param mob_class: Monster class
+ * @param mode: Monster mode
+ * @param type: 1 - EXP, 2 - Item Drop
+ * @return Penalty rate
+ */
+uint16 pc_level_penalty_mod( map_session_data* sd, e_penalty_type type, std::shared_ptr<s_mob_db> mob, mob_data* md ){
+	// No player was attached, we don't use any modifier (100 = rates are not touched)
+	if( sd == nullptr ){
+		return 100;
+	}
+
+	if ((type == PENALTY_DROP && map_getmapflag(sd->m, MF_NORENEWALDROPPENALTY)) || (type == PENALTY_EXP && map_getmapflag(sd->m, MF_NORENEWALEXPPENALTY))) {
+		return 100;
+	}
+
+	int32 monster_level;
+
+	if( md != nullptr ){
+		monster_level = md->level;
+		mob = md->db;
+	}else if( mob != nullptr ){
+		monster_level = mob->lv;
+	}else{
+		return 100;
+	}
+
+	if( ( type == PENALTY_DROP || type == PENALTY_MVP_DROP ) && status_has_mode( &mob->status, MD_FIXEDITEMDROP )  ){
+		return 100;
+	}
+
+	int32 level_difference = monster_level - sd->status.base_level;
+
+	std::shared_ptr<s_penalty> penalty = penalty_db.find( type );
+
+	if( penalty != nullptr ){
+		return penalty->rate[ level_difference + MAX_LEVEL - 1 ];
+	}else{
+		return 100;
+	}
+}
+#endif
+
+int32 pc_split_str(char *str,char **val,int32 num)
+{
+	int32 i;
+
+	for (i=0; i<num && str; i++){
+		val[i] = str;
+		str = strchr(str,',');
+		if (str && i<num-1) //Do not remove a trailing comma.
+			*str++=0;
+	}
+	return i;
+}
+
+int32 pc_split_atoui(char* str, uint32* val, char sep, int32 max)
+{
+	static int32 warning=0;
+	int32 i,j;
+	for (i=0; i<max; i++) {
+		double f;
+		if (!str) break;
+		f = atof(str);
+		if (f < 0)
+			val[i] = 0;
+		else if (f > UINT_MAX) {
+			val[i] = UINT_MAX;
+			if (!warning) {
+				warning = 1;
+				ShowWarning("pc_readdb (exp.txt): Required exp per level is capped to %u\n", UINT_MAX);
+			}
+		} else
+			val[i] = (uint32)f;
+		str = strchr(str,sep);
+		if (str)
+			*str++=0;
+	}
+	//Zero up the remaining.
+	for(j=i; j < max; j++)
+		val[j] = 0;
+	return i;
+}
+
+
+std::shared_ptr<s_skill_tree_entry> SkillTreeDatabase::get_skill_data(int32 class_, uint16 skill_id) {
+	std::shared_ptr<s_skill_tree> tree = this->find(class_);
+
+	if (tree != nullptr)
+		return util::umap_find(tree->skills, skill_id);
+
+	return nullptr;
+}
+
+const std::string SkillTreeDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/skill_tree.yml";
+}
+
+/**
+ * Reads and parses an entry from the skill_tree.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 SkillTreeDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string job_name;
+
+	if (!this->asString(node, "Job", job_name))
+		return 0;
+
+	int64 constant;
+	std::string job_name_constant = "JOB_" + job_name;
+
+	if (!script_get_constant(job_name_constant.c_str(), &constant) || !pcdb_checkid(constant)) {
+		this->invalidWarning(node["Job"], "Invalid job %s.\n", job_name.c_str());
+		return 0;
+	}
+	uint16 job_id = static_cast<uint16>(constant);
+
+	std::shared_ptr<s_skill_tree> tree = this->find(job_id);
+	bool exists = tree != nullptr;
+
+	if (!exists)
+		tree = std::make_shared<s_skill_tree>();
+
+	if (this->nodeExists(node, "Inherit")) {
+		const ryml::NodeRef& InheritNode = node["Inherit"];
+
+		for (const auto &Inheritit : InheritNode) {
+			std::string inheritname;
+			c4::from_chars(Inheritit.key(), &inheritname);
+			std::string inheritname_constant = "JOB_" + inheritname;
+
+			if (!script_get_constant(inheritname_constant.c_str(), &constant) || !pcdb_checkid(constant)) {
+				this->invalidWarning(InheritNode[Inheritit.key()], "Invalid job %s.\n", inheritname.c_str());
+				return 0;
+			}
+
+			bool active;
+
+			if (!this->asBool(InheritNode, inheritname, active))
+				return 0;
+
+			uint16 inherit_job = static_cast<uint16>(constant);
+
+			if (!active) {
+				if (exists)
+					util::vector_erase_if_exists(tree->inherit_job, inherit_job);
+			}
+			else {
+				if (!util::vector_exists(tree->inherit_job, inherit_job))
+					tree->inherit_job.push_back(inherit_job);
+			}
+		}
+	}
+
+	if (this->nodeExists(node, "Tree")) {
+		for (const auto &it : node["Tree"]) {
+			std::string skill_name;
+
+			if (!this->asString(it, "Name", skill_name))
+				return 0;
+
+			uint16 skill_id = skill_name2id(skill_name.c_str());
+
+			if (skill_id == 0) {
+				this->invalidWarning(it["Name"], "Invalid skill name \"%s\".\n", skill_name.c_str());
+				return 0;
+			}
+			if (!skill_get_index(skill_id)) {
+				this->invalidWarning(it["Name"], "Unable to load skill %s into job %hu's tree.\n", skill_name.c_str(), job_id);
+				return 0;
+			}
+
+			std::shared_ptr<s_skill_tree_entry> entry;
+			bool skill_exists = tree->skills.count(skill_id) > 0;
+				
+			if (skill_exists)
+				entry = tree->skills[skill_id];
+			else
+				entry = std::make_shared<s_skill_tree_entry>();
+
+			entry->skill_id = skill_id;

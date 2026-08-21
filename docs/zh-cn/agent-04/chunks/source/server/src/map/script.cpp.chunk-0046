@@ -1,0 +1,500 @@
+	int32 skill_lv = script_getnum( st, 8 );
+
+	if( skill_lv > battle_config.mob_max_skilllvl ){
+		skill_lv = battle_config.mob_max_skilllvl;
+	}
+
+	int32 casttime = script_getnum( st, 9 );
+	int32 cancel = script_getnum( st, 10 );
+	int32 emotion = script_getnum( st, 11 );
+	int32 target = script_getnum( st, 12 );
+
+	map_foreachinallrange(buildin_mobuseskill_sub, &center, range, BL_MOB, mobid, skill_id, skill_lv, casttime, cancel, emotion, target);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Display a progress bar above a character
+ * progressbar "<color>",<seconds>;
+ */
+BUILDIN_FUNC(progressbar)
+{
+	map_session_data * sd;
+	const char * color;
+	uint32 second;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	st->state = STOP;
+
+	color = script_getstr(st,2);
+	second = script_getnum(st,3);
+
+	sd->progressbar.npc_id = st->oid;
+	sd->progressbar.timeout = gettick() + second*1000;
+	sd->state.workinprogress = WIP_DISABLE_ALL;
+
+	clif_progressbar(sd, strtol(color, (char **)nullptr, 0), second);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Display a progress bar above an NPC
+ * progressbar_npc "<color>",<seconds>{,<"NPC Name">};
+ */
+BUILDIN_FUNC(progressbar_npc){
+	map_session_data *sd = map_id2sd(st->rid);
+	npc_data* nd = nullptr;
+
+	if( script_hasdata(st, 4) ){
+		const char* name = script_getstr(st, 4);
+
+		nd = npc_name2id(name);
+
+		if( !nd ){
+			ShowError( "buildin_progressbar_npc: NPC \"%s\" was not found.\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else{
+		nd = map_id2nd(st->oid);
+	}
+
+	// First call(by function call)
+	if( !nd->progressbar.timeout ){
+		const char *color;
+		int32 second;
+
+		color = script_getstr(st, 2);
+		second = script_getnum(st, 3);
+
+		if( second < 0 ){
+			ShowError( "buildin_progressbar_npc: negative amount('%d') of seconds is not supported\n", second );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (sd) { // Player attached - keep them from doing other things
+			sd->state.workinprogress = WIP_DISABLE_ALL;
+			sd->state.block_action |= (PCBLOCK_MOVE | PCBLOCK_ATTACK | PCBLOCK_SKILL);
+		}
+
+		// sleep for the target amount of time
+		st->state = RERUNLINE;
+		st->sleep.tick = second * 1000;
+		nd->progressbar.timeout = gettick() + second * 1000;
+		nd->progressbar.color = strtol(color, (char **)nullptr, 0);
+
+		clif_progressbar_npc_area(nd);
+	// Second call(by timer after sleeping time is over)
+	} else {
+		// Continue the script
+		if (sd) { // Player attached - remove restrictions
+			sd->state.workinprogress = WIP_DISABLE_NONE;
+			sd->state.block_action &= ~(PCBLOCK_MOVE | PCBLOCK_ATTACK | PCBLOCK_SKILL);
+		}
+
+		st->state = RUN;
+		st->sleep.tick = 0;
+		nd->progressbar.timeout = nd->progressbar.color = 0;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(pushpc)
+{
+	uint8 dir;
+	int32 cells, dx, dy;
+	map_session_data* sd;
+
+	if(!script_rid2sd(sd))
+	{
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	dir = script_getnum(st,2);
+	cells     = script_getnum(st,3);
+
+	if(dir >= DIR_MAX)
+	{
+		ShowWarning("buildin_pushpc: Invalid direction %d specified.\n", dir);
+		script_reportsrc(st);
+
+		dir%= DIR_MAX;  // trim spin-over
+	}
+
+	if(!cells)
+	{// zero distance
+		return SCRIPT_CMD_SUCCESS;
+	}
+	else if(cells<0)
+	{// pushing backwards
+		dir = direction_opposite( static_cast<enum directions>( dir ) ); // turn around
+		cells     = -cells;
+	}
+
+	dx = dirx[dir];
+	dy = diry[dir];
+
+	unit_blown(sd, dx, dy, cells, BLOWN_NONE);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/**
+ * Kick the character from the server
+ * kick({<char_id>});
+ */
+BUILDIN_FUNC(kick)
+{
+	map_session_data *sd = nullptr;
+
+	if (!script_charid2sd(2, sd)) {
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_GM_kick(nullptr, sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/// Invokes buying store preparation window
+/// buyingstore <slots>;
+BUILDIN_FUNC(buyingstore)
+{
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+	{
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if( npc_isnear(sd) ) {
+		char output[150];
+		sprintf(output, msg_txt(sd,662), battle_config.min_npc_vendchat_distance);
+		clif_displaymessage(sd->fd, output);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	buyingstore_setup(sd, script_getnum(st,2));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/// Invokes search store info window
+/// searchstores <uses>,<effect>{,<map name>};
+BUILDIN_FUNC(searchstores)
+{
+	if (!battle_config.feature_search_stores) {
+		ShowError("buildin_searchstores: Search stores feature is disabled.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+	{
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 uses = script_getnum(st,2);
+
+	if (uses < 1 || uses > UINT8_MAX)
+	{
+		ShowError("buildin_searchstores: The amount of uses must be a number between 1 and %u.\n", UINT8_MAX);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 effect = script_getnum(st,3);
+
+	if( effect < SEARCHSTORE_EFFECT_NORMAL || effect >= SEARCHSTORE_EFFECT_MAX )
+	{
+		ShowError("buildin_searchstores: Invalid effect id %d, specified.\n", effect);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int16 m;
+
+	if (script_hasdata(st, 4)) {
+		const char* mapname = script_getstr(st, 4);
+
+		if (stricmp(mapname, "all") == 0)
+			m = 0;
+		else if (stricmp(mapname, "this") == 0) {
+			m = sd->m;
+		}
+		else {
+			m = map_mapname2mapid(mapname);
+
+			// TODO: Support multi map-server
+			if (m < 0) {
+				ShowError("buildin_searchstores: Invalid map name %s.\n", mapname);
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+	}
+	else {
+		m = sd->m;
+	}
+
+	searchstore_open(*sd, static_cast<uint8>(uses), static_cast<e_searchstore_effecttype>(effect), m);
+	return SCRIPT_CMD_SUCCESS;
+}
+/// Displays a number as large digital clock.
+/// showdigit <value>[,<type>];
+BUILDIN_FUNC(showdigit)
+{
+	uint32 type = 0;
+	int32 value;
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+	{
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	value = script_getnum(st,2);
+
+	if( script_hasdata(st,3) ){
+		type = script_getnum(st,3);
+	}
+
+	switch( type ){
+		case 0:
+			break;
+		case 1:
+		case 2:
+			// Use absolute value and then the negative value of it as starting value
+			// This is what gravity's client does for these counters
+			value = -abs(value);
+			break;
+		case 3:
+			value = abs(value);
+			if( value > 99 ){
+				ShowWarning("buildin_showdigit: type 3 can display 2 digits at max. Capping value %d to 99...\n", value);
+				script_reportsrc(st);
+				value = 99;
+			}
+			break;
+		default:
+			ShowError("buildin_showdigit: Invalid type %u.\n", type);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_showdigit(sd, (unsigned char)type, value);
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * Rune Knight
+ * makerune <% success bonus>{,<char_id>};
+ **/
+BUILDIN_FUNC(makerune) {
+	map_session_data* sd;
+	
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+	clif_skill_produce_mix_list( *sd, RK_RUNEMASTERY, 24 );
+	sd->itemid = script_getnum(st,2);
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * checkdragon({<char_id>}) returns 1 if mounting a dragon or 0 otherwise.
+ **/
+BUILDIN_FUNC(checkdragon) {
+	TBL_PC* sd;
+	
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	if( pc_isridingdragon(sd) )
+		script_pushint(st,1);
+	else
+		script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * setdragon({optional Color{,<char_id>}}) returns 1 on success or 0 otherwise
+ * - Toggles the dragon on a RK if he can mount;
+ * @param Color - when not provided uses the green dragon;
+ * - 1 : Green Dragon
+ * - 2 : Brown Dragon
+ * - 3 : Gray Dragon
+ * - 4 : Blue Dragon
+ * - 5 : Red Dragon
+ **/
+BUILDIN_FUNC(setdragon) {
+	TBL_PC* sd;
+	int32 color = script_hasdata(st,2) ? script_getnum(st,2) : 0;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+	if( !pc_checkskill(sd,RK_DRAGONTRAINING) || (sd->class_&MAPID_THIRDMASK) != MAPID_RUNE_KNIGHT )
+		script_pushint(st,0);//Doesn't have the skill or it's not a Rune Knight
+	else if ( pc_isridingdragon(sd) ) {//Is mounted; release
+		pc_setoption(sd, sd->sc.option&~OPTION_DRAGON);
+		script_pushint(st,1);
+	} else {//Not mounted; Mount now.
+		uint32 option = OPTION_DRAGON1;
+		if( color ) {
+			option = ( color == 1 ? OPTION_DRAGON1 :
+					   color == 2 ? OPTION_DRAGON2 :
+					   color == 3 ? OPTION_DRAGON3 :
+					   color == 4 ? OPTION_DRAGON4 :
+					   color == 5 ? OPTION_DRAGON5 : 0);
+			if( !option ) {
+				ShowWarning("script_setdragon: Unknown Color %d used; changing to green (1)\n",color);
+				option = OPTION_DRAGON1;
+			}
+		}
+		pc_setoption(sd, sd->sc.option|option);
+		script_pushint(st,1);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * ismounting({<char_id>}) returns 1 if mounting a new mount or 0 otherwise
+ **/
+BUILDIN_FUNC(ismounting) {
+	TBL_PC* sd;
+	
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	if( sd->sc.getSCE(SC_ALL_RIDING) )
+		script_pushint(st,1);
+	else
+		script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * setmounting({<char_id>}) returns 1 on success or 0 otherwise
+ * - Toggles new mounts on a player when he can mount
+ * - Will fail if the player is mounting a non-new mount, e.g. dragon, peco, wug, etc.
+ * - Will unmount the player is he is already mounting
+ **/
+BUILDIN_FUNC(setmounting) {
+	TBL_PC* sd;
+	
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	if( sd->sc.option&(OPTION_WUGRIDER|OPTION_RIDING|OPTION_DRAGON|OPTION_MADOGEAR) ) {
+		clif_msg( *sd, MSI_FAIELD_RIDING_OVERLAPPED );
+		script_pushint(st,0); //can't mount with one of these
+	} else if (sd->sc.getSCE(SC_CLOAKING) || sd->sc.getSCE(SC_CHASEWALK) || sd->sc.getSCE(SC_CLOAKINGEXCEED) || sd->sc.getSCE(SC_CAMOUFLAGE) || sd->sc.getSCE(SC_STEALTHFIELD) || sd->sc.getSCE(SC__FEINTBOMB)) {
+		// SC_HIDING, SC__INVISIBILITY, SC__SHADOWFORM, SC_SUHIDE already disable item usage
+		script_pushint(st, 0); // Silent failure
+	} else {
+		if( sd->sc.getSCE(SC_ALL_RIDING) )
+			status_change_end(sd, SC_ALL_RIDING); //release mount
+		else
+			sc_start(nullptr, sd, SC_ALL_RIDING, 10000, 1, INFINITE_TICK); //mount
+		script_pushint(st,1);//in both cases, return 1.
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * Retrieves quantity of arguments provided to callfunc/callsub.
+ * getargcount() -> amount of arguments received in a function
+ **/
+BUILDIN_FUNC(getargcount) {
+	struct script_retinfo* ri;
+
+	if( st->stack->defsp < 1 || st->stack->stack_data[st->stack->defsp - 1].type != C_RETINFO ) {
+		ShowError("script:getargcount: used out of function or callsub label!\n");
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	ri = st->stack->stack_data[st->stack->defsp - 1].u.ri;
+
+	script_pushint(st, ri->nargs);
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * getcharip(<account ID>/<character ID>/<character name>)
+ **/
+BUILDIN_FUNC(getcharip)
+{
+	map_session_data* sd = nullptr;
+
+	/* check if a character name is specified */
+	if( script_hasdata(st, 2) )
+	{
+		if (script_isstring(st, 2))
+			sd = map_nick2sd(script_getstr(st, 2),false);
+		else
+		{
+			int32 id = script_getnum(st, 2);
+
+			sd = (map_id2sd(id) ? map_id2sd(id) : map_charid2sd(id));
+		}
+	}
+	else
+		script_rid2sd(sd);
+
+	/* check for sd and IP */
+	if (!sd || !session[sd->fd]->client_addr)
+	{
+		script_pushconststr(st, "");
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	/* return the client ip_addr converted for output */
+	if (sd && sd->fd && session[sd->fd])
+	{
+		/* initiliaze */
+		const char *ip_addr = nullptr;
+		uint32 ip;
+
+		/* set ip, ip_addr and convert to ip and push str */
+		ip = session[sd->fd]->client_addr;
+		ip_addr = ip2str(ip, nullptr);
+		script_pushstrcopy(st, ip_addr);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * is_function(<function name>) -> 1 if function exists, 0 otherwise
+ **/
+BUILDIN_FUNC(is_function) {
+	const char* str = script_getstr(st,2);
+
+	if( strdb_exists(userfunc_db, str) )
+		script_pushint(st,1);
+	else
+		script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * get_revision() -> retrieves the current svn revision (if available)
+ **/
+BUILDIN_FUNC(get_revision) {
+	const char *svn = get_svn_revision();
+
+	if ( svn[0] != UNKNOWN_VERSION )
+		script_pushint(st,atoi(svn));
+	else
+		script_pushint(st,-1); //unknown
+	return SCRIPT_CMD_SUCCESS;
+}
+/* get_hash() -> retrieves the current git hash (if available)*/
+BUILDIN_FUNC(get_githash) {
+	const char* git = get_git_hash();
+	char buf[CHAT_SIZE_MAX];
+	safestrncpy(buf,git,strlen(git)+1);
+
+	if ( git[0] != UNKNOWN_VERSION )
+		script_pushstrcopy(st,buf);
+	else
+		script_pushconststr(st,"Unknown"); //unknown
+	return SCRIPT_CMD_SUCCESS;
+}
+/**
+ * freeloop(<toggle>) -> toggles this script instance's looping-check ability
+ **/
+BUILDIN_FUNC(freeloop) {
+
+	if( script_hasdata(st,2) ) {
+		if( script_getnum(st,2) )
+			st->freeloop = 1;
+		else
+			st->freeloop = 0;

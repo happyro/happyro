@@ -1,0 +1,500 @@
+			ai = "10";
+		} else if ((mode & MONSTER_TYPE_02) == MONSTER_TYPE_02) {
+			mode &= ~MONSTER_TYPE_02;
+			ai = "02";
+		} else if ((mode & MONSTER_TYPE_01) == MONSTER_TYPE_01) {
+			mode &= ~MONSTER_TYPE_01;
+			ai = "01";
+		} else if ((mode & MONSTER_TYPE_25) == MONSTER_TYPE_25) {
+			mode &= ~MONSTER_TYPE_25;
+			ai = "25";
+		} else if ((mode & MONSTER_TYPE_06) == MONSTER_TYPE_06)
+			ai = "06";
+
+		if (ai.compare("06") != 0)
+			body << YAML::Key << "Ai" << YAML::Value << ai;
+		if (class_.compare("Normal") != 0)
+			body << YAML::Key << "Class" << YAML::Value << class_;
+
+		if (mode > 0) {
+			body << YAML::Key << "Modes";
+			body << YAML::BeginMap;
+			if (mode & 0x1)
+				body << YAML::Key << "CanMove" << YAML::Value << "true";
+			if (mode & 0x80)
+				body << YAML::Key << "CanAttack" << YAML::Value << "true";
+			if (mode & 0x40)
+				body << YAML::Key << "NoCast" << YAML::Value << "true";
+			if (mode & 0x2)
+				body << YAML::Key << "Looter" << YAML::Value << "true";
+			if (mode & 0x4)
+				body << YAML::Key << "Aggressive" << YAML::Value << "true";
+			if (mode & 0x8)
+				body << YAML::Key << "Assist" << YAML::Value << "true";
+			if (mode & 0x20)
+				body << YAML::Key << "NoRandomWalk" << YAML::Value << "true";
+			if (mode & 0x200)
+				body << YAML::Key << "CastSensorChase" << YAML::Value << "true";
+			if (mode & 0x10)
+				body << YAML::Key << "CastSensorIdle" << YAML::Value << "true";
+			if (mode & 0x800)
+				body << YAML::Key << "Angry" << YAML::Value << "true";
+			if (mode & 0x400)
+				body << YAML::Key << "ChangeChase" << YAML::Value << "true";
+			if (mode & 0x1000)
+				body << YAML::Key << "ChangeTargetMelee" << YAML::Value << "true";
+			if (mode & 0x2000)
+				body << YAML::Key << "ChangeTargetChase" << YAML::Value << "true";
+			if (mode & 0x4000)
+				body << YAML::Key << "TargetWeak" << YAML::Value << "true";
+			if (mode & 0x8000)
+				body << YAML::Key << "RandomTarget" << YAML::Value << "true";
+			if (mode & 0x20000)
+				body << YAML::Key << "IgnoreMagic" << YAML::Value << "true";
+			if (mode & 0x10000)
+				body << YAML::Key << "IgnoreMelee" << YAML::Value << "true";
+			if (mode & 0x100000)
+				body << YAML::Key << "IgnoreMisc" << YAML::Value << "true";
+			if (mode & 0x40000)
+				body << YAML::Key << "IgnoreRanged" << YAML::Value << "true";
+			if (mode & 0x400000)
+				body << YAML::Key << "TeleportBlock" << YAML::Value << "true";
+			if (mode & 0x1000000)
+				body << YAML::Key << "FixedItemDrop" << YAML::Value << "true";
+			if (mode & 0x2000000)
+				body << YAML::Key << "Detector" << YAML::Value << "true";
+			if (mode & 0x200000)
+				body << YAML::Key << "KnockBackImmune" << YAML::Value << "true";
+			if (mode & 0x4000000)
+				body << YAML::Key << "StatusImmune" << YAML::Value << "true";
+			if (mode & 0x8000000)
+				body << YAML::Key << "SkillImmune" << YAML::Value << "true";
+			if (mode & 0x80000)
+				body << YAML::Key << "Mvp" << YAML::Value << "true";
+			body << YAML::EndMap;
+		}
+	}
+
+	bool has_mvp_drops = false;
+
+	for (uint8 d = 31; d < (31 + MAX_MVP_DROP * 2); d += 2) {
+		if (strtoul(fields[d], nullptr, 10) > 0) {
+			has_mvp_drops = true;
+			break;
+		}
+	}
+
+	if (has_mvp_drops) {
+		body << YAML::Key << "MvpDrops";
+		body << YAML::BeginSeq;
+
+		for (uint8 i = 0; i < MAX_MVP_DROP; i++) {
+			t_itemid nameid = strtoul(fields[31 + i * 2], nullptr, 10);
+
+			if (nameid > 0) {
+				std::string *item_name = util::umap_find(aegis_itemnames, nameid);
+
+				if (!item_name) {
+					ShowWarning("Monster \"%s\"(id: %u) is dropping an unknown item \"%u\"(MVP-Drop %d)\n", fields[1], mob_id, nameid, (i / 2) + 1);
+					continue;
+				}
+
+				body << YAML::BeginMap;
+				body << YAML::Key << "Item" << YAML::Value << *item_name;
+				body << YAML::Key << "Rate" << YAML::Value << cap_value(std::stoi(fields[32 + i * 2]), 1, 10000);
+				body << YAML::EndMap;
+			}
+
+			if (i < MAX_MVP_DROP - 1)
+				continue;
+
+			// Insert at end
+			for (const auto &it : mob_drop) {
+				if (it.first != mob_id)
+					continue;
+
+				for (const auto &drop : it.second) {
+					if (drop.mvp) {
+						std::string *item_name = util::umap_find(aegis_itemnames, drop.nameid);
+
+						if (!item_name) {
+							ShowWarning("Monster \"%s\"(id: %u) is dropping an unknown item \"%u\"(MVP-Drop %d)\n", fields[1], mob_id, drop.nameid, (i / 2) + 1);
+							continue;
+						}
+
+						body << YAML::BeginMap;
+						body << YAML::Key << "Item" << YAML::Value << *item_name;
+						body << YAML::Key << "Rate" << YAML::Value << cap_value(drop.rate, 1, 10000);
+						body << YAML::Key << "RandomOptionGroup" << YAML::Value << drop.group_string;
+						body << YAML::EndMap;
+					}
+				}
+			}
+		}
+
+		body << YAML::EndSeq;
+	}
+
+	bool has_drops = false;
+
+	for (uint8 d = 31 + MAX_MVP_DROP * 2; d < ((31 + MAX_MVP_DROP * 2) + MAX_MOB_DROP * 2); d += 2) {
+		if (strtoul(fields[d], nullptr, 10) > 0) {
+			has_drops = true;
+			break;
+		}
+	}
+
+	if (has_drops) {
+		body << YAML::Key << "Drops";
+		body << YAML::BeginSeq;
+
+		for (uint8 i = 0; i < MAX_MOB_DROP; i++) {
+			int32 k = 31 + MAX_MVP_DROP * 2 + i * 2;
+			t_itemid nameid = strtoul(fields[k], nullptr, 10);
+
+			if (nameid > 0) {
+				std::string *item_name = util::umap_find(aegis_itemnames, nameid);
+
+				if (!item_name) {
+					ShowWarning("Monster \"%s\"(id: %u) is dropping an unknown item \"%s\"\n", fields[1], mob_id, fields[k]);
+					continue;
+				}
+
+				body << YAML::BeginMap;
+				body << YAML::Key << "Item" << YAML::Value << *item_name;
+				body << YAML::Key << "Rate" << YAML::Value << cap_value(std::stoi(fields[k + 1]), 1, 10000);
+				if (i > 6) // Slots 8, 9, and 10 are inherently protected
+					body << YAML::Key << "StealProtected" << YAML::Value << "true";
+				body << YAML::EndMap;
+			}
+
+			if (i < MAX_MOB_DROP - 2 || i == MAX_MOB_DROP - 1)
+				continue;
+
+			// Insert before card
+			for (const auto &it : mob_drop) {
+				if (it.first != mob_id)
+					continue;
+
+				for (const auto &drop : it.second) {
+					if (!drop.mvp) {
+						std::string *item_name = util::umap_find(aegis_itemnames, drop.nameid);
+
+						if (!item_name) {
+							ShowWarning("Monster \"%s\"(id: %u) is dropping an unknown item \"%u\"\n", fields[1], mob_id, drop.nameid);
+							continue;
+						}
+
+						body << YAML::BeginMap;
+						body << YAML::Key << "Item" << YAML::Value << *item_name;
+						body << YAML::Key << "Rate" << YAML::Value << cap_value(drop.rate, 1, 10000);
+						body << YAML::Key << "RandomOptionGroup" << YAML::Value << drop.group_string;
+						if (drop.steal_protected == 1)
+							body << YAML::Key << "StealProtected" << YAML::Value << "true";
+						body << YAML::EndMap;
+					}
+				}
+			}
+		}
+
+		body << YAML::EndSeq;
+	}
+
+	body << YAML::EndMap;
+
+	return true;
+}
+
+// Copied and adjusted from mob.cpp
+static bool mob_parse_row_chatdb( char* fields[], size_t columns, size_t current ){
+	int32 msg_id = atoi(fields[0]);
+
+	if (msg_id <= 0){
+		ShowError("Invalid chat ID '%d' in line %d\n", msg_id, current);
+		return false;
+	}
+
+	char* msg = fields[2];
+	size_t len = strlen(msg);
+
+	while( len && ( msg[len-1] == '\r' || msg[len-1] == '\n' ) ) {// find EOL to strip
+		len--;
+	}
+
+	if (len > (CHAT_SIZE_MAX-1)) {
+		ShowError("Message too long! Line %d, id: %d\n", current, msg_id);
+		return false;
+	}
+	else if (len == 0) {
+		ShowWarning("Empty message for id %d.\n", msg_id);
+		return false;
+	}
+
+	msg[len] = 0;  // strip previously found EOL
+
+	body << YAML::BeginMap;
+	body << YAML::Key << "Id" << YAML::Value << msg_id;
+	if (strcmp(fields[1], "0xFF0000") != 0)	// default color
+		body << YAML::Key << "Color" << YAML::Value << fields[1];
+	body << YAML::Key << "Dialog" << YAML::Value << msg;
+	body << YAML::EndMap;
+
+	return true;
+}
+
+// Copied and adjusted from homunculus.cpp
+static bool read_homunculus_expdb(const char* file) {
+	FILE* fp = fopen( file, "r" );
+
+	if( fp == nullptr ){
+		ShowError( "Can't read %s\n", file );
+		return false;
+	}
+
+	uint32 lines = 0, count = 0;
+	char line[1024];
+
+	while (fgets(line, sizeof(line), fp)) {
+		lines++;
+
+		if (line[0] == '/' && line[1] == '/') // Ignore comments
+			continue;
+
+		t_exp exp = strtoull(line, nullptr, 10);
+
+		if( exp > 0 ){
+			body << YAML::BeginMap;
+			body << YAML::Key << "Level" << YAML::Value << (count+1);
+			body << YAML::Key << "Exp" << YAML::Value << exp;
+			body << YAML::EndMap;
+		}
+
+		count++;
+	}
+
+	fclose(fp);
+	ShowStatus("Done reading '" CL_WHITE "%d" CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'.\n", count, file);
+	return true;
+}
+
+// Copied and adjusted from mob.cpp
+static bool mob_readdb_group( char* str[], size_t columns, size_t current ){
+	if (strncasecmp(str[0], "MOBG_", 5) != 0) {
+		ShowError("The group %s must start with 'MOBG_'.\n", str[0]);
+		return false;
+	}
+
+	uint16 mob_id = static_cast<uint16>(strtol(str[1], nullptr, 10));
+	bool is_default = mob_id == 0;
+
+	std::string group_name = str[0];
+	group_name.erase(0, 5);
+	std::transform(group_name.begin(), group_name.end(), group_name.begin(), ::toupper);
+
+	s_randomsummon_group_csv2yaml *group = util::map_find(summon_group, group_name);
+	bool exists = group != nullptr;
+
+	s_randomsummon_group_csv2yaml group_entry;
+
+	if (is_default)
+		mob_id = static_cast<uint16>(strtol(str[3], nullptr, 10));
+	
+	std::string *mob_name = util::umap_find(aegis_mobnames, mob_id);
+
+	if (!mob_name) {
+		ShowError("Unknown mob id %d for group %s.\n", mob_id, str[0]);
+		return false;
+	}
+
+	if (!exists) {
+		group_entry.default_mob = *mob_name;
+		group_entry.group_name = group_name;
+	}
+
+	if (is_default) {
+		if (exists)
+			group->default_mob = *mob_name;
+		else
+			summon_group.insert({ group_name, group_entry });
+	}
+	else {
+		std::shared_ptr<s_randomsummon_entry_csv2yaml> entry = std::make_shared<s_randomsummon_entry_csv2yaml>();
+
+		entry->mob_name = *mob_name;
+		entry->rate = strtol(str[3], nullptr, 10);
+
+		if (exists)
+			group->list.push_back(entry);
+		else {
+			group_entry.list.push_back(entry);
+			summon_group.insert({ group_name, group_entry });
+		}
+	}
+
+	return true;
+}
+
+static bool mob_readdb_group_yaml(void) {
+	for (const auto &it : summon_group) {
+		body << YAML::BeginMap;
+		body << YAML::Key << "Group" << YAML::Value << it.first;
+		body << YAML::Key << "Default" << YAML::Value << it.second.default_mob;
+		body << YAML::Key << "Summon";
+		body << YAML::BeginSeq;
+		for (const auto &sumit : it.second.list) {
+			body << YAML::BeginMap;
+			body << YAML::Key << "Mob" << YAML::Value << sumit->mob_name;
+			body << YAML::Key << "Rate" << YAML::Value << sumit->rate;
+			body << YAML::EndMap;
+		}
+		body << YAML::EndSeq;
+		body << YAML::EndMap;
+	}
+	return true;
+}
+
+// Copied and adjusted from skill.cpp
+static bool skill_parse_row_createarrowdb( char* split[], size_t columns, size_t current ){
+	t_itemid nameid = static_cast<t_itemid>(strtoul(split[0], nullptr, 10));
+
+	if (nameid == 0)
+		return true;
+
+	std::string *material_name = util::umap_find(aegis_itemnames, nameid);
+
+	if (!material_name) {
+		ShowError("skill_parse_row_createarrowdb: Invalid item %u.\n", nameid);
+		return false;
+	}
+
+	// Import just for clearing/disabling from original data
+	if (strtoul(split[1], nullptr, 10) == 0) {
+		body << YAML::BeginMap;
+		body << YAML::Key << "Remove" << YAML::Value << *material_name;
+		body << YAML::EndMap;
+		return true;
+	}
+
+	std::map<std::string, uint32> item_created;
+	
+	for( size_t x = 1; x + 1 < columns && split[x] && split[x + 1]; x += 2 ){
+		nameid = static_cast<t_itemid>(strtoul(split[x], nullptr, 10));
+		std::string* item_name = util::umap_find(aegis_itemnames, nameid);
+
+		if (!item_name) {
+			ShowError("skill_parse_row_createarrowdb: Invalid item %u.\n", nameid);
+			return false;
+		}
+
+		item_created.insert({ *item_name, strtoul(split[x+1], nullptr, 10) });
+	}
+
+	body << YAML::BeginMap;
+	body << YAML::Key << "Source" << YAML::Value << *material_name;
+	body << YAML::Key << "Make";
+	body << YAML::BeginSeq;
+	for (const auto &it : item_created) {
+		body << YAML::BeginMap;
+		body << YAML::Key << "Item" << YAML::Value << it.first;
+		body << YAML::Key << "Amount" << YAML::Value << it.second;
+		body << YAML::EndMap;
+	}
+	body << YAML::EndSeq;
+	body << YAML::EndMap;
+
+	return true;
+}
+
+// Copied and adjusted from pc.cpp
+static bool pc_read_statsdb(const char* file) {
+	FILE* fp = fopen( file, "r" );
+
+	if( fp == nullptr ){
+		ShowError( "Can't read %s\n", file );
+		return false;
+	}
+
+	uint32 lines = 0, count = 0;
+	char line[1024];
+	
+	while (fgets(line, sizeof(line), fp)) {
+		lines++;
+
+		trim(line);
+		if (line[0] == '/' && line[1] == '/') // Ignore comments
+			continue;
+
+		body << YAML::BeginMap;
+		body << YAML::Key << "Level" << YAML::Value << (count+1);
+		body << YAML::Key << "Points" << YAML::Value << static_cast<uint32>(strtoul(line, nullptr, 10));
+		body << YAML::EndMap;
+
+		count++;
+	}
+
+	fclose(fp);
+	ShowStatus("Done reading '" CL_WHITE "%d" CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'.\n", count, file);
+	return true;
+}
+
+// Copied and adjusted from guild.cpp
+static bool guild_read_castledb( char* str[], size_t columns, size_t current ){
+	body << YAML::BeginMap;
+	body << YAML::Key << "Id" << YAML::Value << str[0];
+	body << YAML::Key << "Map" << YAML::Value << str[1];
+	body << YAML::Key << "Name" << YAML::Value << trim(str[2]);
+	body << YAML::Key << "Npc" << YAML::Value << trim(str[3]);
+	body << YAML::EndMap;
+	return true;
+}
+
+// Copied and adjusted from int_guild.cpp
+static bool exp_guild_parse_row( char* split[], size_t column, size_t current ){
+	t_exp exp = strtoull(split[0], nullptr, 10);
+
+	if (exp > MAX_GUILD_EXP) {
+		ShowError("exp_guild: Invalid exp %" PRIu64 " at line %d, exceeds max of %" PRIu64 "\n", exp, current, MAX_GUILD_EXP);
+		return false;
+	}
+
+	body << YAML::BeginMap;
+	body << YAML::Key << "Level" << YAML::Value << (current+1);
+	body << YAML::Key << "Exp" << YAML::Value << exp;
+	body << YAML::EndMap;
+
+	return true;
+}
+
+// Copied and adjusted from itemdb.cpp
+static bool itemdb_read_group( char* str[], size_t columns, size_t current ){
+	if (strncasecmp(str[0], "IG_", 3) != 0) {
+		ShowError("The group %s must start with 'IG_'.\n", str[0]);
+		return false;
+	}
+	if (columns < 3) {
+		ShowError("itemdb_read_group: Insufficient columns (found %d, need at least 3).\n", columns);
+		return false;
+	}
+
+	std::string group_name = trim(str[0]);
+	group_name.erase(0, 3);
+	std::transform(group_name.begin(), group_name.end(), group_name.begin(), ::toupper);
+
+	if (strcmpi( str[1], "clear" ) == 0) {
+		item_group.erase(group_name);
+		return true;
+	}
+
+	// check item name
+	str[1] = trim(str[1]);
+	t_itemid nameid = strtoul(str[1], nullptr, 10);
+
+	std::string *name = util::umap_find(aegis_itemnames, nameid);
+	std::string item_name;
+
+	if (name)
+		item_name = *name;
+	else {
+		std::string tmp = str[1];
+		auto it = aegis_itemnames.begin();
+

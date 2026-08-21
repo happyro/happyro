@@ -1,0 +1,500 @@
+		case C_CONSTSTR:
+			return push_str(stack, C_CONSTSTR, stack->stack_data[pos].u.str);
+			break;
+		case C_STR:
+			return push_str(stack, C_STR, aStrdup(stack->stack_data[pos].u.str));
+			break;
+		case C_RETINFO:
+			ShowFatalError("script:push_copy: can't create copies of C_RETINFO. Exiting...\n");
+			exit(1);
+			break;
+		default:
+			return push_val2(
+				stack,stack->stack_data[pos].type,
+				stack->stack_data[pos].u.num,
+				stack->stack_data[pos].ref
+			);
+			break;
+	}
+}
+
+/// Removes the values in indexes [start,end] from the stack.
+/// Adjusts all stack pointers.
+void pop_stack(struct script_state* st, int32 start, int32 end)
+{
+	struct script_stack* stack = st->stack;
+	struct script_data* data;
+	int32 i;
+
+	if( start < 0 )
+		start = 0;
+	if( end > stack->sp )
+		end = stack->sp;
+	if( start >= end )
+		return;// nothing to pop
+
+	// free stack elements
+	for( i = start; i < end; i++ )
+	{
+		data = &stack->stack_data[i];
+		if( data->type == C_STR )
+			aFree(data->u.str);
+		if( data->type == C_RETINFO ) {
+			struct script_retinfo* ri = data->u.ri;
+
+			if (ri->scope.vars) {
+				script_free_vars(ri->scope.vars);
+				ri->scope.vars = nullptr;
+			}
+			if (ri->scope.arrays) {
+				ri->scope.arrays->destroy(ri->scope.arrays, script_free_array_db);
+				ri->scope.arrays = nullptr;
+			}
+			if( data->ref )
+				aFree(data->ref);
+			aFree(ri);
+		}
+		data->type = C_NOP;
+	}
+
+	// move the rest of the elements
+	if( stack->sp > end )
+	{
+		memmove(&stack->stack_data[start], &stack->stack_data[end], sizeof(stack->stack_data[0])*(stack->sp - end));
+		for( i = start + stack->sp - end; i < stack->sp; ++i )
+			stack->stack_data[i].type = C_NOP;
+	}
+
+	// adjust stack pointers
+	if( st->start > end ){
+		st->start -= end - start;
+	}else if( st->start > start ){
+		st->start = start;
+	}
+	
+	if( st->end > end ){
+		st->end -= end - start;
+	}else if( st->end > start ){
+		st->end = start;
+	}
+	
+	if( stack->defsp > end ){
+		stack->defsp -= end - start;
+	}else if( stack->defsp > start ){
+		stack->defsp = start;
+	}
+	
+	stack->sp -= end - start;
+}
+
+///
+///
+///
+
+/*==========================================
+ * Release script dependent variable, dependent variable of function
+ *------------------------------------------*/
+void script_free_vars(struct DBMap* storage)
+{
+	if( storage ) {
+		// destroy the storage construct containing the variables
+		db_destroy(storage);
+	}
+}
+
+void script_free_code(struct script_code* code)
+{
+	nullpo_retv(code);
+
+	if (code->instances)
+		script_stop_scriptinstances(code);
+	script_free_vars(code->local.vars);
+	if (code->local.arrays)
+		code->local.arrays->destroy(code->local.arrays, script_free_array_db);
+	aFree(code->script_buf);
+	aFree(code);
+}
+
+/// Creates a new script state.
+///
+/// @param script Script code
+/// @param pos Position in the code
+/// @param rid Who is running the script (attached player)
+/// @param oid Where the code is being run (npc 'object')
+/// @return Script state
+struct script_state* script_alloc_state(struct script_code* rootscript, int32 pos, int32 rid, int32 oid)
+{
+	struct script_state* st;
+
+	st = ers_alloc(st_ers, struct script_state);
+	st->stack = ers_alloc(stack_ers, struct script_stack);
+	st->stack->sp = 0;
+	st->stack->sp_max = 64;
+	CREATE(st->stack->stack_data, struct script_data, st->stack->sp_max);
+	st->stack->defsp = st->stack->sp;
+	st->stack->scope.vars = i64db_alloc(DB_OPT_RELEASE_DATA);
+	st->stack->scope.arrays = nullptr;
+	st->state = RUN;
+	st->script = rootscript;
+	st->pos = pos;
+	st->rid = rid;
+	st->oid = oid;
+	st->sleep.timer = INVALID_TIMER;
+	st->npc_item_flag = battle_config.item_enabled_npc;
+	
+	if( st->script->instances != USHRT_MAX )
+		st->script->instances++;
+	else {
+		npc_data *nd = map_id2nd(oid);
+
+		ShowError("Over 65k instances of '%s' script are being run!\n",nd ? nd->name : "unknown");
+	}
+
+	if (!st->script->local.vars)
+		st->script->local.vars = i64db_alloc(DB_OPT_RELEASE_DATA);
+
+	st->id = next_id++;
+	active_scripts++;
+
+	idb_put(st_db, st->id, st);
+
+	return st;
+}
+
+/// Frees a script state.
+///
+/// @param st Script state
+void script_free_state(struct script_state* st)
+{
+	if (idb_exists(st_db, st->id)) {
+		map_session_data *sd = st->rid ? map_id2sd(st->rid) : nullptr;
+
+		if (st->bk_st) // backup was not restored
+			ShowDebug("script_free_state: Previous script state lost (rid=%d, oid=%d, state=%d, bk_npcid=%d).\n", st->bk_st->rid, st->bk_st->oid, st->bk_st->state, st->bk_npcid);
+
+		if (sd && sd->st == st) { // Current script is aborted.
+			if(sd->state.using_fake_npc) {
+				clif_clearunit_single( sd->npc_id, CLR_OUTSIGHT, *sd );
+				sd->state.using_fake_npc = 0;
+			}
+			sd->st = nullptr;
+			sd->npc_id = 0;
+		}
+
+		if (st->sleep.timer != INVALID_TIMER)
+			delete_timer(st->sleep.timer, run_script_timer);
+		if (st->stack) {
+			script_free_vars(st->stack->scope.vars);
+			if (st->stack->scope.arrays)
+				st->stack->scope.arrays->destroy(st->stack->scope.arrays, script_free_array_db);
+			pop_stack(st, 0, st->stack->sp);
+			aFree(st->stack->stack_data);
+			ers_free(stack_ers, st->stack);
+			st->stack = nullptr;
+		}
+		if (st->script && st->script->instances != USHRT_MAX && --st->script->instances == 0) {
+			if (st->script->local.vars && !db_size(st->script->local.vars)) {
+				script_free_vars(st->script->local.vars);
+				st->script->local.vars = nullptr;
+			}
+			if (st->script->local.arrays && !db_size(st->script->local.arrays)) {
+				st->script->local.arrays->destroy(st->script->local.arrays, script_free_array_db);
+				st->script->local.arrays = nullptr;
+			}
+		}
+		st->pos = -1;
+
+		idb_remove(st_db, st->id);
+		ers_free(st_ers, st);
+		if (--active_scripts == 0)
+			next_id = 0;
+	}
+}
+
+//
+// Main execution unit
+//
+/*==========================================
+ * Read command
+ *------------------------------------------*/
+c_op get_com(unsigned char *script,int32 *pos)
+{
+	int32 i = 0, j = 0;
+
+	if(script[*pos]>=0x80){
+		return C_INT;
+	}
+	while(script[*pos]>=0x40){
+		i=script[(*pos)++]<<j;
+		j+=6;
+	}
+	return (c_op)(i+(script[(*pos)++]<<j));
+}
+
+/*==========================================
+ *  Income figures
+ *------------------------------------------*/
+int64 get_num(unsigned char *script,int32 *pos)
+{
+	int32 i, end;
+	int64 value;
+
+	// Find the end of the data
+	for( i = 0; script[*pos+i] >= 0xc0; i++ ) ; // do nothing just find it
+
+	end = i; // store the end for later
+	value = 0; // initialize empty value
+
+	// If more than one byte of data exists
+	for( ; i > 0; i-- ){
+		value |= (int64)( script[*pos+i] & (int64)0x3f );
+		value <<= 6;
+	}
+
+	// Put our last piece of data into the return value
+	value |= (script[*pos+i] & (int64)0x3f);
+
+	*pos += end + 1; // one byte after the last byte of data
+
+	return value;
+}
+
+/// Ternary operators
+/// test ? if_true : if_false
+void op_3(struct script_state* st, int32 op)
+{
+	struct script_data* data;
+	int32 flag = 0;
+
+	data = script_getdatatop(st, -3);
+	get_val(st, data);
+
+	if( data_isstring(data) )
+		flag = data->u.str[0];// "" -> false
+	else if( data_isint(data) )
+		flag = data->u.num == 0 ? 0 : 1;// 0 -> false
+	else
+	{
+		ShowError("script:op_3: invalid data for the ternary operator test\n");
+		script_reportdata(data);
+		script_reportsrc(st);
+		script_removetop(st, -3, 0);
+		script_pushnil(st);
+		return;
+	}
+	if( flag )
+		script_pushcopytop(st, -2);
+	else
+		script_pushcopytop(st, -1);
+	script_removetop(st, -4, -1);
+}
+
+/// Binary string operators
+/// s1 EQ s2 -> i
+/// s1 NE s2 -> i
+/// s1 GT s2 -> i
+/// s1 GE s2 -> i
+/// s1 LT s2 -> i
+/// s1 LE s2 -> i
+/// s1 ADD s2 -> s
+void op_2str(struct script_state* st, int32 op, const char* s1, const char* s2)
+{
+	int32 a = 0;
+
+	switch(op){
+		case C_EQ: a = (strcmp(s1,s2) == 0); break;
+		case C_NE: a = (strcmp(s1,s2) != 0); break;
+		case C_GT: a = (strcmp(s1,s2) >  0); break;
+		case C_GE: a = (strcmp(s1,s2) >= 0); break;
+		case C_LT: a = (strcmp(s1,s2) <  0); break;
+		case C_LE: a = (strcmp(s1,s2) <= 0); break;
+		case C_ADD:
+			{
+				char* buf = (char *)aMalloc((strlen(s1)+strlen(s2)+1)*sizeof(char));
+				strcpy(buf, s1);
+				strcat(buf, s2);
+				script_pushstr(st, buf);
+				return;
+			}
+		default:
+			ShowError("script:op2_str: unexpected string operator %s\n", script_op2name(op));
+			script_reportsrc(st);
+			script_pushnil(st);
+			st->state = END;
+			return;
+	}
+
+	script_pushint(st,a);
+}
+
+/// Binary number operators
+/// i OP i -> i
+void op_2num( struct script_state* st, int32 op, int64 i1, int64 i2 ){
+	int64 ret;
+
+	switch( op ) {
+		case C_AND:  ret = i1 & i2;		break;
+		case C_OR:   ret = i1 | i2;		break;
+		case C_XOR:  ret = i1 ^ i2;		break;
+		case C_LAND: ret = (i1 && i2);	break;
+		case C_LOR:  ret = (i1 || i2);	break;
+		case C_EQ:   ret = (i1 == i2);	break;
+		case C_NE:   ret = (i1 != i2);	break;
+		case C_GT:   ret = (i1 >  i2);	break;
+		case C_GE:   ret = (i1 >= i2);	break;
+		case C_LT:   ret = (i1 <  i2);	break;
+		case C_LE:   ret = (i1 <= i2);	break;
+		case C_R_SHIFT: ret = i1>>i2;	break;
+		case C_L_SHIFT: ret = i1<<i2;	break;
+		case C_DIV:
+		case C_MOD:
+			if( i2 == 0 )
+			{
+				ShowError("script:op_2num: division by zero detected op=%s i1=%" PRId64 " i2=%" PRId64 "\n", script_op2name(op), i1, i2);
+				script_reportsrc(st);
+				script_pushnil(st);
+				st->state = END;
+				return;
+			}
+			else if( op == C_DIV )
+				ret = i1 / i2;
+			else//if( op == C_MOD )
+				ret = i1 % i2;
+			break;
+		default:
+			bool overflow;
+
+			// operators that can overflow/underflow
+			switch( op ) {
+				case C_ADD: overflow = util::safe_addition( i1, i2, ret ); break;
+				case C_SUB: overflow = util::safe_substraction( i1, i2, ret ); break;
+				case C_MUL: overflow = util::safe_multiplication( i1, i2, ret ); break;
+				default:
+					ShowError("script:op_2num: unexpected number operator %s i1=%" PRId64 " i2=%" PRId64 "\n", script_op2name(op), i1, i2);
+					script_reportsrc(st);
+					script_pushnil(st);
+					return;
+			}
+
+			if( overflow ){
+				ShowWarning("script:op_2num: overflow detected op=%s i1=%" PRId64 " i2=%" PRId64 "\n", script_op2name(op), i1, i2);
+				script_reportsrc(st);
+				script_pushnil(st);
+				st->state = END;
+				return;
+			}
+	}
+	script_pushint(st, ret);
+}
+
+/// Binary operators
+void op_2(struct script_state *st, int32 op)
+{
+	struct script_data* left, leftref;
+	struct script_data* right;
+
+	leftref.type = C_NOP;
+
+	left = script_getdatatop(st, -2);
+	right = script_getdatatop(st, -1);
+
+	if (st->op2ref) {
+		if (data_isreference(left)) {
+			leftref = *left;
+		}
+
+		st->op2ref = 0;
+	}
+
+	get_val(st, left);
+	get_val(st, right);
+
+	// automatic conversions
+	switch( op )
+	{
+		case C_ADD:
+			if( data_isint(left) && data_isstring(right) )
+			{// convert int-string to string-string
+				conv_str(st, left);
+			}
+			else if( data_isstring(left) && data_isint(right) )
+			{// convert string-int32 to string-string
+				conv_str(st, right);
+			}
+			break;
+	}
+
+	if( data_isstring(left) && data_isstring(right) )
+	{// ss => op_2str
+		op_2str(st, op, left->u.str, right->u.str);
+		script_removetop(st, leftref.type == C_NOP ? -3 : -2, -1);// pop the two values before the top one
+
+		if (leftref.type != C_NOP)
+		{
+			if (left->type == C_STR) // don't free C_CONSTSTR
+				aFree(left->u.str);
+			*left = leftref;
+		}
+	}
+	else if( data_isint(left) && data_isint(right) )
+	{// ii => op_2num
+		int64 i1 = left->u.num;
+		int64 i2 = right->u.num;
+
+		script_removetop(st, leftref.type == C_NOP ? -2 : -1, 0);
+		op_2num(st, op, i1, i2);
+
+		if (leftref.type != C_NOP)
+			*left = leftref;
+	}
+	else
+	{// invalid argument
+		ShowError("script:op_2: invalid data for operator %s\n", script_op2name(op));
+		script_reportdata(left);
+		script_reportdata(right);
+		script_reportsrc(st);
+		script_removetop(st, -2, 0);
+		script_pushnil(st);
+		st->state = END;
+	}
+}
+
+/// Unary operators
+/// NEG i -> i
+/// NOT i -> i
+/// LNOT i -> i
+void op_1(struct script_state* st, int32 op)
+{
+	struct script_data* data;
+
+	data = script_getdatatop(st, -1);
+	get_val(st, data);
+
+	if( !data_isint(data) )
+	{// not a number
+		ShowError("script:op_1: argument is not a number (op=%s)\n", script_op2name(op));
+		script_reportdata(data);
+		script_reportsrc(st);
+		script_pushnil(st);
+		st->state = END;
+		return;
+	}
+
+	int64 i1 = data->u.num;
+	script_removetop(st, -1, 0);
+	switch( op )
+	{
+		case C_NEG: i1 = -i1; break;
+		case C_NOT: i1 = ~i1; break;
+		case C_LNOT: i1 = !i1; break;
+		default:
+			ShowError("script:op_1: unexpected operator %s i1=%" PRId64 "\n", script_op2name(op), i1);
+			script_reportsrc(st);
+			script_pushnil(st);
+			st->state = END;
+			return;
+	}
+	script_pushint(st, i1);
+}
+
+

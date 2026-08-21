@@ -1,0 +1,500 @@
+		});
+	};
+
+	if (costumeConfig) {
+		Component.setCostumeConfig = function setCostumeConfig(on) {
+			_hideCostume = on;
+			Client.loadFile(DB.INTERFACE_PATH + 'checkbox_' + (on ? '0' : '1') + '.bmp', data => {
+				const root = Component.getRoot();
+				const btn = root.querySelector('.show_costume');
+				if (btn) btn.style.backgroundImage = `url(${data})`;
+			});
+		};
+	} else {
+		Component.setCostumeConfig = function setCostumeConfig(_on) {};
+	}
+
+	Component.equip = function equip(item, location) {
+		const it = DB.getItemInfo(item.ITID);
+		if (entityRender) {
+			item.equipped = location;
+		}
+		_list[item.index] = item;
+
+		if (!entityRender && arguments.length === 1) {
+			if ('WearState' in item) {
+				location = item.WearState;
+			} else if ('location' in item) {
+				location = item.location;
+			}
+		}
+
+		function add3Dots(string, limit) {
+			function stripHTML(str) {
+				const div = document.createElement('div');
+				div.innerHTML = str;
+				return div.textContent || div.innerText || '';
+			}
+			const text = stripHTML(string);
+			if (text.length > limit) return text.substring(0, limit) + '...';
+			return text;
+		}
+
+		const root = Component.getRoot();
+		const selector = getSelectorFromLocation(location);
+		const gradeInner = enchantGrade ? '<div class="grade"></div>' : '';
+		root.querySelectorAll(selector).forEach(cell => {
+			cell.innerHTML =
+				'<div class="item" data-index="' +
+				item.index +
+				'">' +
+				'<button>' +
+				gradeInner +
+				'</button>' +
+				'<span class="itemName">' +
+				escapeHTML(
+					add3Dots(
+						DB.getItemName(item, { showItemGrade: false, showItemSlots: false, showItemOptions: false }),
+						25
+					)
+				) +
+				'</span>' +
+				'</div>';
+		});
+
+		Client.loadFile(DB.INTERFACE_PATH + 'item/' + it.identifiedResourceName + '.bmp', data => {
+			const btns = root.querySelectorAll(`.item[data-index="${item.index}"] button`);
+			btns.forEach(btn => {
+				btn.style.backgroundImage = `url(${data})`;
+			});
+		});
+
+		if (enchantGrade && item.enchantgrade) {
+			Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/grade_icon' + item.enchantgrade + '.bmp', data => {
+				root.querySelectorAll(`.item[data-index="${item.index}"] .grade`).forEach(el => {
+					el.style.backgroundImage = `url(${data})`;
+				});
+			});
+		}
+
+		if (!Inventory.getUI().equippedItems.includes(item.index)) {
+			Inventory.getUI().equippedItems.push(item.index);
+		}
+
+		if (switchEquip && PACKETVER.value >= 20170621) {
+			if (!Inventory.getUI().isInEquipSwitchList(location)) {
+				SwitchEquip.equip(item, location, false);
+			}
+		}
+	};
+
+	Component.unEquip = function unEquip(index, location) {
+		const selector = getSelectorFromLocation(location);
+		const root = Component.getRoot();
+		const item = _list[index];
+		if (entityRender) {
+			item.equipped = 0;
+		}
+
+		root.querySelectorAll(selector).forEach(el => {
+			el.innerHTML = '';
+		});
+		delete _list[index];
+
+		return item;
+	};
+
+	Component.onLevelUp = function onLevelUp() {
+		if (UIVersionManager.getEquipmentVersion() > 0 && _btnLevelUp) {
+			document.body.appendChild(_btnLevelUp);
+		}
+	};
+
+	Component.checkEquipLoc = function checkEquipLoc(location) {
+		if (!entityRender) {
+			return 0;
+		}
+		for (const key in _list) {
+			const equipMask = switchEquip ? _list[key].location : _list[key].equipped;
+			if (equipMask & location) {
+				return _list[key].wItemSpriteNumber;
+			}
+		}
+		return 0;
+	};
+
+	function hideStatus() {
+		const winStats = WinStats.getUI();
+		if (winStats.isEmbedded()) {
+			winStats.unembed();
+		}
+	}
+
+	function toggleStatus() {
+		const root = Component.getRoot();
+		const self = root.querySelector('.view_status');
+		const winStats = WinStats.getUI();
+		const isVisible = winStats.isEmbedded();
+		const state = isVisible ? 'on' : 'off';
+
+		if (isVisible) {
+			winStats.unembed();
+			_preferences.stats = false;
+		} else {
+			winStats.embed(Component._host);
+			_preferences.stats = true;
+		}
+
+		Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/view' + state + '.bmp', data => {
+			if (self) self.style.backgroundImage = `url(${data})`;
+		});
+	}
+
+	function toggleEquip() {
+		Component.onConfigUpdate(0, !_showEquip ? 1 : 0);
+	}
+
+	function toggleCostume() {
+		Component.onConfigUpdate(5, !_hideCostume ? 1 : 0);
+	}
+
+	function onSwtichEquip() {
+		SwitchEquip.toggle();
+
+		if (SwitchEquip.ui) {
+			const switchHost = SwitchEquip._host || SwitchEquip.ui;
+			if (switchHost.style) {
+				switchHost.style.position = 'absolute';
+				switchHost.style.top = '0';
+				switchHost.style.left = '0';
+				switchHost.style.zIndex = '100';
+			}
+		}
+	}
+
+	const renderCharacter = (function renderCharacterClosure() {
+		let _lastState = 0;
+		let _hasCart = 0;
+
+		const _cleanColor = new Float32Array([1.0, 1.0, 1.0, 1.0]);
+		const _savedColor = new Float32Array(4);
+		const _animation = {
+			tick: 0,
+			frame: 0,
+			repeat: true,
+			play: true,
+			next: false,
+			delay: 0,
+			save: false
+		};
+
+		const HasAttachmentState =
+			StatusConst.EffectState.FALCON |
+			StatusConst.EffectState.RIDING |
+			StatusConst.EffectState.DRAGON1 |
+			StatusConst.EffectState.DRAGON2 |
+			StatusConst.EffectState.DRAGON3 |
+			StatusConst.EffectState.DRAGON4 |
+			StatusConst.EffectState.DRAGON5 |
+			StatusConst.EffectState.MADOGEAR |
+			StatusConst.EffectState.CART1 |
+			StatusConst.EffectState.CART2 |
+			StatusConst.EffectState.CART3 |
+			StatusConst.EffectState.CART4 |
+			StatusConst.EffectState.CART5;
+
+		const HasCartState =
+			StatusConst.EffectState.CART1 |
+			StatusConst.EffectState.CART2 |
+			StatusConst.EffectState.CART3 |
+			StatusConst.EffectState.CART4 |
+			StatusConst.EffectState.CART5;
+
+		function updateAttachmentButtons() {
+			if (Session.Entity.effectState !== _lastState || _hasCart !== Session.Entity.hasCart) {
+				_lastState = Session.Entity.effectState;
+				_hasCart = Session.Entity.hasCart;
+
+				const root = Component.getRoot();
+				const removeOpt = root.querySelector('.removeOption');
+				const cartBtn = root.querySelector('.cartitems');
+
+				if (_lastState & HasAttachmentState || _hasCart) {
+					if (removeOpt) removeOpt.style.display = '';
+				} else {
+					if (removeOpt) removeOpt.style.display = 'none';
+				}
+
+				if (_lastState & HasCartState || _hasCart) {
+					if (cartBtn) cartBtn.style.display = '';
+				} else {
+					if (cartBtn) cartBtn.style.display = 'none';
+				}
+			}
+		}
+
+		function renderLegacy() {
+			const character = Session.Entity;
+			const direction = character.direction;
+			const headDir = character.headDir;
+			const action = character.action;
+			const animation = character.animation;
+
+			updateAttachmentButtons();
+
+			Camera.direction = 4;
+			character.direction = 4;
+			character.headDir = 0;
+			character.action = character.ACTION.IDLE;
+			character.animation = _animation;
+
+			_savedColor.set(character.effectColor);
+			character.effectColor.set(_cleanColor);
+
+			SpriteRenderer.bind2DContext(_ctx[0], 30, 130);
+			_ctx[0].clearRect(0, 0, _ctx[0].canvas.width, _ctx[0].canvas.height);
+			character.renderEntity();
+
+			character.direction = direction;
+			character.headDir = headDir;
+			character.action = action;
+			character.animation = animation;
+			character.effectColor.set(_savedColor);
+		}
+
+		function renderEntity() {
+			const equip_character = new Entity();
+			equip_character.set({
+				GID: Session.Entity.GID + '_EQUIP',
+				objecttype: equip_character.constructor.TYPE_PC,
+				job: Session.Entity.job,
+				sex: Session.Entity.sex,
+				name: '',
+				hideShadow: true,
+				head: Session.Entity.head,
+				headpalette: Session.Entity.headpalette,
+				bodypalette: Session.Entity.bodypalette
+			});
+
+			updateAttachmentButtons();
+
+			if (currentTabId === 'general') {
+				equip_character.accessory = Component.checkEquipLoc(EquipLocation.HEAD_BOTTOM);
+				equip_character.accessory2 = Component.checkEquipLoc(EquipLocation.HEAD_TOP);
+				equip_character.accessory3 = Component.checkEquipLoc(EquipLocation.HEAD_MID);
+				equip_character.robe = Component.checkEquipLoc(EquipLocation.GARMENT);
+			} else if (currentTabId === 'costume') {
+				equip_character.accessory = Component.checkEquipLoc(EquipLocation.COSTUME_HEAD_BOTTOM);
+				equip_character.accessory2 = Component.checkEquipLoc(EquipLocation.COSTUME_HEAD_TOP);
+				equip_character.accessory3 = Component.checkEquipLoc(EquipLocation.COSTUME_HEAD_MID);
+				equip_character.robe = Component.checkEquipLoc(EquipLocation.COSTUME_ROBE);
+			}
+
+			_savedColor.set(equip_character.effectColor);
+			equip_character.effectColor.set(_cleanColor);
+
+			Camera.direction = 0;
+			equip_character.direction = 0;
+			equip_character.headDir = 0;
+			equip_character.action = equip_character.ACTION.IDLE;
+			equip_character.animation = _animation;
+
+			for (let i = 0; i < _ctx.length; i++) {
+				const ctx = _ctx[i];
+				SpriteRenderer.bind2DContext(ctx, 30, 130);
+				ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+				equip_character.renderEntity(ctx);
+			}
+		}
+
+		return function renderChar() {
+			if (entityRender) {
+				renderEntity();
+			} else {
+				renderLegacy();
+			}
+		};
+	})();
+
+	function onDragOver(event) {
+		if (window._OBJ_DRAG_) {
+			const data = window._OBJ_DRAG_;
+			if (data.type === 'item') {
+				const item = data.data;
+				if (
+					(item.type === ItemType.WEAPON ||
+						item.type === ItemType.ARMOR ||
+						item.type === ItemType.SHADOWGEAR) &&
+					item.IsIdentified &&
+					!item.IsDamaged
+				) {
+					const selector = getSelectorFromLocation('location' in item ? item.location : item.WearLocation);
+					const root = Component.getRoot();
+					const cells = root.querySelectorAll(selector);
+					Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/item_invert.bmp', _data => {
+						cells.forEach(c => {
+							c.style.backgroundImage = `url(${_data})`;
+						});
+					});
+				}
+			}
+		}
+		event.stopImmediatePropagation();
+		return false;
+	}
+
+	function onDragLeave(event) {
+		const root = Component.getRoot();
+		root.querySelectorAll('td').forEach(td => {
+			td.style.backgroundImage = 'none';
+		});
+		event.stopImmediatePropagation();
+		return false;
+	}
+
+	function onDrop(event) {
+		let item, data;
+		event.stopImmediatePropagation();
+
+		try {
+			data = JSON.parse(event.dataTransfer.getData('Text'));
+		} catch (_e) {
+			return false;
+		}
+
+		if (data && data.type === 'item') {
+			item = data.data;
+			if (
+				(item.type === ItemType.WEAPON ||
+					item.type === ItemType.ARMOR ||
+					item.type === ItemType.AMMO ||
+					item.type === ItemType.SHADOWGEAR) &&
+				item.IsIdentified &&
+				!item.IsDamaged
+			) {
+				const root = Component.getRoot();
+				root.querySelectorAll('td').forEach(td => {
+					td.style.backgroundImage = 'none';
+				});
+				Component.onEquipItem(item.index, 'location' in item ? item.location : item.WearState);
+			}
+		}
+
+		return false;
+	}
+
+	function onEquipmentInfo(event) {
+		const index = parseInt(this.getAttribute('data-index'), 10);
+		const item = _list[index];
+
+		if (item) {
+			if (ItemInfo.uid === item.ITID) {
+				ItemInfo.remove();
+			} else {
+				ItemInfo.append();
+				ItemInfo.uid = item.ITID;
+				ItemInfo.setItem(item);
+			}
+		}
+
+		event.stopImmediatePropagation();
+		return false;
+	}
+
+	function onEquipmentUnEquip() {
+		const index = parseInt(this.getAttribute('data-index'), 10);
+		Component.onUnEquip(index);
+		const root = Component.getRoot();
+		const overlay = root.querySelector('.overlay');
+		if (overlay) overlay.style.display = 'none';
+	}
+
+	function onEquipmentOver() {
+		const idx = parseInt(this.parentNode.getAttribute('data-index'), 10);
+		const item = _list[idx];
+		if (!item) return;
+
+		const root = Component.getRoot();
+		const overlay = root.querySelector('.overlay');
+		const rootEl = root.querySelector('#' + name) || root;
+		const btnRect = this.getBoundingClientRect();
+		const rootRect = rootEl.getBoundingClientRect();
+		const top = btnRect.top - rootRect.top;
+		const left = btnRect.left - rootRect.left;
+		if (!top && !left) return;
+
+		if (overlay) {
+			overlay.style.display = 'block';
+			overlay.style.top = `${top - 22}px`;
+			overlay.style.left = `${left - 22}px`;
+			overlay.textContent = DB.getItemName(item);
+		}
+	}
+
+	function onEquipmentOut() {
+		const root = Component.getRoot();
+		const overlay = root.querySelector('.overlay');
+		if (overlay) overlay.style.display = 'none';
+	}
+
+	Component.onUpdateOwnerName = function () {
+		const root = Component.getRoot();
+		for (const index in _list) {
+			const item = _list[index];
+			if (item.slot && [0x00ff, 0x00fe, 0xff00].includes(item.slot.card1)) {
+				root.querySelectorAll(`.item[data-index="${index}"] .itemName`).forEach(nameEl => {
+					nameEl.textContent = DB.getItemName(item);
+				});
+			}
+		}
+	};
+
+	Component.getNumber = function () {
+		let num = 0;
+		for (const key in _list) {
+			if (_list[key].location && _list[key].location !== EquipLocation.AMMO) {
+				num++;
+			}
+		}
+		return num;
+	};
+
+	if (switchEquip) {
+		Component.isInEquipList = function (data) {
+			for (const key in _list) {
+				if (_list[key].location & data) {
+					return _list[key];
+				}
+			}
+			return 0;
+		};
+
+		Component.equipItemsToSwitch = function () {
+			const equipmentKeys = Object.keys(_list);
+			for (let i = 0; i < equipmentKeys.length; i++) {
+				const key = equipmentKeys[i];
+				const equipmentItem = _list[key];
+				if (equipmentItem.location) {
+					SwitchEquip.equip(equipmentItem, equipmentItem.location, false);
+				}
+			}
+		};
+	} else {
+		Component.isInEquipList = function () {
+			return 0;
+		};
+	}
+
+	if (titles) {
+		Component.loadTitles = function () {
+			const root = Component.getRoot();
+			const titleList = root.querySelector('#title_list');
+			if (!titleList) return;
+			titleList.innerHTML = '';
+
+			const removeTitleText = DB.getMessage(2686) || 'Remove Title';
+			const removeSelectedClass = _currentTitleId === 0 ? ' selected' : '';
+			const removeEl = document.createElement('div');
+			removeEl.className = `title-option${removeSelectedClass}`;
+			removeEl.setAttribute('data-title', '0');
+			removeEl.textContent = removeTitleText;

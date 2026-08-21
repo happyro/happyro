@@ -1,0 +1,500 @@
+		default:
+			ShowError("db_custom_release: Unknown release options %u\n", which);
+			return nullptr;
+	}
+}
+
+/**
+ * Allocate a new database of the specified type.
+ * NOTE: the options are fixed by {@link #db_fix_options(DBType,DBOptions)}
+ * before creating the database.
+ * @param file File where the database is being allocated
+ * @param line Line of the file where the database is being allocated
+ * @param type Type of database
+ * @param options Options of the database
+ * @param maxlen Maximum length of the string to be used as key in string
+ *          databases. If 0, the maximum number of maxlen is used (64K).
+ * @return The interface of the database
+ * @public
+ * @see #DBMap_impl
+ * @see #db_fix_options(DBType,DBOptions)
+ */
+DBMap* db_alloc(const char *file, const char *func, int32 line, DBType type, DBOptions options, uint16 maxlen) {
+	DBMap_impl* db;
+	uint32 i;
+	char ers_name[50];
+
+#ifdef DB_ENABLE_STATS
+	DB_COUNTSTAT(db_alloc);
+	switch (type) {
+		case DB_INT: DB_COUNTSTAT(db_int_alloc); break;
+		case DB_UINT: DB_COUNTSTAT(db_uint_alloc); break;
+		case DB_STRING: DB_COUNTSTAT(db_string_alloc); break;
+		case DB_ISTRING: DB_COUNTSTAT(db_istring_alloc); break;
+		case DB_INT64: DB_COUNTSTAT(db_int64_alloc); break;
+		case DB_UINT64: DB_COUNTSTAT(db_uint64_alloc); break;
+	}
+#endif /* DB_ENABLE_STATS */
+	db = ers_alloc(db_alloc_ers, struct DBMap_impl);
+
+	options = db_fix_options(type, options);
+	/* Interface of the database */
+	db->vtable.iterator = db_obj_iterator;
+	db->vtable.exists   = db_obj_exists;
+	db->vtable.get      = db_obj_get;
+	db->vtable.getall   = db_obj_getall;
+	db->vtable.vgetall  = db_obj_vgetall;
+	db->vtable.ensure   = db_obj_ensure;
+	db->vtable.vensure  = db_obj_vensure;
+	db->vtable.put      = db_obj_put;
+	db->vtable.remove   = db_obj_remove;
+	db->vtable.foreach  = db_obj_foreach;
+	db->vtable.vforeach = db_obj_vforeach;
+	db->vtable.clear    = db_obj_clear;
+	db->vtable.vclear   = db_obj_vclear;
+	db->vtable.destroy  = db_obj_destroy;
+	db->vtable.vdestroy = db_obj_vdestroy;
+	db->vtable.size     = db_obj_size;
+	db->vtable.type     = db_obj_type;
+	db->vtable.options  = db_obj_options;
+	/* File and line of allocation */
+	db->alloc_file = file;
+	db->alloc_line = line;
+	/* Lock system */
+	db->free_list = nullptr;
+	db->free_count = 0;
+	db->free_max = 0;
+	db->free_lock = 0;
+	/* Other */
+	snprintf(ers_name, 50, "db_alloc:nodes:%s:%s:%d",func,file,line);
+	db->nodes = ers_new(sizeof(struct dbn),ers_name,ERS_DBN_OPTIONS);
+	db->cmp = db_default_cmp(type);
+	db->hash = db_default_hash(type);
+	db->release = db_default_release(type, options);
+	for (i = 0; i < HASH_SIZE; i++)
+		db->ht[i] = nullptr;
+	db->cache = nullptr;
+	db->type = type;
+	db->options = options;
+	db->item_count = 0;
+	db->maxlen = maxlen;
+	db->global_lock = 0;
+
+	if( db->maxlen == 0 && (type == DB_STRING || type == DB_ISTRING) )
+		db->maxlen = UINT16_MAX;
+
+	return &db->vtable;
+}
+
+/**
+ * Manual cast from 'int' to the union DBKey.
+ * @param key Key to be casted
+ * @return The key as a DBKey union
+ * @public
+ */
+DBKey db_i2key(int32 key)
+{
+	DBKey ret;
+
+	DB_COUNTSTAT(db_i2key);
+	ret.i = key;
+	return ret;
+}
+
+/**
+ * Manual cast from 'uint32' to the union DBKey.
+ * @param key Key to be casted
+ * @return The key as a DBKey union
+ * @public
+ */
+DBKey db_ui2key(uint32 key)
+{
+	DBKey ret;
+
+	DB_COUNTSTAT(db_ui2key);
+	ret.ui = key;
+	return ret;
+}
+
+/**
+ * Manual cast from 'const char *' to the union DBKey.
+ * @param key Key to be casted
+ * @return The key as a DBKey union
+ * @public
+ */
+DBKey db_str2key(const char *key)
+{
+	DBKey ret;
+
+	DB_COUNTSTAT(db_str2key);
+	ret.str = key;
+	return ret;
+}
+
+/**
+ * Manual cast from 'int64' to the union DBKey.
+ * @param key Key to be casted
+ * @return The key as a DBKey union
+ * @public
+ */
+DBKey db_i642key(int64 key)
+{
+	DBKey ret;
+
+	DB_COUNTSTAT(db_i642key);
+	ret.i64 = key;
+	return ret;
+}
+
+/**
+ * Manual cast from 'uin64' to the union DBKey.
+ * @param key Key to be casted
+ * @return The key as a DBKey union
+ * @public
+ */
+DBKey db_ui642key(uint64 key)
+{
+	DBKey ret;
+
+	DB_COUNTSTAT(db_ui642key);
+	ret.ui64 = key;
+	return ret;
+}
+
+/**
+ * Manual cast from 'int' to the struct DBData.
+ * @param data Data to be casted
+ * @return The data as a DBData struct
+ * @public
+ */
+DBData db_i2data(int32 data)
+{
+	DBData ret;
+
+	DB_COUNTSTAT(db_i2data);
+	ret.type = DB_DATA_INT;
+	ret.u.i = data;
+	return ret;
+}
+
+/**
+ * Manual cast from 'uint32' to the struct DBData.
+ * @param data Data to be casted
+ * @return The data as a DBData struct
+ * @public
+ */
+DBData db_ui2data(uint32 data)
+{
+	DBData ret;
+
+	DB_COUNTSTAT(db_ui2data);
+	ret.type = DB_DATA_UINT;
+	ret.u.ui = data;
+	return ret;
+}
+
+/**
+ * Manual cast from 'void *' to the struct DBData.
+ * @param data Data to be casted
+ * @return The data as a DBData struct
+ * @public
+ */
+DBData db_ptr2data(void *data)
+{
+	DBData ret;
+
+	DB_COUNTSTAT(db_ptr2data);
+	ret.type = DB_DATA_PTR;
+	ret.u.ptr = data;
+	return ret;
+}
+
+/**
+ * Manual cast from 'int' to the struct DBData.
+ * @param data Data to be casted
+ * @return The data as a DBData struct
+ * @public
+ */
+DBData db_i642data(int64 data)
+{
+	DBData ret;
+
+	DB_COUNTSTAT(db_i2data);
+	ret.type = DB_DATA_I64;
+	ret.u.i64 = data;
+	return ret;
+}
+
+/**
+ * Gets int32 type data from struct DBData.
+ * If data is not int32 type, returns 0.
+ * @param data Data
+ * @return Integer value of the data.
+ * @public
+ */
+int32 db_data2i(DBData *data)
+{
+	DB_COUNTSTAT(db_data2i);
+	if (data && DB_DATA_INT == data->type)
+		return data->u.i;
+	return 0;
+}
+
+/**
+ * Gets uint32 type data from struct DBData.
+ * If data is not uint32 type, returns 0.
+ * @param data Data
+ * @return uint32 value of the data.
+ * @public
+ */
+uint32 db_data2ui(DBData *data)
+{
+	DB_COUNTSTAT(db_data2ui);
+	if (data && DB_DATA_UINT == data->type)
+		return data->u.ui;
+	return 0;
+}
+
+/**
+ * Gets void* type data from struct DBData.
+ * If data is not void* type, returns nullptr.
+ * @param data Data
+ * @return Void* value of the data.
+ * @public
+ */
+void* db_data2ptr(DBData *data)
+{
+	DB_COUNTSTAT(db_data2ptr);
+	if (data && DB_DATA_PTR == data->type)
+		return data->u.ptr;
+	return nullptr;
+}
+
+/**
+ * Gets int64 type data from struct DBData.
+ * If data is not int64 type, returns 0.
+ * @param data Data
+ * @return Integer(64-bit signed) value of the data.
+ * @public
+ */
+int64 db_data2i64( const DBData* data )
+{
+	DB_COUNTSTAT(db_data2i64);
+	if (data && DB_DATA_I64 == data->type)
+		return data->u.i64;
+	return 0;
+}
+
+/**
+ * Initializes the database system.
+ * @public
+ * @see #db_final(void)
+ */
+void db_init(void) {
+	db_iterator_ers = ers_new(sizeof(struct DBIterator_impl),"db.cpp::db_iterator_ers",ERS_CACHE_OPTIONS);
+	db_alloc_ers = ers_new(sizeof(struct DBMap_impl),"db.cpp::db_alloc_ers",ERS_CACHE_OPTIONS);
+	ers_chunk_size(db_alloc_ers, 50);
+	ers_chunk_size(db_iterator_ers, 10);
+	DB_COUNTSTAT(db_init);
+}
+
+/**
+ * Finalizes the database system.
+ * @public
+ * @see #db_init(void)
+ */
+void db_final(void)
+{
+#ifdef DB_ENABLE_STATS
+	DB_COUNTSTAT(db_final);
+	ShowInfo(CL_WHITE "Database nodes" CL_RESET ":\n"
+			"allocated %u, freed %u\n",
+			stats.db_node_alloc, stats.db_node_free);
+	ShowInfo(CL_WHITE "Database types" CL_RESET ":\n"
+			"DB_INT     : allocated %10u, destroyed %10u\n"
+			"DB_UINT    : allocated %10u, destroyed %10u\n"
+			"DB_STRING  : allocated %10u, destroyed %10u\n"
+			"DB_ISTRING : allocated %10u, destroyed %10u\n"
+			"DB_INT64   : allocated %10u, destroyed %10u\n"
+			"DB_UINT64  : allocated %10u, destroyed %10u\n",
+			stats.db_int_alloc,     stats.db_int_destroy,
+			stats.db_uint_alloc,    stats.db_uint_destroy,
+			stats.db_string_alloc,  stats.db_string_destroy,
+			stats.db_istring_alloc, stats.db_istring_destroy,
+			stats.db_int64_alloc,   stats.db_int64_destroy,
+			stats.db_uint64_alloc,  stats.db_uint64_destroy);
+	ShowInfo(CL_WHITE "Database function counters" CL_RESET ":\n"
+			"db_rotate_left     %10u, db_rotate_right    %10u,\n"
+			"db_rebalance       %10u, db_rebalance_erase %10u,\n"
+			"db_is_key_null     %10u,\n"
+			"db_dup_key         %10u, db_dup_key_free    %10u,\n"
+			"db_free_add        %10u, db_free_remove     %10u,\n"
+			"db_free_lock       %10u, db_free_unlock     %10u,\n"
+			"db_int_cmp         %10u, db_uint_cmp        %10u,\n"
+			"db_string_cmp      %10u, db_istring_cmp     %10u,\n"
+			"db_int64_cmp       %10u, db_uint64_cmp      %10u,\n"
+			"db_int_hash        %10u, db_uint_hash       %10u,\n"
+			"db_string_hash     %10u, db_istring_hash    %10u,\n"
+			"db_int64_hash      %10u, db_uint64_hash     %10u,\n"
+			"db_release_nothing %10u, db_release_key     %10u,\n"
+			"db_release_data    %10u, db_release_both    %10u,\n"
+			"dbit_first         %10u, dbit_last          %10u,\n"
+			"dbit_next          %10u, dbit_prev          %10u,\n"
+			"dbit_exists        %10u, dbit_remove        %10u,\n"
+			"dbit_destroy       %10u, db_iterator        %10u,\n"
+			"db_exits           %10u, db_get             %10u,\n"
+			"db_getall          %10u, db_vgetall         %10u,\n"
+			"db_ensure          %10u, db_vensure         %10u,\n"
+			"db_put             %10u, db_remove          %10u,\n"
+			"db_foreach         %10u, db_vforeach        %10u,\n"
+			"db_clear           %10u, db_vclear          %10u,\n"
+			"db_destroy         %10u, db_vdestroy        %10u,\n"
+			"db_size            %10u, db_type            %10u,\n"
+			"db_options         %10u, db_fix_options     %10u,\n"
+			"db_default_cmp     %10u, db_default_hash    %10u,\n"
+			"db_default_release %10u, db_custom_release  %10u,\n"
+			"db_alloc           %10u, db_i2key           %10u,\n"
+			"db_ui2key          %10u, db_str2key         %10u,\n"
+			"db_i642key         %10u, db_ui642key        %10u,\n"
+			"db_i2data          %10u, db_ui2data         %10u,\n"
+			"db_ptr2data        %10u, db_data2i          %10u,\n"
+			"db_data2ui         %10u, db_data2ptr        %10u,\n"
+			"db_init            %10u, db_final           %10u\n",
+			stats.db_rotate_left,     stats.db_rotate_right,
+			stats.db_rebalance,       stats.db_rebalance_erase,
+			stats.db_is_key_null,
+			stats.db_dup_key,         stats.db_dup_key_free,
+			stats.db_free_add,        stats.db_free_remove,
+			stats.db_free_lock,       stats.db_free_unlock,
+			stats.db_int_cmp,         stats.db_uint_cmp,
+			stats.db_string_cmp,      stats.db_istring_cmp,
+			stats.db_int64_cmp,       stats.db_uint64_cmp,
+			stats.db_int_hash,        stats.db_uint_hash,
+			stats.db_string_hash,     stats.db_istring_hash,
+			stats.db_int64_hash,      stats.db_uint64_hash,
+			stats.db_release_nothing, stats.db_release_key,
+			stats.db_release_data,    stats.db_release_both,
+			stats.dbit_first,         stats.dbit_last,
+			stats.dbit_next,          stats.dbit_prev,
+			stats.dbit_exists,        stats.dbit_remove,
+			stats.dbit_destroy,       stats.db_iterator,
+			stats.db_exists,          stats.db_get,
+			stats.db_getall,          stats.db_vgetall,
+			stats.db_ensure,          stats.db_vensure,
+			stats.db_put,             stats.db_remove,
+			stats.db_foreach,         stats.db_vforeach,
+			stats.db_clear,           stats.db_vclear,
+			stats.db_destroy,         stats.db_vdestroy,
+			stats.db_size,            stats.db_type,
+			stats.db_options,         stats.db_fix_options,
+			stats.db_default_cmp,     stats.db_default_hash,
+			stats.db_default_release, stats.db_custom_release,
+			stats.db_alloc,           stats.db_i2key,
+			stats.db_ui2key,          stats.db_str2key,
+			stats.db_i642key,         stats.db_ui642key,
+			stats.db_i2data,          stats.db_ui2data,
+			stats.db_ptr2data,        stats.db_data2i,
+			stats.db_data2ui,         stats.db_data2ptr,
+			stats.db_init,            stats.db_final);
+#endif /* DB_ENABLE_STATS */
+	ers_destroy(db_iterator_ers);
+	ers_destroy(db_alloc_ers);
+}
+
+// Link DB System - jAthena
+void linkdb_insert( struct linkdb_node** head, void *key, void* data)
+{
+	struct linkdb_node *node;
+	if( head == nullptr ) return ;
+	node = (struct linkdb_node*)aMalloc( sizeof(struct linkdb_node) );
+	if( *head == nullptr ) {
+		// first node
+		*head      = node;
+		node->prev = nullptr;
+		node->next = nullptr;
+	} else {
+		// link nodes
+		node->next    = *head;
+		node->prev    = (*head)->prev;
+		(*head)->prev = node;
+		(*head)       = node;
+	}
+	node->key  = key;
+	node->data = data;
+}
+
+void linkdb_vforeach( struct linkdb_node** head, LinkDBFunc func, va_list ap) {
+	struct linkdb_node *node;
+	if( head == nullptr ) return;
+	node = *head;
+	while ( node ) {
+		va_list argscopy;
+		va_copy(argscopy, ap);
+		func(node->key, node->data, argscopy);
+		va_end(argscopy);
+		node = node->next;
+	}
+}
+
+void linkdb_foreach( struct linkdb_node** head, LinkDBFunc func, ...) {
+	va_list ap;
+	va_start(ap, func);
+	linkdb_vforeach(head, func, ap);
+	va_end(ap);
+}
+
+void* linkdb_search( struct linkdb_node** head, void *key)
+{
+	int32 n = 0;
+	struct linkdb_node *node;
+	if( head == nullptr ) return nullptr;
+	node = *head;
+	while( node ) {
+		if( node->key == key ) {
+			if( node->prev && n > 5 ) {
+				//Moving the head in order to improve processing efficiency
+				node->prev->next = node->next;
+				if(node->next) node->next->prev = node->prev;
+				node->next = *head;
+				node->prev = (*head)->prev;
+				(*head)->prev = node;
+				(*head)       = node;
+			}
+			return node->data;
+		}
+		node = node->next;
+		n++;
+	}
+	return nullptr;
+}
+
+void* linkdb_erase( struct linkdb_node** head, void *key)
+{
+	struct linkdb_node *node;
+	if( head == nullptr ) return nullptr;
+	node = *head;
+	while( node ) {
+		if( node->key == key ) {
+			void *data = node->data;
+			if( node->prev == nullptr )
+				*head = node->next;
+			else
+				node->prev->next = node->next;
+			if( node->next )
+				node->next->prev = node->prev;
+			aFree( node );
+			return data;
+		}
+		node = node->next;
+	}
+	return nullptr;
+}
+
+void linkdb_replace( struct linkdb_node** head, void *key, void *data )
+{
+	int32 n = 0;
+	struct linkdb_node *node;
+	if( head == nullptr ) return ;
+	node = *head;
+	while( node ) {
+		if( node->key == key ) {

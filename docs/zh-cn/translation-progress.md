@@ -6,10 +6,14 @@
 - 当前分支：lang/zh-cn
 - 当前基准：[translation-scan-baseline.md](translation-scan-baseline.md)
 - 扫描日期：2026-08-21
-- 已完成翻译文件：0
+- 总源文件数：2,099
+- 总原始行数：2,535,635
+- 已处理源文件数：0
 - 已登记源码修改文件：0
 - 已登记术语和人名：0
-- 已分配候选文件：2,099
+- 已分配源文件：2,099
+- 已生成翻译工作单元：6,493（内部执行指标）
+- 已切割文件：538
 - Agent 数量：4
 
 ## 批次进度
@@ -29,20 +33,22 @@
 
 ## Agent 分配
 
-| Agent | 分配文件数 | 已完成 | 状态 |
+| Agent | 负责源文件数 | 已处理源文件数 | 状态 |
 | --- | ---: | ---: | --- |
-| agent-01 | 525 | 0 | 待开始 |
-| agent-02 | 525 | 0 | 待开始 |
-| agent-03 | 525 | 0 | 待开始 |
-| agent-04 | 524 | 0 | 待开始 |
+| agent-01 | 751 | 0 | 待开始 |
+| agent-02 | 773 | 0 | 待开始 |
+| agent-03 | 759 | 0 | 待开始 |
+| agent-04 | 760 | 0 | 待开始 |
+
+由于大文件切片允许跨 agent 分配，上述负责源文件数可能重复；总进度按 repo 和 path 去重，只统计完整文件的处理状态。
 
 ## 记录规则
 
 - translated-files.tsv 初始只保留表头；只有 agent 完成翻译后才新增记录。
 - terms-names.csv 初始只保留表头；不要预先导入旧术语。
-- translation-manifest.tsv 是冻结的全量候选和分配清单；翻译期间不重新分配文件。
-- 每个 agent 只更新自己的 manifest.tsv、modified-files.tsv、progress.md 和 terms-names.csv。
-- 不用历史提交、旧批次编号或翻译行数推断完成状态。
+- translation-manifest.tsv 是冻结的全量候选工作单元和分配清单；翻译期间不重新分配文件或切片。
+- 每个 agent 只更新自己的 manifest.tsv、chunks/translated/、modified-files.tsv、progress.md 和 terms-names.csv。
+- 不用历史提交、旧批次编号或翻译行数推断完成状态；根目录进度以去重后的已处理源文件数为主，切片状态只用于恢复工作。
 - 当前阶段不进行自动测试，全部源码翻译完成后由用户统一手动验收。
 
 ## 下一步

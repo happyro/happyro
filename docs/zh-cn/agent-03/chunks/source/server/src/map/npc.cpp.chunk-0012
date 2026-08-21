@@ -1,0 +1,500 @@
+				map_setmapflag_sub(m, MF_BATTLEGROUND, true, &args);
+			} else
+				map_setmapflag(m, MF_BATTLEGROUND, false);
+			break;
+
+		case MF_NOCOMMAND:
+			if (state) {
+				union u_mapflag_args args = {};
+
+				if (sscanf(w4, "%11d", &args.flag_val) < 1)
+					args.flag_val = 100; // No level specified, block everyone.
+
+				map_setmapflag_sub(m, MF_NOCOMMAND, true, &args);
+			} else
+				map_setmapflag(m, MF_NOCOMMAND, false);
+			break;
+
+		case MF_RESTRICTED:
+			if (state) {
+				union u_mapflag_args args = {};
+
+				if (sscanf(w4, "%11d", &args.flag_val) == 1)
+					map_setmapflag_sub(m, MF_RESTRICTED, true, &args);
+				else // Could not be read, no value defined; don't remove as other restrictions may be set on the map
+					ShowWarning("npc_parse_mapflag: Zone value not set for the restricted mapflag! Skipped flag from %s (file '%s', line '%d').\n", map_mapid2mapname(m), filepath, strline(buffer,start-buffer));
+			} else
+				map_setmapflag(m, MF_RESTRICTED, false);
+			break;
+
+		case MF_JEXP:
+		case MF_BEXP: {
+				union u_mapflag_args args = {};
+
+				if (sscanf(w4, "%11d", &args.flag_val) < 1)
+					args.flag_val = 0;
+
+				map_setmapflag_sub(m, mapflag, state, &args);
+			}
+			break;
+			
+		case MF_SPECIALPOPUP: {
+				union u_mapflag_args args = {};
+
+				if (sscanf(w4, "%11d", &args.flag_val) < 1)
+					args.flag_val = 0;
+
+				map_setmapflag_sub(m, mapflag, state, &args);
+			}
+			break;
+
+		case MF_SKILL_DAMAGE: {
+			char skill_name[SKILL_NAME_LENGTH];
+			char caster_constant[NAME_LENGTH];
+			union u_mapflag_args args = {};
+
+			memset(skill_name, 0, sizeof(skill_name));
+
+			if (!state)
+				map_setmapflag_sub(m, MF_SKILL_DAMAGE, false, &args);
+			else {
+				if (sscanf(w4, "%30[^,],%23[^,],%11d,%11d,%11d,%11d[^\n]", skill_name, caster_constant, &args.skill_damage.rate[SKILLDMG_PC], &args.skill_damage.rate[SKILLDMG_MOB], &args.skill_damage.rate[SKILLDMG_BOSS], &args.skill_damage.rate[SKILLDMG_OTHER]) >= 3) {
+					if (ISDIGIT(caster_constant[0]))
+						args.skill_damage.caster = atoi(caster_constant);
+					else {
+						int64 val_tmp;
+
+						if (!script_get_constant(caster_constant, &val_tmp)) {
+							ShowError( "npc_parse_mapflag: Unknown constant '%s'. Skipping (file '%s', line '%d').\n", caster_constant, filepath, strline(buffer, start - buffer) );
+							break;
+						}
+
+						args.skill_damage.caster = static_cast<uint16>(val_tmp);
+					}
+					
+					if (args.skill_damage.caster == 0)
+						args.skill_damage.caster = BL_ALL;
+
+					for (int32 i = SKILLDMG_PC; i < SKILLDMG_MAX; i++)
+						args.skill_damage.rate[i] = cap_value(args.skill_damage.rate[i], -100, 100000);
+
+					trim(skill_name);
+
+					if (strcmp(skill_name, "all") == 0) // Adjust damage for all skills
+						map_setmapflag_sub(m, MF_SKILL_DAMAGE, true, &args);
+					else if (skill_name2id(skill_name) <= 0)
+						ShowWarning("npc_parse_mapflag: Invalid skill name '%s' for Skill Damage mapflag. Skipping (file '%s', line '%d').\n", skill_name, filepath, strline(buffer, start - buffer));
+					else { // Adjusted damage for specified skill
+						args.flag_val = 1;
+						map_setmapflag_sub(m, MF_SKILL_DAMAGE, true, &args);
+						map_skill_damage_add(map_getmapdata(m), skill_name2id(skill_name), &args);
+					}
+				}
+			}
+			break;
+		}
+
+		case MF_SKILL_DURATION: {
+			union u_mapflag_args args = {};
+
+			if (!state)
+				map_setmapflag_sub(m, MF_SKILL_DURATION, false, &args);
+			else {
+				char skill_name[SKILL_NAME_LENGTH];
+
+				if (sscanf(w4, "%30[^,],%5hu[^\n]", skill_name, &args.skill_duration.per) == 2) {
+					args.skill_duration.skill_id = skill_name2id(skill_name);
+
+					if (!args.skill_duration.skill_id)
+						ShowError("npc_parse_mapflag: skill_duration: Invalid skill name '%s' for Skill Duration mapflag. Skipping (file '%s', line '%d')\n", skill_name, filepath, strline(buffer, start - buffer));
+					else {
+						args.skill_duration.per = cap_value(args.skill_duration.per, 0, UINT16_MAX);
+						map_setmapflag_sub(m, MF_SKILL_DURATION, true, &args);
+					}
+				}
+			}
+			break;
+		}
+
+		case MF_INVINCIBLE_TIME: {
+				union u_mapflag_args args = {};
+
+				if (state && sscanf(w4, "%11d", &args.flag_val) != 1){
+					ShowError("npc_parse_mapflag: invincible_time: Invalid time '%s' for Invincible Time mapflag. Skipping (file '%s', line '%d')\n", w4, filepath, strline(buffer, start - buffer));
+					break;
+				}
+
+				map_setmapflag_sub(m, mapflag, state, &args);
+			}
+			break;
+
+		// All others do not need special treatment
+		default:
+			map_setmapflag(m, mapflag, state);
+			break;
+	}
+
+	return strchr(start,'\n');// continue
+}
+
+/**
+ * Read file and create npc/func/mapflag/monster... accordingly.
+ * @param filepath : Relative path of file from map-serv bin
+ * @param runOnInit :  should we exec OnInit when it's done ?
+ * @return 0:error, 1:success
+ */
+int32 npc_parsesrcfile(const char* filepath)
+{
+	if (check_filepath(filepath) != 2) { //this is not a file 
+		ShowDebug("npc_parsesrcfile: Path doesn't seem to be a file skipping it : '%s'.\n", filepath);
+		return 0;
+	} 
+            
+	// read whole file to buffer
+	FILE* fp = fopen(filepath, "rb");
+	if (fp == nullptr) {
+		ShowError("npc_parsesrcfile: File not found '%s'.\n", filepath);
+		return 0;
+	}
+	fseek(fp, 0, SEEK_END);
+	size_t len = ftell(fp);
+	char* buffer = (char*)aMalloc(len+1);
+	fseek(fp, 0, SEEK_SET);
+	len = fread(buffer, 1, len, fp);
+	buffer[len] = '\0';
+	if (ferror(fp)) {
+		ShowError("npc_parsesrcfile: Failed to read file '%s' - %s\n", filepath, strerror(errno));
+		aFree(buffer);
+		fclose(fp);
+		return 0;
+	}
+	fclose(fp);
+
+	if ((unsigned char)buffer[0] == 0xEF && (unsigned char)buffer[1] == 0xBB && (unsigned char)buffer[2] == 0xBF) {
+		// UTF-8 BOM. This is most likely an error on the user's part, because:
+		// - BOM is discouraged in UTF-8, and the only place where you see it is Notepad and such.
+		// - It's unlikely that the user wants to use UTF-8 data here, since we don't really support it, nor does the client by default.
+		// - If the user really wants to use UTF-8 (instead of latin1, EUC-KR, SJIS, etc), then they can still do it <without BOM>.
+		// More info at http://unicode.org/faq/utf_bom.html#bom5 and http://en.wikipedia.org/wiki/Byte_order_mark#UTF-8
+		ShowError("npc_parsesrcfile: Detected unsupported UTF-8 BOM in file '%s'. Stopping (please consider using another character set).\n", filepath);
+		aFree(buffer);
+		return 0;
+	}
+
+	int32 lines = 0;
+
+	// parse buffer
+	for ( const char* p = skip_space(buffer); p && *p ; p = skip_space(p) ) {
+		size_t pos[9];
+		lines++;
+
+		// w1<TAB>w2<TAB>w3<TAB>w4
+		bool error;
+		size_t count = sv_parse( p, len + buffer - p, 0, '\t', pos, ARRAYLENGTH( pos ), SV_TERMINATE_LF|SV_TERMINATE_CRLF, error );
+
+		if( error ){
+			ShowError("npc_parsesrcfile: Parse error in file '%s', line '%d'. Stopping...\n", filepath, strline(buffer,p-buffer));
+			break;
+		}
+
+		char w1[2048], w2[2048], w3[2048], w4[2048];
+
+		// fill w1
+		if( pos[3]-pos[2] > ARRAYLENGTH(w1)-1 )
+			ShowWarning("npc_parsesrcfile: w1 truncated, too much data (%" PRIuPTR ") in file '%s', line '%d'.\n", pos[3]-pos[2], filepath, strline(buffer,p-buffer));
+
+		size_t index = std::min( pos[3] - pos[2], ARRAYLENGTH( w1 ) - 1 );
+		memcpy( w1, p + pos[2], index * sizeof( char ) );
+		w1[index] = '\0';
+
+		// fill w2
+		if( pos[5]-pos[4] > ARRAYLENGTH(w2)-1 )
+			ShowWarning("npc_parsesrcfile: w2 truncated, too much data (%" PRIuPTR ") in file '%s', line '%d'.\n", pos[5]-pos[4], filepath, strline(buffer,p-buffer));
+
+		index = std::min( pos[5] - pos[4], ARRAYLENGTH( w2 ) - 1 );
+		memcpy( w2, p + pos[4], index * sizeof( char ) );
+		w2[index] = '\0';
+
+		// fill w3
+		if( pos[7]-pos[6] > ARRAYLENGTH(w3)-1 )
+			ShowWarning("npc_parsesrcfile: w3 truncated, too much data (%" PRIuPTR ") in file '%s', line '%d'.\n", pos[7]-pos[6], filepath, strline(buffer,p-buffer));
+
+		index = std::min( pos[7] - pos[6], ARRAYLENGTH( w3 ) - 1 );
+		memcpy( w3, p + pos[6], index * sizeof( char ) );
+		w3[index] = '\0';
+
+		// fill w4 (to end of line)
+		if( pos[1]-pos[8] > ARRAYLENGTH(w4)-1 )
+			ShowWarning("npc_parsesrcfile: w4 truncated, too much data (%" PRIuPTR ") in file '%s', line '%d'.\n", pos[1]-pos[8], filepath, strline(buffer,p-buffer));
+		if (pos[8] != -1) {
+			index = std::min( pos[1] - pos[8], ARRAYLENGTH( w4 ) - 1 );
+			memcpy( w4, p + pos[8], index * sizeof( char ) );
+			w4[index] = '\0';
+		}
+		else
+			w4[0] = '\0';
+
+		if (count < 3) {// Unknown syntax
+			ShowError("npc_parsesrcfile: Unknown syntax in file '%s', line '%d'. Stopping...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,p-buffer), w1, w2, w3, w4);
+			break;
+		}
+
+		// Whether w2 contains word "script"
+		bool has_script = false;
+
+		if (count > 3 && strncasecmp(w2, "script", 6) == 0)
+			has_script = true;
+
+		if (strcmp(w1, "-") != 0 && strcasecmp(w1, "function") != 0) {// check the data of w1 = <map name>,<x>,<y>,<facing>
+			char mapname[MAP_NAME_LENGTH_EXT];
+			int16 x, y;
+			int32 count2 = sscanf(w1,"%15[^,],%6hd,%6hd[^,]",mapname,&x,&y);
+
+			if (count2 < 1) {
+				ShowError("npc_parsesrcfile: Invalid script definition in file '%s', line '%d'. Skipping line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,p-buffer), w1, w2, w3, w4);
+				if (has_script && (p = npc_skip_script(p,buffer,filepath)) == nullptr)
+					break;
+				p = strchr(p,'\n');// next line
+				continue;
+			}
+			else if (count2 < 3) {
+				// If we were not able to parse any x and y coordinates(usually used by mapflags)
+				x = y = 0;
+			}
+
+			if (!mapindex_name2id(mapname)) {// Incorrect map, we must skip the script info...
+				ShowError("npc_parsesrcfile: Unknown map '%s' in file '%s', line '%d'. Skipping line...\n", mapname, filepath, strline(buffer,p-buffer));
+				if (has_script && (p = npc_skip_script(p,buffer,filepath)) == nullptr)
+					break;
+				p = strchr(p,'\n');// next line
+				continue;
+			}
+			int16 m = map_mapname2mapid(mapname);
+			if (m < 0) {// "mapname" is not assigned to this server, we must skip the script info...
+				if (has_script && (p = npc_skip_script(p,buffer,filepath)) == nullptr)
+					break;
+				p = strchr(p,'\n');// next line
+				continue;
+			}
+
+			map_data *mapdata = map_getmapdata(m);
+
+			if (x < 0 || x >= mapdata->xs || y < 0 || y >= mapdata->ys) {
+				ShowError("npc_parsesrcfile: Unknown coordinates ('%d', '%d') for map '%s' in file '%s', line '%d'. Skipping line...\n", x, y, mapname, filepath, strline(buffer,p-buffer));
+				if (has_script && (p = npc_skip_script(p,buffer,filepath)) == nullptr)
+					break;
+				p = strchr(p,'\n');// next line
+				continue;
+			}
+		}
+
+		// parse the data according to w2
+		if ((strncasecmp(w2, "warp", 4) == 0 || strncasecmp(w2, "warp2", 5) == 0) && count > 3)
+			p = npc_parse_warp(w1,w2,w3,w4, p, buffer, filepath);
+		else if ((!strcasecmp(w2,"shop") || !strcasecmp(w2,"cashshop") || !strcasecmp(w2,"itemshop") || !strcasecmp(w2,"pointshop") || !strcasecmp(w2,"marketshop") ) && count > 3)
+			p = npc_parse_shop(w1,w2,w3,w4, p, buffer, filepath);
+		else if (has_script) {
+			if (strcasecmp(w1,"function") == 0) {
+				if (strcasecmp(w2,"script") == 0)
+					p = npc_parse_function(w1, w2, w3, w4, p, buffer, filepath);
+				else {
+					ShowError("npc_parsesrcfile: Unable to parse, probably a missing or extra TAB in file '%s', line '%d'. Skipping line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,p-buffer), w1, w2, w3, w4);
+					p = strchr(p,'\n');// skip and continue
+				}
+			}
+			else
+				p = npc_parse_script(w1,w2,w3,w4, p, buffer, filepath);
+		}
+		else if( int32 i = 0; ( sscanf( w2, "duplicate%n", &i ), ( i > 0 && w2[i] == '(' ) ) && count > 3 )
+			p = npc_parse_duplicate(w1,w2,w3,w4, p, buffer, filepath);
+		else if( (strcmpi(w2,"monster") == 0 || strcmpi(w2,"boss_monster") == 0) && count > 3 )
+			p = npc_parse_mob(w1, w2, w3, w4, p, buffer, filepath);
+		else if( strcmpi(w2,"mapflag") == 0 && count >= 3 )
+			p = npc_parse_mapflag(w1, w2, trim(w3), trim(w4), p, buffer, filepath);
+		else {
+			ShowError("npc_parsesrcfile: Unable to parse, probably a missing or extra TAB in file '%s', line '%d'. Skipping line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,p-buffer), w1, w2, w3, w4);
+			p = strchr(p,'\n');// skip and continue
+		}
+	}
+	aFree(buffer);
+
+	return 1;
+}
+
+size_t npc_script_event( map_session_data& sd, enum npce_event type ){
+	if (type == NPCE_MAX)
+		return 0;
+
+	std::vector<struct script_event_s>& vector = script_event[type];
+
+	for( struct script_event_s& evt : vector ){
+		npc_event_sub( &sd, evt.event, evt.event_name );
+	}
+
+	return vector.size();
+}
+
+/**
+ * Duplicates a NPC.
+ * nd: Original NPC data
+ * name: Duplicate NPC name
+ * m: Map ID of duplicate NPC
+ * x: X coordinate of duplicate NPC
+ * y: Y coordinate of duplicate NPC
+ * class_: View of duplicate NPC
+ * dir: Facing direction of duplicate NPC
+ * Returns duplicate NPC data on success
+ */
+npc_data* npc_duplicate_npc( npc_data& nd, char name[NPC_NAME_LENGTH + 1], int16 mapid, int16 x, int16 y, int32 class_, uint8 dir, int16 xs, int16 ys, map_session_data* owner ){
+	static char w1[128], w2[128], w3[128], w4[128];
+	const char* stat_buf = "- call from duplicate subsystem -\n";
+	char exname[NPC_NAME_LENGTH + 1];
+
+	snprintf(w1, sizeof(w1), "%s,%d,%d,%d", map_getmapdata(mapid)->name, x, y, dir);
+	snprintf(w2, sizeof(w2), "duplicate(%s)", nd.exname);
+
+	//Making sure the generated name is not used for another npc.
+	int32 i = 0;
+	snprintf(exname, ARRAYLENGTH(exname), "%d_%d_%d_%d", i, mapid, x, y);
+	while (npc_name2id(exname) != nullptr) {
+		++i;
+		snprintf(exname, ARRAYLENGTH(exname), "%d_%d_%d_%d", i, mapid, x, y);
+	}
+
+	snprintf(w3, sizeof(w3), "%s::%s", name, exname);
+
+	if( xs >= 0 && ys >= 0 ){
+		snprintf( w4, sizeof( w4 ), "%d,%d,%d", class_, xs, ys ); // Touch Area
+	}else{
+		snprintf( w4, sizeof( w4 ), "%d", class_ );
+	}
+
+	npc_parse_duplicate( w1, w2, w3, w4, stat_buf, stat_buf, "DUPLICATE", owner ); //DUPLICATE means nothing for now.
+
+	npc_data* dnd = npc_name2id( exname );
+
+	// No need to try and execute any events
+	if( dnd == nullptr ){
+		return nullptr;
+	}
+
+	//run OnInit Events
+	char evname[EVENT_NAME_LENGTH];
+	safesnprintf(evname, EVENT_NAME_LENGTH, "%s::%s", exname, script_config.init_event_name);
+	if ((struct event_data*)strdb_get(ev_db, evname)) {
+		npc_event_do(evname);
+	}
+
+	return dnd;
+}
+
+TIMER_FUNC(npc_dynamicnpc_removal_timer){
+	npc_data* nd = map_id2nd( id );
+
+	if( nd == nullptr ){
+		return 0;
+	}
+
+	nd->dynamicnpc.removal_tid = INVALID_TIMER;
+
+	map_session_data* sd = map_charid2sd( nd->dynamicnpc.owner_char_id );
+
+	if( sd != nullptr ){
+		// Still talking to the NPC
+		// TODO: are there other fields to check?
+		if( sd->npc_id == nd->id || sd->npc_shopid == nd->id ){
+			// Retry later
+			nd->dynamicnpc.last_interaction = gettick();
+			nd->dynamicnpc.removal_tid = add_timer( nd->dynamicnpc.last_interaction + battle_config.feature_dynamicnpc_timeout, npc_dynamicnpc_removal_timer, nd->id, (intptr_t)nullptr );
+			return 0;
+		}
+
+		// Last interaction is not long enough in the past
+		if( DIFF_TICK( gettick(), nd->dynamicnpc.last_interaction ) < battle_config.feature_dynamicnpc_timeout ){
+			nd->dynamicnpc.removal_tid = add_timer( nd->dynamicnpc.last_interaction + DIFF_TICK( gettick(), nd->dynamicnpc.last_interaction ), npc_dynamicnpc_removal_timer, nd->id, (intptr_t)nullptr );
+			return 0;
+		}
+
+		// npc id from sd->npc_id_dynamic is removed in npc_unload
+	}
+
+	// Delete the NPC
+	npc_unload( nd, true );
+	// Update NPC event database
+	npc_read_event_script();
+
+	return 0;
+}
+
+npc_data* npc_duplicate_npc_for_player( npc_data& nd, map_session_data& sd ){
+	// A duplicate of a duplicate is still a duplicate of the same NPC
+	int32 src_id = nd.src_id > 0 ? nd.src_id : nd.id;
+
+	for (const auto &it : sd.npc_id_dynamic) {
+		npc_data* src_nd = map_id2nd( it );
+
+		// Check if the source NPC id of currently active duplicates already exists.
+		if( src_nd != nullptr && src_nd->src_id == src_id ){
+			clif_dynamicnpc_result( sd, DYNAMICNPC_RESULT_DUPLICATE );
+			return nullptr;
+		}
+	}
+
+	if( map_getmapflag( sd.m, MF_NODYNAMICNPC ) ){
+		// It has been confirmed that there is no reply to the client
+		return nullptr;
+	}
+
+	int16 new_x, new_y;
+
+	if( !map_search_freecell( &sd, 0, &new_x, &new_y, battle_config.feature_dynamicnpc_rangex, battle_config.feature_dynamicnpc_rangey, 0 ) ){
+		ShowError( "npc_duplicate_npc_for_player: Unable to find a free cell to duplicate NPC \"%s\" for player \"%s\"(AID: %u, CID: %u)\n", nd.exname, sd.status.name, sd.status.account_id, sd.status.char_id );
+		return nullptr;
+	}
+
+	int8 dir;
+
+	if( battle_config.feature_dynamicnpc_direction ){
+		// Let the NPC look to the player
+		dir = map_calc_dir_xy( new_x, new_y, sd.x, sd.y, DIR_CENTER );
+	}else{
+		// Use original NPCs direction
+		dir = nd.ud.dir;
+	}
+
+	npc_data* dnd = npc_duplicate_npc( nd, nd.name, sd.m, new_x, new_y, nd.class_, dir, nd.u.scr.xs, nd.u.scr.ys, &sd );
+
+	if( dnd == nullptr ){
+		return nullptr;
+	}
+
+	dnd->dynamicnpc.last_interaction = gettick();
+	dnd->dynamicnpc.removal_tid = add_timer( dnd->dynamicnpc.last_interaction + battle_config.feature_dynamicnpc_timeout, npc_dynamicnpc_removal_timer, dnd->id, (intptr_t)nullptr );
+
+	return dnd;
+}
+
+const char *npc_get_script_event_name(int32 npce_index)
+{
+	switch (npce_index) {
+	case NPCE_LOGIN:
+		return script_config.login_event_name;
+	case NPCE_LOGOUT:
+		return script_config.logout_event_name;
+	case NPCE_LOADMAP:
+		return script_config.loadmap_event_name;
+	case NPCE_BASELVUP:
+		return script_config.baselvup_event_name;
+	case NPCE_JOBLVUP:
+		return script_config.joblvup_event_name;
+	case NPCE_DIE:
+		return script_config.die_event_name;
+	case NPCE_KILLPC:
+		return script_config.kill_pc_event_name;
+	case NPCE_KILLNPC:
+		return script_config.kill_mob_event_name;
+	case NPCE_IDENTIFY:
+		return script_config.identify_event_name;
+	default:
+		ShowError("npc_get_script_event_name: npce_index is outside the array limits: %d (max: %d).\n", npce_index, NPCE_MAX);
+		return nullptr;

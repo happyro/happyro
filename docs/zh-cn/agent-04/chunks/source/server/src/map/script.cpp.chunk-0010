@@ -1,0 +1,500 @@
+		if (st->stack && st->stack->defsp >= 1 && st->stack->stack_data[st->stack->defsp - 1].type == C_RETINFO) {
+			for (int32 i = 0; i < st->stack->sp; i++) {
+				if (st->stack->stack_data[i].type == C_RETINFO) { // Grab the first, aka the original
+					st->script = st->stack->stack_data[i].u.ri->script;
+					break;
+				}
+			}
+		}
+
+		//Dispose of script.
+		if ((sd = map_id2sd(st->rid))!=nullptr)
+		{	//Restore previous stack and save char.
+			if(sd->state.using_fake_npc){
+				clif_clearunit_single( sd->npc_id, CLR_OUTSIGHT, *sd );
+				sd->state.using_fake_npc = 0;
+			}
+			//Restore previous script if any.
+			script_detach_state(st, true);
+			if (sd->vars_dirty)
+				intif_saveregistry(sd);
+		}
+		script_free_state(st);
+	}
+}
+
+int32 script_config_read(const char *cfgName)
+{
+	int32 i;
+	char line[1024],w1[1024],w2[1024];
+	FILE *fp;
+
+
+	fp=fopen(cfgName,"r");
+	if(fp==nullptr){
+		ShowError("File not found: %s\n", cfgName);
+		return 1;
+	}
+	while(fgets(line, sizeof(line), fp))
+	{
+		if(line[0] == '/' && line[1] == '/')
+			continue;
+		i=sscanf(line,"%1023[^:]: %1023[^\r\n]",w1,w2);
+		if(i!=2)
+			continue;
+
+		if(strcmpi(w1,"warn_func_mismatch_paramnum")==0) {
+			script_config.warn_func_mismatch_paramnum = config_switch(w2);
+		}
+		else if(strcmpi(w1,"check_cmdcount")==0) {
+			script_config.check_cmdcount = config_switch(w2);
+		}
+		else if(strcmpi(w1,"check_gotocount")==0) {
+			script_config.check_gotocount = config_switch(w2);
+		}
+		else if(strcmpi(w1,"input_min_value")==0) {
+			script_config.input_min_value = config_switch(w2);
+		}
+		else if(strcmpi(w1,"input_max_value")==0) {
+			script_config.input_max_value = config_switch(w2);
+		}
+		else if(strcmpi(w1,"warn_func_mismatch_argtypes")==0) {
+			script_config.warn_func_mismatch_argtypes = config_switch(w2);
+		}
+		else if(strcmpi(w1,"import")==0){
+			script_config_read(w2);
+		}
+		else {
+			ShowWarning("Unknown setting '%s' in file %s\n", w1, cfgName);
+		}
+	}
+	fclose(fp);
+
+	return 0;
+}
+
+/**
+ * @see DBApply
+ */
+static int32 db_script_free_code_sub(DBKey key, DBData *data, va_list ap)
+{
+	struct script_code *code = static_cast<script_code *>(db_data2ptr(data));
+	if (code)
+		script_free_code(code);
+	return 0;
+}
+
+void script_run_autobonus(const char *autobonus, map_session_data *sd, uint32 pos)
+{
+	struct script_code *script = (struct script_code *)strdb_get(autobonus_db, autobonus);
+
+	if( script )
+	{
+		int32 j;
+		ARR_FIND( 0, EQI_MAX, j, sd->equip_index[j] >= 0 && sd->inventory.u.items_inventory[sd->equip_index[j]].equip == pos );
+		if( j < EQI_MAX ) {
+			//Single item autobonus
+			current_equip_item_index = sd->equip_index[j];
+			current_equip_combo_pos = 0;
+		} else {
+			//Combo autobonus
+			current_equip_item_index = -1;
+			current_equip_combo_pos = pos;
+		}
+		run_script(script,0,sd->id,0);
+	}
+}
+
+void script_add_autobonus(const char *autobonus)
+{
+	if( strdb_get(autobonus_db, autobonus) == nullptr )
+	{
+		struct script_code *script = parse_script(autobonus, "autobonus", 0, 0);
+
+		if( script )
+			strdb_put(autobonus_db, autobonus, script);
+	}
+}
+
+void script_run_petautobonus(const std::string &autobonus, map_session_data &sd) {
+	std::shared_ptr<s_pet_autobonus_wrapper> script = util::umap_find(pet_autobonuses, autobonus);
+
+	if (script != nullptr) {
+		run_script(script->script, 0, sd.id, 0);
+	}
+}
+
+void script_add_petautobonus(const std::string &autobonus) {
+	if (util::umap_find(pet_autobonuses, autobonus) == nullptr) {
+		script_code *script = parse_script(autobonus.c_str(), "petautobonus", 0, 0);
+
+		if (script != nullptr) {
+			std::shared_ptr<s_pet_autobonus_wrapper> bonus = std::make_shared<s_pet_autobonus_wrapper>();
+
+			bonus->script = script;
+
+			pet_autobonuses.emplace(autobonus, bonus);
+		}
+	}
+}
+
+/// resets a temporary character array variable to given value
+void script_cleararray_pc( map_session_data* sd, const char* varname ){
+	struct script_array *sa = nullptr;
+	struct reg_db *src = nullptr;
+	uint32 i, *list = nullptr, size = 0;
+	int32 key;
+
+	key = add_str(varname);
+
+	if( !(src = script_array_src(nullptr,sd,varname,nullptr) ) )
+		return;
+
+	if( !(sa = static_cast<script_array *>(idb_get(src->arrays, key))) ) /* non-existent array, nothing to empty */
+		return;
+
+	size = sa->size;
+	list = script_array_cpy_list(sa);
+
+	for( i = 0; i < size; i++ ){
+		clear_reg( nullptr, sd, reference_uid( key, list[i] ), varname, nullptr );
+	}
+}
+
+
+/// sets a temporary character array variable element idx to given value
+/// @param refcache Pointer to an int32 variable, which keeps a copy of the reference to varname and must be initialized to 0. Can be nullptr if only one element is set.
+void script_setarray_pc(map_session_data* sd, const char* varname, uint32 idx, int64 value, int32* refcache)
+{
+	int32 key;
+
+	if( idx >= SCRIPT_MAX_ARRAYSIZE ) {
+		ShowError("script_setarray_pc: Variable '%s' has invalid index '%u' (char_id=%d).\n", varname, idx, sd->status.char_id);
+		return;
+	}
+
+	key = ( refcache && refcache[0] ) ? refcache[0] : add_str(varname);
+
+	set_reg_num( nullptr, sd, reference_uid( key, idx ), varname, value, nullptr );
+
+	if( refcache ) {
+		// save to avoid repeated script->add_str calls
+		refcache[0] = key;
+	}
+}
+
+/**
+ * Clears persistent variables from memory
+ **/
+int32 script_reg_destroy(DBKey key, DBData *data, va_list ap)
+{
+	struct script_reg_state *src;
+
+	if( data->type != DB_DATA_PTR ) // got no need for those!
+		return 0;
+
+	src = static_cast<script_reg_state *>(db_data2ptr(data));
+
+	if( src->type ) {
+		struct script_reg_str *p = (struct script_reg_str *)src;
+
+		if( p->value )
+			aFree(p->value);
+
+		ers_free(str_reg_ers,p);
+	} else {
+		ers_free(num_reg_ers,(struct script_reg_num*)src);
+	}
+
+	return 0;
+}
+
+/**
+ * Clears a single persistent variable
+ **/
+void script_reg_destroy_single(map_session_data *sd, int64 reg, struct script_reg_state *data)
+{
+	i64db_remove(sd->regs.vars, reg);
+
+	if( data->type ) {
+		struct script_reg_str *p = (struct script_reg_str*)data;
+
+		if( p->value )
+			aFree(p->value);
+
+		ers_free(str_reg_ers,p);
+	} else {
+		ers_free(num_reg_ers,(struct script_reg_num*)data);
+	}
+}
+
+uint32 *script_array_cpy_list(struct script_array *sa)
+{
+	if( sa->size > generic_ui_array_size )
+		script_generic_ui_array_expand(sa->size);
+	memcpy(generic_ui_array, sa->members, sizeof(uint32)*sa->size);
+	return generic_ui_array;
+}
+
+void script_generic_ui_array_expand (uint32 plus)
+{
+	generic_ui_array_size += plus + 100;
+	RECREATE(generic_ui_array, uint32, generic_ui_array_size);
+}
+
+/*==========================================
+ * Destructor
+ *------------------------------------------*/
+void do_final_script() {
+	int32 i;
+	DBIterator *iter;
+	struct script_state *st;
+
+#ifdef DEBUG_HASH
+	if (battle_config.etc_log)
+	{
+		FILE *fp = fopen("hash_dump.txt","wt");
+		if(fp) {
+			int32 count[SCRIPT_HASH_SIZE];
+			int32 count2[SCRIPT_HASH_SIZE]; // number of buckets with a certain number of items
+			int32 n=0;
+			int32 min=INT_MAX,max=0,zero=0;
+			double mean=0.0f;
+			double median=0.0f;
+
+			ShowNotice("Dumping script str hash information to hash_dump.txt\n");
+			memset(count, 0, sizeof(count));
+			fprintf(fp,"num : hash : data_name\n");
+			fprintf(fp,"---------------------------------------------------------------\n");
+			for(i=LABEL_START; i<str_num; i++) {
+				uint32 h = calc_hash(get_str(i));
+				fprintf(fp,"%04d : %4u : %s\n",i,h, get_str(i));
+				++count[h];
+			}
+			fprintf(fp,"--------------------\n\n");
+			memset(count2, 0, sizeof(count2));
+			for(i=0; i<SCRIPT_HASH_SIZE; i++) {
+				fprintf(fp,"  hash %3d = %d\n",i,count[i]);
+				if(min > count[i])
+					min = count[i];		// minimum count of collision
+				if(max < count[i])
+					max = count[i];		// maximum count of collision
+				if(count[i] == 0)
+					zero++;
+				++count2[count[i]];
+			}
+			fprintf(fp,"\n--------------------\n  items : buckets\n--------------------\n");
+			for( i=min; i <= max; ++i ){
+				fprintf(fp,"  %5d : %7d\n",i,count2[i]);
+				mean += 1.0f*i*count2[i]/SCRIPT_HASH_SIZE; // Note: this will always result in <nr labels>/<nr buckets>
+			}
+			for( i=min; i <= max; ++i ){
+				n += count2[i];
+				if( n*2 >= SCRIPT_HASH_SIZE )
+				{
+					if( SCRIPT_HASH_SIZE%2 == 0 && SCRIPT_HASH_SIZE/2 == n )
+						median = (i+i+1)/2.0f;
+					else
+						median = i;
+					break;
+				}
+			}
+			fprintf(fp,"--------------------\n    min = %d, max = %d, zero = %d\n    mean = %lf, median = %lf\n",min,max,zero,mean,median);
+			fclose(fp);
+		}
+	}
+#endif
+
+	mapreg_final();
+
+	db_destroy(scriptlabel_db);
+	userfunc_db->destroy(userfunc_db, db_script_free_code_sub);
+	autobonus_db->destroy(autobonus_db, db_script_free_code_sub);
+
+	ers_destroy(array_ers);
+	if (generic_ui_array)
+		aFree(generic_ui_array);
+
+	iter = db_iterator(st_db);
+	for( st = static_cast<script_state *>(dbi_first(iter)); dbi_exists(iter); st = static_cast<script_state *>(dbi_next(iter)) )
+		script_free_state(st);
+	dbi_destroy(iter);
+
+	if (str_data)
+		aFree(str_data);
+	if (str_buf)
+		aFree(str_buf);
+
+	for( i = 0; i < atcmd_binding_count; i++ ) {
+		aFree(atcmd_binding[i]);
+	}
+
+	if( atcmd_binding_count != 0 )
+		aFree(atcmd_binding);
+
+	ers_destroy(st_ers);
+	ers_destroy(stack_ers);
+	db_destroy(st_db);
+
+	if( dummy_sd != nullptr ){
+		dummy_sd->~map_session_data();
+		aFree( dummy_sd );
+		dummy_sd = nullptr;
+	}
+}
+/*==========================================
+ * Initialization
+ *------------------------------------------*/
+void do_init_script(void) {
+	st_db = idb_alloc(DB_OPT_BASE);
+	userfunc_db = strdb_alloc(DB_OPT_DUP_KEY,0);
+	scriptlabel_db = strdb_alloc(DB_OPT_DUP_KEY,50);
+	autobonus_db = strdb_alloc(DB_OPT_DUP_KEY,0);
+
+	st_ers = ers_new(sizeof(struct script_state), "script.cpp::st_ers", ERS_CACHE_OPTIONS);
+	stack_ers = ers_new(sizeof(struct script_stack), "script.cpp::script_stack", ERS_OPT_FLEX_CHUNK);
+	array_ers = ers_new(sizeof(struct script_array), "script.cpp:array_ers", ERS_CLEAN_OPTIONS);
+
+	add_timer_func_list( run_script_timer, "run_script_timer" );
+
+	ers_chunk_size(st_ers, 10);
+	ers_chunk_size(stack_ers, 10);
+
+	active_scripts = 0;
+	next_id = 0;
+
+	mapreg_init();
+	add_buildin_func();
+	constant_db.load();
+	script_hardcoded_constants();
+
+	CREATE( dummy_sd, map_session_data, 1 );
+	new( dummy_sd ) map_session_data();
+	dummy_sd->group_id = 99;
+	dummy_sd->fd = 0;
+}
+
+void script_reload(void) {
+	int32 i;
+	DBIterator *iter;
+	struct script_state *st;
+
+	userfunc_db->clear(userfunc_db, db_script_free_code_sub);
+	db_clear(scriptlabel_db);
+
+	// @commands (script based)
+	// Clear bindings
+	for( i = 0; i < atcmd_binding_count; i++ ) {
+		aFree(atcmd_binding[i]);
+	}
+
+	if( atcmd_binding_count != 0 )
+		aFree(atcmd_binding);
+
+	atcmd_binding_count = 0;
+
+	iter = db_iterator(st_db);
+	for( st = static_cast<script_state *>(dbi_first(iter)); dbi_exists(iter); st = static_cast<script_state *>(dbi_next(iter)) )
+		script_free_state(st);
+	dbi_destroy(iter);
+	db_clear(st_db);
+
+	mapreg_reload();
+}
+
+//-----------------------------------------------------------------------------
+// buildin functions
+//
+
+#define BUILDIN_DEF(x,args) { buildin_ ## x , #x , args, nullptr }
+#define BUILDIN_DEF2(x,x2,args) { buildin_ ## x , x2 , args, nullptr }
+#define BUILDIN_DEF_DEPRECATED(x,args,deprecationdate) { buildin_ ## x , #x , args, deprecationdate }
+#define BUILDIN_DEF2_DEPRECATED(x,x2,args,deprecationdate) { buildin_ ## x , x2 , args, deprecationdate }
+#define BUILDIN_FUNC(x) int32 buildin_ ## x (struct script_state* st)
+
+/////////////////////////////////////////////////////////////////////
+// NPC interaction
+//
+
+/// Appends a message to the npc dialog.
+/// If a dialog doesn't exist yet, one is created.
+///
+/// mes "<message>";
+BUILDIN_FUNC(mes)
+{
+	map_session_data* sd;
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( !script_hasdata(st, 3) )
+	{// only a single line detected in the script
+		clif_scriptmes( *sd, st->oid, script_getstr( st, 2 ) );
+	}
+	else
+	{// parse multiple lines as they exist
+		int32 i;
+
+		for( i = 2; script_hasdata(st, i); i++ )
+		{
+			// send the message to the client
+			clif_scriptmes( *sd, st->oid, script_getstr( st, i ) );
+		}
+	}
+
+	st->mes_active = 1; // Invoking character has a NPC dialog box open.
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Displays the button 'next' in the npc dialog.
+/// The dialog text is cleared and the script continues when the button is pressed.
+///
+/// next;
+BUILDIN_FUNC(next)
+{
+	map_session_data* sd;
+
+	if (!st->mes_active) {
+		ShowWarning("buildin_next: There is no mes active.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+#ifdef SECURE_NPCTIMEOUT
+	sd->npc_idle_type = NPCT_WAIT;
+#endif
+	st->state = STOP;
+	clif_scriptnext( *sd, st->oid );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Clears the dialog and continues the script without a next button.
+///
+/// clear;
+BUILDIN_FUNC(clear)
+{
+	TBL_PC* sd;
+
+	if (!st->mes_active) {
+		ShowWarning("buildin_clear: There is no mes active.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE;
+
+	clif_scriptclear( *sd, st->oid );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Ends the script and displays the button 'close' on the npc dialog.
+/// The dialog is closed when the button is pressed.
+///
+/// close;
+BUILDIN_FUNC(close)
+{
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+

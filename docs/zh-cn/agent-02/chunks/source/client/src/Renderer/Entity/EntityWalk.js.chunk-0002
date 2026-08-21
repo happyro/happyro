@@ -1,0 +1,262 @@
+		let dy = nextY - startY;
+		let speed = getSegmentDuration(dx, dy, walk.speed);
+		let segmentStart = walk.tick || TICK;
+		let segmentEnd = segmentStart + speed;
+		let traveledDist = 0;
+
+		// If we were paused by another action, keep segment timing in sync.
+		if (
+			walk.prevTick &&
+			walk.prevTick !== TICK &&
+			walk.prevTick > segmentStart &&
+			this.action !== this.ACTION.WALK &&
+			this.objecttype !== this.constructor.TYPE_FALCON
+		) {
+			segmentStart += TICK - walk.prevTick;
+			segmentEnd = segmentStart + speed;
+		}
+
+		// Advance across any fully elapsed segments, accumulating distance.
+		while (index < total - 2 && TICK >= segmentEnd) {
+			traveledDist += Math.sqrt(
+				(nextX - walk.lastPos[0]) * (nextX - walk.lastPos[0]) +
+					(nextY - walk.lastPos[1]) * (nextY - walk.lastPos[1])
+			);
+
+			walk.pos[0] = startX = nextX;
+			walk.pos[1] = startY = nextY;
+			walk.lastPos[0] = nextX;
+			walk.lastPos[1] = nextY;
+			index += 2;
+
+			nextX = path[index + 0];
+			nextY = path[index + 1];
+			dx = nextX - startX;
+			dy = nextY - startY;
+			speed = getSegmentDuration(dx, dy, walk.speed);
+			segmentStart = segmentEnd;
+			segmentEnd = segmentStart + speed;
+		}
+
+		// Interpolate current segment
+		const duration = Math.max(segmentEnd - segmentStart, 1);
+		const t = Math.min(Math.max((TICK - segmentStart) / duration, 0), 1);
+		const newX = startX + dx * t;
+		const newY = startY + dy * t;
+
+		traveledDist += Math.sqrt(
+			(newX - walk.lastPos[0]) * (newX - walk.lastPos[0]) + (newY - walk.lastPos[1]) * (newY - walk.lastPos[1])
+		);
+		walk.lastPos[0] = newX;
+		walk.lastPos[1] = newY;
+
+		const cellHeight =
+			this.objecttype == this.constructor.TYPE_FALCON
+				? Altitude.getCellHeight(newX, newY) + falconGliding
+				: Altitude.getCellHeight(newX, newY);
+		pos[0] = newX;
+		pos[1] = newY;
+		pos[2] = cellHeight;
+
+		// Facing update:
+		// First segment uses continuous heading from current interpolated position to next tile.
+		// Later segments snap to discrete 8-way direction based on the segment offset.
+		if (index < total) {
+			if (index === 2) {
+				const remDx = nextX - newX;
+				const remDy = nextY - newY;
+
+				// If we're effectively at the next tile (fast-forwarded/last frame),
+				// fall back to the segment's discrete direction instead of defaulting south.
+				if (Math.abs(remDx) < 0.001 && Math.abs(remDy) < 0.001) {
+					const prevTileX0 = path[index - 2];
+					const prevTileY0 = path[index - 1];
+					const segDx0 = nextX - prevTileX0;
+					const segDy0 = nextY - prevTileY0;
+					const dirRow0 = DIRECTION[segDx0 + 1];
+					if (dirRow0 && typeof dirRow0[segDy0 + 1] !== 'undefined') {
+						this.direction = dirRow0[segDy0 + 1];
+					}
+				} else {
+					const contDir = offsetToFloatDir(remDx, remDy);
+					this.direction = quantizeDir(contDir);
+				}
+			} else {
+				const segDx = Math.round(nextX - startX);
+				const segDy = Math.round(nextY - startY);
+				const dirRow = DIRECTION[segDx + 1];
+				if (dirRow && typeof dirRow[segDy + 1] !== 'undefined') {
+					this.direction = dirRow[segDy + 1];
+				}
+			}
+		}
+
+		walk.dist += traveledDist;
+		walk.index = index;
+		walk.tick = segmentStart;
+		walk.prevTick = TICK;
+
+		const reachedEnd = index >= total - 2 && t >= 0.999 && TICK >= segmentEnd;
+
+		if (!reachedEnd) {
+			return;
+		}
+
+		// Stop walking
+		finishWalk();
+	} else {
+		if (index < total) {
+			// Walking got interrupted by getting attacked or other means
+			this.walk.tick += TICK - this.walk.prevTick; // Offset walking by the time elapsed.
+			this.walk.prevTick = TICK; // Store tick
+		}
+		return;
+	}
+}
+
+// Companions walk is passively, don't need complexity or lower walk delay
+function entitiesWalkProcess() {
+	// Use owner's actual current position
+	const ownerCellX = this.position[0];
+	const ownerCellY = this.position[1];
+
+	if (
+		this.falcon &&
+		!this.falcon.isAttacking &&
+		(!this.falcon.walk.lastWalkTick || this.falcon.walk.lastWalkTick + 1000 < Date.now())
+	) {
+		const range = 2;
+		const dist = Math.floor(this.distance(this, this.falcon));
+		if (dist < range) {
+			return;
+		}
+
+		const targetChanged = this.falcon._followTargetX !== ownerCellX || this.falcon._followTargetY !== ownerCellY;
+		if (targetChanged) {
+			this.falcon.walk.speed = Math.max(this.walk.speed - 50, 1);
+			this.falcon._followTargetX = ownerCellX;
+			this.falcon._followTargetY = ownerCellY;
+			this.falcon.walk.lastWalkTick = Date.now();
+			this.falcon.walkToNonWalkableGround(
+				this.falcon.position[0],
+				this.falcon.position[1],
+				ownerCellX,
+				ownerCellY,
+				range - 1,
+				false,
+				false,
+				Date.now()
+			);
+		}
+	}
+
+	if (
+		this.wug &&
+		!this.wug.isAttacking &&
+		(!this.wug.walk.lastWalkTick || this.wug.walk.lastWalkTick + 1000 < Date.now())
+	) {
+		const range = 4;
+		const dist = Math.floor(this.distance(this, this.wug));
+		if (dist < range) {
+			return;
+		}
+
+		const targetChanged = this.wug._followTargetX !== ownerCellX || this.wug._followTargetY !== ownerCellY;
+		if (targetChanged) {
+			this.wug.walk.speed = Math.max(this.walk.speed - 50, 1);
+			this.wug._followTargetX = ownerCellX;
+			this.wug._followTargetY = ownerCellY;
+			this.wug.walk.lastWalkTick = Date.now();
+			this.wug.walkToNonWalkableGround(
+				this.wug.position[0],
+				this.wug.position[1],
+				ownerCellX,
+				ownerCellY,
+				range - 1,
+				false,
+				false,
+				Date.now()
+			);
+		}
+	}
+}
+
+function resetRoute(keepDistance) {
+	this.walk.tick = 0;
+	this.walk.prevTick = 0;
+	if (!keepDistance) {
+		this.walk.dist = 0;
+	}
+	this.walk.path = new Int16Array(PathFinding.MAX_WALKPATH * 2);
+	this.walk.lastPos[0] = 0;
+	this.walk.lastPos[1] = 0;
+	this.walk.lastPos[2] = 0;
+	if (this.walk.onEnd) {
+		this.walk.onEnd();
+	}
+	this.walk.onEnd = null;
+	this.walk.index = 0;
+	this.walk.total = 0;
+}
+
+function calculateOverShot(from_x, from_y, to_x, to_y) {
+	const overshot = 5;
+	let over_x = to_x,
+		over_y = to_y;
+	if (from_x > to_x && from_y > to_y) {
+		//Quadrant 3
+		over_x = to_x - overshot;
+		over_y = to_y - overshot;
+	} else if (from_x < to_x && from_y > to_y) {
+		//Quadrant 4
+		over_x = to_x + overshot;
+		over_y = to_y - overshot;
+	} else if (from_x < to_x && from_y < to_y) {
+		//Quadrant 1
+		over_x = to_x + overshot;
+		over_y = to_y + overshot;
+	} else if (from_x > to_x && from_y < to_y) {
+		//Quadrant 2
+		over_x = to_x - overshot;
+		over_y = to_y + overshot;
+	} else if (from_y < to_y) {
+		// pure positve y position
+		over_x = to_x;
+		over_y = to_y + overshot;
+	} else if (to_y < from_y) {
+		// pure negative y position
+		over_x = to_x;
+		over_y = to_y - overshot;
+	} else if (from_x < to_x) {
+		// pure positve y position
+		over_x = to_x + overshot;
+		over_y = to_y;
+	} else if (from_x > to_x) {
+		// pure negative x position
+		over_x = to_x - overshot;
+		over_y = to_y;
+	}
+	return [over_x, over_y];
+}
+
+function distance(entity1, entity2) {
+	const x1 = entity1.position[0];
+	const y1 = entity1.position[1];
+	const x2 = entity2.position[0];
+	const y2 = entity2.position[1];
+	return Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2));
+}
+
+/**
+ * Initialize and export methods
+ */
+export default function Init() {
+	this.onWalkEnd = function onWalkEnd() {};
+	this.walk = new WalkStructure();
+	this.walkTo = walkTo;
+	this.walkToNonWalkableGround = walkToNonWalkableGround;
+	this.walkProcess = walkProcess;
+	this.entitiesWalkProcess = entitiesWalkProcess;
+	this.resetRoute = resetRoute;
+	this.distance = distance;
+}

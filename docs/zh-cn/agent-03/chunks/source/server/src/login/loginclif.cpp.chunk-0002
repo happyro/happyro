@@ -1,0 +1,72 @@
+ * Entry point from client to log-server.
+ * Function that checks incoming command, then splits it to the correct handler.
+ * @param fd: file descriptor to parse, (link to client)
+ * @return 0=invalid session,marked for disconnection,unknow packet, banned..; 1=success
+ */
+int32 logclif_parse(int32 fd) {
+	struct login_session_data* sd = (struct login_session_data*)session[fd]->session_data;
+
+	char ip[16];
+	uint32 ipl = session[fd]->client_addr;
+	ip2str(ipl, ip);
+
+	if( session[fd]->flag.eof )
+	{
+		ShowInfo("Closed connection from '" CL_WHITE "%s" CL_RESET "'.\n", ip);
+		do_close(fd);
+		return 0;
+	}
+
+	if( sd == nullptr ){
+		// Perform ip-ban check
+		if( login_config.ipban && ipban_check(ipl) )
+		{
+			ShowStatus("Connection refused: IP isn't authorised (deny/allow, ip: %s).\n", ip);
+			login_log(ipl, "unknown", -3, "ip banned");
+
+			logclif_auth_failed( fd, 3 ); // 3 = Rejected from Server
+
+			set_eof(fd);
+			return 0;
+		}
+		// create a session for this new connection
+		CREATE(session[fd]->session_data, struct login_session_data, 1);
+		sd = (struct login_session_data*)session[fd]->session_data;
+		sd->fd = fd;
+	}
+
+	while( RFIFOREST(fd) >= 2 )
+	{
+		uint16 command = RFIFOW(fd,0);
+
+		switch( command ){
+			// Connection request of a char-server
+			case 0x2710: logclif_parse_reqcharconnec(fd,sd, ip); return 0; // processing will continue elsewhere
+			default:
+				if( !login_packet_db.handle( fd, *sd ) ){
+					return 0;
+				}
+				break;
+		}
+	}
+
+	return 0;
+}
+
+/// Constructor destructor
+
+/**
+ * Initialize the module.
+ * Launched at login-serv start, create db or other long scope variable here.
+ */
+void do_init_loginclif(void){
+	return;
+}
+
+/**
+ * loginclif destructor
+ *  dealloc..., function called at exit of the login-serv
+ */
+void do_final_loginclif(void){
+	return;
+}

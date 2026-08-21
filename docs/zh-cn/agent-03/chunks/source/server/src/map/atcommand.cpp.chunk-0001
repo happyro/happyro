@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "atcommand.hpp"
+
+#include <cmath>
+#include <cstdlib>
+#include <set>
+#include <unordered_map>
+
+#include <common/cbasetypes.hpp>
+#include <common/database.hpp>
+#include <common/cli.hpp>
+#include <common/malloc.hpp>
+#include <common/mmo.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "battle.hpp"
+#include "buyingstore.hpp"
+#include "channel.hpp"
+#include "chat.hpp"
+#include "chrif.hpp"
+#include "clan.hpp"
+#include "clif.hpp"
+#include "duel.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp" // MAX_ITEMGROUP
+#include "cashshop.hpp"
+#include "log.hpp"
+#include "mail.hpp"
+#include "map.hpp"
+#include "mapreg.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "pc.hpp"
+#include "pc_groups.hpp"
+#include "pet.hpp"
+#include "quest.hpp"
+#include "script.hpp"
+#include "storage.hpp"
+#include "trade.hpp"
+#include "vending.hpp"
+
+using namespace rathena;
+
+#define ATCOMMAND_LENGTH 50
+#define ACMD_FUNC(x) static int32 atcommand_ ## x (const int32 fd, map_session_data* sd, const char* command, const char* message)
+
+typedef struct AtCommandInfo AtCommandInfo;
+
+int32 atcmd_binding_count = 0;
+
+/// Atcommand restriction usage
+enum e_atcmd_restict {
+	ATCMD_NOCONSOLE    = 0x1, /// Cannot be used via console (is_atcommand type 2)
+	ATCMD_NOSCRIPT     = 0x2, /// Cannot be used via script command 'atcommand' or 'useatcmd' (is_atcommand type 0 and 3)
+	ATCMD_NOAUTOTRADE  = 0x4, /// Like ATCMD_NOSCRIPT, but if the player is autotrader. Example: atcommand "@kick "+strcharinfo(0);
+};
+
+struct AtCommandInfo {
+	char command[ATCOMMAND_LENGTH];
+	AtCommandFunc func;
+	char* at_groups; /// Quick @commands "can-use" lookup
+	char* char_groups; /// Quick @charcommands "can-use" lookup
+	uint8 restriction; /// Restrictions see enum e_restict
+};
+
+struct s_atcommand_alias_info{
+	AtCommandInfo *command;
+	std::set<std::string> aliases;
+	std::string help;
+};
+
+
+char atcommand_symbol = '@'; // first char of the commands
+char charcommand_symbol = '#';
+
+static DBMap* atcommand_db = nullptr; //name -> AtCommandInfo
+
+static AtCommandInfo* get_atcommandinfo_byname( const char* name );
+
+class AtcommandAliasDatabase : public TypesafeYamlDatabase<std::string, s_atcommand_alias_info>{
+private:
+	std::unordered_map<std::string, std::string> aliases;
+
+public:
+	AtcommandAliasDatabase() : TypesafeYamlDatabase( "ATCOMMAND_DB", 1 ){
+
+	}
+
+	void clear() override;
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode( const ryml::NodeRef& node ) override;
+
+	// Additional
+	const char* checkAlias( const char* alias );
+};
+
+void AtcommandAliasDatabase::clear(){
+	TypesafeYamlDatabase::clear();
+	this->aliases.clear();
+}
+
+const std::string AtcommandAliasDatabase::getDefaultLocation(){
+	return std::string(conf_path) + "/atcommands.yml";
+}
+
+uint64 AtcommandAliasDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	std::string command;
+
+	if( !this->asString( node, "Command", command ) ){
+		return 0;
+	}
+
+	AtCommandInfo* commandinfo = get_atcommandinfo_byname( command.c_str() );
+
+	if( commandinfo == nullptr ){
+		this->invalidWarning( node["Command"], "Command %s does not exist.\n", command.c_str() );
+		return 0;
+	}
+
+	std::shared_ptr<s_atcommand_alias_info> info = this->find( command );
+	bool exists = info != nullptr;
+
+	if( !exists ){
+		info = std::make_shared<s_atcommand_alias_info>();
+		info->command = commandinfo;
+	}
+
+	if( this->nodeExists( node, "Help" )  ){
+		std::string help;
+
+		if( !this->asString( node, "Help", help ) ){
+			return 0;
+		}
+
+		info->help = help;
+	}
+
+	if( this->nodeExists( node, "Aliases" ) ){
+		const auto& aliasesNode = node["Aliases"];
+
+		if( !aliasesNode.is_seq() ){
+			this->invalidWarning( aliasesNode, "Aliases should be a sequence.\n" );
+			return 0;
+		}
+
+		for( const auto& subNode : aliasesNode ){
+			std::string alias;
+			subNode >> alias;
+
+			AtCommandInfo* parent_cmd = get_atcommandinfo_byname( alias.c_str() );
+
+			if( parent_cmd != nullptr ){
+				this->invalidWarning( subNode, "\"%s\" cannot be used as alias for \"%s\", since a command with this name exists.\n", alias.c_str(), command.c_str() );
+				return 0;
+			}
+
+			info->aliases.insert( alias );
+			this->aliases[alias] = command;
+		}
+	}
+
+	if( !exists ){
+		this->put( command, info );
+	}
+
+	return 1;
+}
+
+const char* AtcommandAliasDatabase::checkAlias( const char* alias ){
+	std::string alias_str( alias );
+	std::string* command = util::umap_find( this->aliases, alias_str );
+
+	if( command == nullptr ){
+		return alias;
+	}else{
+		return command->c_str();
+	}
+}
+
+AtcommandAliasDatabase atcommand_alias_db;
+
+static char atcmd_output[CHAT_SIZE_MAX];
+static char atcmd_player_name[NAME_LENGTH];
+const char *parent_cmd;
+
+struct atcmd_binding_data** atcmd_binding;
+
+static AtCommandInfo* get_atcommandinfo_byname(const char *name); // @help
+static void atcommand_get_suggestions(map_session_data* sd, const char *name, bool atcommand); // @help
+static void warp_get_suggestions(map_session_data* sd, const char *name); // @rura, @warp, @mapmove
+
+// @commands (script-based)
+struct atcmd_binding_data* get_atcommandbind_byname(const char* name) {
+	int32 i = 0;
+
+	if( *name == atcommand_symbol || *name == charcommand_symbol )
+		name++; // for backwards compatibility
+
+	ARR_FIND( 0, atcmd_binding_count, i, strcmpi(atcmd_binding[i]->command, name) == 0 );
+
+	return ( i < atcmd_binding_count ) ? atcmd_binding[i] : nullptr;
+}
+
+/**
+ * retrieves the help string associated with a given command.
+ *
+ * @param name the name of the command to retrieve help information for
+ * @return the string associated with the command, or nullptr
+ */
+static const char* atcommand_help_string( const char* command ){
+	// remove the prefix symbol for the raw name of the command
+	if( *command == atcommand_symbol || *command == charcommand_symbol ){
+		command++;
+	}
+
+	// convert alias to the real command name
+	command = atcommand_alias_db.checkAlias( command );
+
+	// attempt to find the first default help command
+	std::shared_ptr<s_atcommand_alias_info> info = atcommand_alias_db.find( command );
+
+	// failed to find the help property in the configuration file
+	if( info == nullptr ){
+		return nullptr;
+	}
+
+	// push the result from the method
+	return info->help.c_str();
+}
+
+/// Normalize path separators so Windows-style paths work on all platforms.
+static void atcommand_normalize_npc_path(char* dst, const char* src, size_t size) {
+	safestrncpy(dst, src, size);
+	for (char* p = dst; *p; ++p)
+		if (*p == '\\')
+			*p = '/';
+}
+
+/*==========================================
+ * @send (used for testing packet sends from the client)
+ *------------------------------------------*/
+ACMD_FUNC(send)
+{
+	int32 len=0,type;
+	// read message type as hex number (without the 0x)
+	if(!message || !*message ||
+			!((sscanf(message, "len %8x", &type)==1 && (len=1))
+			|| sscanf(message, "%8x", &type)==1) )
+	{
+		int32 i;
+		for (i = 900; i <= 903; ++i)
+			clif_displaymessage(fd, msg_txt(sd,i));
+		return -1;
+	}
+
+#define PARSE_ERROR(error,p) \
+	{\
+		clif_displaymessage(fd, (error));\
+		sprintf(atcmd_output, ">%s", (p));\
+		clif_displaymessage(fd, atcmd_output);\
+	}
+//define PARSE_ERROR
+
+#define CHECK_EOS(p) \
+	if(*(p) == 0){\
+		clif_displaymessage(fd, "Unexpected end of string");\
+		return -1;\
+	}
+//define CHECK_EOS
+
+#define SKIP_VALUE(p) \
+	{\
+		while(*(p) && !ISSPACE(*(p))) ++(p); /* non-space */\
+		while(*(p) && ISSPACE(*(p)))  ++(p); /* space */\
+	}
+//define SKIP_VALUE
+
+#define GET_VALUE(p,num) \
+	{\
+		if(sscanf((p), "x%16lx", &(num)) < 1 && sscanf((p), "%20ld ", &(num)) < 1){\
+			PARSE_ERROR("Invalid number in:",(p));\
+			return -1;\
+		}\
+	}
+//define GET_VALUE
+	if (type > 0 && type < MAX_PACKET_DB) {
+		int32 off,end;
+		long num;
+		if(len)
+		{// show packet length
+			sprintf(atcmd_output, msg_txt(sd,904), type, packet_db[type].len); // Packet 0x%x length: %d
+			clif_displaymessage(fd, atcmd_output);
+			return 0;
+		}
+
+		len=packet_db[type].len;
+		off=2;
+		if(len == 0)
+		{// unknown packet - ERROR
+			sprintf(atcmd_output, msg_txt(sd,905), type); // Unknown packet: 0x%x
+			clif_displaymessage(fd, atcmd_output);
+			return -1;
+		} else if(len == -1)
+		{// dynamic packet
+			len=SHRT_MAX-4; // maximum length
+			off=4;
+		}
+		WFIFOHEAD(fd, len);
+		WFIFOW(fd,0)=TOW(type);
+
+		// parse packet contents
+		SKIP_VALUE(message);
+		while(*message != 0 && off < len){
+			if(ISDIGIT(*message) || *message == '-' || *message == '+')
+			{// default (byte)
+				GET_VALUE(message,num);
+				WFIFOB(fd,off)=TOB(num);
+				++off;
+			} else if(TOUPPER(*message) == 'B')
+			{// byte
+				++message;
+				GET_VALUE(message,num);
+				WFIFOB(fd,off)=TOB(num);
+				++off;
+			} else if(TOUPPER(*message) == 'W')
+			{// word (2 bytes)
+				++message;
+				GET_VALUE(message,num);
+				WFIFOW(fd,off)=TOW(num);
+				off+=2;
+			} else if(TOUPPER(*message) == 'L')
+			{// long word (4 bytes)
+				++message;
+				GET_VALUE(message,num);
+				WFIFOL(fd,off)=TOL(num);
+				off+=4;
+			} else if(TOUPPER(*message) == 'S')
+			{// string - escapes are valid
+				// get string length - num <= 0 means not fixed length (default)
+				++message;
+				if(*message == '"'){
+					num=0;
+				} else {
+					GET_VALUE(message,num);
+					while(*message != '"')
+					{// find start of string
+						if(*message == 0 || ISSPACE(*message)){
+							PARSE_ERROR(msg_txt(sd,906),message); // Not a string:
+							return -1;
+						}
+						++message;
+					}
+				}
+
+				// parse string
+				++message;
+				CHECK_EOS(message);
+				end=(num<=0? 0: min(off+((int32)num),len));
+				for(; *message != '"' && (off < end || end == 0); ++off){
+					if(*message == '\\'){
+						++message;
+						CHECK_EOS(message);
+						switch(*message){
+							case 'a': num=0x07; break; // Bell
+							case 'b': num=0x08; break; // Backspace
+							case 't': num=0x09; break; // Horizontal tab
+							case 'n': num=0x0A; break; // Line feed
+							case 'v': num=0x0B; break; // Vertical tab
+							case 'f': num=0x0C; break; // Form feed
+							case 'r': num=0x0D; break; // Carriage return
+							case 'e': num=0x1B; break; // Escape
+							default:  num=*message; break;
+							case 'x': // Hexadecimal
+							{
+								++message;
+								CHECK_EOS(message);
+								if(!ISXDIGIT(*message)){
+									PARSE_ERROR(msg_txt(sd,907),message); // Not a hexadecimal digit:
+									return -1;
+								}
+								num=(ISDIGIT(*message)?*message-'0':TOLOWER(*message)-'a'+10);
+								if(ISXDIGIT(*message)){
+									++message;
+									CHECK_EOS(message);
+									num<<=8;
+									num+=(ISDIGIT(*message)?*message-'0':TOLOWER(*message)-'a'+10);
+								}
+								WFIFOB(fd,off)=TOB(num);
+								++message;
+								CHECK_EOS(message);
+								continue;
+							}
+							case '0':
+							case '1':
+							case '2':
+							case '3':
+							case '4':
+							case '5':
+							case '6':
+							case '7': // Octal
+							{
+								num=*message-'0'; // 1st octal digit
+								++message;
+								CHECK_EOS(message);
+								if(ISDIGIT(*message) && *message < '8'){
+									num<<=3;
+									num+=*message-'0'; // 2nd octal digit
+									++message;
+									CHECK_EOS(message);
+									if(ISDIGIT(*message) && *message < '8'){
+										num<<=3;
+										num+=*message-'0'; // 3rd octal digit
+										++message;
+										CHECK_EOS(message);
+									}
+								}
+								WFIFOB(fd,off)=TOB(num);
+								continue;
+							}
+						}
+					} else
+						num=*message;
+					WFIFOB(fd,off)=TOB(num);
+					++message;
+					CHECK_EOS(message);
+				}//for
+				while(*message != '"')
+				{// ignore extra characters
+					++message;
+					CHECK_EOS(message);
+				}
+
+				// terminate the string
+				if(off < end)
+				{// fill the rest with 0's
+					memset(WFIFOP(fd,off),0,end-off);
+					off=end;
+				}
+			} else
+			{// unknown
+				PARSE_ERROR(msg_txt(sd,908),message); // Unknown type of value in:
+				return -1;
+			}
+			SKIP_VALUE(message);
+		}
+
+		if(packet_db[type].len == -1)
+		{// send dynamic packet
+			WFIFOW(fd,2)=TOW(off);
+			WFIFOSET(fd,off);
+		} else
+		{// send static packet
+			if(off < len)
+				memset(WFIFOP(fd,off),0,len-off);
+			WFIFOSET(fd,len);
+		}
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,259)); // Invalid packet
+		return -1;
+	}
+	sprintf (atcmd_output, msg_txt(sd,258), type, type); // Sent packet 0x%x (%d)
+	clif_displaymessage(fd, atcmd_output);
+	return 0;
+#undef PARSE_ERROR
+#undef CHECK_EOS
+#undef SKIP_VALUE
+#undef GET_VALUE
+}
+
+/**
+ * Retrieves map name suggestions for a given string.
+ * This will first check if any map names contain the given string, and will
+ *   print out MAX_SUGGESTIONS results if any maps are found.
+ * Otherwise, suggestions will be calculated through Levenshtein distance,
+ *   and up to 5 of the closest matches will be printed.
+ *
+ * @author Euphy
+ */
+static void warp_get_suggestions(map_session_data* sd, const char *name) {
+	// Minimum length for suggestions is 2 characters
+	if( strlen( name ) < 2 ){
+		return;
+	}
+

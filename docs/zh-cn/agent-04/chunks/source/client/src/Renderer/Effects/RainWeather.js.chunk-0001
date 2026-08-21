@@ -1,0 +1,500 @@
+/**
+ * Renderer/Effects/RainWeather.js
+ *
+ * Weather rain effect (EF_RAIN).
+ * Procedural multi‑layer rain designed for aesthetic depth:
+ * - Looping emitter pinned to the owning entity (usually local player).
+ * - Coherent, slowly‑varying wind so streaks slant consistently.
+ * - Three depth layers (far/mid/near) with different speeds, sizes, and opacity.
+ * - Alpha fades by fall progress (not raw time) to avoid popping.
+ * - Added procedural audio system for Rain and Thunder (Web Audio API).
+ * - Added lightning visual effect using the existing overlay system.
+ */
+
+import Renderer from 'Renderer/Renderer.js';
+import MapRenderer from 'Renderer/MapRenderer.js';
+import SpriteRenderer from 'Renderer/SpriteRenderer.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import Camera from 'Renderer/Camera.js';
+import Preferences from 'Preferences/Audio.js';
+import Session from 'Engine/SessionStorage.js';
+import _puddleVs from './RainWeather.vs?raw';
+import _puddleFs from './RainWeather.fs?raw';
+import WebGL from 'Utils/WebGL.js';
+
+const RAG_TICK_MS = 25;
+const FADEOUT_TAIL_MS = 1000 * RAG_TICK_MS;
+
+// Emission control.
+const EMIT_PER_TICK = 10;
+const EMIT_STOP_BEFORE_END_MS = 160 * RAG_TICK_MS;
+const MAX_DROPS = 1100;
+
+// Spawn volume around player (in map cells). Large enough to cover the view.
+const SCATTER_RADIUS_CELLS = 70;
+const SPAWN_HEIGHT_MIN_CELLS = 22;
+const SPAWN_HEIGHT_MAX_CELLS = 42;
+
+// Base wind, slowly varying over time (cells per rag tick).
+const WIND_STRENGTH_BASE = 0.14;
+const WIND_STRENGTH_VAR = 0.06;
+const WIND_ANGLE_MAX_RAD = 0.55; // ~31deg sideways
+
+// Thunderstorm
+const THUNDER_MIN_INTERVAL = 5000;
+const THUNDER_MAX_INTERVAL = 60000;
+const FLASH_FADE_IN = 50;
+const FLASH_FADE_OUT = 300;
+const RAIN_VOLUME = 0.03;
+
+// Depth layers: far/mid/near.
+// Each layer defines relative look and speed.
+const LAYERS = [
+	{
+		weight: 0.55,
+		speedTick: [0.35, 0.55],
+		widthPx: [1.0, 1.8],
+		lengthPx: [22, 36],
+		alphaScale: 0.12,
+		brightness: [0.45, 0.65]
+	},
+	{
+		weight: 0.3,
+		speedTick: [0.55, 0.85],
+		widthPx: [1.6, 2.6],
+		lengthPx: [36, 55],
+		alphaScale: 0.22,
+		brightness: [0.65, 0.85]
+	},
+	{
+		weight: 0.15,
+		speedTick: [0.85, 1.25],
+		widthPx: [2.3, 3.4],
+		lengthPx: [55, 78],
+		alphaScale: 0.35,
+		brightness: [0.8, 1.0]
+	}
+];
+
+// Precompute CDF for layer picking.
+const _layerCDF = (function () {
+	const out = [];
+	let acc = 0;
+	for (let i = 0; i < LAYERS.length; i++) {
+		acc += LAYERS[i].weight;
+		out.push(acc);
+	}
+	return out;
+})();
+
+// Puddle settings (Water accumulation system)
+const MAX_PUDDLES = 600; // Increased limit to prevent popping
+const PUDDLE_INITIAL_SIZE = 20.0;
+const PUDDLE_MAX_SIZE = 230.0;
+const PUDDLE_GROWTH_PER_DROP = 4.5;
+const PUDDLE_ALPHA_MAX = 0.45;
+const PUDDLE_FADE_SPEED = 0.00004; // Alpha per ms (faster drying)
+const PUDDLE_SEED_CHANCE = 0.06; // Lowered to favor accumulation over spam
+
+// Procedural raindrop sprite (1x16 alpha‑gradient texture stretched into streaks).
+let _dropFrame = null;
+// Full-screen grey filter (1x1 texture).
+let _filterFrame = null;
+// Ground splash texture (16x16 soft disc).
+let _splashFrame = null;
+const SPLASH_LIFE_MS = 220;
+const SPLASH_SIZE_PX = [10, 18];
+const SPLASH_ALPHA = 0.45;
+
+// Puddle texture (64x64 deformed disc).
+let _puddleFrame = null;
+
+// Shader resources
+let _puddleProgram = null;
+let _puddleBuffer = null;
+
+// SINGLETON STATE
+let _instance = null;
+let _mapName = '';
+let _isStopping = false;
+
+function ensureDropFrame(gl) {
+	if (_dropFrame && _dropFrame.texture && gl.isTexture(_dropFrame.texture)) {
+		return;
+	}
+
+	_dropFrame = null;
+	const tex = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, tex);
+
+	// Build a 1x16 vertical gradient (top transparent → bright core → soft tail).
+	const h = 16;
+	const data = new Uint8Array(h * 4);
+	for (let i = 0; i < h; i++) {
+		const t = i / (h - 1);
+		// Ramp up to full alpha, then taper slightly.
+		let a = Math.min(1, t / 0.7);
+		if (t > 0.7) {
+			a *= 1 - ((t - 0.7) / 0.3) * 0.35;
+		}
+		const alphaByte = Math.max(0, Math.min(255, Math.floor(a * 255)));
+		const idx = i * 4;
+		data[idx + 0] = 255;
+		data[idx + 1] = 255;
+		data[idx + 2] = 255;
+		data[idx + 3] = alphaByte;
+	}
+
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+	_dropFrame = { texture: tex, width: 1, height: h, type: 1 };
+}
+
+function ensureFilterFrame(gl) {
+	if (_filterFrame && _filterFrame.texture && gl.isTexture(_filterFrame.texture)) {
+		return;
+	}
+	_filterFrame = null;
+
+	const tex = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, tex);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+	_filterFrame = { texture: tex, width: 1, height: 1, type: 1 };
+}
+
+function ensureSplashFrame(gl) {
+	if (_splashFrame && _splashFrame.texture && gl.isTexture(_splashFrame.texture)) {
+		return;
+	}
+	_splashFrame = null;
+
+	const w = 16,
+		h = 16;
+	const data = new Uint8Array(w * h * 4);
+	const cx = (w - 1) / 2;
+	const cy = (h - 1) / 2;
+	const maxR = Math.min(cx, cy);
+
+	for (let y = 0; y < h; y++) {
+		for (let x = 0; x < w; x++) {
+			const dx = x - cx;
+			const dy = y - cy;
+			const r = Math.sqrt(dx * dx + dy * dy) / maxR;
+			let a = 0;
+			if (r <= 1) {
+				// Soft disc with slight ring emphasis.
+				a = Math.exp(-r * r * 2.8);
+				const ring = Math.exp(-Math.pow((r - 0.65) / 0.12, 2));
+				a = Math.max(a, ring * 0.9);
+			}
+			const alphaByte = Math.max(0, Math.min(255, Math.floor(a * 255)));
+			const idx = (y * w + x) * 4;
+			data[idx + 0] = 255;
+			data[idx + 1] = 255;
+			data[idx + 2] = 255;
+			data[idx + 3] = alphaByte;
+		}
+	}
+
+	const tex = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, tex);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+	_splashFrame = { texture: tex, width: w, height: h, type: 1 };
+}
+
+function ensurePuddleFrame(gl) {
+	if (_puddleFrame && _puddleFrame.texture && gl.isTexture(_puddleFrame.texture)) {
+		return;
+	}
+	_puddleFrame = null;
+
+	const w = 64,
+		h = 64;
+	const data = new Uint8Array(w * h * 4);
+	const cx = (w - 1) / 2;
+	const cy = (h - 1) / 2;
+	const maxR = Math.min(cx, cy) * 0.85;
+
+	for (let y = 0; y < h; y++) {
+		for (let x = 0; x < w; x++) {
+			const dx = x - cx;
+			const dy = y - cy;
+			const dist = Math.sqrt(dx * dx + dy * dy);
+			const angle = Math.atan2(dy, dx);
+
+			// Procedural deformation for "organic" look
+			const deform =
+				1.0 + 0.15 * Math.sin(angle * 5) + 0.08 * Math.sin(angle * 3 + 1.5) + 0.05 * Math.cos(angle * 11);
+			const r = dist / (maxR * deform);
+
+			let a = 0;
+			if (r <= 1.0) {
+				// Soft concave falloff for pool look
+				a = Math.pow(1.0 - r, 0.7);
+			}
+
+			const alphaByte = Math.max(0, Math.min(255, Math.floor(a * 255)));
+			const idx = (y * w + x) * 4;
+			// Deep wet-blue/dark tone
+			data[idx + 0] = 18;
+			data[idx + 1] = 32;
+			data[idx + 2] = 55;
+			data[idx + 3] = alphaByte;
+		}
+	}
+
+	const tex = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, tex);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+	_puddleFrame = { texture: tex, width: w, height: h, type: 1 };
+}
+
+function initPuddleShader(gl) {
+	if (_puddleProgram) {
+		return;
+	}
+	_puddleProgram = WebGL.createShaderProgram(gl, _puddleVs, _puddleFs);
+
+	// Generate horizontal quad buffer (XZ plane)
+	const vertices = new Float32Array([
+		// Triangle 1 (pos: x, y, z, tex: u, v)
+		-0.5, 0.0, -0.5, 0.0, 0.0, 0.5, 0.0, -0.5, 1.0, 0.0, -0.5, 0.0, 0.5, 0.0, 1.0,
+		// Triangle 2
+		0.5, 0.0, -0.5, 1.0, 0.0, 0.5, 0.0, 0.5, 1.0, 1.0, -0.5, 0.0, 0.5, 0.0, 1.0
+	]);
+	_puddleBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, _puddleBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+}
+
+function randRange(min, max) {
+	return min + Math.random() * (max - min);
+}
+
+function pickLayerIndex() {
+	const r = Math.random() * _layerCDF[_layerCDF.length - 1];
+	for (let i = 0; i < _layerCDF.length; i++) {
+		if (r <= _layerCDF[i]) {
+			return i;
+		}
+	}
+	return _layerCDF.length - 1;
+}
+
+function computeGlobalWind(tick) {
+	// Slow oscillation: changes over ~10s.
+	const t = tick * 0.00012;
+	const strengthTick = WIND_STRENGTH_BASE + WIND_STRENGTH_VAR * Math.sin(t * 2.3);
+	const angleCam = Math.sin(t * 1.1) * WIND_ANGLE_MAX_RAD;
+	const camXTick = Math.cos(angleCam) * strengthTick;
+	const camYTick = Math.sin(angleCam) * strengthTick * 0.35;
+
+	// Convert camera‑space wind to world‑space so on‑screen direction stays consistent
+	// even when the camera rotates.
+	const yawRad = (((Camera.angle && Camera.angle[1]) || 0) * Math.PI) / 180;
+	const cosYaw = Math.cos(yawRad);
+	const sinYaw = Math.sin(yawRad);
+	const xTick = camXTick * cosYaw + camYTick * sinYaw;
+	const yTick = -camXTick * sinYaw + camYTick * cosYaw;
+	return {
+		camXTick: camXTick,
+		camYTick: camYTick,
+		xTick: xTick,
+		yTick: yTick,
+		xMs: xTick / RAG_TICK_MS,
+		yMs: yTick / RAG_TICK_MS
+	};
+}
+
+/**
+ * Compute the on‑screen tilt for a raindrop so the streak aligns with its
+ * projected movement direction under the current camera pitch/yaw.
+ *
+ * We transform the drop velocity into the same "map coords" used by the
+ * SpriteRenderer Project() helper (x, -z, y), then into view space via
+ * Camera.modelView. The streak axis is SpriteRenderer +Y, so the angle is
+ * atan2(vx_view, vy_view).
+ */
+function computeDropTilt(vx, vy, speedMs) {
+	// Velocity in world coords (cells/ms). Falling decreases world Z.
+	const vz = -speedMs;
+
+	// Convert to map coords expected by Camera.modelView / Project().
+	const mx = vx;
+	const my = -vz; // = speedMs, positive when falling down.
+	const mz = vy;
+
+	const m = Camera.modelView;
+	if (!m) {
+		return 0;
+	}
+
+	// View‑space velocity (w=0 ignores translation).
+	const vxView = m[0] * mx + m[4] * my + m[8] * mz;
+	const vyView = m[1] * mx + m[5] * my + m[9] * mz;
+
+	if (Math.abs(vxView) < 0.000001 && Math.abs(vyView) < 0.000001) {
+		return 0;
+	}
+
+	return (Math.atan2(vxView, vyView) * 180) / Math.PI;
+}
+
+class RainWeatherEffect {
+	constructor(Params) {
+		this.effectID = Params.Inst.effectID;
+		this.ownerAID = Params.Init.ownerAID;
+		this.startTick = Params.Inst.startTick;
+		this.endTick = Params.Inst.endTick; // -1 for infinite
+
+		this.lastEmitTick = this.startTick;
+		this.drops = [];
+		this.splashes = [];
+		this.puddles = [];
+
+		this._wind = { xTick: 0, yTick: 0, xMs: 0, yMs: 0 };
+
+		// --- Thunderstorm ---
+		this.nextLightningTime = Date.now() + randRange(THUNDER_MIN_INTERVAL, THUNDER_MAX_INTERVAL);
+		this.isFlashing = false;
+		this.flashStartTime = 0;
+		this.flashMultiCount = 1; // Double thunders
+		this.audioCtx = null;
+		this.rainNode = null;
+		this.audioResumed = false;
+
+		// Try start audio feature
+		try {
+			const AudioContext = window.AudioContext || window.webkitAudioContext;
+			if (AudioContext) {
+				this.audioCtx = new AudioContext();
+				this.initRainSound();
+			}
+		} catch (e) {
+			console.warn('RainWeather: Web Audio API is not supported', e);
+		}
+
+		this.ready = true;
+		this.needCleanUp = false;
+	}
+
+	static isActive() {
+		return _instance;
+	}
+
+	static beforeRender(gl, modelView, projection, fog) {
+		SpriteRenderer.shadow = 1;
+		SpriteRenderer.angle = 0;
+		SpriteRenderer.offset[0] = 0;
+		SpriteRenderer.offset[1] = 0;
+		SpriteRenderer.image.palette = null;
+		SpriteRenderer.color.set([1, 1, 1, 1]);
+		SpriteRenderer.depth = 0;
+		SpriteRenderer.zIndex = 0;
+	}
+
+	static afterRender(gl) {
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	}
+
+	static startOrRestart(Params) {
+		const now = Params.Inst.startTick || Renderer.tick;
+		const currentMap = MapRenderer.currentMap;
+
+		if (_mapName !== currentMap) {
+			_instance = null;
+			_mapName = currentMap;
+		}
+		_isStopping = false;
+		if (_instance && !_instance.needCleanUp) {
+			if (_instance.endTick > 0) {
+				_instance.endTick = -1;
+				_instance.lastEmitTick = now;
+			}
+			return _instance;
+		}
+
+		_instance = new RainWeatherEffect(Params);
+		_mapName = currentMap;
+		return _instance;
+	}
+
+	static renderAll(gl, modelView, projection, fog, tick) {
+		if (!_instance) {
+			return;
+		}
+
+		// Clean up if map changed
+		if (_mapName !== MapRenderer.currentMap) {
+			_instance = null;
+			return;
+		}
+
+		this.beforeRender(gl, modelView, projection, fog);
+
+		SpriteRenderer.runWithDepth(false, false, true, () => {
+			_instance.render(gl, tick, false);
+		});
+
+		if (_instance.needCleanUp) {
+			_instance.free();
+			_instance = null;
+		}
+
+		this.afterRender(gl);
+	}
+
+	static renderPuddles(gl, modelView, projection, fog, tick) {
+		if (!_instance || !_instance.puddles.length) {
+			return;
+		}
+
+		this.beforeRender(gl, modelView, projection, fog);
+		_instance.render(gl, tick, true);
+		this.afterRender(gl);
+	}
+
+	static stop(ownerAID, tick) {
+		if (!_instance) {
+			return;
+		}
+
+		const now = tick || Renderer.tick;
+		if (_instance.endTick === -1) {
+			_isStopping = true;
+			_instance.endTick = now + FADEOUT_TAIL_MS;
+		}
+	}
+
+	initRainSound() {
+		if (!this.audioCtx) {
+			return;
+		}
+
+		if (!Preferences.Sound.play) {
+			return;
+		}
+
+		const ctx = this.audioCtx;
+		const bufferSize = 2 * ctx.sampleRate;
+		const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+		const output = buffer.getChannelData(0);

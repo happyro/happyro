@@ -1,0 +1,223 @@
+
+static void block_free(struct block* p)
+{
+	if( p->unfill_prev ) {
+		if( p->unfill_prev == &block_head) {
+			hash_unfill[ p->unit_hash ] = p->unfill_next;
+		} else {
+			p->unfill_prev->unfill_next = p->unfill_next;
+		}
+		if( p->unfill_next ) {
+			p->unfill_next->unfill_prev = p->unfill_prev;
+		}
+		p->unfill_prev = nullptr;
+	}
+
+	p->unfill_next = hash_unfill[0];
+	hash_unfill[0] = p;
+}
+
+size_t memmgr_usage (void)
+{
+	return memmgr_usage_bytes / 1024;
+}
+
+#ifdef LOG_MEMMGR
+static char memmer_logfile[128];
+static FILE *log_fp;
+
+static void memmgr_log (char *buf)
+{
+	if( !log_fp )
+	{
+		const char* version;
+		time_t raw;
+		struct tm* t;
+
+		log_fp = fopen(memmer_logfile,"at");
+		if (!log_fp) log_fp = stdout;
+
+		time(&raw);
+		t = localtime(&raw);
+
+		if( ( version = get_git_hash() ) && version[0] != UNKNOWN_VERSION ){
+			fprintf(log_fp, "\nMemory manager: Memory leaks found at %d/%02d/%02d %02dh%02dm%02ds (Git Hash %s).\n", (t->tm_year+1900), (t->tm_mon+1), t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec, version );
+		}else if( ( version = get_svn_revision() ) && version[0] != UNKNOWN_VERSION ){
+			fprintf(log_fp, "\nMemory manager: Memory leaks found at %d/%02d/%02d %02dh%02dm%02ds (SVN Revision %s).\n", (t->tm_year + 1900), (t->tm_mon + 1), t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec, version );
+		}else{
+			fprintf(log_fp, "\nMemory manager: Memory leaks found at %d/%02d/%02d %02dh%02dm%02ds (Unknown version).\n", (t->tm_year + 1900), (t->tm_mon + 1), t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec );
+		}
+	}
+	fprintf(log_fp, "%s", buf);
+	return;
+}
+#endif /* LOG_MEMMGR */
+
+/// Returns true if the memory location is active.
+/// Active means it is allocated and points to a usable part.
+///
+/// @param ptr Pointer to the memory
+/// @return true if the memory is active
+bool memmgr_verify(void* ptr)
+{
+	struct block* block = block_first;
+	struct unit_head_large* large = unit_head_large_first;
+
+	if( ptr == nullptr )
+		return false;// never valid
+
+	// search small blocks
+	while( block )
+	{
+		if( (char*)ptr >= (char*)block && (char*)ptr < ((char*)block) + sizeof(struct block) )
+		{// found memory block
+			if( block->unit_used && (char*)ptr >= block->data )
+			{// memory block is being used and ptr points to a sub-unit
+				size_t i = (size_t)((char*)ptr - block->data)/block->unit_size;
+				struct unit_head* head = block2unit(block, i);
+				if( i < block->unit_maxused && head->block != nullptr )
+				{// memory unit is allocated, check if ptr points to the usable part
+					return ( (char*)ptr >= ((char*)head) + sizeof(struct unit_head) - sizeof(long)
+						&& (char*)ptr < ((char*)head) + sizeof(struct unit_head) - sizeof(long) + head->size );
+				}
+			}
+			return false;
+		}
+		block = block->block_next;
+	}
+
+	// search large blocks
+	while( large )
+	{
+		if( (char*)ptr >= (char*)large && (char*)ptr < ((char*)large) + large->size )
+		{// found memory block, check if ptr points to the usable part
+			return ( (char*)ptr >= ((char*)large) + sizeof(struct unit_head_large) - sizeof(long)
+				&& (char*)ptr < ((char*)large) + sizeof(struct unit_head_large) - sizeof(long) + large->size );
+		}
+		large = large->next;
+	}
+	return false;
+}
+
+static void memmgr_final (void)
+{
+	struct block *block = block_first;
+	struct unit_head_large *large = unit_head_large_first;
+
+#ifdef LOG_MEMMGR
+	int32 count = 0;
+#endif /* LOG_MEMMGR */
+
+	while (block) {
+		if (block->unit_used) {
+			int32 i;
+			for (i = 0; i < block->unit_maxused; i++) {
+				struct unit_head *head = block2unit(block, i);
+				if(head->block != nullptr) {
+					char* ptr = (char *)head + sizeof(struct unit_head) - sizeof(long);
+#ifdef LOG_MEMMGR
+					char buf[1024];
+					sprintf (buf,
+						"%04d : %s line %d size %lu address 0x%p\n", ++count,
+						head->file, head->line, (unsigned long)head->size, ptr);
+					memmgr_log (buf);
+#endif /* LOG_MEMMGR */
+					// get block pointer and free it [celest]
+					_mfree(ptr, ALC_MARK);
+				}
+			}
+		}
+		block = block->block_next;
+	}
+
+	while(large) {
+		struct unit_head_large *large2;
+#ifdef LOG_MEMMGR
+		char buf[1024];
+		sprintf (buf,
+			"%04d : %s line %d size %lu address 0x%p\n", ++count,
+			large->unit_head.file, large->unit_head.line, (unsigned long)large->size, &large->unit_head.checksum);
+		memmgr_log (buf);
+#endif /* LOG_MEMMGR */
+		large2 = large->next;
+		FREE(large,file,line,func);
+		large = large2;
+	}
+#ifdef LOG_MEMMGR
+	if(count == 0) {
+		ShowInfo("Memory manager: No memory leaks found.\n");
+	} else {
+		ShowWarning("Memory manager: Memory leaks found and fixed.\n");
+		fclose(log_fp);
+	}
+#endif /* LOG_MEMMGR */
+}
+
+static void memmgr_init (void)
+{
+#ifdef LOG_MEMMGR
+	sprintf(memmer_logfile, "log/%s.leaks", SERVER_NAME);
+	ShowStatus("Memory manager initialised: " CL_WHITE "%s" CL_RESET "\n", memmer_logfile);
+	memset(hash_unfill, 0, sizeof(hash_unfill));
+#endif /* LOG_MEMMGR */
+}
+#endif /* USE_MEMMGR */
+
+
+/*======================================
+ * Initialise
+ *--------------------------------------
+ */
+
+
+/// Tests the memory for errors and memory leaks.
+void malloc_memory_check(void)
+{
+	MEMORY_CHECK();
+}
+
+
+/// Returns true if a pointer is valid.
+/// The check is best-effort, false positives are possible.
+bool malloc_verify_ptr(void* ptr)
+{
+#ifdef USE_MEMMGR
+	return memmgr_verify(ptr) && MEMORY_VERIFY(ptr);
+#else
+	return MEMORY_VERIFY(ptr);
+#endif
+}
+
+
+size_t malloc_usage (void)
+{
+#ifdef USE_MEMMGR
+	return memmgr_usage ();
+#else
+	return MEMORY_USAGE();
+#endif
+}
+
+void malloc_final (void)
+{
+#ifdef USE_MEMMGR
+	memmgr_final ();
+#endif
+	MEMORY_CHECK();
+}
+
+void malloc_init (void)
+{
+#if defined(DMALLOC) && defined(CYGWIN)
+	// http://dmalloc.com/docs/latest/online/dmalloc_19.html
+	dmalloc_debug_setup(getenv("DMALLOC_OPTIONS"));
+#endif
+#ifdef GCOLLECT
+	// don't garbage collect, only report inaccessible memory that was not deallocated
+	GC_find_leak = 1;
+	GC_INIT();
+#endif
+#ifdef USE_MEMMGR
+	memmgr_init ();
+#endif
+}

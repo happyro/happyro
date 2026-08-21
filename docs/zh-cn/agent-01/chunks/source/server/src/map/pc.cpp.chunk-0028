@@ -1,0 +1,500 @@
+
+			uint16 max_lv;
+
+			if (!this->asUInt16(it, "MaxLevel", max_lv))
+				return 0;
+
+			if (max_lv > MAX_SKILL_LEVEL) {
+				this->invalidWarning(it["MaxLevel"], "MaxLevel exceeds the maximum skill level of %d, skipping.\n", MAX_SKILL_LEVEL);
+				return 0;
+			}
+
+			uint16 skill_lv_max = skill_get_max(skill_id);
+
+			if (max_lv > skill_lv_max) {
+				this->invalidWarning(it["MaxLevel"], "Skill %s's level %hu exceeds the skill's max level %hu. Capping skill level.\n", skill_name.c_str(), max_lv, skill_lv_max);
+				max_lv = skill_lv_max;
+			}
+
+			// if (max_lv == 0) {	// skill lvl 0 removed on loadingFinished (because of inherit)
+				// if (!skill_exists || entry->skill_id.erase(skill_id) == 0)
+					// this->invalidWarning(it["Name"], "Failed to erase %s, the skill doesn't exist in for job %s, skipping.\n", skill_name.c_str(), job_name.c_str());
+				// continue;
+			// }
+
+			entry->max_lv = max_lv;
+
+			if (this->nodeExists(it, "BaseLevel")) {
+				uint32 baselv;
+
+				if (!this->asUInt32(it, "BaseLevel", baselv))
+					return 0;
+
+				uint32 baselv_max = job_db.get_maxBaseLv(job_id);
+
+				if (baselv > baselv_max) {
+					this->invalidWarning(it["BaseLevel"], "Skill %hu's base level requirement %hu exceeds job %s's max base level %d. Capping skill base level.\n",
+						skill_id, baselv, job_name.c_str(), baselv_max);
+					baselv = baselv_max;
+				}
+				entry->baselv = baselv;
+			} else {
+				if (!skill_exists)
+					entry->baselv = 0;
+			}
+
+			if (this->nodeExists(it, "JobLevel")) {
+				uint32 joblv;
+
+				if (!this->asUInt32(it, "JobLevel", joblv))
+					return 0;
+
+				uint32 joblv_max = job_db.get_maxJobLv(job_id);
+
+				if (joblv > joblv_max) {
+					this->invalidWarning(it["JobLevel"], "Skill %hu's job level requirement %hu exceeds job %s's max job level %d. Capping skill job level.\n",
+						skill_id, joblv, job_name.c_str(), joblv_max);
+					joblv = joblv_max;
+				}
+				entry->joblv = joblv;
+			} else {
+				if (!skill_exists)
+					entry->joblv = 0;
+			}
+
+			if (this->nodeExists(it, "Requires")) {
+				for (const auto &Requiresit : it["Requires"]) {
+					if (!this->nodesExist(Requiresit, { "Name" }))
+						return 0;
+
+					std::string skill_name_req;
+
+					if (!this->asString(Requiresit, "Name", skill_name_req))
+						return 0;
+
+					uint16 skill_id_req = skill_name2id(skill_name_req.c_str());
+
+					if (skill_id_req == 0) {
+						this->invalidWarning(Requiresit["Name"], "Invalid skill name \"%s\".\n", skill_name_req.c_str());
+						return 0;
+					}
+
+					uint16 lv_req;
+
+					if (!this->asUInt16(Requiresit, "Level", lv_req))
+						return 0;
+
+					if (lv_req > MAX_SKILL_LEVEL) {
+						this->invalidWarning(Requiresit["Level"], "Level exceeds the maximum skill level of %d, skipping.\n", MAX_SKILL_LEVEL);
+						return 0;
+					}
+
+					uint16 lv_req_max = skill_get_max(skill_id_req);
+
+					if (lv_req > lv_req_max) {
+						this->invalidWarning(it["MaxLevel"], "Required skill %s's level %hu exceeds the skill's max level %hu. Capping skill level.\n", skill_name.c_str(), lv_req, lv_req_max);
+						lv_req = lv_req_max;
+					}
+					
+					if (lv_req == 0) {
+						if (entry->need.erase(skill_id_req) == 0)
+							this->invalidWarning(Requiresit["Name"], "Failed to erase %s, the skill doesn't exist in for job %s, skipping.\n", skill_name_req.c_str(), job_name.c_str());
+						continue;
+					}
+
+					entry->need[skill_id_req] = lv_req;
+				}
+			}
+
+			if (this->nodeExists(it, "Exclude")) {
+				bool exclude;
+
+				if (!this->asBool(it, "Exclude", exclude))
+					return 0;
+
+				entry->exclude_inherit = exclude;
+			} else {
+				if (!skill_exists)
+					entry->exclude_inherit = false;
+			}
+
+			if (!skill_exists)
+				tree->skills.insert({ skill_id, entry });
+		}
+	}
+
+	if (!exists)
+		this->put(job_id, tree);
+
+	return true;
+}
+
+void SkillTreeDatabase::loadingFinished() {
+	std::unordered_map<uint16, std::shared_ptr<s_skill_tree>> job_tree;	// get the data from skill_tree_db before populate it
+
+	for (auto &data : *this) {
+		if (data.second->inherit_job.empty())
+			continue;
+
+		std::shared_ptr<s_skill_tree> skill_tree = std::make_shared<s_skill_tree>();
+
+		uint32 baselv_max = job_db.get_maxBaseLv(data.first);
+		uint32 joblv_max = job_db.get_maxJobLv(data.first);
+
+		for (const auto &inherit_job : data.second->inherit_job) {
+			std::shared_ptr<s_skill_tree> tree = this->find(inherit_job);
+			if (tree == nullptr || tree->skills.empty())
+				continue;
+
+			for (const auto &it : tree->skills) {
+				if (it.second->exclude_inherit)
+					continue;
+				if (data.second->skills.count(it.first) > 0)	// skill already in the skill tree
+					continue;
+
+				if (skill_tree->skills.count(it.first) > 0)	// replaced by the last inheritance
+					skill_tree->skills[it.first] = it.second;
+				else
+					skill_tree->skills.insert({ it.first, it.second });
+				std::shared_ptr<s_skill_tree_entry> skill = skill_tree->skills[it.first];
+
+				if (skill->baselv > baselv_max) {
+					ShowWarning("SkillTreeDatabase: Skill %s (%hu)'s base level requirement %hu exceeds job %s's max base level %d. Capping skill base level.\n",
+						skill_get_name(skill->skill_id), skill->skill_id, skill->baselv, job_name(data.first), baselv_max);
+					skill->baselv = baselv_max;
+				}
+				if (skill->joblv > joblv_max) {
+					ShowWarning("SkillTreeDatabase: Skill %s (%hu)'s job level requirement %hu exceeds job %s's max job level %d. Capping skill job level.\n",
+						skill_get_name(skill->skill_id), skill->skill_id, skill->joblv, job_name(data.first), joblv_max);
+					skill->joblv = joblv_max;
+				}
+			}
+		}
+		if (skill_tree != nullptr && !skill_tree->skills.empty())
+			job_tree.insert({ data.first, skill_tree });
+	}
+
+	if (!job_tree.empty()) {
+		for (auto &data : *this) {
+			if (job_tree.count(data.first) == 0)
+				continue;
+			data.second->skills.insert(job_tree[data.first]->skills.begin(), job_tree[data.first]->skills.end());
+		}
+	}
+
+	// remove skills with max_lv = 0
+	for (const auto &job : *this) {
+		if (job.second->skills.empty())
+			continue;
+
+		auto it = job.second->skills.begin();
+
+		while( it != job.second->skills.end() ){
+			if( it->second->max_lv == 0 ){
+				it = job.second->skills.erase( it );
+			}else{
+				it++;
+			}
+		}
+	}
+
+	TypesafeYamlDatabase::loadingFinished();
+}
+
+/**
+ * Calculates base HP of player.
+ * @param level: Base level of player
+ * @param job:
+ * @return base_hp
+ */
+uint32 JobDatabase::calc_basehp( const uint16 level, const std::shared_ptr<s_job_info>& job ){
+	uint64 mapid = pc_jobid2mapid( job->job_id );
+	double base_hp = 35.;
+
+	base_hp += floor( level * ( job->hp_increase / 100. ) );
+
+	for( uint16 i = 2; i <= level; i++ ){
+		// Don't have round()
+		base_hp += floor( ( ( job->hp_factor / 100. ) * i ) + 0.5 );
+	}
+
+#ifndef RENEWAL
+	if( (mapid & MAPID_FIRSTMASK) == MAPID_NINJA ){
+		if( level >= 10 ){
+			base_hp += 90.;
+		}
+	}else if( (mapid & MAPID_FIRSTMASK) == MAPID_GUNSLINGER ){
+		if( level >= 10 ){
+			base_hp += 90.;
+		}
+	}
+#endif
+
+	if( (mapid&MAPID_FIRSTMASK) == MAPID_SUMMONER ){
+		base_hp += floor( ( base_hp / 2 ) + 0.5 );
+	}else if( (mapid&MAPID_SECONDMASK) == MAPID_SUPER_NOVICE ){
+		// Supernovice lvl99 HP bonus.
+		if( level >= 99 ){
+			base_hp += 2000.;
+		}
+
+		// Supernovice lvl150 HP bonus.
+		if( level >= 150 ){
+			base_hp += 2000.;
+		}
+	}
+
+	return static_cast<uint32>( base_hp );
+}
+
+/**
+ * Calculates base SP of player.
+ * @param level: Base level of player
+ * @param job:
+ * @return base_sp
+ */
+uint32 JobDatabase::calc_basesp( const uint16 level, const std::shared_ptr<s_job_info>& job ){
+	uint64 mapid = pc_jobid2mapid( job->job_id );
+	double base_sp = 10;
+
+	base_sp += floor( level * ( job->sp_increase / 100. ) );
+
+	for( uint16 i = 2; i <= level; i++ ){
+		// Don't have round()
+		base_sp += floor( ( ( job->sp_factor / 100. ) * i ) + 0.5 );
+	}
+
+	if( (mapid & MAPID_FIRSTMASK) == MAPID_NINJA ){
+		if( level >= 10 ){
+			base_sp -= 22.;
+		}else{
+			base_sp = 11. + 3. * level;
+		}
+	}else if( (mapid & MAPID_FIRSTMASK) == MAPID_GUNSLINGER ){
+		if( level >= 10 ){
+			base_sp -= 18.;
+		}else{
+			base_sp = 9. + 3. * level;
+		}
+	}else if( (mapid&MAPID_FIRSTMASK) == MAPID_SUMMONER ){
+		base_sp += floor( ( base_sp / 2 ) + 0.5 );
+	}
+
+	return static_cast<uint32>( base_sp );
+}
+
+/**
+ * Calculates base AP of player.
+ * @param level: Base level of player
+ * @param job_id:
+ * @return base_sp
+ */
+uint32 JobDatabase::calc_baseap( const uint16 level, const std::shared_ptr<s_job_info>& job ){
+	uint64 mapid = pc_jobid2mapid( job->job_id );
+	double base_ap = 0;
+
+	if( level >= 200 ){
+		base_ap = 200.0;
+	}
+
+	base_ap += floor( level * ( job->ap_increase / 100. ) );
+
+	for( uint16 i = 2; i <= level; i++ ){
+		// Don't have round()
+		base_ap += floor( ( ( job->ap_factor / 100. ) * i ) + 0.5 );
+	}
+
+	return static_cast<uint32>( base_ap );
+}
+
+const std::string JobDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/job_stats.yml";
+}
+
+/**
+ * Reads and parses an entry from the job_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 JobDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	if (this->nodeExists(node, "Jobs")) {
+		const ryml::NodeRef& jobsNode = node["Jobs"];
+
+		for (const auto &jobit : jobsNode) {
+			std::string job_name;
+			c4::from_chars(jobit.key(), &job_name);
+			std::string job_name_constant = "JOB_" + job_name;
+			int64 job_id;
+
+			if (!script_get_constant(job_name_constant.c_str(), &job_id)) {
+				this->invalidWarning(node["Job"], "Job %s does not exist.\n", job_name.c_str());
+				return 0;
+			}
+
+			std::shared_ptr<s_job_info> job = job_db.find(static_cast<uint16>(job_id));
+			bool exists = job != nullptr;
+
+			if (!exists) {
+				job = std::make_shared<s_job_info>();
+
+				job->job_id = static_cast<uint16>( job_id );
+
+				job->job_bonus.resize(MAX_LEVEL);
+				std::fill(job->job_bonus.begin(), job->job_bonus.end(), std::array<uint16, PARAM_MAX> { 0 });
+
+				job->base_hp.resize(MAX_LEVEL);
+				std::fill(job->base_hp.begin(), job->base_hp.end(), 0);
+
+				job->base_sp.resize(MAX_LEVEL);
+				std::fill(job->base_sp.begin(), job->base_sp.end(), 0);
+
+				job->base_ap.resize(MAX_LEVEL);
+				std::fill(job->base_ap.begin(), job->base_ap.end(), 0);
+			}
+
+			if (this->nodeExists(node, "MaxWeight")) {
+				uint32 weight;
+
+				if (!this->asUInt32(node, "MaxWeight", weight))
+					return 0;
+
+				job->max_weight_base = weight;
+			} else {
+				if (!exists)
+					job->max_weight_base = 20000;
+			}
+
+			if (this->nodeExists(node, "HpFactor")) {
+				uint32 hp;
+
+				if (!this->asUInt32(node, "HpFactor", hp))
+					return 0;
+
+				job->hp_factor = hp;
+			} else {
+				if (!exists)
+					job->hp_factor = 0;
+			}
+
+			if (this->nodeExists(node, "HpIncrease")) {
+				uint32 hp;
+
+				if (!this->asUInt32(node, "HpIncrease", hp))
+					return 0;
+
+				job->hp_increase = hp;
+			} else {
+				if (!exists)
+					job->hp_increase = 500;
+			}
+
+			if( this->nodeExists( node, "SpFactor" ) ){
+				uint32 sp;
+
+				if( !this->asUInt32( node, "SpFactor", sp ) ){
+					return 0;
+				}
+
+				job->sp_factor = sp;
+			}else{
+				if( !exists ){
+					job->sp_factor = 0;
+				}
+			}
+
+			if (this->nodeExists(node, "SpIncrease")) {
+				uint32 sp;
+
+				if (!this->asUInt32(node, "SpIncrease", sp))
+					return 0;
+
+				job->sp_increase = sp;
+			} else {
+				if (!exists)
+					job->sp_increase = 100;
+			}
+
+			if( this->nodeExists( node, "ApFactor" ) ){
+				uint32 ap;
+
+				if( !this->asUInt32( node, "ApFactor", ap ) ){
+					return 0;
+				}
+
+				job->ap_factor = ap;
+			}else{
+				if( !exists ){
+					job->ap_factor = 0;
+				}
+			}
+
+			if( this->nodeExists( node, "ApIncrease" ) ){
+				uint32 ap;
+
+				if( !this->asUInt32( node, "ApIncrease", ap ) ){
+					return 0;
+				}
+
+				job->ap_increase = ap;
+			}else{
+				if( !exists ){
+					job->ap_increase = 0;
+				}
+			}
+
+			if (this->nodeExists(node, "BaseASPD")) {
+				const ryml::NodeRef& aspdNode = node["BaseASPD"];
+				uint8 max = MAX_WEAPON_TYPE;
+				int32 def_aspd = AMOTION_ZERO_ASPD;
+
+#ifdef RENEWAL
+				// Renewal adds an extra column for shields
+				max += 1;
+				// Renewal uses ASPD penalty which is amotion divided by the amotion interval
+				def_aspd /= AMOTION_INTERVAL;
+#endif
+
+				if (!exists) {
+					job->aspd_base.resize(max);
+					std::fill(job->aspd_base.begin(), job->aspd_base.end(), def_aspd);
+				}
+
+				for (const auto &aspdit : aspdNode) {
+					std::string weapon;
+					c4::from_chars(aspdit.key(), &weapon);
+					std::string weapon_constant = "W_" + weapon;
+					int64 constant;
+
+					if (!script_get_constant(weapon_constant.c_str(), &constant)) {
+						this->invalidWarning(aspdNode["BaseASPD"], "Unknown weapon type %s specified for %s, skipping.\n", weapon.c_str(), job_name.c_str());
+						continue;
+					}
+
+					if (constant < W_FIST || constant >= max) {
+						this->invalidWarning(aspdNode["BaseASPD"], "Invalid weapon type %s specified for %s, skipping.\n", weapon.c_str(), job_name.c_str());
+						continue;
+					}
+
+					int16 aspd;
+
+					if (!this->asInt16(aspdNode, weapon.c_str(), aspd))
+						return 0;
+
+					job->aspd_base[static_cast<int16>(constant)] = aspd;
+				}
+			} else {
+				if (!exists) {
+					uint8 max = MAX_WEAPON_TYPE;
+					int32 def_aspd = AMOTION_ZERO_ASPD;
+
+#ifdef RENEWAL
+					// Renewal adds an extra column for shields
+					max += 1;
+					// Renewal uses ASPD penalty which is amotion divided by the amotion interval
+					def_aspd /= AMOTION_INTERVAL;
+#endif
+					job->aspd_base.resize(max);
+					std::fill(job->aspd_base.begin(), job->aspd_base.end(), def_aspd);
+				}
+			}
+

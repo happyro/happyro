@@ -1,0 +1,500 @@
+ */
+struct regen_data *status_get_regen_data(block_list* bl)
+{
+	nullpo_retr(nullptr, bl);
+	switch (bl->type) {
+		case BL_PC:	return &reinterpret_cast<map_session_data*>(bl)->regen;
+		case BL_HOM:	return &reinterpret_cast<homun_data*>(bl)->regen;
+		case BL_MER:	return &reinterpret_cast<s_mercenary_data*>(bl)->regen;
+		case BL_ELEM:	return &reinterpret_cast<s_elemental_data*>(bl)->regen;
+		default:
+			return nullptr;
+	}
+}
+
+const regen_data* status_get_regen_data(const block_list* bl){
+	return status_get_regen_data(const_cast<block_list*>(bl));
+}
+
+/**
+ * Gets the status data of the given bl
+ * @param bl: Object whose status to get [PC|MOB|PET|HOM|MER|ELEM|NPC]
+ * @return status or "dummy_status" if any other bl->type than noted above
+ */
+status_data* status_get_status_data(block_list& bl){
+	switch (bl.type) {
+		case BL_PC:
+			return &reinterpret_cast<map_session_data*>( &bl )->battle_status;
+		case BL_MOB:
+			return &reinterpret_cast<mob_data*>( &bl )->status;
+		case BL_PET:
+			return &reinterpret_cast<pet_data*>( &bl )->status;
+		case BL_HOM:
+			return &reinterpret_cast<homun_data*>( &bl )->battle_status;
+		case BL_MER:
+			return &reinterpret_cast<s_mercenary_data*>( &bl )->battle_status;
+		case BL_ELEM:
+			return &reinterpret_cast<s_elemental_data*>( &bl )->battle_status;
+		case BL_NPC: {
+				npc_data* nd = reinterpret_cast<npc_data*>( &bl );
+
+				if( mobdb_checkid( nd->class_ ) == 0 ){
+					return &nd->status;
+				}else{
+					return &dummy_status;
+				}
+			}
+		default:
+			return &dummy_status;
+	}
+}
+
+const status_data* status_get_status_data(const block_list& bl){
+	return status_get_status_data(const_cast<block_list&>(bl));
+}
+
+/**
+ * Gets the base status data of the given bl
+ * @param bl: Object whose status to get [PC|MOB|PET|HOM|MER|ELEM|NPC]
+ * @return base_status or nullptr if any other bl->type than noted above
+ */
+struct status_data *status_get_base_status(block_list *bl)
+{
+	nullpo_retr(nullptr, bl);
+	switch (bl->type) {
+		case BL_PC:	return &((TBL_PC*)bl)->base_status;
+		case BL_MOB:	return ((TBL_MOB*)bl)->base_status ? ((TBL_MOB*)bl)->base_status : &((TBL_MOB*)bl)->db->status;
+		case BL_PET:	return &((TBL_PET*)bl)->db->status;
+		case BL_HOM:	return &((TBL_HOM*)bl)->base_status;
+		case BL_MER:	return &((TBL_MER*)bl)->base_status;
+		case BL_ELEM:	return &((TBL_ELEM*)bl)->base_status;
+		case BL_NPC:	return ((mobdb_checkid(((TBL_NPC*)bl)->class_) == 0) ? &((TBL_NPC*)bl)->status : nullptr);
+		default:
+			return nullptr;
+	}
+}
+
+const status_data* status_get_base_status(const block_list* bl){
+	return status_get_base_status(const_cast<block_list*>(bl));
+}
+
+/**
+ * Gets the defense of the given bl
+ * @param bl: Object whose defense to get [PC|MOB|HOM|MER|ELEM]
+ * @return defense with cap_value(def, DEFTYPE_MIN, DEFTYPE_MAX)
+ */
+defType status_get_def( const block_list* bl )
+{
+	const unit_data* ud;
+	const status_data* status = status_get_status_data(*bl);
+	// TODO: check if dummy_status? Can never be nullptr [Lemongrass]
+	int32 def = status?status->def:0;
+	ud = unit_bl2ud(bl);
+	if (ud && ud->skilltimer != INVALID_TIMER)
+		def -= def * skill_get_castdef(ud->skill_id)/100;
+
+	return cap_value(def, DEFTYPE_MIN, DEFTYPE_MAX);
+}
+
+/**
+ * Gets the walking speed of the given bl
+ * @param bl: Object whose speed to get [PC|MOB|PET|HOM|MER|ELEM|NPC]
+ * @return speed
+ */
+uint16 status_get_speed( const block_list* bl )
+{
+	// TODO: is the statement of Skotlex still true? And would it not be better to check for dummy_status instead? [Lemongrass]
+	if(bl->type==BL_NPC)// Only BL with speed data but no status_data [Skotlex]
+		return static_cast<const npc_data*>(bl)->speed;
+	return status_get_status_data(*bl)->speed;
+}
+
+/**
+ * Gets the party ID of the given bl
+ * @param bl: Object whose party ID to get [PC|MOB|PET|HOM|MER|SKILL|ELEM]
+ * @return party ID
+ */
+int32 status_get_party_id( const block_list* bl )
+{
+	nullpo_ret(bl);
+	switch (bl->type) {
+		case BL_PC:
+			return static_cast<const map_session_data*>(bl)->status.party_id;
+		case BL_PET:
+			if (static_cast<const pet_data*>(bl)->master)
+				return static_cast<const pet_data*>(bl)->master->status.party_id;
+			break;
+		case BL_MOB: {
+				const mob_data* md = static_cast<const mob_data*>(bl);
+				if( md->master_id > 0 ) {
+					map_session_data *msd;
+					if (md->special_state.ai && (msd = map_id2sd(md->master_id)) != nullptr)
+						return msd->status.party_id;
+					return -md->master_id;
+				}
+			}
+			break;
+		case BL_HOM:
+			if (static_cast<const homun_data*>(bl)->master)
+				return static_cast<const homun_data*>(bl)->master->status.party_id;
+			break;
+		case BL_MER:
+			if (static_cast<const s_mercenary_data*>(bl)->master)
+				return static_cast<const s_mercenary_data*>(bl)->master->status.party_id;
+			break;
+		case BL_SKILL:
+			if (static_cast<const skill_unit*>(bl)->group)
+				return static_cast<const skill_unit*>(bl)->group->party_id;
+			break;
+		case BL_ELEM:
+			if (static_cast<const s_elemental_data*>(bl)->master)
+				return static_cast<const s_elemental_data*>(bl)->master->status.party_id;
+			break;
+	}
+	return 0;
+}
+
+/**
+ * Gets the guild ID of the given bl
+ * @param bl: Object whose guild ID to get [PC|MOB|PET|HOM|MER|SKILL|ELEM|NPC]
+ * @return guild ID
+ */
+int32 status_get_guild_id(const block_list* bl)
+{
+	nullpo_ret(bl);
+	switch (bl->type) {
+		case BL_PC:
+			return static_cast<const map_session_data*>(bl)->status.guild_id;
+		case BL_PET:
+			if (const pet_data* pd = static_cast<const pet_data*>(bl); pd->master != nullptr)
+				return pd->master->status.guild_id;
+			break;
+		case BL_MOB:
+			{
+				const mob_data *md = static_cast<const mob_data*>(bl);
+				if (md->guardian_data)	// Guardian's guild [Skotlex]
+					return md->guardian_data->guild_id;
+				if (md->special_state.ai){
+					if(map_session_data* msd = map_id2sd(md->master_id); msd != nullptr)
+						return msd->status.guild_id; // Alchemist's mobs [Skotlex]
+				}
+			}
+			break;
+		case BL_HOM:
+			if (const homun_data* hd = static_cast<const homun_data*>(bl); hd->master != nullptr)
+				return hd->master->status.guild_id;
+			break;
+		case BL_MER:
+			if (const s_mercenary_data* md = static_cast<const s_mercenary_data*>(bl); md->master != nullptr)
+				return md->master->status.guild_id;
+			break;
+		case BL_NPC:
+			if (const npc_data* nd = static_cast<const npc_data*>(bl); nd->subtype == NPCTYPE_SCRIPT)
+				return nd->u.scr.guild_id;
+			break;
+		case BL_SKILL:
+			if (const skill_unit* su = static_cast<const skill_unit*>(bl); su->group != nullptr)
+				return su->group->guild_id;
+			break;
+		case BL_ELEM:
+			if (const s_elemental_data* ed = static_cast<const s_elemental_data*>(bl); ed->master != nullptr)
+				return ed->master->status.guild_id;
+			break;
+	}
+	return 0;
+}
+
+/**
+ * Gets the guild emblem ID of the given bl
+ * @param bl: Object whose emblem ID to get [PC|MOB|PET|HOM|MER|SKILL|ELEM|NPC]
+ * @return guild emblem ID
+ */
+int32 status_get_emblem_id(const block_list* bl)
+{
+	nullpo_ret(bl);
+	switch (bl->type) {
+		case BL_PC:
+			return static_cast<const map_session_data*>(bl)->guild_emblem_id;
+		case BL_PET:
+			if (static_cast<const pet_data*>(bl)->master)
+				return static_cast<const pet_data*>(bl)->master->guild_emblem_id;
+			break;
+		case BL_MOB:
+			{
+				const map_session_data* msd;
+				const mob_data* md = static_cast<const mob_data*>(bl);
+				if (md->guardian_data)	// Guardian's guild [Skotlex]
+					return md->guardian_data->emblem_id;
+				if (md->special_state.ai && (msd = map_id2sd(md->master_id)) != nullptr)
+					return msd->guild_emblem_id; // Alchemist's mobs [Skotlex]
+			}
+			break;
+		case BL_HOM:
+			if (static_cast<const homun_data*>(bl)->master)
+				return static_cast<const homun_data*>(bl)->master->guild_emblem_id;
+			break;
+		case BL_MER:
+			if (static_cast<const s_mercenary_data*>(bl)->master)
+				return static_cast<const s_mercenary_data*>(bl)->master->guild_emblem_id;
+			break;
+		case BL_NPC:
+			if (const npc_data* nd = static_cast<const npc_data*>(bl); nd->subtype == NPCTYPE_SCRIPT && nd->u.scr.guild_id > 0) {
+				auto g = guild_search(nd->u.scr.guild_id);
+				if (g)
+					return g->guild.emblem_id;
+			}
+			break;
+		case BL_ELEM:
+			if (static_cast<const s_elemental_data*>(bl)->master)
+				return static_cast<const s_elemental_data*>(bl)->master->guild_emblem_id;
+			break;
+	}
+	return 0;
+}
+
+/**
+ * Gets the race2 of a mob or pet
+ * @param bl: Object whose race2 to get [MOB|PET]
+ * @return race2
+ */
+std::vector<e_race2> status_get_race2(const block_list* bl)
+{
+	nullpo_retr(std::vector<e_race2>(),bl);
+
+	if (bl->type == BL_MOB)
+		return static_cast<const mob_data*>(bl)->db->race2;
+	if (bl->type == BL_PET)
+		return static_cast<const pet_data*>(bl)->db->race2;
+	return std::vector<e_race2>();
+}
+
+/**
+ * Checks if an object is dead 
+ * @param bl: Object to check [PC|MOB|HOM|MER|ELEM]
+ * @return 1: Is dead or 0: Is alive
+ */
+bool status_isdead(const block_list &bl){
+	return status_get_status_data(bl)->hp == 0;
+}
+
+/**
+ * Checks if an object is immune to magic 
+ * @param bl: Object to check [PC|MOB|HOM|MER|ELEM]
+ * @return value of magic damage to be blocked
+ */
+int32 status_isimmune(const block_list* bl)
+{
+	const status_change *sc =status_get_sc(bl);
+
+	if (sc) {
+		if (sc->getSCE(SC_HERMODE))
+			return 100;
+
+		if (sc->getSCE(SC_DEADLY_DEFEASANCE))
+			return 0;
+	}
+
+	if (bl->type == BL_PC &&
+		(static_cast<const map_session_data*>(bl))->special_state.no_magic_damage >= battle_config.gtb_sc_immunity)
+		return (static_cast<const map_session_data*>(bl))->special_state.no_magic_damage;
+	return 0;
+}
+
+/**
+ * Returns whether object can be stopped by damage or not
+ * This does not only include the status change "Endure" but also all other endure effects
+ * @param bl: Object to check [PC|MOB|HOM|MER|ELEM]
+ * @param tick: Current tick
+ * @param visible: If true, function returns if the endure effect should be shown on the client
+ * @return Whether object can be stopped (false) or not (true)
+ */
+bool status_isendure(const block_list& bl, t_tick tick, bool visible)
+{
+	// If bl type is set to always have endure, we don't need to check anything else
+	if (battle_config.infinite_endure&bl.type)
+		return true;
+
+	// Officially the bonus "no_walk_delay" is actually just SC_ENDURE with unlimited duration.
+	// Endure is forbidden on some maps, but the bonus is still set to true on such maps.
+	// That's why we need to check it here and disable the bonus to correctly mimic official behavior.
+	if (bl.m >= 0 && bl.type == BL_PC && !status_change_isDisabledOnMap(SC_ENDURE, map_getmapdata(bl.m))) {
+		if (static_cast<const map_session_data&>(bl).special_state.no_walk_delay)
+			return true;
+	}
+
+	if (const unit_data* ud = unit_bl2ud(&bl); ud != nullptr && DIFF_TICK(ud->endure_tick, tick) > 0)
+		return true;
+
+	if (const status_change* sc = status_get_sc(&bl); sc != nullptr && !sc->empty()) {
+		// Officially endure also sets endure_tick
+		// However, we have a lot of extra logic for infinite endure, so we use the status change for now
+		if (sc->getSCE(SC_ENDURE) != nullptr)
+			return true;
+
+		// These status changes don't send "Endure" to the client, but still prevent being stopped
+		if (!visible && (sc->getSCE(SC_RUN) != nullptr || sc->getSCE(SC_WUGDASH) != nullptr))
+			return true;
+	}
+
+#ifdef RENEWAL
+	// Bosses in renewal (episode 20+) cannot be stopped by damage, but still show damage normally
+	if (!visible && bl.type == BL_MOB && status_get_class_(&bl) == CLASS_BOSS)
+		return true;
+#endif
+
+	return false;
+}
+
+/**
+ * Get view data of an object 
+ * @param bl: Object whose view data to get [PC|MOB|PET|HOM|MER|ELEM|NPC]
+ * @return view data structure bl->vd
+ */
+struct view_data* status_get_viewdata(block_list *bl)
+{
+	nullpo_retr(nullptr, bl);
+	switch (bl->type) {
+		case BL_PC:  return &reinterpret_cast<map_session_data*>(bl)->vd;
+		case BL_MOB: return reinterpret_cast<mob_data*>(bl)->vd;
+		case BL_PET: return &reinterpret_cast<pet_data*>(bl)->vd;
+		case BL_NPC: return &reinterpret_cast<npc_data*>(bl)->vd;
+		case BL_HOM: return reinterpret_cast<homun_data*>(bl)->vd;
+		case BL_MER: return reinterpret_cast<s_mercenary_data*>(bl)->vd;
+		case BL_ELEM: return reinterpret_cast<s_elemental_data*>(bl)->vd;
+	}
+	return nullptr;
+}
+
+const struct view_data* status_get_viewdata(const block_list* bl){
+	return status_get_viewdata(const_cast<block_list*>(bl));
+}
+
+/**
+ * Set view data of an object
+ * This function deals with class, mount, and item views
+ * SC views are set in clif_getareachar_unit() 
+ * @param bl: Object whose view data to set [PC|MOB|PET|HOM|MER|ELEM|NPC]
+ * @param class_: class of the object
+ */
+void status_set_viewdata(block_list *bl, int32 class_)
+{
+	struct view_data* vd;
+	nullpo_retv(bl);
+	if (mobdb_checkid(class_) || mob_is_clone(class_))
+		vd = mob_get_viewdata(class_);
+	else if (npcdb_checkid(class_))
+		vd = npc_get_viewdata(class_);
+	else if (homdb_checkid(class_))
+		vd = hom_get_viewdata(class_);
+	else if (mercenary_db.exists(class_))
+		vd = mercenary_get_viewdata(class_);
+	else if (elemental_db.exists(class_))
+		vd = elemental_get_viewdata(class_);
+	else
+		vd = nullptr;
+
+	switch (bl->type) {
+	case BL_PC:
+		{
+			TBL_PC* sd = (TBL_PC*)bl;
+			if (pcdb_checkid(class_)) {
+				if (sd->sc.option&OPTION_RIDING) {
+					switch (class_) { // Adapt class to a Mounted one.
+						case JOB_KNIGHT:
+							class_ = JOB_KNIGHT2;
+							break;
+						case JOB_CRUSADER:
+							class_ = JOB_CRUSADER2;
+							break;
+						case JOB_LORD_KNIGHT:
+							class_ = JOB_LORD_KNIGHT2;
+							break;
+						case JOB_PALADIN:
+							class_ = JOB_PALADIN2;
+							break;
+						case JOB_BABY_KNIGHT:
+							class_ = JOB_BABY_KNIGHT2;
+							break;
+						case JOB_BABY_CRUSADER:
+							class_ = JOB_BABY_CRUSADER2;
+							break;
+					}
+				}
+				sd->vd.look[LOOK_BASE] = class_;
+				sd->update_look( LOOK_WEAPON );
+				sd->update_look( LOOK_SHIELD );
+				sd->vd.look[LOOK_HEAD_TOP] = sd->status.head_top;
+				sd->vd.look[LOOK_HEAD_MID] = sd->status.head_mid;
+				sd->vd.look[LOOK_HEAD_BOTTOM] = sd->status.head_bottom;
+				sd->vd.look[LOOK_HAIR] = cap_value(sd->status.hair, MIN_HAIR_STYLE, MAX_HAIR_STYLE);
+				sd->vd.look[LOOK_HAIR_COLOR] = cap_value(sd->status.hair_color, MIN_HAIR_COLOR, MAX_HAIR_COLOR);
+				sd->vd.look[LOOK_CLOTHES_COLOR] = cap_value(sd->status.clothes_color, MIN_CLOTH_COLOR, MAX_CLOTH_COLOR);
+				sd->vd.look[LOOK_BODY2] = sd->status.body;
+				sd->vd.sex = sd->status.sex;
+				sd->vd.look[LOOK_ROBE] = sd->status.robe;
+
+				if (sd->vd.look[LOOK_CLOTHES_COLOR]) {
+					if(sd->sc.option&OPTION_WEDDING && battle_config.wedding_ignorepalette)
+						sd->vd.look[LOOK_CLOTHES_COLOR] = 0;
+					if(sd->sc.option&OPTION_XMAS && battle_config.xmas_ignorepalette)
+						sd->vd.look[LOOK_CLOTHES_COLOR] = 0;
+					if(sd->sc.option&(OPTION_SUMMER|OPTION_SUMMER2) && battle_config.summer_ignorepalette)
+						sd->vd.look[LOOK_CLOTHES_COLOR] = 0;
+					if(sd->sc.option&OPTION_HANBOK && battle_config.hanbok_ignorepalette)
+						sd->vd.look[LOOK_CLOTHES_COLOR] = 0;
+					if(sd->sc.option&OPTION_OKTOBERFEST && battle_config.oktoberfest_ignorepalette)
+						sd->vd.look[LOOK_CLOTHES_COLOR] = 0;
+				}
+				if( sd->sc.option&OPTION_COSTUME ){
+ 					sd->vd.look[LOOK_BODY2] = class_;
+				}
+			} else if (vd)
+				memcpy(&sd->vd, vd, sizeof(struct view_data));
+			else
+				ShowError("status_set_viewdata (PC): No view data for class %d\n", class_);
+		}
+	break;
+	case BL_MOB:
+		{
+			TBL_MOB* md = (TBL_MOB*)bl;
+			if (vd){
+				mob_free_dynamic_viewdata( md );
+
+				md->vd = vd;
+			}else if( pcdb_checkid( class_ ) ){
+				mob_set_dynamic_viewdata( md );
+
+				md->vd->look[LOOK_BASE] = class_;
+				md->vd->look[LOOK_BODY2] = class_;
+				md->vd->look[LOOK_HAIR] = cap_value(md->vd->look[LOOK_HAIR], MIN_HAIR_STYLE, MAX_HAIR_STYLE);
+				md->vd->look[LOOK_HAIR_COLOR] = cap_value(md->vd->look[LOOK_HAIR_COLOR], MIN_HAIR_COLOR, MAX_HAIR_COLOR);
+			}else
+				ShowError("status_set_viewdata (MOB): No view data for class %d\n", class_);
+		}
+	break;
+	case BL_PET:
+		{
+			TBL_PET* pd = (TBL_PET*)bl;
+			if (vd) {
+				memcpy(&pd->vd, vd, sizeof(struct view_data));
+				if (!pcdb_checkid(vd->look[LOOK_BASE])) {
+					pd->vd.look[LOOK_HAIR] = battle_config.pet_hair_style;
+					if(pd->pet.equip) {
+						pd->vd.look[LOOK_HEAD_BOTTOM] = itemdb_viewid(pd->pet.equip);
+						if (!pd->vd.look[LOOK_HEAD_BOTTOM])
+							pd->vd.look[LOOK_HEAD_BOTTOM] = pd->pet.equip;
+					}
+				}
+			} else
+				ShowError("status_set_viewdata (PET): No view data for class %d\n", class_);
+		}
+	break;
+	case BL_NPC:
+		{
+			TBL_NPC* nd = (TBL_NPC*)bl;
+			if (vd)
+				memcpy(&nd->vd, vd, sizeof(struct view_data));
+			else if (pcdb_checkid(class_)) {
+				memset(&nd->vd, 0, sizeof(struct view_data));
+				nd->vd.look[LOOK_BASE] = class_;
+				nd->vd.look[LOOK_BODY2] = class_;

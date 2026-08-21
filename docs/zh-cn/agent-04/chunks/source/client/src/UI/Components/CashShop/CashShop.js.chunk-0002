@@ -1,0 +1,500 @@
+};
+
+/**
+ * Load Cash Shop Components
+ */
+CashShop.loadComponentCashShop = function loadComponentCashShop() {
+	const root = _root();
+
+	if (CashShop.cashShopBannerTable?.length > 0) {
+		CashShop.startBannerRotation();
+	}
+
+	CashShop.isSearch = false;
+
+	// toggle active at activeCashmenu using data-index to search
+	root.querySelectorAll('#panel-menu .tab').forEach(el => el.classList.remove('active'));
+	const activeTab = root.querySelector(`#panel-menu .tab[data-index="${CashShop.activeCashMenu}"]`);
+	if (activeTab) activeTab.classList.add('active');
+
+	const tab_items =
+		CashShop.cashShopListItem[CashShop.activeCashMenu]?.items?.length >= 0
+			? CashShop.cashShopListItem[CashShop.activeCashMenu].items
+			: [];
+	CashShop.initPagination(tab_items);
+	CashShop.renderCashShopItems(CashShop.paginate(tab_items, CashShop.pageOffset, CashShop.pageEnd));
+};
+
+CashShop.startBannerRotation = function () {
+	this.stopBannerRotation();
+	if (this.cashShopBannerTable.length > 1) {
+		this.bannerInterval = setInterval(() => {
+			this.nextBanner();
+		}, this.bannerRotationTime);
+	}
+};
+
+CashShop.stopBannerRotation = function () {
+	if (this.bannerInterval) {
+		clearInterval(this.bannerInterval);
+		this.bannerInterval = null;
+	}
+};
+
+CashShop.nextBanner = function () {
+	let nextIndex = this.currentBannerIndex + 1;
+	if (nextIndex >= this.cashShopBannerTable.length) {
+		nextIndex = 0;
+	}
+	this.goToBanner(nextIndex);
+};
+
+CashShop.goToBanner = function (index) {
+	if (index === this.currentBannerIndex) {
+		return;
+	}
+
+	const root = _root();
+	const slides = root.querySelectorAll('.banner-slide');
+	const dots = root.querySelectorAll('.banner-dot');
+
+	slides.forEach(s => s.classList.remove('active'));
+	dots.forEach(d => d.classList.remove('active'));
+
+	if (slides[index]) slides[index].classList.add('active');
+	if (dots[index]) dots[index].classList.add('active');
+
+	this.currentBannerIndex = index;
+
+	// Reset timer on manual interaction
+	this.startBannerRotation();
+};
+
+CashShop.renderCashShopItems = function renderCashShopItems(items) {
+	const root = _root();
+	const content = root.querySelector('#panel-items');
+	if (!content) return;
+
+	content.innerHTML = '';
+	for (let i = 0; i < items.length; i++) {
+		const item = structuredClone(items[i]);
+		const it = DB.getItemInfo(item.itemId);
+		content.insertAdjacentHTML(
+			'beforeend',
+			`<div class="item" draggable="true" title="${it.identifiedDisplayName}" data-index="${item.itemId}" data-background="cashshop/img_shop_itembg.bmp">
+				<div class="top-con">
+					<span class="item-name">${it.identifiedDisplayName}</span>
+				</div>
+				<div class="lower-con">
+					<div class="item-left-img" data-background="${'collection/' + it.identifiedResourceName + '.bmp'}"></div>
+					<div class="item-right-desc">
+						<div class="item-desc-price">
+							<span>${item.price}</span>
+						</div>
+						<div class="purchase-btn-container">
+							<button class="add-to-cart" data-itemid="${item.itemId}" tab-index="${i}" data-background="cashshop/btn_add_normal.bmp" data-down="cashshop/btn_add_press.bmp">Purchase</button>
+						</div>
+					</div>
+				</div>
+			</div>`
+		);
+	}
+	_processContent(content);
+};
+
+CashShop.initPagination = function initPagination(items) {
+	const root = _root();
+	CashShop.currentPage = 1;
+	CashShop.pageOffset = 0;
+	CashShop.pageEnd = CashShop.pageLimit;
+	CashShop.isFirstPage = true;
+	CashShop.isLastPage = items.length >= CashShop.pageLimit ? false : true;
+
+	const arrowsL = CashShop.isFirstPage ? 'off' : 'on';
+	const arrowsR = CashShop.isLastPage ? 'off' : 'on';
+
+	CashShop.totalPage = Math.ceil(items.length / CashShop.pageLimit);
+
+	const countPage = root.querySelector('.panel-pagination span.pagi-countpage');
+	if (countPage) countPage.textContent = CashShop.totalPage;
+
+	const changePage = root.querySelector('.panel-pagination span.pagi-changepage');
+	if (changePage) changePage.textContent = CashShop.totalPage > 0 ? 1 : 0;
+
+	const goNext = root.querySelector('.panel-pagination .go-next');
+	const goLast = root.querySelector('.panel-pagination .go-last');
+	const goPrev = root.querySelector('.panel-pagination .go-prev');
+	const goFirst = root.querySelector('.panel-pagination .go-first');
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowR_' + arrowsR + '.bmp', function (data) {
+		if (goNext) goNext.style.backgroundImage = `url(${data})`;
+	});
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowR2_' + arrowsR + '.bmp', function (data) {
+		if (goLast) goLast.style.backgroundImage = `url(${data})`;
+	});
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowL_' + arrowsL + '.bmp', function (data) {
+		if (goPrev) goPrev.style.backgroundImage = `url(${data})`;
+	});
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowL2_' + arrowsL + '.bmp', function (data) {
+		if (goFirst) goFirst.style.backgroundImage = `url(${data})`;
+	});
+};
+
+CashShop.paginate = function paginate(items, start, end) {
+	return items.slice(start, end);
+};
+
+CashShop.paginationOffsetLimit = function paginationOffsetLimit() {
+	const start = (CashShop.currentPage - 1) * CashShop.pageLimit;
+	const end = CashShop.pageLimit * CashShop.currentPage;
+	CashShop.pageOffset = start;
+	CashShop.pageEnd = end;
+};
+
+function onClickPagination(target) {
+	const root = _root();
+	const index = parseInt(target.dataset.index);
+	const items = CashShop.isSearch
+		? CashShop.csListItemSearchResult
+		: CashShop.cashShopListItem[CashShop.activeCashMenu]?.items || [];
+	if (items.length === 0) {
+		return;
+	}
+
+	CashShop.isFirstPage = false;
+	CashShop.isLastPage = false;
+
+	switch (index) {
+		case 1: //go first//
+			CashShop.currentPage = 1;
+			CashShop.pageOffset = 0;
+			CashShop.isFirstPage = true;
+			break;
+		case 2: //go prev//
+			CashShop.currentPage--;
+			if (CashShop.currentPage <= 1) {
+				CashShop.currentPage = 1;
+				CashShop.isFirstPage = true;
+			}
+			break;
+		case 3: //go next//
+			CashShop.currentPage++;
+			if (CashShop.currentPage >= CashShop.totalPage) {
+				CashShop.currentPage = CashShop.totalPage;
+				CashShop.isLastPage = true;
+			}
+			break;
+		case 4: //go last//
+			CashShop.currentPage = CashShop.totalPage;
+			CashShop.pageOffset = (CashShop.currentPage - 1) * CashShop.pageLimit;
+			CashShop.isLastPage = true;
+			break;
+	}
+	CashShop.paginationOffsetLimit();
+
+	const arrowsL = CashShop.isFirstPage ? 'off' : 'on';
+	const arrowsR = CashShop.isLastPage ? 'off' : 'on';
+
+	const goNext = root.querySelector('.panel-pagination .go-next');
+	const goLast = root.querySelector('.panel-pagination .go-last');
+	const goPrev = root.querySelector('.panel-pagination .go-prev');
+	const goFirst = root.querySelector('.panel-pagination .go-first');
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowR_' + arrowsR + '.bmp', function (data) {
+		if (goNext) goNext.style.backgroundImage = `url(${data})`;
+	});
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowR2_' + arrowsR + '.bmp', function (data) {
+		if (goLast) goLast.style.backgroundImage = `url(${data})`;
+	});
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowL_' + arrowsL + '.bmp', function (data) {
+		if (goPrev) goPrev.style.backgroundImage = `url(${data})`;
+	});
+
+	Client.loadFile(DB.INTERFACE_PATH + 'cashshop/bt_arrowL2_' + arrowsL + '.bmp', function (data) {
+		if (goFirst) goFirst.style.backgroundImage = `url(${data})`;
+	});
+
+	const changePage = root.querySelector('.panel-pagination span.pagi-changepage');
+	if (changePage) changePage.textContent = CashShop.currentPage;
+
+	CashShop.renderCashShopItems(CashShop.paginate(items, CashShop.pageOffset, CashShop.pageEnd));
+}
+
+function onClickSearch() {
+	const root = _root();
+	const searchInput = root.querySelector('.cashshop-search');
+	const val = searchInput ? searchInput.value.toLowerCase() : '';
+	const newList = [];
+
+	CashShop.isSearch = true;
+	CashShop.activeCashMenu = 9;
+	if (val && CashShop.cashShopListItem.length > 0) {
+		for (let i = 0; i < CashShop.cashShopListItem.length; ++i) {
+			const items = CashShop.cashShopListItem[i].items;
+			for (let iit = 0; iit < items.length; ++iit) {
+				items[iit].tab = CashShop.cashShopListItem[i].tabNum;
+				const it = DB.getItemInfo(items[iit].itemId);
+
+				if (it.identifiedDisplayName) {
+					const matches = new RegExp(val).test(it.identifiedDisplayName.toLowerCase());
+					if (matches) {
+						newList.push(items[iit]);
+					}
+				}
+			}
+		}
+	}
+
+	const searchResultTab = root.querySelector('#panel-menu .search-result');
+	if (!searchResultTab) {
+		root.querySelectorAll('#panel-menu .tab').forEach(el => el.classList.remove('active'));
+	}
+
+	if (newList.length === 0) {
+		UIManager.showMessageBox('No items found in auction search', 'ok');
+		return;
+	}
+
+	CashShop.csListItemSearchResult = newList;
+	CashShop.initPagination(newList);
+	CashShop.paginationOffsetLimit();
+	CashShop.renderCashShopItems(CashShop.paginate(newList, CashShop.pageOffset, CashShop.pageEnd));
+}
+
+function onClickActionCounterButtonCart(target) {
+	const counter = target.dataset.index;
+	const itemEl = target.closest('.item');
+	if (!itemEl) return;
+	const itemId = parseInt(itemEl.getAttribute('data-index'), 10);
+	const itemCart = CashShop.cartItem.find(i => i.itemId === itemId);
+
+	if (!itemCart) return;
+
+	if (itemCart.amount >= 99 && counter === 'up') {
+		UIManager.showMessageBox('Max Quantity 99!', 'ok');
+		ChatBox.addText('Max Quantity 99!', ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+		return;
+	}
+
+	if (itemCart.amount <= 1 && counter === 'down') {
+		UIManager.showMessageBox('Minimum Quantity 1!', 'ok');
+		ChatBox.addText('Minimum Quantity 1!', ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+		return;
+	}
+
+	if (counter === 'up') {
+		itemCart.amount += 1;
+	} else {
+		itemCart.amount -= 1;
+	}
+
+	const cntEl = itemEl.querySelector('.item-counter .item-cnt');
+	if (cntEl) cntEl.textContent = itemCart.amount;
+	updateCartTotal();
+}
+
+function onClickDeleteItemInCart(target) {
+	const itemEl = target.closest('.item');
+	if (!itemEl) return;
+	const itemId = parseInt(itemEl.getAttribute('data-index'), 10);
+
+	CashShop.cartItem = CashShop.cartItem.filter(i => i.itemId != itemId);
+	itemEl.remove();
+	updateCartTotal();
+}
+
+function updateCartTotal() {
+	const root = _root();
+	if (CashShop.cartItem.length === 0) {
+		CashShop.cartItemTotalPrice = 0;
+	} else {
+		CashShop.cartItemTotalPrice = CashShop.cartItem.reduce((total, item) => total + item.price * item.amount, 0);
+	}
+	const totalPriceEl = root.querySelector('.cart-footer-action .total-price span');
+	if (totalPriceEl) totalPriceEl.textContent = CashShop.cartItemTotalPrice + ' C';
+}
+
+function onResetCartListCashShop() {
+	const root = _root();
+	CashShop.cartItem = [];
+	CashShop.cartItemTotalPrice = 0;
+	const totalPriceEl = root.querySelector('.cart-footer-action .total-price span');
+	if (totalPriceEl) totalPriceEl.textContent = '0 C';
+	const cartItems = root.querySelector('.panel-cart #cart-list .items');
+	if (cartItems) cartItems.innerHTML = '';
+}
+
+function onDropToCart(event) {
+	let item, data;
+	event.stopImmediatePropagation();
+	event.preventDefault();
+
+	try {
+		data = JSON.parse(event.dataTransfer.getData('Text'));
+		item = data.data;
+	} catch (_e) {
+		return false;
+	}
+
+	if (data.type === 'item' && data.from === 'CashShop') {
+		InputBox.append();
+		InputBox.setType('number', false, 1);
+		InputBox.onSubmitRequest = function OnSubmitRequest(count) {
+			addItemToCart(item.itemId, count);
+			InputBox.remove();
+		};
+	}
+
+	return false;
+}
+
+function addItemToCart(itemId, amount = 1) {
+	const root = _root();
+	const it = DB.getItemInfo(itemId);
+	const cartContainer = root.querySelector('.panel-cart');
+	const itemCart = CashShop.cartItem.find(i => i.itemId === itemId);
+	let item = [];
+	let tab = 0;
+
+	if (CashShop.activeCashMenu !== 9) {
+		item = CashShop.cashShopListItem[CashShop.activeCashMenu].items.find(i => i.itemId === itemId);
+		tab = CashShop.cashShopListItem[CashShop.activeCashMenu].tabNum;
+	} else {
+		item = CashShop.csListItemSearchResult.find(i => i.itemId === itemId);
+		tab = item.tab;
+	}
+
+	if (!item) {
+		return;
+	}
+
+	const noItems = cartContainer ? cartContainer.querySelector('#cart-list .items .no-items') : null;
+	if (noItems) {
+		noItems.remove();
+	}
+
+	if (CashShop.cartItem.length > 7 && typeof itemCart === 'undefined') {
+		UIManager.showMessageBox('8 Items can only be stored in cart!', 'ok');
+		return;
+	}
+
+	if (item.amount >= 99) {
+		UIManager.showMessageBox('Max Quantity 99!', 'ok');
+		ChatBox.addText('Max Quantity 99!', ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+		return;
+	}
+
+	if (typeof itemCart === 'undefined') {
+		item.amount = amount;
+		item.tab = tab;
+		CashShop.cartItem.push(item);
+		const html = `<li class="item" data-index="${itemId}" data-background="cashshop/img_shop_itembg2.bmp">
+			<div class="inner-item-dt">
+				<div class="delete-item" data-background="cashshop/btn_close.bmp"></div>
+				<div class="item-dt-img"></div>
+				<div class="item-dt-desc">
+					<div class="item-desc-top">${it.identifiedDisplayName}</div>
+					<div class="item-counter">
+						<div class="item-cnt">${item.amount}</div>
+						<button class="counter-btn item-cnt-up" data-index="up"></button>
+						<button class="counter-btn item-cnt-down" data-index="down"></button>
+					</div>
+					<div class="item-desc-price">
+						<span>${item.price}</span> C
+					</div>
+				</div>
+			</div>
+		</li>`;
+		const itemsList = cartContainer ? cartContainer.querySelector('.items') : null;
+		if (itemsList) {
+			itemsList.insertAdjacentHTML('beforeend', html);
+			_processContent(itemsList);
+		}
+		Client.loadFile(DB.INTERFACE_PATH + 'collection/' + it.identifiedResourceName + '.bmp', function (data) {
+			const imgEl = cartContainer
+				? cartContainer.querySelector(`.item[data-index="${itemId}"] .item-dt-img`)
+				: null;
+			if (imgEl) imgEl.style.backgroundImage = `url(${data})`;
+		});
+	} else {
+		itemCart.amount += amount;
+		const cntEl = cartContainer
+			? cartContainer.querySelector(`.items .item[data-index="${itemId}"] .item-cnt`)
+			: null;
+		if (cntEl) cntEl.textContent = itemCart.amount;
+	}
+	updateCartTotal();
+}
+
+/**
+ * Add cash item in cart list
+ */
+function onClickActionAddCartItem(e) {
+	const btn = e.target.closest('.purchase-btn-container button');
+	if (!btn) return;
+	const itemId = parseInt(btn.dataset.itemid);
+	addItemToCart(itemId);
+}
+
+/**
+ * purchase item list in cart
+ */
+function onClickActionBuyItem() {
+	const root = _root();
+	const itemlist = CashShop.cartItem;
+	CashShop.cartItemLen = itemlist.length;
+
+	UIManager.showPromptBox('Are you sure you want to buy this items?', 'ok', 'cancel', () => {
+		if (CashShop.cartItem.length > 0) {
+			const pkt = new PACKET.CZ.SE_PC_BUY_CASHITEM_LIST();
+			const freePointsInput = root.querySelector('#use-free-points');
+			const useFreePoints = (freePointsInput ? freePointsInput.value : 0) || 0;
+			if (useFreePoints >= 0 && useFreePoints <= CashShop.kafraPoints) {
+				pkt.kafraPoints = useFreePoints;
+				pkt.item_list = CashShop.cartItem;
+				Network.sendPacket(pkt);
+			} else {
+				UIManager.showMessageBox('You dont have enough Kafra Points!', 'ok');
+			}
+		} else {
+			UIManager.showMessageBox('No item in cart!', 'ok');
+		}
+	});
+}
+
+/**
+ * Menu navigation
+ */
+function onClickMenu(target) {
+	const root = _root();
+	const selectedMenu = target.dataset.index.toUpperCase();
+
+	const searchInput = root.querySelector('#cashshop-search');
+	if (searchInput) searchInput.value = '';
+
+	if (selectedMenu !== CashShop.activeCashMenu) {
+		CashShop.isSearch = false;
+		CashShop.activeCashMenu = selectedMenu;
+		const panelItems = root.querySelector('.panel-items');
+		if (panelItems) panelItems.innerHTML = '';
+		root.querySelectorAll('#panel-menu .tab').forEach(el => el.classList.remove('active'));
+		target.classList.add('active');
+
+		const tab_items =
+			CashShop.cashShopListItem[CashShop.activeCashMenu]?.items?.length >= 0
+				? CashShop.cashShopListItem[CashShop.activeCashMenu].items
+				: [];
+		CashShop.initPagination(tab_items);
+		CashShop.renderCashShopItems(CashShop.paginate(tab_items, CashShop.pageOffset, CashShop.pageEnd));
+	}
+}
+
+/**
+ * Hide the item name
+ */
+function onItemOut() {

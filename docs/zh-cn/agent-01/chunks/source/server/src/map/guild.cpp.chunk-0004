@@ -1,0 +1,500 @@
+
+	// Update char position in client [LuzZza]
+	if(g.member[idx].sd != nullptr)
+		clif_guild_position_selected(*g.member[idx].sd);
+	return 0;
+}
+
+/*====================================================
+ * Change guild title or member
+ *---------------------------------------------------*/
+int32 guild_change_position(int32 guild_id,int32 idx, int32 mode, int32 exp_mode, const char *name) {
+	struct guild_position p;
+
+	exp_mode = cap_value(exp_mode, 0, battle_config.guild_exp_limit);
+	p.mode = mode&GUILD_PERM_ALL;
+	p.exp_mode=exp_mode;
+	safestrncpy(p.name,name,NAME_LENGTH);
+	return intif_guild_position(guild_id,idx,&p);
+}
+
+/*====================================================
+ * Notification of member has changed his guild title
+ *---------------------------------------------------*/
+int32 guild_position_changed(int32 guild_id,int32 idx,struct guild_position *p) {
+	auto g = guild_search(guild_id);
+	int32 i;
+	if(g==nullptr)
+		return 0;
+	memcpy(&g->guild.position[idx],p,sizeof(struct guild_position));
+	clif_guild_positionchanged(g->guild,idx);
+
+	// Update char name in client [LuzZza]
+	for(i=0;i<g->guild.max_member;i++)
+		if(g->guild.member[i].position == idx && g->guild.member[i].sd != nullptr)
+			clif_guild_position_selected(*g->guild.member[i].sd);
+	return 0;
+}
+
+/*====================================================
+ * Change guild notice
+ *---------------------------------------------------*/
+int32 guild_change_notice(map_session_data *sd,int32 guild_id,const char *mes1,const char *mes2) {
+	nullpo_ret(sd);
+
+	if(guild_id!=sd->status.guild_id)
+		return 0;
+	return intif_guild_notice(guild_id,mes1,mes2);
+}
+
+/*====================================================
+ * Notification of guild has changed his notice
+ *---------------------------------------------------*/
+int32 guild_notice_changed(int32 guild_id,const char *mes1,const char *mes2) {
+	int32 i;
+	auto g = guild_search(guild_id);
+	if (!g)
+		return 0;
+
+	memcpy(g->guild.mes1,mes1,MAX_GUILDMES1);
+	memcpy(g->guild.mes2,mes2,MAX_GUILDMES2);
+
+	for(i=0;i<g->guild.max_member;i++){
+		map_session_data *sd = g->guild.member[i].sd;
+		if(sd != nullptr)
+			clif_guild_notice( *sd );
+	}
+	return 0;
+}
+
+/*====================================================
+ * Check condition for changing guild emblem
+ *---------------------------------------------------*/
+bool guild_check_emblem_change_condition( map_session_data& sd ){
+	auto &g = sd.guild;
+
+	if (battle_config.require_glory_guild && g != nullptr && guild_checkskill(g->guild, GD_GLORYGUILD) > 0) {
+		clif_skill_fail( sd, GD_GLORYGUILD );
+		return false;
+	}
+
+	return true;
+}
+
+/*====================================================
+ * Change guild emblem
+ *---------------------------------------------------*/
+int32 guild_change_emblem( map_session_data& sd, int32 len, const char* data ){
+	if (!guild_check_emblem_change_condition(sd)) {
+		return 0;
+	}
+
+	return intif_guild_emblem( sd.status.guild_id, len, data );
+}
+
+/*====================================================
+ * Change guild emblem version
+ *---------------------------------------------------*/
+int32 guild_change_emblem_version( map_session_data& sd, int32 version ){
+	if (!guild_check_emblem_change_condition(sd)) {
+		return 0;
+	}
+
+	return intif_guild_emblem_version( sd.status.guild_id, version );
+}
+
+/*====================================================
+ * Notification of guild emblem changed
+ *---------------------------------------------------*/
+int32 guild_emblem_changed(int32 len,int32 guild_id,int32 emblem_id,const char *data) {
+	int32 i;
+	map_session_data *sd;
+	auto g = guild_search(guild_id);
+	if (!g)
+		return 0;
+
+	if (data != nullptr)
+		memcpy(g->guild.emblem_data,data,len);
+	g->guild.emblem_len=len;
+	g->guild.emblem_id=emblem_id;
+
+	for(i=0;i<g->guild.max_member;i++){
+		if((sd=g->guild.member[i].sd)!=nullptr){
+			sd->guild_emblem_id=emblem_id;
+			clif_guild_belonginfo( *sd );
+			clif_guild_emblem(*sd, g->guild);
+			clif_guild_emblem_area(sd);
+		}
+	}
+	{// update guardians (mobs)
+		for (const auto &it : castle_db) {
+			if( it.second->guild_id != guild_id )
+				continue;
+			// update permanent guardians
+			for( i = 0; i < ARRAYLENGTH(it.second->guardian); ++i )
+			{
+				TBL_MOB* md = (it.second->guardian[i].id ? map_id2md(it.second->guardian[i].id) : nullptr);
+				if( md == nullptr || md->guardian_data == nullptr )
+					continue;
+				md->guardian_data->emblem_id = emblem_id;
+				clif_guild_emblem_area(md);
+			}
+			// update temporary guardians
+			for( i = 0; i < it.second->temp_guardians_max; ++i )
+			{
+				TBL_MOB* md = (it.second->temp_guardians[i] ? map_id2md(it.second->temp_guardians[i]) : nullptr);
+				if( md == nullptr || md->guardian_data == nullptr )
+					continue;
+				md->guardian_data->emblem_id = emblem_id;
+				clif_guild_emblem_area(md);
+			}
+		}
+	}
+	{// update npcs (flags or other npcs that used flagemblem to attach to this guild)
+		for( i = 0; i < guild_flags_count; i++ ) {
+			if( guild_flags[i] && guild_flags[i]->u.scr.guild_id == guild_id ) {
+				clif_guild_emblem_area(guild_flags[i]);
+			}
+		}
+	}
+	return 0;
+}
+
+/**
+ * @see DBCreateData
+ */
+static DBData create_expcache(DBKey key, va_list args) {
+	struct guild_expcache *c;
+	map_session_data *sd = va_arg(args, map_session_data*);
+
+	c = ers_alloc(expcache_ers, struct guild_expcache);
+	c->guild_id = sd->status.guild_id;
+	c->account_id = sd->status.account_id;
+	c->char_id = sd->status.char_id;
+	c->exp = 0;
+	return db_ptr2data(c);
+}
+
+/*====================================================
+ * Return taxed experience from player sd to guild
+ *---------------------------------------------------*/
+t_exp guild_payexp(map_session_data *sd,t_exp exp) {
+	struct guild_expcache *c;
+	int32 per;
+
+	nullpo_ret(sd);
+
+	if (!exp) return 0;
+
+	auto &g = sd->guild;
+
+	if (sd->status.guild_id == 0 || !g ||
+		(per = guild_getposition(*sd)) < 0 ||
+		(per = g->guild.position[per].exp_mode) < 1)
+		return 0;
+
+
+	if (per < 100)
+		exp = exp * per / 100;
+	//Otherwise tax everything.
+
+	c = (struct guild_expcache *)db_data2ptr(guild_expcache_db->ensure(guild_expcache_db, db_i2key(sd->status.char_id), create_expcache, sd));
+	c->exp = util::safe_addition_cap(c->exp, exp, MAX_GUILD_EXP);
+
+	return exp;
+}
+
+/*====================================================
+ * Player sd pay a tribute experience to his guild
+ * Add this experience to guild exp
+ * [Celest]
+ *---------------------------------------------------*/
+t_exp guild_getexp(map_session_data *sd,t_exp exp) {
+	struct guild_expcache *c;
+	nullpo_ret(sd);
+
+	if (sd->status.guild_id == 0 || sd->guild == nullptr)
+		return 0;
+
+	c = (struct guild_expcache *)db_data2ptr(guild_expcache_db->ensure(guild_expcache_db, db_i2key(sd->status.char_id), create_expcache, sd));
+	c->exp = util::safe_addition_cap(c->exp, exp, MAX_GUILD_EXP);
+
+	return exp;
+}
+
+/*====================================================
+ * Ask to increase guildskill skill_id
+ *---------------------------------------------------*/
+void guild_skillup(map_session_data* sd, uint16 skill_id) {
+	int16 idx = guild_skill_get_index(skill_id);
+	int16 max = 0;
+
+	nullpo_retv(sd);
+
+	if (idx == -1)
+		return;
+
+	auto &g = sd->guild;
+
+	if( sd->status.guild_id == 0 || !g || // no guild
+		strcmp(sd->status.name, g->guild.master) ) // not the guild master
+		return;
+
+	max = guild_skill_get_max(skill_id);
+
+	if( g->guild.skill_point > 0 &&
+		g->guild.skill[idx].id != 0 &&
+		g->guild.skill[idx].lv < max )
+		intif_guild_skillup(g->guild.guild_id, skill_id, sd->status.account_id, max);
+}
+
+/*====================================================
+ * Notification of guildskill skill_id increase request
+ *---------------------------------------------------*/
+int32 guild_skillupack(int32 guild_id,uint16 skill_id,uint32 account_id) {
+	map_session_data *sd = map_id2sd(account_id);
+	auto g = guild_search(guild_id);
+	int32 i;
+	int16 idx = guild_skill_get_index(skill_id);
+
+	if (g == nullptr || idx == -1)
+		return 0;
+	if (sd != nullptr) {
+		uint16 lv = g->guild.skill[idx].lv;
+		int32 range = skill_get_range(skill_id, lv);
+		clif_skillup( *sd, skill_id,lv, range, true );
+
+		/* Guild Aura handling */
+		switch( skill_id ) {
+			case GD_LEADERSHIP:
+			case GD_GLORYWOUNDS:
+			case GD_SOULCOLD:
+			case GD_HAWKEYES:
+					guild_guildaura_refresh(sd,skill_id,g->guild.skill[idx].lv);
+				break;
+		}
+	}
+
+	// Inform all members
+	for (i = 0; i < g->guild.max_member; i++)
+		if ((sd = g->guild.member[i].sd) != nullptr)
+			clif_guild_skillinfo( *sd );
+
+	return 0;
+}
+
+void guild_guildaura_refresh(map_session_data *sd, uint16 skill_id, uint16 skill_lv) {
+	if( !(battle_config.guild_aura&(is_agit_start()?2:1)) &&
+			!(battle_config.guild_aura&(map_flag_gvg2(sd->m)?8:4)) )
+		return;
+	if( !skill_lv )
+		return;
+
+	sc_type type = skill_get_sc(skill_id);
+
+	if (type == SC_NONE)
+		return;
+
+	status_change_end(sd, type);
+
+	std::shared_ptr<s_skill_unit_group> group = skill_unitsetting(sd,skill_id,skill_lv,sd->x,sd->y,0);
+
+	if( group )
+		sc_start4(nullptr,sd,type,100,(battle_config.guild_aura&16)?0:skill_lv,0,0,group->group_id,600000);//duration doesn't matter these status never end with val4
+	return;
+}
+
+/*====================================================
+ * Count number of relations the guild has.
+ * Flag:
+ *	0 = allied
+ *	1 = enemy
+ *---------------------------------------------------*/
+int32 guild_get_alliance_count(const struct mmo_guild &g,int32 flag) {
+	int32 i,c;
+
+	for(i=c=0;i<MAX_GUILDALLIANCE;i++){
+		if(	g.alliance[i].guild_id>0 &&
+			g.alliance[i].opposition==flag )
+			c++;
+	}
+	return c;
+}
+
+// Blocks all guild skills which have a common delay time.
+void guild_block_skill(map_session_data *sd, int32 time) {
+	uint16 skill_id[] = { GD_BATTLEORDER, GD_REGENERATION, GD_RESTORE, GD_EMERGENCYCALL };
+	int32 i;
+	for (i = 0; i < 4; i++)
+		skill_blockpc_start(*sd, skill_id[i], time);
+}
+
+/*====================================================
+ * Check relation between guild_id1 and guild_id2.
+ * Flag:
+ *	0 = allied
+ *	1 = enemy
+ * Returns true if yes.
+ *---------------------------------------------------*/
+int32 guild_check_alliance(int32 guild_id1, int32 guild_id2, int32 flag) {
+	int32 i;
+
+	auto g = guild_search(guild_id1);
+	if (g == nullptr)
+		return 0;
+
+	ARR_FIND( 0, MAX_GUILDALLIANCE, i, g->guild.alliance[i].guild_id == guild_id2 && g->guild.alliance[i].opposition == flag );
+	return( i < MAX_GUILDALLIANCE ) ? 1 : 0;
+}
+
+/*====================================================
+ * Player sd, asking player tsd an alliance between their 2 guilds
+ *---------------------------------------------------*/
+int32 guild_reqalliance(map_session_data *sd,map_session_data *tsd) {
+	int32 i;
+
+	if(is_agit_start()) {	// Disable alliance creation during woe [Valaris]
+		clif_displaymessage(sd->fd,msg_txt(sd,676)); //"Alliances cannot be made during Guild Wars!"
+		return 0;
+	}	// end addition [Valaris]
+
+
+	nullpo_ret(sd);
+
+	if(tsd==nullptr || tsd->status.guild_id<=0)
+		return 0;
+
+	// Check, is tsd guild master, if not - cancel alliance. [f0und3r]
+	if (battle_config.guild_alliance_onlygm && !tsd->state.gmaster_flag) {
+		clif_guild_allianceack(*sd, 5);
+		return 0;
+	}
+
+	auto &g = sd->guild;
+	auto &tg = tsd->guild;
+
+	if(g==nullptr || tg==nullptr)
+		return 0;
+
+	// Prevent creation alliance with same guilds [LuzZza]
+	if(sd->status.guild_id == tsd->status.guild_id)
+		return 0;
+
+	if( guild_get_alliance_count(g->guild,0) >= battle_config.max_guild_alliance ) {
+		clif_guild_allianceack(*sd,4);
+		return 0;
+	}
+	if( guild_get_alliance_count(tg->guild,0) >= battle_config.max_guild_alliance ) {
+		clif_guild_allianceack(*sd,3);
+		return 0;
+	}
+
+	if( tsd->guild_alliance>0 ){
+		clif_guild_allianceack(*sd,1);
+		return 0;
+	}
+
+	for (i = 0; i < MAX_GUILDALLIANCE; i++) { // check if already allied
+		if(	g->guild.alliance[i].guild_id==tsd->status.guild_id &&
+			g->guild.alliance[i].opposition==0){
+			clif_guild_allianceack(*sd,0);
+			return 0;
+		}
+	}
+
+	tsd->guild_alliance=sd->status.guild_id;
+	tsd->guild_alliance_account=sd->status.account_id;
+
+	clif_guild_reqalliance(*tsd,sd->status.account_id,g->guild.name);
+	return 0;
+}
+
+/*====================================================
+ * Player sd, answer to player tsd (account_id) for an alliance request
+ *---------------------------------------------------*/
+int32 guild_reply_reqalliance(map_session_data *sd,uint32 account_id,int32 flag) {
+	map_session_data *tsd;
+
+	nullpo_ret(sd);
+	tsd= map_id2sd( account_id );
+	if (!tsd) { //Character left? Cancel alliance.
+		clif_guild_allianceack(*sd,3);
+		return 0;
+	}
+
+	if (sd->guild_alliance != tsd->status.guild_id) // proposed guild_id alliance doesn't match tsd guildid
+		return 0;
+
+	if (flag == 1) { // consent
+		int32 i;
+
+		auto &g = sd->guild;
+		auto &tg = tsd->guild;
+
+		if (!g || guild_get_alliance_count(g->guild,0) >= battle_config.max_guild_alliance) {
+			clif_guild_allianceack(*sd,4);
+			clif_guild_allianceack(*tsd,3);
+			return 0;
+		}
+		if (!tg || guild_get_alliance_count(tg->guild,0) >= battle_config.max_guild_alliance) {
+			clif_guild_allianceack(*sd,3);
+			clif_guild_allianceack(*tsd,4);
+			return 0;
+		}
+
+		for(i=0;i<MAX_GUILDALLIANCE;i++){
+			if(g->guild.alliance[i].guild_id==tsd->status.guild_id &&
+				g->guild.alliance[i].opposition==1)
+				intif_guild_alliance( sd->status.guild_id,tsd->status.guild_id,
+					sd->status.account_id,tsd->status.account_id,9 );
+		}
+		for(i=0;i<MAX_GUILDALLIANCE;i++){
+			if(tg->guild.alliance[i].guild_id==sd->status.guild_id &&
+				tg->guild.alliance[i].opposition==1)
+				intif_guild_alliance( tsd->status.guild_id,sd->status.guild_id,
+					tsd->status.account_id,sd->status.account_id,9 );
+		}
+
+	// inform other servers
+		intif_guild_alliance( sd->status.guild_id,tsd->status.guild_id,
+			sd->status.account_id,tsd->status.account_id,0 );
+		return 0;
+	} else { // deny
+		sd->guild_alliance=0;
+		sd->guild_alliance_account=0;
+		if(tsd!=nullptr)
+			clif_guild_allianceack(*tsd,3);
+	}
+	return 0;
+}
+
+/*====================================================
+ * Player sd asking to break alliance with guild guild_id
+ *---------------------------------------------------*/
+int32 guild_delalliance(map_session_data *sd,int32 guild_id,int32 flag) {
+	nullpo_ret(sd);
+
+	if(is_agit_start()) {	// Disable alliance breaking during woe [Valaris]
+		clif_displaymessage(sd->fd,msg_txt(sd,677)); //"Alliances cannot be broken during Guild Wars!"
+		return 0;
+	}	// end addition [Valaris]
+
+	intif_guild_alliance( sd->status.guild_id,guild_id,sd->status.account_id,0,flag|8 );
+	return 0;
+}
+
+/*====================================================
+ * Player sd, asking player tsd a formal enemy relation between their 2 guilds
+ *---------------------------------------------------*/
+int32 guild_opposition(map_session_data *sd,map_session_data *tsd) {
+	int32 i;
+
+	nullpo_ret(sd);
+
+	auto &g = sd->guild;
+	if(g==nullptr || tsd==nullptr)
+		return 0;
+
+	// Prevent creation opposition with same guilds [LuzZza]
+	if(sd->status.guild_id == tsd->status.guild_id)
+		return 0;

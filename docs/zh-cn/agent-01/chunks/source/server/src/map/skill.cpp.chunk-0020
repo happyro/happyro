@@ -1,0 +1,500 @@
+	require = skill_get_requirement(&sd,skill_id,skill_lv);
+
+	if( require.hp > 0 && status->hp <= (uint32)require.hp) {
+		clif_skill_fail( sd, skill_id, USESKILL_FAIL_HP_INSUFFICIENT );
+		return false;
+	}
+
+	if( require.weapon && !pc_check_weapontype(&sd,require.weapon) ) {
+		clif_skill_fail( sd, skill_id, USESKILL_FAIL_THIS_WEAPON );
+		return false;
+	}
+
+	if( require.ammo ) { //Skill requires stuff equipped in the ammo slot.
+		uint8 extra_ammo = 0;
+
+#ifdef RENEWAL
+		switch(skill_id) { // 2016-10-26 kRO update made these skills require an extra ammo to cast
+			case WM_SEVERE_RAINSTORM:
+			case RL_FIREDANCE:
+			case RL_R_TRIP:
+			case RL_FIRE_RAIN:
+				extra_ammo = 1;
+				break;
+			default:
+				break;
+		}
+#endif
+		if((i=sd.equip_index[EQI_AMMO]) < 0 || !sd.inventory_data[i] ) {
+			clif_arrow_fail( sd, ARROWFAIL_NO_AMMO );
+			return false;
+		} else if( sd.inventory.u.items_inventory[i].amount < require.ammo_qty + extra_ammo ) {
+			char e_msg[100];
+			if (require.ammo&(1<<AMMO_BULLET|1<<AMMO_GRENADE|1<<AMMO_SHELL)) {
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_NEED_MORE_BULLET );
+				return false;
+			}
+			else if (require.ammo&(1<<AMMO_KUNAI)) {
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_NEED_EQUIPMENT_KUNAI );
+				return false;
+			}
+			sprintf(e_msg,msg_txt(&sd,381), //Skill Failed. [%s] requires %dx %s.
+						skill_get_desc(skill_id),
+						require.ammo_qty,
+						itemdb_ename(sd.inventory.u.items_inventory[i].nameid));
+			clif_messagecolor(&sd,color_table[COLOR_RED],e_msg,false,SELF);
+			return false;
+		}
+		if (!(require.ammo&1<<sd.inventory_data[i]->subtype)) { //Ammo type check. Send the "wrong weapon type" message
+			//which is the closest we have to wrong ammo type. [Skotlex]
+			clif_arrow_fail( sd, ARROWFAIL_NO_AMMO ); //Haplo suggested we just send the equip-arrows message instead. [Skotlex]
+			//clif_skill_fail( sd, skill_id, USESKILL_FAIL_THIS_WEAPON );
+			return false;
+		}
+	}
+
+	for( i = 0; i < MAX_SKILL_ITEM_REQUIRE; ++i ) {
+		if( !require.itemid[i] )
+			continue;
+		index[i] = pc_search_inventory(&sd,require.itemid[i]);
+		if( index[i] < 0 || sd.inventory.u.items_inventory[index[i]].amount < require.amount[i] ) {
+			if( require.itemid[i] == ITEMID_HOLY_WATER )
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_HOLYWATER ); //Holy water is required.
+			else if( require.itemid[i] == ITEMID_RED_GEMSTONE )
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_REDJAMSTONE ); //Red gemstone is required.
+			else if( require.itemid[i] == ITEMID_BLUE_GEMSTONE )
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_BLUEJAMSTONE ); //Blue gemstone is required.
+			else if( require.itemid[i] == ITEMID_PAINT_BRUSH )
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_PAINTBRUSH ); //Paint brush is required.
+			else if( require.itemid[i] == ITEMID_ANCILLA )
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_ANCILLA ); //Ancilla is required.
+			else
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_NEED_ITEM, require.amount[i], require.itemid[i] ); // [%s] required '%d' amount.
+			return false;
+		}
+	}
+
+	/* check the status required */
+	if (!require.status.empty()) {
+		switch (skill_id) {
+			case WZ_SIGHTRASHER:
+				if (!skill_check_condition_sc_required(sd, skill_id, require))
+					return false;
+				break;
+			default:
+				break;
+		}
+	}
+
+	return true;
+}
+
+/** Consume skill requirement
+ * @param sd Player who uses the skill
+ * @param skill_id ID of used skill
+ * @param skill_lv Level of used skill
+ * @param type Consume type
+ *  type&1: consume the others (before skill was used);
+ *  type&2: consume items (after skill was used)
+ */
+void skill_consume_requirement(map_session_data *sd, uint16 skill_id, uint16 skill_lv, int16 type)
+{
+	struct s_skill_condition require;
+
+	nullpo_retv(sd);
+
+	require = skill_get_requirement(sd,skill_id,skill_lv);
+
+	if( type&1 ) {
+		switch( skill_id ) {
+			case CG_TAROTCARD: // TarotCard will consume sp in skill_cast_nodamage_id [Inkfish]
+			case MC_IDENTIFY:
+			case SM_AUTOBERSERK:
+			case BD_ADAPTATION:
+			case BD_ENCORE:
+				require.sp = 0;
+				break;
+			case AL_HOLYLIGHT:
+				if(sd->sc.getSCE(SC_SPIRIT) && sd->sc.getSCE(SC_SPIRIT)->val2 == SL_PRIEST)
+					require.sp *= 5;
+				break;
+			case MO_KITRANSLATION:
+				//Spiritual Bestowment only uses spirit sphere when giving it to someone
+				require.spiritball = 0;
+				[[fallthrough]];
+			default:
+				if(sd->state.autocast)
+					require.sp = 0;
+				// Need to remove remembered Encore skill to prevent permanent halving of SP cost
+				if (sd->skill_id_old == BD_ENCORE && skill_id == sd->skill_id_dance)
+					sd->skill_id_old = 0;
+			break;
+		}
+		if(require.hp || require.sp || require.ap)
+			skill_consume_hpspap(sd, skill_id, require.hp, require.sp, require.ap);
+
+		if(require.spiritball > 0) { // Skills that require certain types of spheres to use
+			switch (skill_id) { // Skills that require soul spheres.
+				case SP_SOULGOLEM:
+				case SP_SOULSHADOW:
+				case SP_SOULFALCON:
+				case SP_SOULFAIRY:
+				case SP_SOULCURSE:
+				case SP_SPA:
+				case SP_SHA:
+				case SP_SWHOO:
+				case SP_SOULUNITY:
+				case SP_SOULDIVISION:
+				case SP_SOULREAPER:
+				case SP_SOULEXPLOSION:
+				case SP_KAUTE:
+					pc_delsoulball( *sd, require.spiritball );
+					break;
+
+				// Skills that require servants.
+				// Note: We don't update the servants display here
+				// since using these skills auto trigger an animation
+				// with them in unique ways that makes them vanish.
+				case DK_SERVANT_W_SIGN:
+				case DK_SERVANT_W_PHANTOM:
+				case DK_SERVANT_W_DEMOL:
+					pc_delservantball( *sd, require.spiritball );
+					break;
+
+				default: // Skills that require spirit/coin spheres.
+					pc_delspiritball(sd, require.spiritball, 0);
+					break;
+			}
+		}
+		else if(require.spiritball == -1) {
+			sd->spiritball_old = sd->spiritball;
+			pc_delspiritball(sd,sd->spiritball,0);
+		}
+
+		if(require.zeny > 0)
+		{
+			if( skill_id == NJ_ZENYNAGE )
+				require.zeny = 0; //Zeny is reduced on skill_attack.
+			if( sd->status.zeny < require.zeny )
+				require.zeny = sd->status.zeny;
+			pc_payzeny(sd,require.zeny,LOG_TYPE_CONSUME);
+		}
+	}
+
+	if( type&2 ) {
+		switch (skill_id) {
+			case MC_IDENTIFY:
+				if (require.hp || require.sp || require.ap)
+					skill_consume_hpspap(sd, skill_id, require.hp, require.sp, require.ap);
+				break;
+		}
+
+		status_change *sc = &sd->sc;
+		int32 n,i;
+
+		if( sc->empty() )
+			sc = nullptr;
+
+		for( i = 0; i < MAX_SKILL_ITEM_REQUIRE; ++i )
+		{
+			if( !require.itemid[i] )
+				continue;
+
+			if( itemdb_group.item_exists(IG_GEMSTONE, require.itemid[i]) && skill_id != HW_GANBANTEIN && sc && sc->getSCE(SC_SPIRIT) && sc->getSCE(SC_SPIRIT)->val2 == SL_WIZARD )
+				continue; //Gemstones are checked, but not substracted from inventory.
+
+			switch( skill_id ){
+				case SA_SEISMICWEAPON:
+					if( sc && sc->getSCE(SC_UPHEAVAL_OPTION) && rnd()%100 < 50 )
+						continue;
+					break;
+				case SA_FLAMELAUNCHER:
+				case SA_VOLCANO:
+					if( sc && sc->getSCE(SC_TROPIC_OPTION) && rnd()%100 < 50 )
+						continue;
+					break;
+				case SA_FROSTWEAPON:
+				case SA_DELUGE:
+					if( sc && sc->getSCE(SC_CHILLY_AIR_OPTION) && rnd()%100 < 50 )
+						continue;
+					break;
+				case SA_LIGHTNINGLOADER:
+				case SA_VIOLENTGALE:
+					if( sc && sc->getSCE(SC_WILD_STORM_OPTION) && rnd()%100 < 50 )
+						continue;
+					break;
+			}
+
+			if( (n = pc_search_inventory(sd,require.itemid[i])) >= 0 )
+				pc_delitem(sd,n,require.amount[i],0,1,LOG_TYPE_CONSUME);
+		}
+	}
+}
+
+/**
+ * Get skill requirements and return the value after some additional/reduction condition (such item bonus and status change)
+ * @param sd Player's that will be checked
+ * @param skill_id Skill that's being used
+ * @param skill_lv Skill level of used skill
+ * @return s_skill_condition Struct 's_skill_condition' that store the modified skill requirements
+ */
+struct s_skill_condition skill_get_requirement(map_session_data* sd, uint16 skill_id, uint16 skill_lv)
+{
+	struct s_skill_condition req;
+	struct status_data *status;
+	status_change *sc;
+	int32 i,hp_rate,sp_rate, ap_rate, sp_skill_rate_bonus = 100;
+
+	memset(&req,0,sizeof(req));
+
+	if( !sd )
+		return req;
+
+	if( sd->skillitem == skill_id && !sd->skillitem_keep_requirement )
+		return req; // Item skills and Hocus-Pocus don't have requirements.[Inkfish]
+
+	sc = &sd->sc;
+	if( sc->empty() )
+		sc = nullptr;
+
+	//Checks if disabling skill - in which case no SP requirements are necessary
+	if( sc && skill_disable_check(*sc,skill_id) )
+		return req;
+
+	skill_lv = cap_value(skill_lv, 1, MAX_SKILL_LEVEL);
+
+	status = &sd->battle_status;
+
+	std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+
+	req.hp = skill->require.hp[skill_lv - 1];
+	hp_rate = skill->require.hp_rate[skill_lv - 1];
+	if(hp_rate > 0)
+		req.hp += (status->hp * hp_rate)/100;
+	else
+		req.hp += (status->max_hp * (-hp_rate))/100;
+
+	req.sp = skill->require.sp[skill_lv-1];
+	if((sd->skill_id_old == BD_ENCORE) && skill_id == sd->skill_id_dance)
+		req.sp /= 2;
+	if ((sd->skill_id_old == TR_RETROSPECTION) && skill_id == sd->skill_id_song)
+		req.sp -= req.sp * 30 / 100;
+	sp_rate = skill->require.sp_rate[skill_lv-1];
+	if(sp_rate > 0)
+		req.sp += (status->sp * sp_rate)/100;
+	else
+		req.sp += (status->max_sp * (-sp_rate))/100;
+	if( sd->dsprate != 100 )
+		req.sp = req.sp * sd->dsprate / 100;
+
+	for (auto &it : sd->skillusesprate) {
+		if (it.id == skill_id) {
+			sp_skill_rate_bonus -= it.val;
+			break;
+		}
+	}
+
+	for (auto &it : sd->skillusesp) {
+		if (it.id == skill_id) {
+			req.sp -= it.val;
+			break;
+		}
+	}
+
+	if (skill_id == sd->status.skill[sd->reproduceskill_idx].id)
+		req.sp += req.sp * 30 / 100;
+
+	req.sp = cap_value(req.sp * sp_skill_rate_bonus / 100, 0, SHRT_MAX);
+
+	if( sc ) {
+		if( sc->getSCE(SC__LAZINESS) )
+			req.sp += req.sp + sc->getSCE(SC__LAZINESS)->val1 * 10;
+		if( sc->getSCE(SC_RECOGNIZEDSPELL) )
+			req.sp += req.sp / 4;
+		if( sc->getSCE(SC_OFFERTORIUM))
+			req.sp += req.sp * sc->getSCE(SC_OFFERTORIUM)->val3 / 100;
+		if( sc->getSCE(SC_TELEKINESIS_INTENSE) && skill_get_ele(skill_id, skill_lv) == ELE_GHOST)
+			req.sp -= req.sp * sc->getSCE(SC_TELEKINESIS_INTENSE)->val2 / 100;
+#ifdef RENEWAL
+		if (sc->getSCE(SC_ADAPTATION) && (skill_get_inf2(skill_id, INF2_ISSONG)))
+			req.sp -= req.sp * 20 / 100;
+		if (sc->getSCE(SC_NIBELUNGEN) && sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_SPCONSUM)
+			req.sp -= req.sp * 30 / 100;
+#endif
+		if (sc->getSCE(SC_GLOOMYDAY))
+			req.sp += req.sp * (skill_lv * 10) / 100;
+		if (sc->getSCE(SC_CRESCIVEBOLT))
+			req.sp += req.sp * (20 * sc->getSCE(SC_CRESCIVEBOLT)->val1) / 100;
+	}
+
+	req.ap = skill->require.ap[skill_lv - 1];
+	ap_rate = skill->require.ap_rate[skill_lv - 1];
+	if (ap_rate > 0)
+		req.ap += (status->ap * ap_rate) / 100;
+	else
+		req.ap += (status->max_ap * (-ap_rate)) / 100;
+
+	req.zeny = skill->require.zeny[skill_lv-1];
+
+	if( sc && sc->getSCE(SC__UNLUCKY) ) {
+		if(sc->getSCE(SC__UNLUCKY)->val1 < 3)
+			req.zeny += sc->getSCE(SC__UNLUCKY)->val1 * 250;
+		else
+			req.zeny += 1000;
+	}
+
+	req.spiritball = skill->require.spiritball[skill_lv-1];
+	req.state = skill->require.state;
+
+	req.mhp = skill->require.mhp[skill_lv-1];
+	req.weapon = skill->require.weapon;
+	req.ammo_qty = skill->require.ammo_qty[skill_lv-1];
+	if (skill_id == NW_MAGAZINE_FOR_ONE && sd->weapontype1 == W_GATLING)
+		req.ammo_qty += 4;
+	if (req.ammo_qty)
+		req.ammo = skill->require.ammo;
+
+	if (!req.ammo && skill_id && skill_isammotype(sd, skill_id))
+	{	//Assume this skill is using the weapon, therefore it requires arrows.
+		req.ammo = AMMO_TYPE_ALL; //Enable use on all ammo types.
+		req.ammo_qty = 1;
+	}
+
+	req.status = skill->require.status;
+	req.eqItem = skill->require.eqItem;
+
+	// Level dependence flag is determined based on the ItemCost Level label
+	bool level_dependent = skill->require.itemid_level_dependent;
+
+	switch( skill_id ) {
+		/* Skill level-dependent checks */
+		case NC_SHAPESHIFT: // NOTE: Magic_Gear_Fuel must be last in the ItemCost list depending on the skill's max level
+		case NC_REPAIR: // NOTE: Repair_Kit must be last in the ItemCost list depending on the skill's max level
+			req.itemid[1] = skill->require.itemid[skill->max];
+			req.amount[1] = skill->require.amount[skill->max];
+			[[fallthrough]];
+
+		/* Normal skill requirements and gemstone checks */
+		default:
+			for( i = 0; i < ((!level_dependent) ? MAX_SKILL_ITEM_REQUIRE : 2); i++ ) {
+				// Skip this for level_dependent requirement, just looking forward for gemstone removal. Assumed if there is gemstone there.
+				if (!level_dependent) {
+					switch( skill_id ) {
+						case AM_POTIONPITCHER:
+						case CR_SLIMPITCHER:
+						case CR_CULTIVATION:
+							if (i != skill_lv%11 - 1)
+								continue;
+							break;
+#ifdef RENEWAL
+						case AM_CALLHOMUN:
+							// Player has no homunculus, only requires first item
+							if (i > 0 && sd->hd == nullptr) {
+								i = MAX_SKILL_ITEM_REQUIRE;
+								continue;
+							}
+
+							// Recalling from Rest state has a different consume item (stored as second item)
+							if (skill_area_temp[0] == 1 || (sd->hd != nullptr && sd->hd->homunculus.vaporize == HOM_ST_REST)) {
+								req.itemid[0] = skill->require.itemid[1];
+								req.amount[0] = skill->require.amount[1];
+								if (skill_area_temp[0] == 1 && hom_is_active(sd->hd))
+									skill_area_temp[0] = 0;
+								i = MAX_SKILL_ITEM_REQUIRE;
+								continue;
+							}
+							break;
+#else
+						case AM_CALLHOMUN:
+							if (sd->status.hom_id) //Don't delete items when hom is already out.
+								continue;
+							break;
+#endif
+						case AB_ADORAMUS:
+							if( itemdb_group.item_exists(IG_GEMSTONE, skill->require.itemid[i]) && (sd->special_state.no_gemstone == 2 || skill_check_pc_partner(sd,skill_id,&skill_lv, 1, 2)) )
+								continue;
+							break;
+					}
+
+					req.itemid[i] = skill->require.itemid[i];
+					req.amount[i] = skill->require.amount[i];
+
+					if ((skill_id >= HT_SKIDTRAP && skill_id <= HT_TALKIEBOX && pc_checkskill(sd, RA_RESEARCHTRAP) > 0) || skill_id == SC_ESCAPE) {
+						int16 itIndex;
+
+						if ((itIndex = pc_search_inventory(sd,req.itemid[i])) < 0 || ( itIndex >= 0 && sd->inventory.u.items_inventory[itIndex].amount < req.amount[i])) {
+							if (skill_id == SC_ESCAPE) // Alloy Trap has priority over normal Trap
+								req.itemid[i] = ITEMID_TRAP;
+							else
+								req.itemid[i] = ITEMID_TRAP_ALLOY;
+							req.amount[i] = 1;
+						}
+						break;
+					}
+				}
+				else {
+					// Process level_dependent requirement
+					if (level_dependent && skill_lv <= MAX_SKILL_ITEM_REQUIRE && i == 0) {
+						req.itemid[0] = skill->require.itemid[skill_lv - 1];
+						req.amount[0] = skill->require.amount[skill_lv - 1];
+					}
+				}
+
+				// Check requirement for gemstone.
+				if (itemdb_group.item_exists(IG_GEMSTONE, req.itemid[i])) {
+					if( sd->special_state.no_gemstone == 2 ) // Remove all Magic Stone required for all skills for VIP.
+						req.itemid[i] = req.amount[i] = 0;
+					else {
+						if( sd->special_state.no_gemstone || (sc && sc->getSCE(SC_INTOABYSS)) )
+						{	// All gem skills except Hocus Pocus and Ganbantein can cast for free with Mistress card -helvetica
+							if (skill_id != SA_ABRACADABRA && skill_id != HW_GANBANTEIN)
+		 						req.itemid[i] = req.amount[i] = 0;
+							else if( --req.amount[i] < 1 )
+								req.amount[i] = 1; // Hocus Pocus always use at least 1 gem
+						}
+					}
+				}
+				// Check requirement for Magic Gear Fuel
+				if (req.itemid[i] == ITEMID_MAGIC_GEAR_FUEL && sd->special_state.no_mado_fuel)
+					req.itemid[i] = req.amount[i] = 0;
+			}
+			break;
+	}
+
+	// Check for cost reductions due to skills & SCs
+	switch(skill_id) {
+		case MC_MAMMONITE:
+#ifdef RENEWAL
+		case WS_CARTTERMINATION:
+#endif
+			if(pc_checkskill(sd,BS_UNFAIRLYTRICK)>0)
+#ifdef RENEWAL
+				req.zeny -= req.zeny*20/100;
+#else
+				req.zeny -= req.zeny*10/100;
+#endif
+			break;
+		case SL_SMA:
+		case SL_STUN:
+		case SL_STIN:
+		{
+			int32 kaina_lv = sd?pc_checkskill(sd,SL_KAINA):skill_get_max(SL_KAINA);
+
+			if(kaina_lv==0 || !sd || sd->status.base_level<70)
+				break;
+			if(sd->status.base_level>=90)
+				req.sp -= req.sp*7*kaina_lv/100;
+			else if(sd->status.base_level>=80)
+				req.sp -= req.sp*5*kaina_lv/100;
+			else if(sd->status.base_level>=70)
+				req.sp -= req.sp*3*kaina_lv/100;
+		}
+			break;
+		case MO_CHAINCOMBO:
+		case MO_COMBOFINISH:
+		case CH_TIGERFIST:
+		case CH_CHAINCRUSH:
+			if(sc && sc->getSCE(SC_SPIRIT) && sc->getSCE(SC_SPIRIT)->val2 == SL_MONK)
+				req.sp = 2; //Monk Spirit makes monk/champion combo skills cost 2 SP regardless of original cost
+			break;
+		case MO_BODYRELOCATION:

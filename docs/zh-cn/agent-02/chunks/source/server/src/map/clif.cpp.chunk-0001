@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// Copyright (c) Hercules Dev Team - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "clif.hpp"
+
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <unordered_set>
+
+#include <common/cbasetypes.hpp>
+#include <common/conf.hpp>
+#include <common/ers.hpp>
+#include <common/grfio.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "atcommand.hpp"
+#include "battle.hpp"
+#include "battleground.hpp"
+#include "cashshop.hpp"
+#include "channel.hpp"
+#include "chat.hpp"
+#include "chrif.hpp"
+#include "clan.hpp"
+#include "clif.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp"
+#include "log.hpp"
+#include "mail.hpp"
+#include "map.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "pc.hpp"
+#include "pc_groups.hpp"
+#include "pet.hpp"
+#include "quest.hpp"
+#include "script.hpp"
+#include "skill.hpp"
+#include "status.hpp"
+#include "storage.hpp"
+#include "unit.hpp"
+#include "vending.hpp"
+
+using namespace rathena;
+
+static inline uint32 client_tick( t_tick tick ){
+	return (uint32)tick;
+}
+
+#if PACKETVER >= 20170830
+static inline int64 client_exp(t_exp exp) {
+	return (int64)u64min(exp, MAX_EXP);
+}
+#else
+static inline int32 client_exp(t_exp exp) {
+	return (int32)u64min(exp, MAX_EXP);
+}
+#endif
+
+/* for clif_clearunit_delayed */
+static struct eri *delay_clearunit_ers;
+
+struct s_packet_db packet_db[MAX_PACKET_DB + 1];
+unsigned long color_table[COLOR_MAX];
+
+#include "clif_obfuscation.hpp"
+static bool clif_session_isValid( const map_session_data* sd );
+static void clif_loadConfirm( map_session_data *sd );
+static void clif_favorite_item( map_session_data& sd, uint16 index );
+
+#if PACKETVER >= 20150513
+enum mail_type {
+	MAIL_TYPE_TEXT = 0x0,
+	MAIL_TYPE_ZENY = 0x2,
+	MAIL_TYPE_ITEM = 0x4,
+	MAIL_TYPE_NPC = 0x8
+};
+#endif
+
+enum e_inventory_type{
+	INVTYPE_INVENTORY = 0,
+	INVTYPE_CART = 1,
+	INVTYPE_STORAGE = 2,
+	INVTYPE_GUILD_STORAGE = 3,
+};
+
+/** Converts item type to display it on client if necessary.
+* @param nameid: Item ID
+* @return item type. For IT_PETEGG will be displayed as IT_ARMOR. If Shadow Weapon of IT_SHADOWGEAR as IT_WEAPON and else as IT_ARMOR
+*/
+static inline int32 itemtype(t_itemid nameid) {
+	struct item_data* id = itemdb_search(nameid); //Use itemdb_search, so non-existence item will use dummy data and won't crash the server. bugreport:8468
+	int32 type = id->type;
+	if( type == IT_SHADOWGEAR ) {
+		if( id->equip&EQP_SHADOW_WEAPON )
+			return IT_WEAPON;
+		else
+			return IT_ARMOR;
+	}
+	return ( type == IT_PETEGG ) ? IT_ARMOR : type;
+}
+
+// TODO: doc
+static inline uint16 client_index( uint16 server_index ){
+	return server_index + 2;
+}
+
+static inline uint16 server_index( uint16 client_index ){
+	return client_index - 2;
+}
+
+static inline uint16 client_storage_index( uint16 server_index ){
+	return server_index + 1;
+}
+
+static inline uint16 server_storage_index( uint16 client_index ){
+	return client_index - 1;
+}
+
+static inline uint32 disguised_bl_id( uint32 bl_id ){
+	// Casting to prevent a compiler warning
+	return -((int32)bl_id);
+}
+
+#if PACKETVER_MAIN_NUM >= 20181121 || PACKETVER_RE_NUM >= 20180704 || PACKETVER_ZERO_NUM >= 20181114
+static inline uint32 client_nameid( t_itemid server_nameid ){
+	t_itemid view = itemdb_viewid( server_nameid );
+
+	if( view > 0 ){
+		return view;
+	}else{
+		return server_nameid;
+	}
+}
+#else
+static inline uint16 client_nameid( t_itemid server_nameid ){
+	t_itemid view = itemdb_viewid( server_nameid );
+
+	if( view > 0 ){
+		if( view > UINT16_MAX ){
+			return (uint16)UNKNOWN_ITEM_ID;
+		}
+
+		return (uint16)view;
+	}else{
+		if( server_nameid > UINT16_MAX ){
+			return (uint16)UNKNOWN_ITEM_ID;
+		}
+
+		return (uint16)server_nameid;
+	}
+}
+#endif
+
+static inline void WBUFPOS(uint8* p, uint16 pos, int16 x, int16 y, unsigned char dir) {
+	p += pos;
+	p[0] = (uint8)(x>>2);
+	p[1] = (uint8)((x<<6) | ((y>>4)&0x3f));
+	p[2] = (uint8)((y<<4) | (dir&0xf));
+}
+
+
+// client-side: x0+=sx0*0.0625-0.5 and y0+=sy0*0.0625-0.5
+static inline void WBUFPOS2(uint8* p, uint16 pos, int16 x0, int16 y0, int16 x1, int16 y1, uint8 sx0, uint8 sy0) {
+	p += pos;
+	p[0] = (uint8)(x0>>2);
+	p[1] = (uint8)((x0<<6) | ((y0>>4)&0x3f));
+	p[2] = (uint8)((y0<<4) | ((x1>>6)&0x0f));
+	p[3] = (uint8)((x1<<2) | ((y1>>8)&0x03));
+	p[4] = (uint8)y1;
+	p[5] = (uint8)((sx0<<4) | (sy0&0x0f));
+}
+
+
+static inline void WFIFOPOS(int32 fd, uint16 pos, int16 x, int16 y, unsigned char dir) {
+	WBUFPOS(WFIFOP(fd,pos), 0, x, y, dir);
+}
+
+static inline void RBUFPOS(const uint8* p, uint16 pos, int16* x, int16* y, unsigned char* dir) {
+	p += pos;
+
+	if( x ) {
+		x[0] = ( ( p[0] & 0xff ) << 2 ) | ( p[1] >> 6 );
+	}
+
+	if( y ) {
+		y[0] = ( ( p[1] & 0x3f ) << 4 ) | ( p[2] >> 4 );
+	}
+
+	if( dir ) {
+		dir[0] = ( p[2] & 0x0f );
+	}
+}
+
+
+static inline void RBUFPOS2(const uint8* p, uint16 pos, int16* x0, int16* y0, int16* x1, int16* y1, unsigned char* sx0, unsigned char* sy0) {
+	p += pos;
+
+	if( x0 ) {
+		x0[0] = ( ( p[0] & 0xff ) << 2 ) | ( p[1] >> 6 );
+	}
+
+	if( y0 ) {
+		y0[0] = ( ( p[1] & 0x3f ) << 4 ) | ( p[2] >> 4 );
+	}
+
+	if( x1 ) {
+		x1[0] = ( ( p[2] & 0x0f ) << 6 ) | ( p[3] >> 2 );
+	}
+
+	if( y1 ) {
+		y1[0] = ( ( p[3] & 0x03 ) << 8 ) | ( p[4] >> 0 );
+	}
+
+	if( sx0 ) {
+		sx0[0] = ( p[5] & 0xf0 ) >> 4;
+	}
+
+	if( sy0 ) {
+		sy0[0] = ( p[5] & 0x0f ) >> 0;
+	}
+}
+
+
+static inline void RFIFOPOS(int32 fd, uint16 pos, int16* x, int16* y, unsigned char* dir) {
+	RBUFPOS(RFIFOP(fd,pos), 0, x, y, dir);
+}
+
+
+static inline void RFIFOPOS2(int32 fd, uint16 pos, int16* x0, int16* y0, int16* x1, int16* y1, unsigned char* sx0, unsigned char* sy0) {
+	RBUFPOS2(WFIFOP(fd,pos), 0, x0, y0, x1, y1, sx0, sy0);
+}
+
+//To idenfity disguised characters.
+static inline bool disguised(const block_list* bl) {
+	return (bool)( bl->type == BL_PC && static_cast<const map_session_data*>(bl)->disguise );
+}
+
+
+//Guarantees that the given string does not exceeds the allowed size, as well as making sure it's null terminated. [Skotlex]
+static inline uint32 mes_len_check(char* mes, uint32 len, uint32 max) {
+	if( len > max )
+		len = max;
+
+	mes[len-1] = '\0';
+
+	return len;
+}
+
+
+static char map_ip_str[128];
+static uint32 map_ip;
+static uint32 bind_ip = INADDR_ANY;
+static uint16 map_port = 5121;
+static bool clif_ally_only = false;
+int32 map_fd;
+
+static int32 clif_parse (int32 fd);
+
+/*==========================================
+ * Ip setting of map-server
+ *------------------------------------------*/
+int32 clif_setip(const char* ip) {
+	char ip_str[16];
+	map_ip = host2ip(ip);
+	if (!map_ip) {
+		ShowWarning("Failed to Resolve Map Server Address! (%s)\n", ip);
+		return 0;
+	}
+
+	safestrncpy(map_ip_str, ip, sizeof(map_ip_str));
+	ShowInfo("Map Server IP Address : '" CL_WHITE "%s" CL_RESET "' -> '" CL_WHITE "%s" CL_RESET "'.\n", ip, ip2str(map_ip, ip_str));
+	return 1;
+}
+
+void clif_setbindip(const char* ip)
+{
+	bind_ip = host2ip(ip);
+	if (bind_ip) {
+		char ip_str[16];
+		ShowInfo("Map Server Bind IP Address : '" CL_WHITE "%s" CL_RESET "' -> '" CL_WHITE "%s" CL_RESET "'.\n", ip, ip2str(bind_ip, ip_str));
+	} else {
+		ShowWarning("Failed to Resolve Map Server Address! (%s)\n", ip);
+	}
+}
+
+/*==========================================
+ * Sets map port to 'port'
+ * is run from map.cpp upon loading map server configuration
+ *------------------------------------------*/
+void clif_setport(uint16 port)
+{
+	map_port = port;
+}
+
+/*==========================================
+ * Returns map server IP
+ *------------------------------------------*/
+uint32 clif_getip(void)
+{
+	return map_ip;
+}
+
+//Refreshes map_server ip, returns the new ip if the ip changed, otherwise it returns 0.
+uint32 clif_refresh_ip(void)
+{
+	uint32 new_ip;
+
+	new_ip = host2ip(map_ip_str);
+	if (new_ip && new_ip != map_ip) {
+		map_ip = new_ip;
+		ShowInfo("Updating IP resolution of [%s].\n", map_ip_str);
+		return map_ip;
+	}
+	return 0;
+}
+
+/*==========================================
+ * Returns map port which is set by clif_setport()
+ *------------------------------------------*/
+uint16 clif_getport(void)
+{
+	return map_port;
+}
+
+#if PACKETVER >= 20071106
+static inline unsigned char clif_bl_type(const block_list* bl, bool walking) {
+	switch (bl->type) {
+	case BL_PC:    return (disguised(bl) && !pcdb_checkid(status_get_viewdata(bl)->look[LOOK_BASE]))? 0x1:0x0; //PC_TYPE
+	case BL_ITEM:  return 0x2; //ITEM_TYPE
+	case BL_SKILL: return 0x3; //SKILL_TYPE
+	case BL_CHAT:  return 0x4; //UNKNOWN_TYPE
+	case BL_MOB:
+		if( pcdb_checkid( status_get_viewdata( bl )->look[LOOK_BASE] ) ){
+			return 0x0; //PC_TYPE
+		}else{
+			switch( ( (mob_data*)bl )->special_state.ai ){
+				case AI_ABR:
+					return 0xd; //NPC_ABR_TYPE
+				case AI_BIONIC:
+					return 0xe; //NPC_BIONIC_TYPE
+				default:
+					return 0x5; //NPC_MOB_TYPE
+			}
+		}
+	case BL_NPC:
+// From 2017-07-26 on NPC type units can also use player sprites.
+// There is one exception and this is if they are walking.
+// Since walking NPCs are not supported on official servers, the client does not know how to handle it.
+#if PACKETVER >= 20170726
+		if (pcdb_checkid( status_get_viewdata( bl )->look[LOOK_BASE] ) && walking)
+			return 0x0;
+		else if (mobdb_checkid( status_get_viewdata( bl )->look[LOOK_BASE] ))	// FIXME: categorize NPCs able to walk
+			return 0xC;
+		else
+			return 0x6;
+#else
+		return pcdb_checkid(status_get_viewdata(bl)->look[LOOK_BASE]) ? 0x0 : 0x6; //NPC_EVT_TYPE
+#endif
+	case BL_PET:   return pcdb_checkid(status_get_viewdata(bl)->look[LOOK_BASE])?0x0:0x7; //NPC_PET_TYPE
+	case BL_HOM:   return 0x8; //NPC_HOM_TYPE
+	case BL_MER:   return 0x9; //NPC_MERSOL_TYPE
+	case BL_ELEM:  return 0xa; //NPC_ELEMENTAL_TYPE
+	default:       return 0x1; //NPC_TYPE
+	}
+}
+#endif
+
+static bool clif_session_isValid(const map_session_data* sd) {
+	return ( sd != nullptr && session_isActive(sd->fd) );
+}
+
+/*==========================================
+ * sub process of clif_send
+ * Called from a map_foreachinallarea (grabs all players in specific area and subjects them to this function)
+ * In order to send area-wise packets, such as:
+ * - AREA : everyone nearby your area
+ * - AREA_WOSC (AREA WITHOUT SAME CHAT) : Not run for people in the same chat as yours
+ * - AREA_WOC (AREA WITHOUT CHAT) : Not run for people inside a chat
+ * - AREA_WOS (AREA WITHOUT SELF) : Not run for self
+ * - AREA_CHAT_WOC : Everyone in the area of your chat without a chat
+ *------------------------------------------*/
+static int32 clif_send_sub(block_list *bl, va_list ap)
+{
+	block_list *src_bl;
+	map_session_data *sd;
+	unsigned char *buf;
+	int32 len, type, fd;
+
+	nullpo_ret(bl);
+	nullpo_ret(sd = (map_session_data *)bl);
+
+	// Don't send to disconnected clients.
+	if( !session_isActive( fd = sd->fd ) ){
+		return 0;
+	}
+
+	buf = va_arg(ap,unsigned char*);
+	len = va_arg(ap,int32);
+	nullpo_ret(src_bl = va_arg(ap,block_list*));
+	type = va_arg(ap,int32);
+
+	switch(type) {
+	case AREA_WOS:
+		if (bl == src_bl)
+			return 0;
+	break;
+	case AREA_WOC:
+		if (sd->chatID || bl == src_bl)
+			return 0;
+	break;
+	case AREA_WOSC:
+	{
+		if(src_bl->type == BL_PC) {
+			map_session_data *ssd = (map_session_data *)src_bl;
+			if (ssd && sd->chatID && (sd->chatID == ssd->chatID))
+			return 0;
+		}
+		else if(src_bl->type == BL_NPC) {
+			npc_data *nd = (npc_data *)src_bl;
+			if (nd && sd->chatID && (sd->chatID == nd->chat_id))
+			return 0;
+		}
+	}
+	break;
+	}
+
+	if( src_bl->type == BL_NPC && npc_is_hidden_dynamicnpc( *( (npc_data*)src_bl ), *sd ) ){
+		// Do not send anything
+		return 0;
+	}
+
+	/* unless visible, hold it here */
+	if (!battle_config.update_enemy_position && clif_ally_only && !sd->special_state.intravision &&
+		!sd->sc.getSCE(SC_INTRAVISION) && battle_check_target(src_bl,sd,BCT_ENEMY) > 0)
+		return 0;
+
+	WFIFOHEAD(fd, len);
+	if (WFIFOP(fd,0) == buf) {
+		ShowError("WARNING: Invalid use of clif_send function\n");
+		ShowError("         Packet x%4x use a WFIFO of a player instead of to use a buffer.\n", WBUFW(buf,0));
+		ShowError("         Please correct your code.\n");
+		// don't send to not move the pointer of the packet for next sessions in the loop
+		//WFIFOSET(fd,0);//## TODO is this ok?
+		//NO. It is not ok. There is the chance WFIFOSET actually sends the buffer data, and shifts elements around, which will corrupt the buffer.
+		return 0;
+	}
+
+	memcpy(WFIFOP(fd,0), buf, len);
+	WFIFOSET(fd,len);
+
+	return 0;
+}
+
+/*==========================================
+ * Packet Delegation (called on all packets that require data to be sent to more than one client)
+ * functions that are sent solely to one use whose ID it posses use WFIFOSET
+ *------------------------------------------*/
+int32 clif_send(const void* buf, int32 len, const block_list* bl, enum send_target type)
+{
+	int32 i;
+	const map_session_data* sd, *tsd;
+	struct party_data *p = nullptr;
+	std::shared_ptr<s_battleground_data> bg;
+	int32 x0 = 0, x1 = 0, y0 = 0, y1 = 0, fd;
+	struct s_mapiterator* iter;
+
+	if( type != ALL_CLIENT )
+		nullpo_ret(bl);
+
+	sd = BL_CAST(BL_PC, bl);
+
+	switch(type) {
+
+	case ALL_CLIENT: //All player clients.
+		iter = mapit_getallusers();
+		while( ( tsd = static_cast<const map_session_data*>(mapit_next( iter )) ) != nullptr ){
+			if( session_isActive( fd = tsd->fd ) ){
+				WFIFOHEAD( fd, len );
+				memcpy( WFIFOP( fd, 0 ), buf, len );
+				WFIFOSET( fd, len );
+			}

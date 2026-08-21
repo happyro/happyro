@@ -1,0 +1,500 @@
+				break;
+			}
+		}
+#ifdef RENEWAL
+		// Damage modifier need to be applied before SMATK
+		ad.damage += battle_calc_cardfix(BF_MAGIC, src, target, nk, s_ele, 0, ad.damage, 0, ad.flag);
+
+		// Additionnal damage from W_2HSTAFF
+		// Must be before smatk and after battle_calc_cardfix
+		if (sd != nullptr && sd->status.weapon == W_2HSTAFF && (i = pc_checkskill(sd, AG_TWOHANDSTAFF)) > 0) {
+			ad.damage += ad.damage * i / 100;
+		}
+
+		if (has_skillratio) {
+			// S.MATK needs to be applied before the skill ratio to prevent rounding issues
+			if (sd && sstatus->smatk > 0)
+				ad.damage += ad.damage * sstatus->smatk / 100;
+
+			MATK_RATE(skillratio);
+		}
+#endif
+
+		if(sd) {
+#ifndef RENEWAL
+			//Damage bonuses
+			if ((i = pc_skillatk_bonus(sd, skill_id)))
+				ad.damage += (int64)ad.damage*i/100;
+#endif
+
+			//Ignore Defense?
+			if (!flag.imdef && (
+				sd->bonus.ignore_mdef_ele & ( 1 << tstatus->def_ele ) || sd->bonus.ignore_mdef_ele & ( 1 << ELE_ALL ) ||
+				sd->bonus.ignore_mdef_race & ( 1 << tstatus->race ) || sd->bonus.ignore_mdef_race & ( 1 << RC_ALL ) ||
+				sd->bonus.ignore_mdef_class & ( 1 << tstatus->class_ ) || sd->bonus.ignore_mdef_class & ( 1 << CLASS_ALL )
+			))
+				flag.imdef = 1;
+		}
+
+		if (tsd && (i = pc_sub_skillatk_bonus(tsd, skill_id)))
+			ad.damage -= (int64)ad.damage*i/100;
+
+#ifdef RENEWAL
+		// MRes reduces magical damage by a percentage and is calculated before MDEF and other reductions.
+		if (ad.damage != 0 && tstatus->mres > 0) {
+			// (MRes flat reduction is already applied)
+			int16 mres = tstatus->mres;
+
+			// % MRes ignored
+			int16 ignore_mres = 0;
+
+			if (sd != nullptr) {
+				// (in case other bonuses are implemented) % MRes ignored is the sum of all types of % MRes
+				ignore_mres += sd->indexed_bonus.ignore_mres_by_race[tstatus->race] + sd->indexed_bonus.ignore_mres_by_race[RC_ALL];
+			}
+
+			// Attacker status's that pierce MRes.
+			if (sc != nullptr) {
+				if (sc->getSCE(SC_A_VITA) != nullptr)
+					ignore_mres += sc->getSCE(SC_A_VITA)->val2;
+			}
+
+			// % MRes ignored is capped to 50% on official server
+			ignore_mres = min(ignore_mres, battle_config.max_res_mres_ignored);
+
+			mres = static_cast<decltype(mres)>(mres - ignore_mres * mres / 100.0);
+
+			ad.damage -= static_cast<decltype(ad.damage)>(static_cast<float>(mres / (mres + 400.0)) * 80.0 / 100.0 * static_cast<double>(ad.damage));
+		}
+#endif
+
+		if(!flag.imdef){
+			// Bonuses ignoring Mdef are added together
+			defType mdef = tstatus->mdef;
+			int32 mdef2 = tstatus->mdef2;
+			i = 0;	// Bonus ratio that ignores Mdef
+
+			if (sc != nullptr && sc->getSCE(SC_EXPIATIO))
+				i += 5 * sc->getSCE(SC_EXPIATIO)->val1;
+
+			if (sd != nullptr) {
+				i += sd->indexed_bonus.ignore_mdef_by_race[tstatus->race] + sd->indexed_bonus.ignore_mdef_by_race[RC_ALL] +
+					sd->indexed_bonus.ignore_mdef_by_class[tstatus->class_] + sd->indexed_bonus.ignore_mdef_by_class[CLASS_ALL];
+
+				std::vector<e_race2> race2 = status_get_race2(target);
+
+				for (const auto &raceit : race2)
+					i += sd->indexed_bonus.ignore_mdef_by_race2[raceit];
+			}
+
+			i = cap_value(i, 0, 100);
+
+#ifdef RENEWAL
+			// On renewal, Mdef is rounded after calculation
+			if (i > 0) {
+				mdef = (defType)( (float)(mdef - mdef * i / 100.) );
+			}
+
+			/**
+			 * RE MDEF Reduction
+			 * Damage = Magic Attack * (1000+eMDEF)/(1000+eMDEF) - sMDEF
+			 */
+			if (mdef < 0)
+				mdef = 0; // Negative eMDEF is treated as 0 on official
+
+			ad.damage = ad.damage * (1000 + mdef) / (1000 + mdef * 10) - mdef2;
+#else
+			// On pre-renewal, Mdef reduction is rounded down before being subtracted from Mdef
+			if (i > 0)
+				mdef -= mdef * i / 100;
+
+			if(battle_config.magic_defense_type)
+				ad.damage = ad.damage - mdef*battle_config.magic_defense_type - mdef2;
+			else
+				ad.damage = ad.damage * (100-mdef)/100 - mdef2;
+#endif
+		}
+
+		i = 0;	// pc_skillatk_bonus ratio
+
+#ifdef RENEWAL
+		// pc_skillatk_bonus must be after def reduction and before the damages applied when the target is hit (at least on renewal)
+		if (sd != nullptr)
+			i += pc_skillatk_bonus(sd, skill_id);
+#endif
+
+		// Buffs added to pc_skillatk_bonus (renewal) ratio
+		switch (skill_id) {
+			case AG_DESTRUCTIVE_HURRICANE:
+				if (sc->getSCE(SC_CLIMAX)) {
+					if (sc->getSCE(SC_CLIMAX)->val1 == 3)
+						i += 150;
+					else if (sc->getSCE(SC_CLIMAX)->val1 == 5)
+						i -= 20;
+				}
+				break;
+			case AG_VIOLENT_QUAKE_ATK:
+				if (sc->getSCE(SC_CLIMAX)) {
+					if (sc->getSCE(SC_CLIMAX)->val1 == 1)
+						i -= 50;
+					else if (sc->getSCE(SC_CLIMAX)->val1 == 3)
+						i += 200;
+				}
+				break;
+			case AG_ALL_BLOOM_ATK:
+				if (sc->getSCE(SC_CLIMAX) && sc->getSCE(SC_CLIMAX)->val1 == 3)
+					i += 300;
+				break;
+			case AG_CRYSTAL_IMPACT:
+				if (sc->getSCE(SC_CLIMAX)) {
+					if (sc->getSCE(SC_CLIMAX)->val1 == 3)
+						i += 50;
+					else if (sc->getSCE(SC_CLIMAX)->val1 == 4)
+						i -= 50;
+				}
+				break;
+			case AG_CRYSTAL_IMPACT_ATK:
+				if (sc->getSCE(SC_CLIMAX) && sc->getSCE(SC_CLIMAX)->val1 == 4)
+					i += 150;
+				break;
+			case SU_CN_METEOR:
+			case SU_CN_METEOR2:
+				if (sc->getSCE(SC_COLORS_OF_HYUN_ROK_BUFF) != nullptr)
+					i += sc->getSCE(SC_COLORS_OF_HYUN_ROK_BUFF)->val2;
+				break;
+		}
+
+		if (i != 0)
+			ad.damage = (int64)( (double)( ad.damage + ad.damage * i / 100. ) );
+
+		//Apply the physical part of the skill's damage. [Skotlex]
+		switch (skill_id) {
+			case CR_GRANDCROSS:
+			case NPC_GRANDDARKNESS: {
+				// Pre-re ATK = Take atk, apply def reduction and add refine bonus
+				// Final Damage = (ATK+MATK)*RATIO
+				// Renewal ATK = Take total atk
+				// Final Damage = ((ATK+MATK)/2)*RATIO - (tDEF + tMDEF)
+				// No need to go through the whole physical damage code
+				struct Damage wd = initialize_weapon_data(src, target, skill_id, skill_lv, mflag);
+				battle_calc_skill_base_damage(&wd, src, target, skill_id, skill_lv);
+				// Calculate ATK
+#ifdef RENEWAL
+				if (sd)
+					wd.damage = wd.statusAtk + wd.weaponAtk + wd.equipAtk + wd.percentAtk;
+#else
+				battle_calc_defense_reduction(&wd, src, target, skill_id, skill_lv);
+				if (sd) {
+					wd.damage += sstatus->rhw.atk2;
+				}
+#endif
+				// Combine ATK and MATK
+#ifdef RENEWAL
+				ad.damage = (wd.damage + ad.damage) / 2;
+#else
+				ad.damage = std::max((int64)1, wd.damage + ad.damage);
+#endif
+				// Ratio
+				skillratio += 40 * skill_lv;
+				MATK_RATE(skillratio);
+#ifdef RENEWAL
+				// Total defense reduction (renewal only)
+				battle_calc_defense_reduction(&ad, src, target, skill_id, skill_lv);
+				ad.damage -= (tstatus->mdef + tstatus->mdef2);
+#endif
+			}
+			break;
+		}
+
+		if(ad.damage<1)
+			ad.damage=1;
+		else if(sc) { //only applies when hit
+			// !TODO: shouldn't they be with pc_skillatk_bonus?
+			switch(skill_id) {
+				case MG_LIGHTNINGBOLT:
+				case MG_THUNDERSTORM:
+					if(sc->getSCE(SC_GUST_OPTION))
+						ad.damage += (6 + sstatus->int_ / 4) + max(sstatus->dex - 10, 0) / 30;
+					break;
+				case MG_FIREBOLT:
+				case MG_FIREWALL:
+					if(sc->getSCE(SC_PYROTECHNIC_OPTION))
+						ad.damage += (6 + sstatus->int_ / 4) + max(sstatus->dex - 10, 0) / 30;
+					break;
+				case MG_COLDBOLT:
+				case MG_FROSTDIVER:
+					if(sc->getSCE(SC_AQUAPLAY_OPTION))
+						ad.damage += (6 + sstatus->int_ / 4) + max(sstatus->dex - 10, 0) / 30;
+					break;
+				case WZ_EARTHSPIKE:
+				case WZ_HEAVENDRIVE:
+					if(sc->getSCE(SC_PETROLOGY_OPTION))
+						ad.damage += (6 + sstatus->int_ / 4) + max(sstatus->dex - 10, 0) / 30;
+					break;
+			}
+		}
+
+		if (!nk[NK_IGNOREELEMENT])
+			ad.damage = battle_attr_fix(src, target, ad.damage, s_ele, tstatus->def_ele, tstatus->ele_lv);
+
+#ifndef RENEWAL
+		ad.damage += battle_calc_cardfix(BF_MAGIC, src, target, nk, s_ele, 0, ad.damage, 0, ad.flag);
+#endif
+
+		switch (skill_id) {
+			case CR_GRANDCROSS:
+			case NPC_GRANDDARKNESS:
+				if (src == target) {
+					// Grand Cross on self first applies attr_fix, then cardfix and finally halves the damage
+					if (src->type == BL_PC)
+						ad.damage = ad.damage / 2;
+					else
+						ad.damage = 0;
+				}
+				else
+					// Grand Cross on target applies attr_fix, then cardfix and then attr_fix a second time
+					ad.damage = battle_attr_fix(src, target, ad.damage, s_ele, tstatus->def_ele, tstatus->ele_lv);
+				break;
+		}
+
+	} //Hint: Against plants damage will still be 1 at this point
+
+	//Apply DAMAGE_DIV_FIX and check for min damage
+	battle_apply_div_fix(&ad, skill_id);
+
+	struct map_data *mapdata = map_getmapdata(target->m);
+
+	ad.damage = battle_calc_damage(src,target,&ad,ad.damage,skill_id,skill_lv);
+	if (mapdata_flag_gvg2(mapdata))
+		ad.damage = battle_calc_gvg_damage(src,target,ad.damage,skill_id,ad.flag);
+	else if (mapdata->getMapFlag(MF_BATTLEGROUND))
+		ad.damage = battle_calc_bg_damage(src,target,ad.damage,skill_id,ad.flag);
+
+	// Skill damage adjustment
+	if ((skill_damage = battle_skill_damage(src,target,skill_id)) != 0)
+		MATK_ADDRATE(skill_damage);
+
+	battle_absorb_damage(target, &ad);
+
+	//battle_do_reflect(BF_MAGIC,&ad, src, target, skill_id, skill_lv); //WIP [lighta] Magic skill has own handler at skill_attack
+	return ad;
+}
+
+/*==========================================
+ * Calculate "misc"-type attacks and skills
+ *------------------------------------------
+ * Credits:
+ *	Original coder Skotlex
+ *	Refined and optimized by helvetica
+ */
+struct Damage battle_calc_misc_attack(block_list *src,block_list *target,uint16 skill_id,uint16 skill_lv,int32 mflag)
+{
+	int32 skill_damage = 0;
+	int16 i, s_ele;
+
+	map_session_data *sd, *tsd;
+	struct Damage md; //DO NOT CONFUSE with md of mob_data!
+	status_change *ssc = status_get_sc(src);
+
+	memset(&md,0,sizeof(md));
+
+	if (src == nullptr || target == nullptr) {
+		nullpo_info(NLP_MARK);
+		return md;
+	}
+
+	status_data* sstatus = status_get_status_data(*src);
+	status_data* tstatus = status_get_status_data(*target);
+
+	//Some initial values
+	md.amotion = (skill_get_inf(skill_id)&INF_GROUND_SKILL ? 0 : sstatus->amotion);
+	md.dmotion = tstatus->dmotion;
+	md.div_ = skill_get_num(skill_id,skill_lv);
+	md.blewcount = skill_get_blewcount(skill_id,skill_lv);
+	md.dmg_lv = ATK_DEF;
+	md.flag = BF_MISC|BF_SKILL;
+	md.miscflag = mflag;
+
+	std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+	std::bitset<NK_MAX> nk;
+
+	if (skill)
+		nk = skill->nk;
+
+	sd = BL_CAST(BL_PC, src);
+	tsd = BL_CAST(BL_PC, target);
+
+	if(sd) {
+		sd->state.arrow_atk = 0;
+		md.blewcount += battle_blewcount_bonus(sd, skill_id);
+	}
+
+	s_ele = battle_get_misc_element(md, *src, *target, skill_id, skill_lv);
+
+	//Skill Range Criteria
+	md.flag |= battle_range_type(src, target, skill_id, skill_lv);
+
+	// Update Damage data based on skill
+	if (skill != nullptr && skill->impl != nullptr) {
+		skill->impl->modifyDamageData(md, *src, *target, skill_lv);
+	}
+
+	switch (skill_id) {
+		case TF_THROWSTONE:
+			if (sd)
+				md.damage = 50;
+			else
+				md.damage = 30;
+			md.flag |= BF_WEAPON;
+			break;
+		case NPC_KILLING_AURA:
+			md.damage = 10000;
+			break;
+#ifdef RENEWAL
+		case HT_LANDMINE:
+		case MA_LANDMINE:
+		case HT_BLASTMINE:
+		case HT_CLAYMORETRAP:
+			md.damage = (int64)(skill_lv * sstatus->dex * (3.0 + (float)status_get_lv(src) / 100.0) * (1.0 + (float)sstatus->int_ / 35.0));
+			md.damage += md.damage * (rnd()%20 - 10) / 100;
+			md.damage += (sd ? pc_checkskill(sd,RA_RESEARCHTRAP) * 40 : 0);
+			break;
+#else
+		case HT_LANDMINE:
+		case MA_LANDMINE:
+			md.damage = static_cast<decltype(md.damage)>(skill_lv * (sstatus->dex + 75.0) * (100.0 + sstatus->int_) / 100.0);
+			break;
+		case HT_BLASTMINE:
+			md.damage = static_cast<decltype(md.damage)>(skill_lv * (sstatus->dex / 2.0 + 50.0) * (100.0 + sstatus->int_) / 100.0);
+			break;
+		case HT_CLAYMORETRAP:
+			md.damage = static_cast<decltype(md.damage)>(skill_lv * (sstatus->dex / 2.0 + 75.0) * (100.0 + sstatus->int_) / 100.0);
+			break;
+#endif
+		case HT_BLITZBEAT:
+		case SN_FALCONASSAULT:
+			{
+				uint16 skill;
+
+				//Blitz-beat Damage
+				if(!sd || !(skill = pc_checkskill(sd,HT_STEELCROW)))
+					skill = 0;
+#ifdef RENEWAL
+				md.damage = skill_lv * 20 + skill * 6 + ((sstatus->agi / 2) *2) + ((sstatus->dex / 10) *2);
+#else
+				md.damage = (sstatus->dex / 10 + sstatus->int_ / 2 + skill * 3 + 40) * 2;
+				if(mflag > 1) //Autocasted Blitz
+					nk.set(NK_SPLASHSPLIT);
+#endif
+				if (skill_id == SN_FALCONASSAULT) {
+					//Div fix of Blitzbeat
+					DAMAGE_DIV_FIX2(md.damage, skill_get_num(HT_BLITZBEAT, 5));
+					//Falcon Assault Modifier
+					md.damage = md.damage * (150 + 70 * skill_lv) / 100;
+				}
+			}
+			break;
+#ifndef RENEWAL
+		case BA_DISSONANCE:
+			md.damage = 30 + 10 * skill_lv;
+			md.damage += skill_lv * pc_checkskill(sd, BA_MUSICALLESSON);
+			break;
+#endif
+		case NPC_SELFDESTRUCTION:
+			md.damage = sstatus->hp;
+			break;
+		case NPC_SMOKING:
+			md.damage = 3;
+			break;
+		case NPC_EVILLAND:
+			md.damage = skill_calc_heal(src,target,skill_id,skill_lv,false);
+			break;
+#ifndef RENEWAL
+		case ASC_BREAKER:
+			md.damage = 500 + rnd()%500 + 5 * skill_lv * sstatus->int_;
+			nk.set(NK_IGNOREFLEE);
+			nk.set(NK_IGNOREELEMENT); //These two are not properties of the weapon based part.
+			break;
+		case HW_GRAVITATION:
+			md.damage = 200 + 200 * skill_lv;
+			md.dmotion = 0; //No flinch animation
+			if (target->type == BL_MOB) {
+				mob_data& mob = *reinterpret_cast<mob_data*>(target);
+				// Deals 400 damage to Emperium on all levels
+				if (mob.mob_id == MOBID_EMPERIUM)
+					md.damage = 400;
+			}
+			break;
+		case PA_PRESSURE:
+			md.damage = 500 + 300 * skill_lv;
+			break;
+#endif
+		case PA_GOSPEL:
+			if (mflag > 0)
+				md.damage = (rnd() % 4000) + 1500;
+			else {
+				md.damage = (rnd() % 5000) + 3000;
+#ifdef RENEWAL
+				md.damage -= (int64)status_get_def(target);
+#else
+				md.damage -= (md.damage * (int64)status_get_def(target)) / 100;
+#endif
+				md.damage -= tstatus->def2;
+				if (md.damage < 0)
+					md.damage = 0;
+			}
+			break;
+		case GN_FIRE_EXPANSION_ACID:
+#ifdef RENEWAL
+			// Official Renewal formula [helvetica]
+			// damage = 7 * ((atk + matk)/skill level) * (target vit/100)
+			// skill is a "forced neutral" type skill, it benefits from weapon element but final damage
+			// 	is considered "neutral" for purposes of resistances
+			{
+				struct Damage atk = battle_calc_weapon_attack(src, target, skill_id, skill_lv, 0);
+				struct Damage matk = battle_calc_magic_attack(src, target, skill_id, skill_lv, 0);
+				md.damage = 7 * ((atk.damage/skill_lv + matk.damage/skill_lv) * tstatus->vit / 100 );
+
+				// AD benefits from endow/element but damage is forced back to neutral
+				md.damage = battle_attr_fix(src, target, md.damage, ELE_NEUTRAL, tstatus->def_ele, tstatus->ele_lv);
+			}
+			// Fall through
+#else
+		case CR_ACIDDEMONSTRATION:
+			if(tstatus->vit+sstatus->int_) //crash fix
+				md.damage = (int32)((int64)7*tstatus->vit*sstatus->int_*sstatus->int_ / (10*(tstatus->vit+sstatus->int_)));
+			else
+				md.damage = 0;
+			if (tsd)
+				md.damage /= 2;
+#endif
+			break;
+		case NJ_ZENYNAGE:
+			md.damage = skill_get_zeny( skill_id, skill_lv );
+
+			if( md.damage == 0 ){
+				md.damage = 2;
+			}
+
+			md.damage += rnd_value( static_cast<decltype(md.damage)>( 0 ), md.damage );
+
+			// Specific to Boss Class
+			if( status_get_class_( target ) == CLASS_BOSS ){
+				md.damage /= 3;
+			}
+
+			if( tsd != nullptr ){
+				md.damage /= 2;
+			}
+			break;
+		case KO_MUCHANAGE:
+			md.damage = skill_get_zeny( skill_id, skill_lv );
+
+			if( md.damage == 0 ){
+				md.damage = 10;
+			}
+
+			md.damage = rnd_value( md.damage / 2, md.damage );
+
+			if( pc_checkskill( sd, NJ_TOBIDOUGU ) == 0 ){
+				md.damage /= 2;

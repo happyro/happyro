@@ -1,0 +1,500 @@
+			if (battle_config.slave_stick_with_master && md->target_id != 0) {
+				block_list* tbl = map_id2bl(md->target_id);
+				if (tbl == nullptr || !check_distance_bl(bl, tbl, AREA_SIZE)) {
+					md->target_id = 0;
+				}
+			}
+			break;
+		}
+	}
+
+	if(map_addblock(bl))
+		return 4; //error on adding bl to map
+
+	clif_spawn(bl);
+	skill_unit_move(bl,gettick(),1);
+
+	if (!battle_config.slave_stick_with_master && bl->type == BL_MOB && mob_countslave(bl) > 0)
+		mob_warpslave(bl,MOB_SLAVEDISTANCE);
+
+	return 0;
+}
+
+/**
+ * Calculates the exact coordinates of a bl considering the walktimer
+ * This is needed because we only update X/Y when finishing movement to the next cell
+ * Officially, however, the coordinates update when crossing the border to the next cell
+ * The coordinates are stored in unit_data.pos together with the tick based on which they were calculated
+ * Access to these coordinates is only allowed through corresponding unit_data class functions
+ * This function makes sure calculation only happens when it's needed to save performance
+ * @param tick: Tick based on which we calculate the coordinates
+ */
+void unit_data::update_pos(t_tick tick)
+{
+	// Check if coordinates are still up-to-date
+	if (DIFF_TICK(tick, this->pos.tick) < MIN_POS_INTERVAL)
+		return;
+
+	if (this->bl == nullptr)
+		return;
+
+	// Set initial coordinates
+	this->pos.x = this->bl->x;
+	this->pos.y = this->bl->y;
+	this->pos.sx = 8;
+	this->pos.sy = 8;
+
+	// Remember time at which we did the last calculation
+	this->pos.tick = tick;
+
+	if (this->walkpath.path_pos >= this->walkpath.path_len)
+		return;
+
+	if (this->walktimer == INVALID_TIMER)
+		return;
+
+	const TimerData* td = get_timer(this->walktimer);
+
+	if (td == nullptr)
+		return;
+
+	// Get how much percent we traversed on the timer
+	double cell_percent = 1.0 - ((double)DIFF_TICK(td->tick, tick) / (double)td->data);
+
+	if (cell_percent > 0.0 && cell_percent < 1.0) {
+		// Set subcell coordinates according to timer
+		// This gives a value between 8 and 39
+		this->pos.sx = static_cast<uint8>(24.0 + dirx[this->walkpath.path[this->walkpath.path_pos]] * 16.0 * cell_percent);
+		this->pos.sy = static_cast<uint8>(24.0 + diry[this->walkpath.path[this->walkpath.path_pos]] * 16.0 * cell_percent);
+		// 16-31 reflect sub position 0-15 on the current cell
+		// 8-15 reflect sub position 8-15 at -1 main coordinate
+		// 32-39 reflect sub position 0-7 at +1 main coordinate
+		if (this->pos.sx < 16 || this->pos.sy < 16 || this->pos.sx > 31 || this->pos.sy > 31) {
+			if (this->pos.sx < 16) this->pos.x--;
+			if (this->pos.sy < 16) this->pos.y--;
+			if (this->pos.sx > 31) this->pos.x++;
+			if (this->pos.sy > 31) this->pos.y++;
+		}
+		this->pos.sx %= 16;
+		this->pos.sy %= 16;
+	}
+	else if (cell_percent >= 1.0) {
+		// Assume exactly one cell moved
+		this->pos.x += dirx[this->walkpath.path[this->walkpath.path_pos]];
+		this->pos.y += diry[this->walkpath.path[this->walkpath.path_pos]];
+	}
+}
+
+/**
+ * Helper function to get the exact X coordinate
+ * This ensures that the coordinate is calculated when needed
+ * @param tick: Tick based on which we calculate the coordinate
+ * @return The exact X coordinate
+ */
+int16 unit_data::getx(t_tick tick) {
+	// Make sure exact coordinates are up-to-date
+	this->update_pos(tick);
+	return this->pos.x;
+}
+
+/**
+ * Helper function to get the exact Y coordinate
+ * This ensures that the coordinate is calculated when needed
+ * @param tick: Tick based on which we calculate the coordinate
+ * @return The exact Y coordinate
+ */
+int16 unit_data::gety(t_tick tick) {
+	// Make sure exact coordinates are up-to-date
+	this->update_pos(tick);
+	return this->pos.y;
+}
+
+/**
+ * Helper function to get exact coordinates
+ * This ensures that the coordinates are calculated when needed
+ * @param x: Will be set to the exact X value of the bl
+ * @param y: Will be set to the exact Y value of the bl
+ * @param sx: Will be set to the exact subcell X value of the bl
+ * @param sy: Will be set to the exact subcell Y value of the bl
+ * @param tick: Tick based on which we calculate the coordinate
+ * @return The exact Y coordinate
+ */
+void unit_data::getpos(int16 &x, int16 &y, uint8 &sx, uint8 &sy, t_tick tick) {
+	// Make sure exact coordinates are up-to-date
+	this->update_pos(tick);
+	x = this->pos.x;
+	y = this->pos.y;
+	sx = this->pos.sx;
+	sy = this->pos.sy;
+}
+
+/**
+ * Updates the walkpath of a unit to end after 0.5-1.5 cells moved
+ * Sends required packet for proper display on the client using subcoordinates
+ * @param bl: Object to stop walking
+ */
+void unit_stop_walking_soon(block_list& bl, t_tick tick)
+{
+	struct unit_data* ud = unit_bl2ud(&bl);
+
+	if (ud == nullptr)
+		return;
+
+	int16 ox = bl.x, oy = bl.y; // Remember original x and y coordinates
+	int16 path_remain = 1; // Remaining path to walk
+	bool shortened = false;
+
+	if (ud->walkpath.path_pos + 1 >= ud->walkpath.path_len) {
+		// Less than 1 cell left to walk so no need to shorten the path
+		// Since we don't need to resend the move packet, we don't need to calculate the exact coordinates
+		path_remain = ud->walkpath.path_len - ud->walkpath.path_pos;
+	}
+	else {
+		// Set coordinates to exact coordinates
+		ud->getpos(bl.x, bl.y, ud->sx, ud->sy, tick);
+
+		// If x or y already changed, we need to move one more cell
+		if (ox != bl.x || oy != bl.y)
+			path_remain = 2;
+
+		// Shorten walkpath
+		if (ud->walkpath.path_pos + path_remain < ud->walkpath.path_len) {
+			ud->walkpath.path_len = ud->walkpath.path_pos + path_remain;
+			shortened = true;
+		}
+	}
+
+	// Make sure to_x and to_y match the walk path even if not shortened in case they were modified
+	ud->to_x = ox;
+	ud->to_y = oy;
+	for (int32 i = 0; i < path_remain; i++) {
+		ud->to_x += dirx[ud->walkpath.path[ud->walkpath.path_pos + i]];
+		ud->to_y += diry[ud->walkpath.path[ud->walkpath.path_pos + i]];
+	}
+	// To prevent sending a pointless walk command
+	ud->state.change_walk_target = 0;
+
+	// Send movement packet with calculated coordinates and subcoordinates
+	// Only need to send if walkpath was shortened
+	if (shortened)
+		clif_move(*ud);
+
+	// Reset coordinates
+	bl.x = ox;
+	bl.y = oy;
+	ud->sx = 8;
+	ud->sy = 8;
+}
+
+/**
+ * Stops a unit from walking
+ * @param bl: Object to stop walking
+ * @param type: Options, see e_unit_stop_walking
+ * @return Success(true); Failed(false);
+ */
+bool unit_stop_walking( block_list* bl, int32 type, t_tick canmove_delay ){
+	const struct TimerData* td = nullptr;
+	t_tick tick;
+
+	if( bl == nullptr ){
+		return false;
+	}
+
+	unit_data* ud = unit_bl2ud(bl);
+	if (ud == nullptr)
+		return false;
+
+	// Need to release chase target even if already not walking
+	if (type&USW_RELEASE_TARGET)
+		ud->target_to = 0;
+
+	if (!(type&USW_FORCE_STOP) && ud->walktimer == INVALID_TIMER)
+		return false;
+
+	// NOTE: We are using timer data after deleting it because we know the
+	// delete_timer function does not mess with it. If the function's
+	// behaviour changes in the future, this code could break!
+	if (ud->walktimer != INVALID_TIMER) {
+		td = get_timer(ud->walktimer);
+		delete_timer(ud->walktimer, unit_walktoxy_timer);
+		ud->walktimer = INVALID_TIMER;
+	}
+	ud->state.change_walk_target = 0;
+	tick = gettick();
+
+	if( (type&USW_MOVE_ONCE && !ud->walkpath.path_pos) // Force moving at least one cell.
+	||  (type&USW_MOVE_FULL_CELL && td && DIFF_TICK(td->tick, tick) <= td->data/2) // Enough time has passed to cover half-cell
+	) {
+		ud->walkpath.path_len = ud->walkpath.path_pos+1;
+		unit_walktoxy_timer(INVALID_TIMER, tick, bl->id, ud->walkpath.path_pos);
+	}
+
+	if (type&USW_FIXPOS) {
+		// Stop on cell center
+		ud->sx = 8;
+		ud->sy = 8;
+		clif_fixpos(*bl);
+	}
+
+	ud->walkpath.path_len = 0;
+	ud->walkpath.path_pos = 0;
+	ud->to_x = bl->x;
+	ud->to_y = bl->y;
+
+	if( canmove_delay > 0 ){
+		ud->canmove_tick = gettick() + canmove_delay;
+	}
+
+	// Re-added, the check in unit_set_walkdelay means dmg during running won't fall through to this place in code [Kevin]
+	if (ud->state.running) {
+		status_change_end(bl, SC_RUN);
+		status_change_end(bl, SC_WUGDASH);
+	}
+
+	return true;
+}
+
+/**
+ * Initiates a skill use by a unit
+ * @param src: Source object initiating skill use
+ * @param target_id: Target ID (bl->id)
+ * @param skill_id: Skill ID
+ * @param skill_lv: Skill Level
+ * @return unit_skilluse_id2()
+ */
+int32 unit_skilluse_id(block_list *src, int32 target_id, uint16 skill_id, uint16 skill_lv)
+{
+	return unit_skilluse_id2(
+		src, target_id, skill_id, skill_lv,
+		skill_castfix(src, skill_id, skill_lv),
+		skill_get_castcancel(skill_id)
+	);
+}
+
+/**
+ * Checks if a unit is walking
+ * @param bl: Object to check walk status
+ * @return Walking(1); Not Walking(0)
+ */
+int32 unit_is_walking(const block_list* bl)
+{
+	const unit_data* ud = unit_bl2ud(bl);
+
+	nullpo_ret(bl);
+
+	if(!ud)
+		return 0;
+
+	return (ud->walktimer != INVALID_TIMER);
+}
+
+/** 
+ * Checks if a unit is able to move based on status changes
+ * View the StatusChangeStateTable in status.cpp for a list of statuses
+ * Some statuses are still checked here due too specific variables
+ * @author [Skotlex]
+ * @param bl: Object to check
+ * @return True - can move; False - can't move
+ */
+bool unit_can_move(block_list *bl) {
+	map_session_data *sd;
+	struct unit_data *ud;
+	status_change *sc;
+
+	nullpo_ret(bl);
+
+	ud = unit_bl2ud(bl);
+	sc = status_get_sc(bl);
+	sd = BL_CAST(BL_PC, bl);
+
+	if (!ud)
+		return false;
+
+	if (ud->skilltimer != INVALID_TIMER && ud->skill_id != LG_EXEEDBREAK && (!sd || !pc_checkskill(sd, SA_FREECAST) || skill_get_inf2(ud->skill_id, INF2_ISGUILD)))
+		return false; // Prevent moving while casting
+
+	if (DIFF_TICK(ud->canmove_tick, gettick()) > 0)
+		return false;
+
+	if ((sd && (pc_issit(sd) || sd->state.vending || sd->state.buyingstore || (sd->state.block_action & PCBLOCK_MOVE) || sd->state.mail_writing)) || ud->state.blockedmove)
+		return false; // Can't move
+
+	// Status changes that block movement
+	if (sc && sc->cant.move)
+		return false;
+
+	// Icewall walk block special trapped monster mode
+	if(bl->type == BL_MOB) {
+		mob_data *md = BL_CAST(BL_MOB, bl);
+		if(md && ((status_has_mode(&md->status,MD_STATUSIMMUNE) && battle_config.boss_icewall_walk_block == 1 && map_getcell(bl->m,bl->x,bl->y,CELL_CHKICEWALL))
+			|| (!status_has_mode(&md->status,MD_STATUSIMMUNE) && battle_config.mob_icewall_walk_block == 1 && map_getcell(bl->m,bl->x,bl->y,CELL_CHKICEWALL)))) {
+			md->walktoxy_fail_count = 1; //Make sure rudeattacked skills are invoked
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Resumes running (RA_WUGDASH or TK_RUN) after a walk delay
+ * @param tid: Timer ID
+ * @param id: Object ID
+ * @param data: Data passed through timer function (unit_data)
+ * @return 0
+ */
+TIMER_FUNC(unit_resume_running){
+	struct unit_data *ud = (struct unit_data *)data;
+	TBL_PC *sd = map_id2sd(id);
+
+	if (sd && pc_isridingwug(sd))
+		clif_skill_nodamage(ud->bl,*ud->bl,RA_WUGDASH,ud->skill_lv,sc_start4(ud->bl,ud->bl,SC_WUGDASH,100,ud->skill_lv,unit_getdir(ud->bl),0,0,0));
+	else
+		clif_skill_nodamage(ud->bl,*ud->bl,TK_RUN,ud->skill_lv,sc_start4(ud->bl,ud->bl,SC_RUN,100,ud->skill_lv,unit_getdir(ud->bl),0,0,0));
+
+	if (sd)
+		clif_walkok(*sd);
+
+	return 0;
+}
+
+/**
+ * Sets the delays that prevent attacks and skill usage considering the bl type
+ * Makes sure that delays are not decreased in case they are already higher
+ * Will also invoke bl type specific delay functions when required
+ * @param bl Object to apply attack delay to
+ * @param tick Current tick
+ * @param event The event that resulted in calling this function
+ */
+void unit_set_attackdelay(block_list& bl, t_tick tick, e_delay_event event)
+{
+	unit_data* ud = unit_bl2ud(&bl);
+
+	if (ud == nullptr)
+		return;
+
+	t_tick attack_delay = 0;
+	t_tick act_delay = 0;
+
+	switch (bl.type) {
+		case BL_PC:
+			switch (event) {
+				case DELAY_EVENT_CASTBEGIN_ID:
+				case DELAY_EVENT_CASTBEGIN_POS:
+					if (reinterpret_cast<map_session_data*>(&bl)->skillitem == ud->skill_id) {
+						// Skills used from items don't seem to give any attack or act delay
+						return;
+					}
+					[[fallthrough]];
+				case DELAY_EVENT_ATTACK:
+				case DELAY_EVENT_PARRY:
+					// Officially for players it just remembers the last attack time here and applies the delays during the comparison
+					// But we pre-calculate the delays instead and store them in attackabletime and canact_tick
+					attack_delay = status_get_adelay(&bl);
+					// A fixed delay is added here which is equal to the minimum attack motion you can get
+					// This ensures that at max ASPD attackabletime and canact_tick are equal
+					act_delay = status_get_amotion(&bl) + (pc_maxaspd(reinterpret_cast<map_session_data*>(&bl)) / AMOTION_DIVIDER_PC);
+					break;
+			}
+			break;
+		case BL_MOB:
+			switch (event) {
+				case DELAY_EVENT_ATTACK:
+				case DELAY_EVENT_CASTEND:
+				case DELAY_EVENT_CASTCANCEL:
+					// This represents setting of attack delay (recharge time) that happens for non-PCs
+					attack_delay = status_get_adelay(&bl);
+					break;
+				case DELAY_EVENT_CASTBEGIN_ID:
+				case DELAY_EVENT_CASTBEGIN_POS:
+					// When monsters use skills, they only get delays on cast end and cast cancel
+					break;
+			}
+			// Set monster-specific delays (inactive AI time, monster skill delays)
+			mob_set_delay(reinterpret_cast<mob_data&>(bl), tick, event);
+			break;
+		case BL_HOM:
+			switch (event) {
+				case DELAY_EVENT_ATTACK:
+					// This represents setting of attack delay (recharge time) that happens for non-PCs
+					attack_delay = status_get_adelay(&bl);
+					break;
+				case DELAY_EVENT_CASTBEGIN_ID:
+				case DELAY_EVENT_CASTBEGIN_POS:
+					// For non-PCs that can be controlled from the client, there is a security delay of 200ms
+					// However to prevent tricks to use skills faster, we have a config to use amotion instead
+					if (battle_config.amotion_min_skill_delay == 1)
+						act_delay = status_get_amotion(&bl) + MAX_ASPD_NOPC;
+					else
+						act_delay = MIN_DELAY_SLAVE;
+					break;
+			}
+			break;
+		case BL_MER:
+			switch (event) {
+				case DELAY_EVENT_ATTACK:
+					// This represents setting of attack delay (recharge time) that happens for non-PCs
+					attack_delay = status_get_adelay(&bl);
+					break;
+				case DELAY_EVENT_CASTBEGIN_ID:
+					// For non-PCs that can be controlled from the client, there is a security delay of 200ms
+					// However to prevent tricks to use skills faster, we have a config to use amotion instead
+					if (battle_config.amotion_min_skill_delay == 1)
+						act_delay = status_get_amotion(&bl) + MAX_ASPD_NOPC;
+					else
+						act_delay = MIN_DELAY_SLAVE;
+					break;
+				case DELAY_EVENT_CASTBEGIN_POS:
+					// For ground skills, mercenaries work similar to players
+					attack_delay = status_get_adelay(&bl);
+					act_delay = status_get_amotion(&bl) + MAX_ASPD_NOPC;
+					break;
+			}
+			break;
+		default:
+			// Fallback to original behavior as unit type is not fully integrated yet
+			switch (event) {
+				case DELAY_EVENT_ATTACK:
+					attack_delay = status_get_adelay(&bl);
+					break;
+				case DELAY_EVENT_CASTBEGIN_ID:
+				case DELAY_EVENT_CASTBEGIN_POS:
+					act_delay = status_get_amotion(&bl);
+					break;
+			}
+			break;
+	}
+
+	// When setting delays, we need to make sure not to decrease them in case they've been set by another source already
+	if (attack_delay > 0)
+		ud->attackabletime = i64max(tick + attack_delay, ud->attackabletime);
+	if (act_delay > 0)
+		ud->canact_tick = i64max(tick + act_delay, ud->canact_tick);
+}
+
+/**
+ * Updates skill delays according to cast time and minimum delay, and applies security casttime
+ * @param bl Object to apply update delay for
+ * @param tick Current tick
+ * @param event The event that resulted in calling this function
+ */
+void unit_set_castdelay(unit_data& ud, t_tick tick, int32 casttime) {
+	// Use casttime or minimum delay, whatever is longer
+	t_tick cast_delay = i64max(casttime, battle_config.min_skill_delay_limit);
+
+	// Only apply the cast delay, if it is longer than the act delay (set by unit_set_attackdelay)
+	ud.canact_tick = i64max(ud.canact_tick, tick + cast_delay);
+
+	// Security delay that will be removed at castend again
+	ud.canact_tick += SECURITY_CASTTIME;
+}
+
+/**
+ * Applies a walk delay to a unit
+ * @param bl: Object to apply walk delay to
+ * @param tick: Current tick
+ * @param delay: Amount of time to set walk delay
+ * @param type: Type of delay
+ *	0: Damage induced delay; Do not change previous delay
+ *	1: Skill induced delay; Walk delay can only be increased, not decreased
+ * @param skill_id: ID of skill that dealt damage (type 0 only)

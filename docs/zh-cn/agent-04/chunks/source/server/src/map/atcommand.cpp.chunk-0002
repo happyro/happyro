@@ -1,0 +1,500 @@
+	std::vector<const char*> suggestions;
+
+	suggestions.reserve( MAX_SUGGESTIONS );
+
+	// check for maps that contain string
+	for (int32 i = 0; i < map_num; i++) {
+		struct map_data *mapdata = map_getmapdata(i);
+
+		// Prevent suggestion of instance mapnames
+		if( mapdata->instance_id != 0 ){
+			continue;
+		}
+
+		if( strstr( mapdata->name, name ) != nullptr ){
+			suggestions.push_back( mapdata->name );
+
+			if( suggestions.size() == MAX_SUGGESTIONS ){
+				break;
+			}
+		}
+	}
+
+	// if no maps found, search by edit distance
+	if( suggestions.empty() ){
+		// Levenshtein > 4 is bad
+		const int32 LEVENSHTEIN_MAX = 4;
+
+		std::unordered_map<int32, std::vector<const char*>> maps;
+
+		for (int32 i = 0; i < map_num; i++) {
+			struct map_data *mapdata = map_getmapdata(i);
+
+			// Prevent suggestion of instance mapnames
+			if(mapdata->instance_id != 0 ){
+				continue;
+			}
+
+			// Calculate the levenshtein distance of the two strings
+			int32 distance = levenshtein(mapdata->name, name);
+
+			// Check if it is above the maximum defined distance
+			if( distance > LEVENSHTEIN_MAX ){
+				continue;
+			}
+
+			std::vector<const char*>& vector = maps[distance];
+
+			// Do not add more entries than required
+			if( vector.size() == MAX_SUGGESTIONS ){
+				continue;
+			}
+
+			vector.push_back(mapdata->name);
+		}
+
+		for( int32 distance = 0; distance <= LEVENSHTEIN_MAX; distance++ ){
+			std::vector<const char*>& vector = maps[distance];
+
+			for( const char* found_map : vector ){
+				suggestions.push_back( found_map );
+
+				if( suggestions.size() == MAX_SUGGESTIONS ){
+					break;
+				}
+			}
+
+			if( suggestions.size() == MAX_SUGGESTIONS ){
+				break;
+			}
+		}
+	}
+
+	// If no suggestion could be made, do not output anything at all
+	if( suggestions.empty() ){
+		return;
+	}
+
+	char buffer[CHAT_SIZE_MAX];
+
+	// build the suggestion string
+	strcpy(buffer, msg_txt(sd, 205)); // Maybe you meant:
+	strcat(buffer, "\n");
+
+	for( const char* suggestion : suggestions ){
+		strcat(buffer, suggestion);
+		strcat(buffer, " ");
+	}
+
+	clif_displaymessage(sd->fd, buffer);
+}
+
+/*==========================================
+ * @rura, @warp, @mapmove
+ *------------------------------------------*/
+ACMD_FUNC(mapmove)
+{
+	char map_name[MAP_NAME_LENGTH_EXT];
+	uint16 mapindex;
+	int16 x = 0, y = 0;
+	int16 m = -1;
+
+	nullpo_retr(-1, sd);
+
+	memset(map_name, '\0', sizeof(map_name));
+
+	if (!message || !*message ||
+		(sscanf(message, "%15s %6hd %6hd", map_name, &x, &y) < 3 &&
+		 sscanf(message, "%15[^,],%6hd,%6hd", map_name, &x, &y) < 1)) {
+			clif_displaymessage(fd, msg_txt(sd,909)); // Please enter a map (usage: @warp/@rura/@mapmove <mapname> <x> <y>).
+			return -1;
+	}
+
+	mapindex = mapindex_name2idx(map_name, nullptr);
+	if (mapindex)
+		m = map_mapindex2mapid(mapindex);
+
+	if (m < 0) { // m < 0 means on different server! [Kevin]
+		clif_displaymessage(fd, msg_txt(sd,1)); // Map not found.
+
+		if (battle_config.warp_suggestions_enabled)
+			warp_get_suggestions(sd, map_name);
+
+		return -1;
+	}
+
+	if ((x || y) && map_getcell(m, x, y, CELL_CHKNOPASS))
+	{	//This is to prevent the pc_setpos call from printing an error.
+		clif_displaymessage(fd, msg_txt(sd,2)); // Invalid coordinates, using random target cell.
+		if (!map_search_freecell(nullptr, m, &x, &y, 10, 10, 1))
+			x = y = 0; //Invalid cell, use random spot.
+	}
+	if ((map_getmapflag(m, MF_NOWARPTO) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) || !pc_job_can_entermap((enum e_job)sd->status.class_, m, pc_get_group_level(sd))) {
+		clif_displaymessage(fd, msg_txt(sd,247)); // You are not authorized to warp to this map.
+		return -1;
+	}
+	if (sd->m >= 0 && map_getmapflag(sd->m, MF_NOWARP) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) {
+		clif_displaymessage(fd, msg_txt(sd,248)); // You are not authorized to warp from your current map.
+		return -1;
+	}
+	if (pc_setpos(sd, mapindex, x, y, CLR_TELEPORT) != SETPOS_OK) {
+		clif_displaymessage(fd, msg_txt(sd,1)); // Map not found.
+		return -1;
+	}
+
+	clif_displaymessage(fd, msg_txt(sd,0)); // Warped.
+	return 0;
+}
+
+/*==========================================
+ * Displays where a character is. Corrected version by Silent. [Skotlex]
+ *------------------------------------------*/
+ACMD_FUNC(where)
+{
+	map_session_data* pl_sd;
+
+	nullpo_retr(-1, sd);
+	memset(atcmd_player_name, '\0', sizeof atcmd_player_name);
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,910)); // Please enter a player name (usage: @where <char name>).
+		return -1;
+	}
+
+	pl_sd = map_nick2sd(atcmd_player_name,true);
+	if (pl_sd == nullptr ||
+	    strncmp(pl_sd->status.name, atcmd_player_name, NAME_LENGTH) != 0 ||
+	    (pc_has_permission(pl_sd, PC_PERM_HIDE_SESSION) && pc_get_group_level(pl_sd) > pc_get_group_level(sd) && !pc_has_permission(sd, PC_PERM_WHO_DISPLAY_AID))
+	) {
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	snprintf(atcmd_output, sizeof atcmd_output, "%s %s %d %d", pl_sd->status.name, mapindex_id2name(pl_sd->mapindex), pl_sd->x, pl_sd->y);
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(jumpto)
+{
+	map_session_data* pl_sd = nullptr;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,911)); // Please enter a player name (usage: @jumpto/@warpto/@goto <char name/ID>).
+		return -1;
+	}
+
+	if((pl_sd=map_nick2sd(atcmd_player_name,true)) == nullptr && (pl_sd=map_charid2sd(atoi(atcmd_player_name))) == nullptr)
+	{
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	if (pl_sd->m >= 0 && map_getmapflag(pl_sd->m, MF_NOWARPTO) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE))
+	{
+		clif_displaymessage(fd, msg_txt(sd,247));	// You are not authorized to warp to this map.
+		return -1;
+	}
+
+	if (sd->m >= 0 && map_getmapflag(sd->m, MF_NOWARP) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE))
+	{
+		clif_displaymessage(fd, msg_txt(sd,248));	// You are not authorized to warp from your current map.
+		return -1;
+	}
+
+	if( pc_isdead(sd) )
+	{
+		clif_displaymessage(fd, msg_txt(sd,664)); // You cannot use this command when dead.
+		return -1;
+	}
+
+	pc_setpos(sd, pl_sd->mapindex, pl_sd->x, pl_sd->y, CLR_TELEPORT);
+	sprintf(atcmd_output, msg_txt(sd,4), pl_sd->status.name); // Jumped to %s
+ 	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(jump)
+{
+	int16 x = 0, y = 0;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	sscanf(message, "%6hd %6hd", &x, &y);
+
+	if (map_getmapflag(sd->m, MF_NOTELEPORT) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) {
+		clif_displaymessage(fd, msg_txt(sd,248));	// You are not authorized to warp from your current map.
+		return -1;
+	}
+
+	if( pc_isdead(sd) )
+	{
+		clif_displaymessage(fd, msg_txt(sd,664)); // You cannot use this command when dead.
+		return -1;
+	}
+
+	if ((x || y) && map_getcell(sd->m, x, y, CELL_CHKNOPASS))
+	{	//This is to prevent the pc_setpos call from printing an error.
+		clif_displaymessage(fd, msg_txt(sd,2)); // Invalid coordinates, using random target cell.
+		if (!map_search_freecell(nullptr, sd->m, &x, &y, 10, 10, 1))
+			x = y = 0; //Invalid cell, use random spot.
+	}
+
+	pc_setpos(sd, sd->mapindex, x, y, CLR_TELEPORT);
+	sprintf(atcmd_output, msg_txt(sd,5), sd->x, sd->y); // Jumped to %d %d
+	clif_displaymessage(fd, atcmd_output);
+	return 0;
+}
+
+/*==========================================
+ * Display list of online characters with
+ * various info.
+ *------------------------------------------*/
+ACMD_FUNC(who) {
+	map_session_data* pl_sd = nullptr;
+	struct s_mapiterator *iter = nullptr;
+	char player_name[NAME_LENGTH] = "";
+	int32 count = 0;
+	int32 level = 0;
+	StringBuf buf;
+	/**
+	 * 1 = @who  : Player name, [Title], [Party name], [Guild name]
+	 * 2 = @who2 : Player name, [Title], BLvl, JLvl, Job
+	 * 3 = @who3 : [CID/AID] Player name [Title], Map, X, Y
+	 */
+	int32 display_type = 1;
+	int32 map_id = -1;
+
+	nullpo_retr(-1, sd);
+
+	if (strstr(command, "map") != nullptr) {
+		char map_name[MAP_NAME_LENGTH_EXT] = "";
+		if (sscanf(message, "%15s %23s", map_name, player_name) < 1 || (map_id = map_mapname2mapid(map_name)) < 0)
+			map_id = sd->m;
+	} else {
+		sscanf(message, "%23s", player_name);
+	}
+
+	if (strstr(command, "2") != nullptr)
+		display_type = 2;
+	else if (strstr(command, "3") != nullptr)
+		display_type = 3;
+
+	level = pc_get_group_level(sd);
+	StringBuf_Init(&buf);
+
+	iter = mapit_getallusers();
+	for (pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter))	{
+		if (!((pc_has_permission(pl_sd, PC_PERM_HIDE_SESSION) || pc_isinvisible(pl_sd)) && pc_get_group_level(pl_sd) > level)) { // you can look only lower or same level
+			if (stristr(pl_sd->status.name, player_name) == nullptr // search with no case sensitive
+				|| (map_id >= 0 && pl_sd->m != map_id))
+				continue;
+			switch (display_type) {
+				case 2: {
+					StringBuf_Printf(&buf, msg_txt(sd,343), pl_sd->status.name); // "Name: %s "
+					if (pc_get_group_id(pl_sd) > 0) // Player title, if exists
+						StringBuf_Printf(&buf, msg_txt(sd,344),pl_sd->group->name.c_str()); // "(%s) "
+					StringBuf_Printf(&buf, msg_txt(sd,347), pl_sd->status.base_level, pl_sd->status.job_level,
+						job_name(pl_sd->status.class_)); // "| Lv:%d/%d | Job: %s"
+					break;
+				}
+				case 3: {
+					if (pc_has_permission(sd, PC_PERM_WHO_DISPLAY_AID))
+						StringBuf_Printf(&buf, msg_txt(sd,912), pl_sd->status.char_id, pl_sd->status.account_id);	// "(CID:%d/AID:%d) "
+					StringBuf_Printf(&buf, msg_txt(sd,343), pl_sd->status.name); // "Name: %s "
+					if (pc_get_group_id(pl_sd) > 0) // Player title, if exists
+						StringBuf_Printf(&buf, msg_txt(sd,344), pl_sd->group->name.c_str()); // "(%s) "
+					StringBuf_Printf(&buf, msg_txt(sd,348), mapindex_id2name(pl_sd->mapindex), pl_sd->x, pl_sd->y); // "| Location: %s %d %d"
+					break;
+				}
+				default: {
+					struct party_data *p = party_search(pl_sd->status.party_id);
+					auto &g = pl_sd->guild;
+
+					StringBuf_Printf(&buf, msg_txt(sd,343), pl_sd->status.name); // "Name: %s "
+					if (pc_get_group_id(pl_sd) > 0) // Player title, if exists
+						StringBuf_Printf(&buf, msg_txt(sd,344), pl_sd->group->name.c_str()); // "(%s) "
+					if (p != nullptr)
+						StringBuf_Printf(&buf, msg_txt(sd,345), p->party.name); // " | Party: '%s'"
+					if (g != nullptr)
+						StringBuf_Printf(&buf, msg_txt(sd,346), g->guild.name); // " | Guild: '%s'"
+					break;
+				}
+			}
+			clif_displaymessage(fd, StringBuf_Value(&buf));
+			StringBuf_Clear(&buf);
+			count++;
+		}
+	}
+	mapit_free(iter);
+
+	if (map_id < 0) {
+		if (count == 0)
+			StringBuf_Printf(&buf, msg_txt(sd,28)); // No player found.
+		else if (count == 1)
+			StringBuf_Printf(&buf, msg_txt(sd,29)); // 1 player found.
+		else
+			StringBuf_Printf(&buf, msg_txt(sd,30), count); // %d players found.
+	} else {
+		struct map_data *mapdata = map_getmapdata(map_id);
+
+		if (count == 0)
+			StringBuf_Printf(&buf, msg_txt(sd,54), mapdata->name); // No player found in map '%s'.
+		else if (count == 1)
+			StringBuf_Printf(&buf, msg_txt(sd,55), mapdata->name); // 1 player found in map '%s'.
+		else
+			StringBuf_Printf(&buf, msg_txt(sd,56), count, mapdata->name); // %d players found in map '%s'.
+	}
+	clif_displaymessage(fd, StringBuf_Value(&buf));
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(whogm)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+	int32 j, count;
+	int32 level;
+	char match_text[CHAT_SIZE_MAX];
+	char player_name[NAME_LENGTH];
+	struct party_data *p;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	memset(match_text, '\0', sizeof(match_text));
+	memset(player_name, '\0', sizeof(player_name));
+
+	if (sscanf(message, "%255[^\n]", match_text) < 1)
+		strcpy(match_text, "");
+	for (j = 0; match_text[j]; j++)
+		match_text[j] = TOLOWER(match_text[j]);
+
+	count = 0;
+	level = pc_get_group_level(sd);
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		int32 pl_level = pc_get_group_level(pl_sd);
+		if (!pl_level)
+			continue;
+
+		if (match_text[0])
+		{
+			memcpy(player_name, pl_sd->status.name, NAME_LENGTH);
+			for (j = 0; player_name[j]; j++)
+				player_name[j] = TOLOWER(player_name[j]);
+			// search with no case sensitive
+			if (strstr(player_name, match_text) == nullptr)
+				continue;
+		}
+		if (pl_level > level) {
+			if (pc_isinvisible(pl_sd))
+				continue;
+			sprintf(atcmd_output, msg_txt(sd,913), pl_sd->status.name); // Name: %s (GM)
+			clif_displaymessage(fd, atcmd_output);
+			count++;
+			continue;
+		}
+
+		sprintf(atcmd_output, msg_txt(sd,914), // Name: %s (GM:%d) | Location: %s %d %d
+			pl_sd->status.name, pl_level,
+			mapindex_id2name(pl_sd->mapindex), pl_sd->x, pl_sd->y);
+		clif_displaymessage(fd, atcmd_output);
+
+		sprintf(atcmd_output, msg_txt(sd,915), // BLvl: %d | Job: %s (Lvl: %d)
+			pl_sd->status.base_level,
+			job_name(pl_sd->status.class_), pl_sd->status.job_level);
+		clif_displaymessage(fd, atcmd_output);
+
+		p = party_search(pl_sd->status.party_id);
+		auto &g = pl_sd->guild;
+
+		sprintf(atcmd_output,msg_txt(sd,916),	// Party: '%s' | Guild: '%s'
+			p?p->party.name:msg_txt(sd,917), g?g->guild.name:msg_txt(sd,917));	// None.
+
+		clif_displaymessage(fd, atcmd_output);
+		count++;
+	}
+	mapit_free(iter);
+
+	if (count == 0)
+		clif_displaymessage(fd, msg_txt(sd,150)); // No GM found.
+	else if (count == 1)
+		clif_displaymessage(fd, msg_txt(sd,151)); // 1 GM found.
+	else {
+		sprintf(atcmd_output, msg_txt(sd,152), count); // %d GMs found.
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(save)
+{
+	nullpo_retr(-1, sd);
+
+	if( map_getmapdata(sd->m)->instance_id ) {
+		clif_displaymessage(fd, msg_txt(sd,383)); // You cannot create a savepoint in an instance.
+		return 1;
+	}
+
+	pc_setsavepoint(sd, sd->mapindex, sd->x, sd->y);
+	if (sd->status.pet_id > 0 && sd->pd)
+		intif_save_petdata(sd->status.account_id, &sd->pd->pet);
+
+	chrif_save(sd, CSAVE_NORMAL);
+
+	clif_displaymessage(fd, msg_txt(sd,6)); // Your save point has been changed.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(load){
+	nullpo_retr(-1, sd);
+
+	uint16 mapindex = mapindex_name2id( sd->status.save_point.map );
+
+	int16 m = map_mapindex2mapid( mapindex );
+
+	if (m >= 0 && map_getmapflag(m, MF_NOWARPTO) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) {
+		clif_displaymessage(fd, msg_txt(sd,249));	// You are not authorized to warp to your save map.
+		return -1;
+	}
+	if (sd->m >= 0 && map_getmapflag(sd->m, MF_NOWARP) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) {
+		clif_displaymessage(fd, msg_txt(sd,248));	// You are not authorized to warp from your current map.
+		return -1;
+	}
+
+	pc_setpos( sd, mapindex, sd->status.save_point.x, sd->status.save_point.y, CLR_OUTSIGHT );
+	clif_displaymessage(fd, msg_txt(sd,7)); // Warping to save point..
+
+	return 0;
+}
+
+/*==========================================
+ *

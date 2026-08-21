@@ -1,0 +1,500 @@
+				// Restore pseudo-infinite duration
+				sce->val4 = 0;
+				// Update icon duration
+				if (battle_config.refresh_song_icon == 1)
+					clif_status_change(bl, static_cast<int32>(scdb->icon), 1, INFINITE_TICK, 1, 0, 0);
+				sc_timer_next(unit->limit + tick);
+				return 0;
+			}
+			break;
+#endif
+
+	case SC_BERSERK:
+		// 5% every 10 seconds [DracoRPG]
+		if( --( sce->val3 ) > 0 && status_charge(bl, sce->val2, 0) && status->hp > 100 ) {
+			sc_timer_next(sce->val4+tick);
+			return 0;
+		}
+		break;
+
+	case SC_NOCHAT:
+		if(sd) {
+			sd->status.manner++;
+			clif_changemanner( *sd );
+			clif_updatestatus(*sd,SP_MANNER);
+			if (sd->status.manner < 0) { // Every 60 seconds your manner goes up by 1 until it gets back to 0.
+				sc_timer_next(60000+tick);
+				return 0;
+			}
+		}
+		break;
+
+	case SC_SPLASHER:
+		// Custom Venom Splasher countdown timer
+		// if (sce->val4 % 1000 == 0) {
+		// 	char timer[10];
+		// 	snprintf (timer, 10, "%d", sce->val4/1000);
+		// 	clif_message(bl, timer);
+		// }
+		if((sce->val4 -= 500) > 0) {
+			sc_timer_next(500 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_MARIONETTE:
+	case SC_MARIONETTE2:
+		{
+			block_list *pbl = map_id2bl(sce->val1);
+			if( pbl && check_distance_bl(bl, pbl, 7) ) {
+				sc_timer_next(1000 + tick);
+				return 0;
+			}
+		}
+		break;
+
+	case SC_GOSPEL:
+		if(sce->val4 == BCT_SELF && --(sce->val2) > 0) {
+			int32 hp, sp;
+			hp = (sce->val1 > 5) ? 45 : 30;
+			sp = (sce->val1 > 5) ? 35 : 20;
+			if(!status_charge(bl, hp, sp))
+				break;
+			sc_timer_next(10000+tick);
+			return 0;
+		}
+		break;
+
+	case SC_JAILED:
+		if(sce->val1 == INT_MAX || --(sce->val1) > 0) {
+			sc_timer_next(60000+tick);
+			return 0;
+		}
+		break;
+
+	case SC_BLIND:
+		if(sc->getSCE(SC_FOGWALL)) { // Blind lasts forever while you are standing on the fog.
+			sc_timer_next(5000+tick);
+			return 0;
+		}
+		break;
+	case SC_ABUNDANCE:
+		if(--(sce->val4) > 0) {
+			status_heal(bl,0,60,0);
+			sc_timer_next(10000+tick);
+		}
+		break;
+		
+	case SC_OBLIVIONCURSE:
+		if( --(sce->val4) >= 0 ) {
+			clif_emotion( *bl, ET_QUESTION );
+			sc_timer_next(3000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_WEAPONBLOCKING:
+		if( --(sce->val4) >= 0 ) {
+			if( !status_charge(bl,0,3) )
+				break;
+			sc_timer_next(5000+tick);
+			return 0;
+		}
+		break;
+
+	case SC_CLOAKINGEXCEED:
+		if(!status_charge(bl,0,10-sce->val1))
+			break;
+		sc_timer_next(1000 + tick);
+		return 0;
+
+	case SC_RENOVATIO:
+		if( --(sce->val4) >= 0 ) {
+			int32 heal = status->max_hp * (sce->val1 + 4) / 100;
+			if( sc && sc->getSCE(SC_AKAITSUKI) && heal )
+				heal = ~heal + 1;
+			status_heal(bl, heal, 0, 3);
+			sc_timer_next(5000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_SPHERE_1:
+	case SC_SPHERE_2:
+	case SC_SPHERE_3:
+	case SC_SPHERE_4:
+	case SC_SPHERE_5:
+		if( --(sce->val4) >= 0 ) {
+			if( !status_charge(bl, 0, 1) )
+				break;
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_FREEZE_SP:
+		if( !status_charge(bl, 0, sce->val2) ) {
+			int32 i;
+			for(i = SC_SPELLBOOK1; i <= SC_MAXSPELLBOOK; i++) // Also remove stored spell as well.
+				status_change_end(bl, (sc_type)i);
+			break;
+		}
+		sc_timer_next(10000 + tick);
+		return 0;
+
+	case SC_ELECTRICSHOCKER:
+		if( --(sce->val4) >= 0 ) {
+			status_charge(bl, 0, 5 * sce->val1 * status->max_sp / 100);
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_CAMOUFLAGE:
+		if (!status_charge(bl, 0, 7 - sce->val1))
+			break;
+		if (--sce->val4 >= 0)
+			sce->val3++;
+		sc_timer_next(1000 + tick);
+		return 0;
+
+	case SC__REPRODUCE:
+		if(!status_charge(bl, 0, 1))
+			break;
+		sc_timer_next(1000+tick);
+		return 0;
+
+	case SC__SHADOWFORM:
+		if( --(sce->val4) >= 0 ) {
+			if( !status_charge(bl, 0, 11 - sce->val1) )
+				break;
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC__INVISIBILITY:
+		if( !status_charge(bl, 0, (12 - 2 * sce->val1) * status->max_sp / 100) ) // 6% - skill_lv.
+			break;
+		sc_timer_next(1000 + tick);
+		return 0;
+
+	case SC_STRIKING:
+		if( --(sce->val4) >= 0 ) {
+			if( !status_charge(bl,0, sce->val3 ) )
+				break;
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_WARMER: {
+			int32 hp = 0;
+			status_change *ssc = status_get_sc(map_id2bl(sce->val2));
+
+			if (ssc && ssc->getSCE(SC_HEATER_OPTION))
+				hp = status->max_hp * 3 * sce->val1 / 100;
+			else
+				hp = status->max_hp * sce->val1 / 100;
+			if (sc && sc->getSCE(SC_AKAITSUKI) && hp)
+				hp = ~hp + 1;
+			if (status->hp != status->max_hp)
+				status_heal(bl, hp, 0, 0);
+			sc_timer_next(3000 + tick);
+			return 0;
+		}
+
+	case SC_HELLS_PLANT:
+		if( sce->val4 >= 0 ){
+			skill_castend_damage_id( bl, bl, GN_HELLS_PLANT_ATK, sce->val1, tick, 0 );
+		}
+		break;
+
+	case SC_WINKCHARM:
+	case SC_VOICEOFSIREN:
+		if (sce->val4 >= 0) {
+			clif_emotion( *bl, ET_THROB );
+		}
+		break;
+
+	case SC_DEEPSLEEP:
+		if( --(sce->val4) >= 0 ) { // Recovers 3% HP/SP every 2 seconds.
+			status_heal(bl, status->max_hp * 3 / 100, status->max_sp * 3 / 100, 2);
+			sc_timer_next(2000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_SATURDAYNIGHTFEVER:
+		// 1% HP/SP drain every val4 seconds [Jobbie]
+		if( --(sce->val3) >= 0 ) {
+			if( !status_charge(bl, status->hp / 100, status->sp / 100) )
+				break;
+			sc_timer_next(sce->val4+tick);
+			return 0;
+		}
+		break;
+
+	case SC_CRYSTALIZE:
+		if( --(sce->val4) >= 0 ) { // Drains 2% of HP and 1% of SP every seconds.
+			if (!status_charge(bl, status->max_hp * 2 / 100, status->max_sp / 100))
+				break;
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_FORCEOFVANGUARD:
+		if( !status_charge(bl,0,24 - 4 * sce->val1) )
+			break;
+		sc_timer_next(10000 + tick);
+		return 0;
+
+	case SC_BANDING:
+		if( status_charge(bl, 0, 7 - sce->val1) ) {
+			sce->val2 = (sd ? skill_banding_count(sd) : 1);
+			sc_timer_next(5000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_REFLECTDAMAGE:
+		if( --(sce->val4) > 0 ) {
+			if( !status_charge(bl,0,10) )
+ 				break;
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_OVERHEAT_LIMITPOINT:
+		if (--(sce->val1) >= 0) { // Cooling
+			if (sce->val2 == 0) { // Flag the overheat limit once it has been met.
+				static std::vector<int16> limit = { 150, 200, 280, 360, 450 };
+				uint16 skill_lv = (sd ? cap_value(pc_checkskill(sd, NC_MAINFRAME), 0, (uint16)(limit.size() - 1)) : 0);
+
+				if (sce->val1 > limit[skill_lv])
+					sce->val2 = 1;
+			} else {
+				status_change_end(bl, SC_OVERHEAT);
+				if (sce->val2 > 0)
+					sc_start(bl, bl, SC_OVERHEAT, 100, sce->val1, 975);
+			}
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_OVERHEAT: {
+			uint32 damage = status->max_hp / 100; // Suggestion 1% each second
+
+			if (damage >= status->hp)
+				damage = status->hp - 1; // Do not kill, just keep you with 1 hp minimum
+			freeLock.lock();
+			status_zap(bl, damage, 0);
+			sc_timer_next(975 + tick); // Tick is not 1000 to avoid desync with SC_OVERHEAT_LIMITPOINT.
+			return 0;
+		}
+		break;
+
+	case SC_MAGNETICFIELD:
+		if (--(sce->val4) >= 0) {
+			block_list *src = map_id2bl(sce->val2);
+
+			if (!src || (src && (status_isdead(*src) || src->m != bl->m)))
+				break;
+			freeLock.lock();
+			if (!status_charge(bl, 0, 50))
+				status_zap(bl, 0, status->sp);
+			if (sc->getSCE(type))
+				sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+
+	case SC_INSPIRATION:
+		if(--(sce->val4) >= 0) {
+			if (!status_charge(bl, status->max_hp * (35 - 5 * sce->val1) / 1000, status->max_sp * (45 - 5 * sce->val1) / 1000))
+				break;
+
+			sc_timer_next(5000+tick);
+			return 0;
+		}
+		break;
+
+	case SC_SHIELDSPELL_HP:
+		if( sce->val4 >= 0 && status->hp < status->max_hp ){
+			status_heal( bl, status->max_hp * sce->val2 / 100, 0, 1 );
+		}
+		break;
+
+	case SC_SHIELDSPELL_SP:
+		if( sce->val4 >= 0 && status->sp < status->max_sp ){
+			status_heal( bl, 0, status->max_sp * sce->val2 / 100, 1 );
+		}
+		break;
+
+	case SC_TROPIC:
+	case SC_CHILLY_AIR:
+	case SC_WILD_STORM:
+	case SC_UPHEAVAL:
+	case SC_HEATER:
+	case SC_COOLER:
+	case SC_BLAST:
+	case SC_CURSED_SOIL:
+	case SC_PYROTECHNIC:
+	case SC_AQUAPLAY:
+	case SC_GUST:
+	case SC_PETROLOGY:
+	case SC_CIRCLE_OF_FIRE:
+	case SC_FIRE_CLOAK:
+	case SC_WATER_DROP:
+	case SC_WATER_SCREEN:
+	case SC_WIND_CURTAIN:
+	case SC_WIND_STEP:
+	case SC_STONE_SHIELD:
+	case SC_SOLID_SKIN:
+	case SC_FLAMETECHNIC:
+	case SC_FLAMEARMOR:
+	case SC_COLD_FORCE:
+	case SC_CRYSTAL_ARMOR:
+	case SC_GRACE_BREEZE:
+	case SC_EYES_OF_STORM:
+	case SC_EARTH_CARE:
+	case SC_STRONG_PROTECTION:
+	case SC_DEEP_POISONING:
+	case SC_POISON_SHIELD:
+		if( !status_charge(bl,0,sce->val2) ) {
+			block_list *s_bl = battle_get_master(bl);
+			if (bl->type == BL_ELEM)
+				elemental_change_mode(BL_CAST(BL_ELEM, bl), EL_MODE_PASSIVE);
+			if( s_bl )
+				status_change_end(s_bl,static_cast<sc_type>(type+1));
+			status_change_end(bl,type);
+			break;
+		}
+		sc_timer_next(sce->val3 + tick);
+		return 0;
+
+	case SC_WATER_SCREEN_OPTION:
+		status_heal(bl,1000,0,2);
+		sc_timer_next(10000 + tick);
+		return 0;
+
+	case SC_TEARGAS:
+		if( --(sce->val4) >= 0 ) {
+			block_list *src = map_id2bl(sce->val3);
+			int32 damage = sce->val2;
+
+			freeLock.lock();
+			clif_damage(*bl, *bl, tick, 0, 0, damage, 1, DMG_MULTI_HIT_ENDURE, 0, false);
+			status_damage(src, bl, damage,0, 0, 1, 0);
+			if( sc->getSCE(type) ) {
+				sc_timer_next(2000 + tick);
+			}
+			return 0;
+		}
+		break;
+	case SC_TEARGAS_SOB:
+		if( --(sce->val4) >= 0 ) {
+			clif_emotion( *bl, ET_CRY );
+			sc_timer_next(3000 + tick);
+			return 0;
+		}
+		break;
+	case SC_STOMACHACHE:
+		if( --(sce->val4) >= 0 ) {
+			status_charge(bl,0,sce->val2);	// Reduce 8 every 10 seconds.
+			if( sd && !pc_issit(sd) ) { // Force to sit every 10 seconds.
+				pc_setsit(sd);
+				skill_sit(sd, true);
+				clif_sitting(*bl);
+			}
+			sc_timer_next(10000 + tick);
+			return 0;
+		}
+		break;
+	case SC_LEADERSHIP:
+	case SC_GLORYWOUNDS:
+	case SC_SOULCOLD:
+	case SC_HAWKEYES:
+		// They only end by status_change_end
+		sc_timer_next(600000 + tick);
+		return 0;
+	case SC_MEIKYOUSISUI:
+		if( --(sce->val4) >= 0 ) {
+			status_heal(bl, status->max_hp * sce->val2 / 100, status->max_sp * sce->val3 / 100, 0);
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+	case SC_KAGEMUSYA:
+		if( --(sce->val4) >= 0 ) {
+			if(!status_charge(bl, 0, 1)) break;
+			sc_timer_next(1000+tick);
+			return 0;
+		}
+		break;
+	case SC_ANGRIFFS_MODUS:
+		if(--(sce->val4) >= 0) { // Drain hp/sp
+			if( !status_charge(bl,100,20) ) break;
+			sc_timer_next(1000+tick);
+			return 0;
+		}
+		break;
+	case SC_CBC:
+		if(--(sce->val4) >= 0) { // Drain hp/sp
+			int32 hp=0;
+			int32 sp = (status->max_sp * sce->val3) / 100;
+			if(bl->type == BL_MOB) hp = sp*10;
+			if( !status_charge(bl,hp,sp) )break;
+			sc_timer_next(1000+tick);
+			return 0;
+		}
+		break;
+	case SC_FULL_THROTTLE:
+		if( --(sce->val4) >= 0 ) {
+			status_percent_damage(bl, bl, 0, sce->val2, false);
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+	case SC_REBOUND:
+		if( --(sce->val4) >= 0 ) {
+			clif_emotion( *bl, ET_SWEAT );
+			sc_timer_next(2000 + tick);
+			return 0;
+		}
+		break;
+	case SC_KINGS_GRACE:
+		if( --(sce->val4) >= 0 ) {
+			status_percent_heal(bl, sce->val2, 0);
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+	case SC_FRIGG_SONG:
+		if( --(sce->val4) >= 0 ) {
+			status_heal(bl, sce->val3, 0, 0);
+			sc_timer_next(1000 + tick);
+			return 0;
+		}
+		break;
+	case SC_C_MARKER:
+		if( --(sce->val4) >= 0 ) {
+			TBL_PC *caster = map_id2sd(sce->val2);
+			if (!caster || caster->m != bl->m) //End the SC if caster isn't in same map
+				break;
+			sc_timer_next(1000 + tick);
+			clif_crimson_marker( *caster, *bl, false );
+			return 0;
+		}
+		break;
+	case SC_STEALTHFIELD_MASTER:
+		if (--(sce->val4) >= 0) {
+			if (!status_charge(bl, 0, status->max_sp * 3 / 100))
+				break;
+			sc_timer_next(sce->val3 + tick);
+			return 0;
+		}
+		break;

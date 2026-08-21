@@ -1,0 +1,500 @@
+	// In pre-renewal, it requires the monster to have exactly 100 def
+	if ((skill_id == MO_TRIPLEATTACK || skill_id == MO_FINGEROFFENSIVE) && wd->div_ < 0
+#ifndef RENEWAL
+		&& tstatus->def == 100
+#endif
+		)
+		wd->div_ *= -1;
+
+	//For plants we don't continue with the weapon attack code, so we have to apply DAMAGE_DIV_FIX here
+	battle_apply_div_fix(wd, skill_id);
+
+	//If there is left hand damage, total damage can never exceed 2, even on multiple hits
+	if(wd->damage > 1 && wd->damage2 > 0) {
+		wd->damage = 1;
+		wd->damage2 = 1;
+	}
+}
+
+/*========================================================================================
+ * Perform left/right hand weapon damage calculation based on previously calculated damage
+ *----------------------------------------------------------------------------------------
+ * Credits:
+ *	Original coder Skotlex
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+static void battle_calc_attack_left_right_hands(struct Damage* wd, block_list *src,block_list *target,uint16 skill_id,uint16 skill_lv)
+{
+	map_session_data *sd = BL_CAST(BL_PC, src);
+
+	if (sd) {
+		int32 skill;
+
+		if(sd->status.weapon == W_KATAR && !skill_id) { //Katars (offhand damage only applies to normal attacks, tested on Aegis 10.2)
+			skill = pc_checkskill(sd,TF_DOUBLE);
+			wd->damage2 = (int64)wd->damage * (1 + (skill * 2))/100;
+#ifdef RENEWAL
+		} else if(is_attack_left_handed(src, skill_id) && sd->status.weapon != W_KATAR) {	//Dual-wield
+#else
+		} else if(is_attack_left_handed(src, skill_id)) {	//Dual-wield
+#endif
+			// If you only have a weapon in the left hand, then your main hand damage will be identical to an unarmed attack
+			if (is_attack_right_handed(src, skill_id) && wd->damage) {
+				if( (sd->class_&MAPID_FIRSTMASK) == MAPID_THIEF ) {
+					skill = pc_checkskill(sd,AS_RIGHT);
+					ATK_RATER(wd->damage, 50 + (skill * 10))
+				}
+				else if(sd->class_ == MAPID_KAGEROUOBORO) {
+					skill = pc_checkskill(sd,KO_RIGHT);
+					ATK_RATER(wd->damage, 70 + (skill * 10))
+				}
+				if(wd->damage < 1)
+					wd->damage = 1;
+			}
+			// Left hand damage will always be adjusted, even if you don't have a weapon in the main hand
+			if (wd->damage2) {
+				if( (sd->class_&MAPID_FIRSTMASK) == MAPID_THIEF) {
+					skill = pc_checkskill(sd,AS_LEFT);
+					ATK_RATEL(wd->damage2, 30 + (skill * 10))
+				}
+				else if(sd->class_ == MAPID_KAGEROUOBORO) {
+					skill = pc_checkskill(sd,KO_LEFT);
+					ATK_RATEL(wd->damage2, 50 + (skill * 10))
+				}
+				if(wd->damage2 < 1)
+					wd->damage2 = 1;
+			}
+		}
+	}
+
+	if(!is_attack_right_handed(src, skill_id) && !is_attack_left_handed(src, skill_id) && wd->damage)
+		wd->damage=0;
+
+	if(!is_attack_left_handed(src, skill_id) && wd->damage2)
+		wd->damage2=0;
+}
+
+/**
+* Check if bl is devoted by someone
+* @param bl
+* @return 'd_bl' if devoted or nullptr if not devoted
+*/
+block_list *battle_check_devotion(block_list *bl) {
+	block_list *d_bl = nullptr;
+
+	if (battle_config.devotion_rdamage && battle_config.devotion_rdamage > rnd() % 100) {
+		status_change *sc = status_get_sc(bl);
+		if (sc && sc->getSCE(SC_DEVOTION))
+			d_bl = map_id2bl(sc->getSCE(SC_DEVOTION)->val1);
+	}
+	return d_bl;
+}
+
+/*==========================================
+ * BG/GvG attack modifiers
+ *------------------------------------------
+ * Credits:
+ *	Original coder Skotlex
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+static void battle_calc_attack_gvg_bg(struct Damage* wd, block_list *src,block_list *target,uint16 skill_id,uint16 skill_lv)
+{
+	if( wd->damage + wd->damage2 ) { //There is a total damage value
+		if( src != target && //Don't reflect your own damage (Grand Cross)
+			(!skill_id || skill_id ||
+			(src->type == BL_SKILL && (skill_id == SG_SUN_WARM || skill_id == SG_MOON_WARM || skill_id == SG_STAR_WARM))) ) {
+				int64 damage = wd->damage + wd->damage2, rdamage = 0;
+				map_session_data *tsd = BL_CAST(BL_PC, target);
+				status_data* sstatus = status_get_status_data(*src);
+				t_tick tick = gettick();
+
+				rdamage = battle_calc_return_damage(target, src, &damage, wd->flag, skill_id, false);
+				if( rdamage > 0 ) { //Item reflect gets calculated before any mapflag reducing is applicated
+					block_list *d_bl = battle_check_devotion(src);
+
+					clif_damage(*src, (d_bl == nullptr) ? *src : *d_bl, tick, wd->amotion, sstatus->dmotion, rdamage, 1, DMG_ENDURE, 0, false);
+					if( tsd )
+						battle_drain(tsd, src, rdamage, rdamage, sstatus->race, sstatus->class_);
+					//Use Reflect Shield to signal this kind of skill trigger [Skotlex]
+					battle_delay_damage(tick, wd->amotion, target, (!d_bl) ? src : d_bl, 0, CR_REFLECTSHIELD, 0, rdamage, ATK_DEF, 1, true, false);
+					skill_additional_effect(target, (!d_bl) ? src : d_bl, CR_REFLECTSHIELD, 1, BF_WEAPON|BF_SHORT|BF_NORMAL, ATK_DEF, tick);
+				}
+		}
+
+		struct map_data *mapdata = map_getmapdata(target->m);
+
+		if(!wd->damage2) {
+			wd->damage = battle_calc_damage(src,target,wd,wd->damage,skill_id,skill_lv);
+			if( mapdata_flag_gvg2(mapdata) )
+				wd->damage=battle_calc_gvg_damage(src,target,wd->damage,skill_id,wd->flag);
+			else if( mapdata->getMapFlag(MF_BATTLEGROUND) )
+				wd->damage=battle_calc_bg_damage(src,target,wd->damage,skill_id,wd->flag);
+		}
+		else if(!wd->damage) {
+			wd->damage2 = battle_calc_damage(src,target,wd,wd->damage2,skill_id,skill_lv);
+			if( mapdata_flag_gvg2(mapdata) )
+				wd->damage2 = battle_calc_gvg_damage(src,target,wd->damage2,skill_id,wd->flag);
+			else if( mapdata->getMapFlag(MF_BATTLEGROUND) )
+				wd->damage2 = battle_calc_bg_damage(src,target,wd->damage2,skill_id,wd->flag);
+		}
+		else {
+			wd->damage = battle_calc_damage(src, target, wd, wd->damage, skill_id, skill_lv);
+			wd->damage2 = battle_calc_damage(src, target, wd, wd->damage2, skill_id, skill_lv);
+			if (mapdata_flag_gvg2(mapdata)) {
+				wd->damage = battle_calc_gvg_damage(src, target, wd->damage, skill_id, wd->flag);
+				wd->damage2 = battle_calc_gvg_damage(src, target, wd->damage2, skill_id, wd->flag);
+			}
+			else if (mapdata->getMapFlag(MF_BATTLEGROUND)) {
+				wd->damage = battle_calc_bg_damage(src, target, wd->damage, skill_id, wd->flag);
+				wd->damage2 = battle_calc_bg_damage(src, target, wd->damage2, skill_id, wd->flag);
+			}
+			if(wd->damage > 1 && wd->damage2 < 1) wd->damage2 = 1;
+		}
+	}
+}
+
+/*==========================================
+ * final ATK modifiers - after BG/GvG calc
+ *------------------------------------------
+ * Credits:
+ *	Original coder Skotlex
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+static void battle_calc_weapon_final_atk_modifiers(struct Damage* wd, block_list *src,block_list *target,uint16 skill_id,uint16 skill_lv)
+{
+	map_session_data *sd = BL_CAST(BL_PC, src);
+	map_session_data *tsd = BL_CAST(BL_PC, target);
+	status_change *sc = status_get_sc(src);
+	status_change *tsc = status_get_sc(target);
+	status_data* sstatus = status_get_status_data(*src);
+	status_data* tstatus = status_get_status_data(*target);
+	int32 skill_damage = 0;
+
+	//Reject Sword bugreport:4493 by Daegaladh
+	if(wd->damage && tsc && tsc->getSCE(SC_REJECTSWORD) &&
+		(src->type!=BL_PC || (
+			((TBL_PC *)src)->weapontype1 == W_DAGGER ||
+			((TBL_PC *)src)->weapontype1 == W_1HSWORD ||
+			((TBL_PC *)src)->status.weapon == W_2HSWORD
+		)) &&
+		rnd()%100 < tsc->getSCE(SC_REJECTSWORD)->val2
+		)
+	{
+		ATK_RATER(wd->damage, 50)
+		clif_skill_nodamage(target, *target,ST_REJECTSWORD, tsc->getSCE(SC_REJECTSWORD)->val1);
+		clif_damage(*target, *src, gettick(), 0, 0, wd->damage, 0, DMG_NORMAL, 0, false);
+		battle_fix_damage(target, src, wd->damage, wd->div_, ST_REJECTSWORD);
+		if (status_isdead(*target))
+			return;
+		if( --(tsc->getSCE(SC_REJECTSWORD)->val3) <= 0 )
+			status_change_end(target, SC_REJECTSWORD);
+	}
+
+	// Poison React Envenom Level 5 Autocast
+	if (tsc != nullptr && wd->damage > 0) {
+		if (status_change_entry* sce = tsc->getSCE(SC_POISONREACT); sce != nullptr && rnd_chance_official(sce->val3, 100)) {
+			if (status_check_skilluse(target, src, TF_POISON, 0))
+				skill_attack(BF_WEAPON, target, target, src, TF_POISON, 5, gettick(), 0);
+			// Counter is reduced even if the autocast fails
+			if (--sce->val2 <= 0)
+				status_change_end(target, SC_POISONREACT);
+		}
+	}
+
+	if( tsc && tsc->getSCE(SC_CRESCENTELBOW) && wd->flag&BF_SHORT && rnd()%100 < tsc->getSCE(SC_CRESCENTELBOW)->val2 ) {
+		//ATK [{(Target HP / 100) x Skill Level} x Caster Base Level / 125] % + [Received damage x {1 + (Skill Level x 0.2)}]
+		int64 rdamage = 0;
+		int32 ratio = (int64)(status_get_hp(src) / 100) * tsc->getSCE(SC_CRESCENTELBOW)->val1 * status_get_lv(target) / 125;
+		if (ratio > 5000) ratio = 5000; // Maximum of 5000% ATK
+		rdamage = battle_calc_base_damage(target,tstatus,&tstatus->rhw,tsc,sstatus->size,0);
+		rdamage = (int64)rdamage * ratio / 100 + wd->damage * (10 + tsc->getSCE(SC_CRESCENTELBOW)->val1 * 20 / 10) / 10;
+		skill_blown(target, src, skill_get_blewcount(SR_CRESCENTELBOW_AUTOSPELL, tsc->getSCE(SC_CRESCENTELBOW)->val1), unit_getdir(src), BLOWN_NONE);
+		clif_skill_damage( *target, *src, gettick(), status_get_amotion(src), 0, rdamage,
+			1, SR_CRESCENTELBOW_AUTOSPELL, tsc->getSCE(SC_CRESCENTELBOW)->val1, DMG_SINGLE ); // This is how official does
+		clif_damage(*src, *target, gettick(), status_get_amotion(src)+1000, 0, rdamage/10, 1, DMG_NORMAL, 0, false);
+		battle_fix_damage(target, src, rdamage, 0, SR_CRESCENTELBOW);
+		status_damage(src, target, rdamage/10, 0, 0, 1, 0);
+		status_change_end(target, SC_CRESCENTELBOW);
+	}
+
+	if( sc ) {
+		//SC_FUSION hp penalty [Komurka]
+		if (sc->getSCE(SC_FUSION)) {
+			uint32 hp = sstatus->max_hp;
+
+			if (sd && tsd) {
+				hp = hp / 13;
+				if (((int64)sstatus->hp * 100) <= ((int64)sstatus->max_hp * 20))
+					hp = sstatus->hp;
+			} else
+				hp = 2*hp/100; //2% hp loss per hit
+			status_zap(src, hp, 0);
+		}
+		if (sc->getSCE(SC_VIGOR))
+			status_zap(src, sc->getSCE(SC_VIGOR)->val2, 0);
+		// Only affecting non-skills
+		if (!skill_id && wd->dmg_lv > ATK_BLOCK) {
+			if (sc->getSCE(SC_ENCHANTBLADE)) {
+				//[((Skill Lv x 20) + 100) x (casterBaseLevel / 150)] + casterInt + MATK - MDEF - MDEF2
+				int64 enchant_dmg = sc->getSCE(SC_ENCHANTBLADE)->val2;
+				if (sstatus->matk_max > sstatus->matk_min)
+					enchant_dmg = enchant_dmg + sstatus->matk_min + rnd() % (sstatus->matk_max - sstatus->matk_min);
+				else
+					enchant_dmg = enchant_dmg + sstatus->matk_min;
+				enchant_dmg = enchant_dmg - (tstatus->mdef + tstatus->mdef2);
+				if (enchant_dmg > 0)
+					ATK_ADD(wd->damage, wd->damage2, enchant_dmg);
+			}
+		}
+		if (skill_id != SN_SHARPSHOOTING && skill_id != RA_ARROWSTORM)
+			status_change_end(src, SC_CAMOUFLAGE);
+	}
+
+#ifndef RENEWAL
+	if (skill_id == ASC_BREAKER) { //Breaker's int-based damage (a misc attack?)
+		struct Damage md = battle_calc_misc_attack(src, target, skill_id, skill_lv, wd->miscflag);
+
+		wd->damage += md.damage;
+	}
+#endif
+
+	// Skill damage adjustment
+	if ((skill_damage = battle_skill_damage(src, target, skill_id)) != 0)
+		ATK_ADDRATE(wd->damage, wd->damage2, skill_damage);
+}
+
+/*====================================================
+ * Basic wd init - not influenced by HIT/MISS/DEF/etc.
+ *----------------------------------------------------
+ * Credits:
+ *	Original coder Skotlex
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+static struct Damage initialize_weapon_data(const block_list* src, const block_list* target, uint16 skill_id, uint16 skill_lv, int32 wflag)
+{
+	const status_data* sstatus = status_get_status_data(*src);
+	const status_data* tstatus = status_get_status_data(*target);
+	const status_change *sc = status_get_sc(src);
+	const map_session_data* sd = BL_CAST(BL_PC,src);
+	struct Damage wd;
+
+	wd.type = DMG_NORMAL; //Normal attack
+	wd.div_ = skill_id?skill_get_num(skill_id,skill_lv):1;
+	wd.amotion = (skill_id && skill_get_inf(skill_id)&INF_GROUND_SKILL)?0:sstatus->amotion; //Amotion should be 0 for ground skills.
+	// counter attack DOES obey ASPD delay on official, uncomment if you want the old (bad) behavior [helvetica]
+	/*if(skill_id == KN_AUTOCOUNTER)
+		wd.amotion /= 2; */
+	wd.dmotion = tstatus->dmotion;
+	wd.blewcount =skill_get_blewcount(skill_id,skill_lv);
+	wd.miscflag = wflag;
+	wd.flag = BF_WEAPON; //Initial Flag
+	wd.flag |= (skill_id||wd.miscflag)?BF_SKILL:BF_NORMAL; // Baphomet card's splash damage is counted as a skill. [Inkfish]
+	wd.isspdamage = false;
+	wd.damage = wd.damage2 =
+#ifdef RENEWAL
+	wd.statusAtk = wd.statusAtk2 = wd.equipAtk = wd.equipAtk2 = wd.weaponAtk = wd.weaponAtk2 = wd.masteryAtk = wd.masteryAtk2 =
+	wd.percentAtk = wd.percentAtk2 =
+#else
+	wd.basedamage =
+#endif
+	0;
+
+	wd.dmg_lv=ATK_DEF;	//This assumption simplifies the assignation later
+
+	if(sd)
+		wd.blewcount += battle_blewcount_bonus(sd, skill_id);
+
+	if (skill_id) {
+		// wd.flag from skills
+		wd.flag |= battle_range_type(src, target, skill_id, skill_lv);
+	} else {
+		// wd.flag from basic attacks
+		if (is_skill_using_arrow(src, skill_id) || (sc != nullptr && sc->hasSCE(SC_SOULATTACK)))
+			wd.flag |= BF_LONG;
+		else
+			wd.flag |= BF_SHORT;
+	}
+
+	return wd;
+}
+
+/**
+ * Check if we should reflect the damage and calculate it if so
+ * @param attack_type : BL_WEAPON,BL_MAGIC or BL_MISC
+ * @param wd : weapon damage
+ * @param src : bl who did the attack
+ * @param target : target of the attack
+ * @param skill_id : id of casted skill, 0 = basic atk
+ * @param skill_lv : lvl of skill casted
+ */
+void battle_do_reflect(int32 attack_type, struct Damage *wd, block_list* src, block_list* target, uint16 skill_id, uint16 skill_lv)
+{
+	// Don't reflect your own damage (Grand Cross)
+	if ((wd->damage + wd->damage2) && src && target && src != target && (src->type != BL_SKILL ||
+		(src->type == BL_SKILL && (skill_id == SG_SUN_WARM || skill_id == SG_MOON_WARM || skill_id == SG_STAR_WARM ))))
+	{
+		int64 damage = wd->damage + wd->damage2, rdamage = 0;
+		map_session_data *tsd = BL_CAST(BL_PC, target);
+		status_change *tsc = status_get_sc(target);
+		status_data* sstatus = status_get_status_data(*src);
+		struct unit_data *ud = unit_bl2ud(target);
+		t_tick tick = gettick();
+
+		if (!tsc)
+			return;
+
+		auto * sce = tsc->getSCE(SC_MAXPAIN);
+		if (sce) {
+			sce->val2 = (int32)damage;
+			if (!tsc->getSCE(SC_KYOMU) && !(tsc->getSCE(SC_DARKCROW) && (wd->flag&BF_SHORT))) //SC_KYOMU invalidates reflecting ability. SC_DARKCROW also does, but only for short weapon attack.
+				skill_castend_damage_id(target, src, NPC_MAXPAIN_ATK, sce->val1, tick, ((wd->flag & 1) ? wd->flag - 1 : wd->flag));
+		}
+		
+		// Calculate skill reflect damage separately
+		if ((ud && !ud->immune_attack) || !status_bl_has_mode(target, MD_SKILLIMMUNE))
+			rdamage = battle_calc_return_damage(target, src, &damage, wd->flag, skill_id,true);
+		if( rdamage > 0 ) {
+			block_list *d_bl = battle_check_devotion(src);
+			status_change *sc = status_get_sc(src);
+
+			if (sc && sc->getSCE(SC_VITALITYACTIVATION))
+				rdamage /= 2;
+			if( attack_type == BF_WEAPON && tsc->getSCE(SC_REFLECTDAMAGE) ) // Don't reflect your own damage (Grand Cross)
+				map_foreachinshootrange(battle_damage_area,target,skill_get_splash(LG_REFLECTDAMAGE,1),BL_CHAR,tick,target,wd->amotion,sstatus->dmotion,rdamage,wd->flag);
+			else if( attack_type == BF_WEAPON || attack_type == BF_MISC) {
+				clif_damage(*src, (d_bl == nullptr) ? *src : *d_bl, tick, wd->amotion, sstatus->dmotion, rdamage, 1, DMG_ENDURE, 0, false);
+				if( tsd )
+					battle_drain(tsd, src, rdamage, rdamage, sstatus->race, sstatus->class_);
+				battle_delay_damage(tick, wd->amotion, target, (!d_bl) ? src : d_bl, 0, CR_REFLECTSHIELD, 0, rdamage, ATK_DEF, 1, true, false);
+				skill_additional_effect(target, (!d_bl) ? src : d_bl, CR_REFLECTSHIELD, 1, BF_WEAPON|BF_SHORT|BF_NORMAL, ATK_DEF, tick);
+			}
+		}
+	}
+}
+
+/*============================================
+ * Calculate "weapon"-type attacks and skills
+ *--------------------------------------------
+ * Credits:
+ *	Original coder Skotlex
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+static struct Damage battle_calc_weapon_attack(block_list *src, block_list *target, uint16 skill_id, uint16 skill_lv, int32 wflag)
+{
+	map_session_data *sd, *tsd;
+	struct Damage wd;
+	status_change *sc = status_get_sc(src);
+	status_change *tsc = status_get_sc(target);
+	status_data* sstatus = status_get_status_data(*src);
+	status_data* tstatus = status_get_status_data(*target);
+	int32 right_element, left_element;
+	bool infdef = false;
+
+	memset(&wd,0,sizeof(wd));
+
+	if (src == nullptr || target == nullptr) {
+		nullpo_info(NLP_MARK);
+		return wd;
+	}
+
+	wd = initialize_weapon_data(src, target, skill_id, skill_lv, wflag);
+
+	// Update Damage data based on skill
+	if (std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id); skill != nullptr && skill->impl != nullptr) {
+		skill->impl->modifyDamageData(wd, *src, *target, skill_lv);
+	}
+
+	right_element = battle_get_weapon_element(wd, *src, *target, skill_id, skill_lv, EQI_HAND_R, false);
+	left_element = battle_get_weapon_element(wd, *src, *target, skill_id, skill_lv, EQI_HAND_L, false);
+
+	if (sc != nullptr && sc->empty())
+		sc = nullptr; //Skip checking as there are no status changes active.
+	if (tsc != nullptr && tsc->empty())
+		tsc = nullptr; //Skip checking as there are no status changes active.
+
+	sd = BL_CAST(BL_PC, src);
+	tsd = BL_CAST(BL_PC, target);
+
+	//Check for Lucky Dodge
+	if ((!skill_id || skill_id == PA_SACRIFICE) && tstatus->flee2 && rnd()%1000 < tstatus->flee2) {
+		wd.type = DMG_LUCY_DODGE;
+		wd.dmg_lv = ATK_LUCKY;
+		if(wd.div_ < 0)
+			wd.div_ *= -1;
+		return wd;
+	}
+
+	// on official check for multi hit first so we can override crit on double attack [helvetica]
+	battle_calc_multi_attack(&wd, src, target, skill_id, skill_lv);
+
+	// crit check is next since crits always hit on official [helvetica]
+	if (is_attack_critical(&wd, src, target, skill_id, skill_lv, true)) {
+#if PACKETVER >= 20161207
+		if (wd.type&DMG_MULTI_HIT)
+			wd.type = DMG_MULTI_HIT_CRITICAL;
+		else
+			wd.type = DMG_CRITICAL;
+#else
+		wd.type = DMG_CRITICAL;
+#endif
+	}
+
+	std::bitset<NK_MAX> nk = battle_skill_get_damage_properties(skill_id, wd.miscflag);
+
+	// check if we're landing a hit
+	if(!is_attack_hitting(&wd, src, target, skill_id, skill_lv, true))
+		wd.dmg_lv = ATK_FLEE;
+	else if(!(infdef = is_infinite_defense(target, wd.flag))) { //no need for math against plants
+
+#ifndef RENEWAL
+		// First call function with skill_id 0 to get base damage of a normal attack
+		battle_calc_skill_base_damage(&wd, src, target, 0, 0); // base damage
+		wd.basedamage = wd.damage;
+		// Now get actual skill damage
+		if (skill_id != 0)
+#endif
+			battle_calc_skill_base_damage(&wd, src, target, skill_id, skill_lv); // base skill damage
+
+#ifndef RENEWAL
+		// Skill ratio
+		ATK_RATE(wd.damage, wd.damage2, battle_calc_attack_skill_ratio(&wd, src, target, skill_id, skill_lv));
+
+		// Additive damage bonus
+		ATK_ADD(wd.damage, wd.damage2, battle_calc_skill_constant_addition(&wd, src, target, skill_id, skill_lv));
+#endif
+
+#ifdef RENEWAL
+		if(skill_id == HW_MAGICCRASHER) { // Add weapon attack for MATK onto Magic Crasher
+			status_data* sstatus = status_get_status_data(*src);
+
+			if (sstatus->matk_max > sstatus->matk_min) {
+				ATK_ADD(wd.weaponAtk, wd.weaponAtk2, sstatus->matk_min+rnd()%(sstatus->matk_max-sstatus->matk_min));
+			} else
+				ATK_ADD(wd.weaponAtk, wd.weaponAtk2, sstatus->matk_min);
+		}
+#endif
+
+		int32 i = 0;
+
+#ifndef RENEWAL
+		// add any miscellaneous player ATK bonuses
+		if( sd && skill_id && (i = pc_skillatk_bonus(sd, skill_id)))
+			ATK_ADDRATE(wd.damage, wd.damage2, i);
+		if (tsd && (i = pc_sub_skillatk_bonus(tsd, skill_id)))
+			ATK_ADDRATE(wd.damage, wd.damage2, -i);
+#endif
+
+#ifdef RENEWAL
+		// In Renewal we only cardfix to the weapon and equip ATK
+		//Card Fix for attacker (sd), 2 is added to the "left" flag meaning "attacker cards only"
+		if (sd) {
+			wd.weaponAtk += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.weaponAtk, 2, wd.flag);
+			wd.equipAtk += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.equipAtk, 2, wd.flag);
+			if (is_attack_left_handed(src, skill_id)) {
+				wd.weaponAtk2 += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.weaponAtk2, 3, wd.flag);
+				wd.equipAtk2 += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.equipAtk2, 3, wd.flag);

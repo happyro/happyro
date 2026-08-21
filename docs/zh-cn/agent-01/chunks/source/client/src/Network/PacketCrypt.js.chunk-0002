@@ -1,0 +1,87 @@
+	imul = function (a, b) {
+		const ah = (a >>> 16) & 0xffff;
+		const al = a & 0xffff;
+		const bh = (b >>> 16) & 0xffff;
+		const bl = b & 0xffff;
+		// the shift by 0 fixes the sign on the high part
+		// the final |0 converts the unsigned value into a signed value
+		return (al * bl + (((ah * bl + al * bh) << 16) >>> 0)) | 0;
+	};
+}
+
+/**
+ * Initialize to get keys for packet encryption
+ */
+function Init() {
+	_available = false;
+	const packetKeys = Configs.get('packetKeys');
+
+	if (!packetKeys) {
+		return;
+	}
+
+	// Custom keys
+	if (packetKeys instanceof Array) {
+		_available = true;
+		_keys.set(packetKeys);
+	} else {
+		let date, key;
+
+		// Define a date or use the defined packetver ?
+		if (typeof packetKeys === 'number') {
+			date = packetKeys;
+		} else {
+			date = Configs.get('packetver');
+		}
+
+		// Get the available keys
+		for (key in KeysTable) {
+			if (date >= key) {
+				_available = true;
+				_keys.set(KeysTable[key]);
+			}
+		}
+	}
+
+	if (_available) {
+		console.log('%c[PACKETCRYPT] Encrypt sent packets using keys', 'color:#007000', _keys);
+	}
+}
+
+/**
+ * Encrypt header using keys
+ *
+ * @param {DataView} view
+ */
+function Process(view) {
+	if (_available) {
+		let cmd = view.getInt16(0, true);
+
+		// Update key
+		_keys[0] = (imul(_keys[0], _keys[1]) + _keys[2]) & 0xffffffff;
+
+		// Encrypt header
+		cmd ^= (_keys[0] >> 16) & 0x7fff;
+
+		view.setInt16(0, cmd, true);
+	}
+}
+
+/**
+ * Reset encryption state when disconnecting from zone server
+ */
+function Reset() {
+	_keys[0] = 0;
+	_keys[1] = 0;
+	_keys[2] = 0;
+	_available = false;
+}
+
+/**
+ * Export
+ */
+export default {
+	init: Init,
+	process: Process,
+	reset: Reset
+};

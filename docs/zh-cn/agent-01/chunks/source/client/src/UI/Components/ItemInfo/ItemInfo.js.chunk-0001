@@ -1,0 +1,500 @@
+/**
+ * UI/Components/ItemInfo/ItemInfo.js
+ *
+ * Item Information
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import DB from 'DB/DBManager.js';
+import ItemType from 'DB/Items/ItemType.js';
+import EquipLocation from 'DB/Items/EquipmentLocation.js';
+import Client from 'Core/Client.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import CardIllustration from 'UI/Components/CardIllustration/CardIllustration.js';
+import UIManager from 'UI/UIManager.js';
+import Mouse from 'Controls/MouseEventHandler.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import Cursor from 'UI/CursorManager.js';
+import ItemCompare from 'UI/Components/ItemCompare/ItemCompare.js';
+import ItemPreview from 'UI/Components/ItemPreview/ItemPreview.js';
+import MakeReadBook from 'UI/Components/MakeReadBook/MakeReadBook.js';
+import Renderer from 'Renderer/Renderer.js';
+import SpriteRenderer from 'Renderer/SpriteRenderer.js';
+import Sprite from 'Loaders/Sprite.js';
+import Action from 'Loaders/Action.js';
+import htmlText from './ItemInfo.html?raw';
+import cssText from './ItemInfo.css?raw';
+import Network from 'Network/NetworkManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import Entity from 'Renderer/Entity/Entity.js';
+import Equipment from 'UI/Components/Equipment/Equipment.js';
+import Inventory from 'UI/Components/Inventory/Inventory.js';
+
+/**
+ * Create Component
+ */
+const ItemInfo = new GUIComponent('ItemInfo', cssText);
+
+ItemInfo.render = () => htmlText;
+
+/**
+ * @let {Sprite,Action} objects
+ */
+let _sprite, _action;
+
+/**
+ * @let {CanvasRenderingContext2D}
+ */
+let _ctx;
+
+/**
+ * @let {number} type
+ */
+const _type = 0;
+
+/**
+ * @let {number} start tick
+ */
+const _start = 0;
+
+/**
+ * @let {number} ItemInfo unique id
+ */
+ItemInfo.uid = -1;
+
+/**
+ * ItemMoveInfo messages mapping
+ */
+const MOVE_INFO_MESSAGES = [
+	{ key: 'Drop', msgId: 2788 },
+	{ key: 'Storage', msgId: 2789 },
+	{ key: 'Cart', msgId: 2790 },
+	{ key: 'Mail', msgId: 2791 },
+	{ key: 'Exchange', msgId: 2792 },
+	// 2793 Auction → intentionally skipped
+	{ key: 'GuildStorage', msgId: 2794 },
+	{ key: 'NPCSale', msgId: 2795 }
+];
+
+/**
+ * Helper: escape HTML keeping whitelisted tags
+ */
+function _escapeHTML(text) {
+	const div = document.createElement('div');
+	div.textContent = text;
+	return div.innerHTML;
+}
+
+/**
+ * Once append to the DOM
+ */
+ItemInfo.onKeyDown = function onKeyDown(event) {
+	if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && this._host.style.display !== 'none') {
+		// Cleanup moveInfo tooltip & cursor
+		ItemInfo.hideMoveInfoTooltip();
+
+		ItemInfo.remove();
+		if (ItemCompare.ui) {
+			ItemCompare.remove();
+		}
+		if (ItemPreview.ui) {
+			ItemPreview.remove();
+		}
+	}
+};
+
+/**
+ * Once append
+ */
+ItemInfo.onAppend = function onAppend() {
+	const root = ItemInfo.getRoot();
+	const descInner = root.querySelector('.description-inner');
+	if (descInner) {
+		resize(descInner.offsetHeight + 45);
+	}
+};
+
+/**
+ * Once removed from html
+ */
+ItemInfo.onRemove = function onRemove() {
+	this.uid = -1;
+
+	// Cleanup moveInfo tooltip & cursor
+	ItemInfo.hideMoveInfoTooltip();
+
+	// Remove existing compare UI if it's currently displayed
+	if (ItemCompare.ui) {
+		ItemCompare.remove();
+	}
+	if (ItemPreview.ui) {
+		ItemPreview.remove();
+	}
+};
+
+/**
+ * Initialize UI
+ */
+ItemInfo.init = function init() {
+	const root = ItemInfo.getRoot();
+
+	this._host.style.top = '200px';
+	this._host.style.left = '480px';
+
+	const extendBtn = root.querySelector('.extend');
+	if (extendBtn) {
+		extendBtn.addEventListener('mousedown', onResize);
+	}
+
+	const closeBtn = root.querySelector('.close');
+	if (closeBtn) {
+		closeBtn.addEventListener('mousedown', e => {
+			e.stopImmediatePropagation();
+		});
+		closeBtn.addEventListener('click', () => {
+			this.remove();
+			if (ItemCompare.ui) {
+				ItemCompare.remove();
+			}
+		});
+	}
+
+	// Ask to see card.
+	const viewBtn = root.querySelector('.view');
+	if (viewBtn) {
+		viewBtn.addEventListener('click', () => {
+			CardIllustration.append();
+			CardIllustration.setCard(this.item);
+		});
+	}
+
+	this.draggable('.title');
+};
+
+/**
+ * Bind component
+ *
+ * @param {object} item
+ */
+ItemInfo.setItem = function setItem(item) {
+	const it = DB.getItemInfo(item.ITID);
+	const root = ItemInfo.getRoot();
+	const cardList = root.querySelector('.cardlist .border');
+	const optionContainer = root.querySelector('.option-container');
+
+	this.item = it;
+	Client.loadFile(
+		DB.INTERFACE_PATH +
+			'collection/' +
+			(item.IsIdentified ? it.identifiedResourceName : it.unidentifiedResourceName) +
+			'.bmp',
+		data => {
+			const collection = root.querySelector('.collection');
+			if (collection) {
+				collection.style.backgroundImage = `url(${data})`;
+			}
+		}
+	);
+
+	const itemName = DB.getItemName(item, { showItemOptions: false });
+
+	// Damaged status
+	const title = root.querySelector('.title');
+	if (title) {
+		if (item.IsDamaged) {
+			title.classList.add('damaged');
+		} else {
+			title.classList.remove('damaged');
+		}
+		title.textContent = itemName;
+	}
+
+	if (item.Options && item.IsIdentified) {
+		//Clear all option list
+		if (optionContainer) {
+			optionContainer.innerHTML = '';
+		}
+
+		//Loop to Show Options
+		for (let i = 1; i <= 5; i++) {
+			if (item.Options[i].index > 0) {
+				const randomOptionName = DB.getOptionName(item.Options[i].index);
+				const optionList =
+					'<div class="optionlist">' +
+					'<div class="border">' +
+					randomOptionName.replace('%d', item.Options[i].value).replace('%%', '%') +
+					'</div>' +
+					'</div>';
+				if (optionContainer) {
+					optionContainer.insertAdjacentHTML('beforeend', optionList);
+				}
+			}
+		}
+		if (optionContainer) {
+			optionContainer.style.display = 'block';
+		}
+	} else {
+		if (optionContainer) {
+			optionContainer.style.display = 'none';
+		}
+	}
+
+	/* Grade System */
+	const container = root.querySelector('.container');
+	if (item.enchantgrade) {
+		Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/collection_bg_g' + item.enchantgrade + '.bmp', data => {
+			if (container) {
+				container.style.backgroundImage = `url(${data})`;
+			}
+		});
+	} else {
+		Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/collection_bg.bmp', data => {
+			if (container) {
+				container.style.backgroundImage = `url(${data})`;
+			}
+		});
+	}
+
+	const descInner = root.querySelector('.description-inner');
+	if (descInner) {
+		const rawDesc = item.IsIdentified ? it.identifiedDescriptionName : it.unidentifiedDescriptionName;
+		descInner.innerHTML = DB.formatMsgToHtml(_escapeHTML(rawDesc));
+	}
+
+	if (item.HireExpireDate) {
+		const dateText = DB.formatUnixDate(item.HireExpireDate);
+
+		// Get message and replace %s
+		let msg = DB.getMessage(1255).replace('%s', dateText);
+		msg = DB.formatMsgToHtml(msg);
+
+		if (descInner) {
+			const div = document.createElement('div');
+			div.innerHTML = msg;
+			descInner.insertBefore(div, descInner.firstChild);
+		}
+	}
+
+	if (it.moveInfo) {
+		const tooltipHtml = buildMoveInfoTooltip(it.moveInfo);
+		if (tooltipHtml) {
+			// Create the hoverable label
+			const label = document.createElement('span');
+			label.textContent = DB.getMessage(2796);
+			label.className = 'moveinfo-label';
+
+			// Append label to description
+			if (descInner) {
+				descInner.appendChild(label);
+			}
+
+			// Tooltip container (in light DOM for z-index)
+			let tooltip = document.getElementById('moveinfo-tooltip');
+			if (!tooltip) {
+				tooltip = document.createElement('div');
+				tooltip.id = 'moveinfo-tooltip';
+				document.body.appendChild(tooltip);
+			}
+
+			// Mouse enter → show tooltip
+			label.addEventListener('mouseenter', e => {
+				Cursor.setType(Cursor.ACTION.CLICK);
+				tooltip.innerHTML = tooltipHtml;
+				tooltip.style.display = 'block';
+				tooltip.style.left = `${e.pageX + 15}px`;
+				tooltip.style.top = `${e.pageY + 2}px`;
+			});
+
+			// Mouse leave → hide tooltip
+			label.addEventListener('mouseleave', () => {
+				tooltip.style.display = 'none';
+				Cursor.setType(Cursor.ACTION.DEFAULT);
+			});
+
+			// Mouse move → follow cursor
+			label.addEventListener('mousemove', e => {
+				tooltip.style.left = `${e.pageX + 20}px`;
+				tooltip.style.top = `${e.pageY + 2}px`;
+			});
+		}
+	}
+
+	updatePreviewButton(item);
+
+	// Add view button (for cards)
+	addEvent(item);
+	let hideslots = false;
+
+	if (item.slot) {
+		switch (item.slot['card1']) {
+			case 0x00ff: // FORGE
+			case 0x00fe: // CREATE
+			case 0xff00: // PET
+				hideslots = true;
+				break;
+		}
+		switch (item.slot['card4']) {
+			case 0x1: //BELOVED PET
+				hideslots = true;
+				break;
+		}
+	}
+
+	const cardListParent = cardList ? cardList.parentElement : null;
+
+	switch (item.type) {
+		// Not an equipement = no card
+		default:
+			if (cardListParent) {
+				cardListParent.style.display = 'none';
+			}
+			break;
+
+		case ItemType.ARMOR:
+			// Pet Egg check for old versions (before ItemType.PETEGG existed)
+			if (DB.isPetEgg(item.ITID)) {
+				hideslots = true;
+			}
+		// falls through
+		case ItemType.WEAPON:
+		case ItemType.SHADOWGEAR: {
+			if (hideslots) {
+				if (cardListParent) {
+					cardListParent.style.display = 'none';
+				}
+				break;
+			}
+			const slotCount = it.slotCount || 0;
+
+			if (cardListParent) {
+				cardListParent.style.display = 'block';
+			}
+			if (cardList) {
+				cardList.innerHTML = '';
+			}
+
+			for (let i = 0; i < 4; ++i) {
+				addCard(cardList, (item.slot && item.slot['card' + (i + 1)]) || 0, i, slotCount);
+			}
+			if (!item.IsIdentified && cardListParent) {
+				cardListParent.style.display = 'none';
+			}
+			break;
+		}
+
+		case ItemType.PETEGG:
+			if (cardListParent) {
+				cardListParent.style.display = 'none';
+			}
+			break;
+	}
+
+	if (descInner) {
+		resize(descInner.offsetHeight + 45);
+	}
+};
+
+/**
+ * Add a card into a slot
+ *
+ * @param {Element} cardList DOM element
+ * @param {number} item id
+ * @param {number} index
+ * @param {number} slot count
+ */
+function addCard(cardList, itemId, index, slotCount) {
+	let file,
+		name = '';
+	const card = DB.getItemInfo(itemId);
+
+	if (itemId && card) {
+		file = 'item/' + card.identifiedResourceName + '.bmp';
+		name = `<div class="name">${_escapeHTML(card.identifiedDisplayName)}</div>`;
+	} else if (index < slotCount) {
+		file = 'empty_card_slot.bmp';
+	} else {
+		file = 'basic_interface/coparison_disable_card_slot.bmp';
+	}
+
+	if (!cardList) {
+		return;
+	}
+
+	cardList.insertAdjacentHTML(
+		'beforeend',
+		`<div class="item" data-index="${index}"><div class="icon"></div>${name}</div>`
+	);
+
+	Client.loadFile(DB.INTERFACE_PATH + file, data => {
+		const root = ItemInfo.getRoot();
+		const element = root.querySelector(`.cardlist .item[data-index="${index}"] .icon`);
+		if (element) {
+			element.style.backgroundImage = `url(${data})`;
+
+			if (itemId && card) {
+				element.addEventListener('contextmenu', e => {
+					e.preventDefault();
+					e.stopImmediatePropagation();
+					ItemInfo.setItem({
+						ITID: itemId,
+						IsIdentified: true,
+						type: 6
+					});
+				});
+			}
+		}
+	});
+}
+
+/**
+ * Extend ItemInfo window size
+ */
+function onResize() {
+	const top = ItemInfo._host.offsetTop;
+	let lastHeight = 0;
+
+	function resizing() {
+		const h = Math.floor(Mouse.screen.y - top);
+		if (h === lastHeight) {
+			return;
+		}
+		resize(h);
+		lastHeight = h;
+	}
+
+	// Start resizing
+	const _Interval = setInterval(resizing, 30);
+
+	// Stop resizing on left click
+	const onMouseUp = event => {
+		if (event.which === 1) {
+			clearInterval(_Interval);
+			window.removeEventListener('mouseup', onMouseUp);
+		}
+	};
+	window.addEventListener('mouseup', onMouseUp);
+}
+
+/**
+ * Extend ItemInfo window size
+ *
+ * @param {number} height
+ */
+function resize(height) {
+	const root = ItemInfo.getRoot();
+	const container = root.querySelector('.container');
+	const description = root.querySelector('.description');
+	const descriptionInner = root.querySelector('.description-inner');
+	let containerHeight = height;
+	const minHeight = 140;
+	const innerH = descriptionInner ? descriptionInner.offsetHeight : 0;
+	const maxHeight = innerH + 45 > 140 ? Math.min(innerH + 45, 448) : 140;
+
+	if (containerHeight <= minHeight) {
+		containerHeight = minHeight;
+	}
+

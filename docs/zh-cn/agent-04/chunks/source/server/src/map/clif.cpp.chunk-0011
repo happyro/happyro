@@ -1,0 +1,500 @@
+		clif_spiritball( dstsd, sd, SELF );
+	clif_millenniumshield_single( *dstsd, *sd );
+	clif_spiritcharm_single( *dstsd, *sd );
+	if (dstsd->soulball > 0)
+		clif_soulball( dstsd, sd, SELF );
+	if (dstsd->servantball > 0)
+		clif_servantball( *dstsd, sd, SELF );
+	if (dstsd->abyssball > 0)
+		clif_abyssball( *dstsd, sd, SELF );
+	if( (sd->status.party_id && dstsd->status.party_id == sd->status.party_id) || //Party-mate, or hpdisp setting.
+		(sd->bg_id && sd->bg_id == dstsd->bg_id) || //BattleGround
+		pc_has_permission(sd, PC_PERM_VIEW_HPMETER)
+	)
+	clif_hpmeter_single( *sd, dstsd->id, dstsd->battle_status.hp, dstsd->battle_status.max_hp );
+
+	// display link (sd - dstsd) to sd
+	ARR_FIND( 0, MAX_DEVOTION, i, sd->devotion[i] == dstsd->id );
+	if( i < MAX_DEVOTION )
+		clif_devotion(sd, sd);
+	// display links (dstsd - devotees) to sd
+	ARR_FIND( 0, MAX_DEVOTION, i, dstsd->devotion[i] > 0 );
+	if( i < MAX_DEVOTION )
+		clif_devotion(dstsd, sd);
+	// display link (dstsd - crusader) to sd
+	if( dstsd->sc.getSCE(SC_DEVOTION) && (d_bl = map_id2bl(dstsd->sc.getSCE(SC_DEVOTION)->val1)) != nullptr )
+		clif_devotion(d_bl, sd);
+}
+
+void clif_getareachar_unit( map_session_data* sd,block_list *bl ){
+	if( bl == nullptr ){
+		return;
+	}
+
+	struct unit_data *ud;
+	struct view_data *vd;
+	bool option = false;
+	uint32 option_val = 0;
+
+	vd = status_get_viewdata(bl);
+	if (!vd || vd->look[LOOK_BASE] == JT_INVISIBLE)
+		return;
+
+	// Hide NPC from Maya Purple card
+	if( clif_npc_mayapurple( *bl ) ){
+		return;
+	}
+
+	if( bl->type == BL_NPC && npc_is_hidden_dynamicnpc( *( (npc_data*)bl ), *sd ) ){
+		// Do not send anything
+		return;
+	}
+
+	// Prevents visual bug where unit shadows appear when entering view range
+	if (battle_config.hide_cloaked_units & bl->type) {
+		if (status_change* sc = status_get_sc(bl); sc != nullptr && sc->option & (OPTION_HIDE | OPTION_CLOAK | OPTION_CHASEWALK | OPTION_INVISIBLE)) {
+			return; // Hide this unit type
+		}
+	}
+
+	ud = unit_bl2ud(bl);
+
+	if( ud && ud->walktimer != INVALID_TIMER ){
+		clif_set_unit_walking( *bl, sd, *ud, SELF );
+	}else{
+		clif_set_unit_idle( bl, false, SELF, sd );
+	}
+
+	clif_refresh_clothcolor( *bl, SELF, sd );
+
+	switch (bl->type)
+	{
+	case BL_PC:
+		{
+			TBL_PC* tsd = (TBL_PC*)bl;
+
+			clif_getareachar_pc(sd, tsd);
+			if(tsd->state.size==SZ_BIG) // tiny/big players [Valaris]
+				clif_specialeffect_single(bl,EF_GIANTBODY2,sd->fd);
+			else if(tsd->state.size==SZ_MEDIUM)
+				clif_specialeffect_single(bl,EF_BABYBODY2,sd->fd);
+			if( tsd->bg_id && map_getmapflag(tsd->m, MF_BATTLEGROUND) )
+				clif_sendbgemblem_single(sd->fd,tsd);
+			clif_efst_status_change_sub(sd, bl, SELF);
+		}
+		break;
+	case BL_MER: // Devotion Effects
+		if( ((TBL_MER*)bl)->devotion_flag )
+			clif_devotion(bl, sd);
+		break;
+	case BL_NPC:
+		{
+			TBL_NPC* nd = (TBL_NPC*)bl;
+
+			if( nd->chat_id ){
+				chat_data* cd = map_id2cd( nd->chat_id );
+
+				if( cd != nullptr ){
+					clif_dispchat( *cd );
+				}
+			}
+
+			if( nd->size == SZ_BIG )
+				clif_specialeffect_single(bl,EF_GIANTBODY2,sd->fd);
+			else if( nd->size == SZ_MEDIUM )
+				clif_specialeffect_single(bl,EF_BABYBODY2,sd->fd);
+			clif_efst_status_change_sub(sd, bl, SELF);
+			clif_progressbar_npc(nd, sd);
+		}
+		break;
+	case BL_MOB:
+		{
+			TBL_MOB* md = (TBL_MOB*)bl;
+			if(md->special_state.size==SZ_BIG) // tiny/big mobs [Valaris]
+				clif_specialeffect_single(bl,EF_GIANTBODY2,sd->fd);
+			else if(md->special_state.size==SZ_MEDIUM)
+				clif_specialeffect_single(bl,EF_BABYBODY2,sd->fd);
+#if PACKETVER >= 20120404
+			if (battle_config.monster_hp_bars_info && !map_getmapflag(bl->m, MF_HIDEMOBHPBAR)) {
+				// Must show hp bar to all char who already hit the mob.
+				for( const auto& entry : md->dmglog ){
+					if( entry.id == sd->status.char_id ){
+						clif_monster_hp_bar(md, sd->fd);
+					}
+				}
+			}
+#endif
+		clif_name_area(md);
+		}
+		break;
+	case BL_PET:
+		// If the pet wears equip
+		if( vd->look[LOOK_HEAD_BOTTOM] != 0 ){
+			pet_data& pd = *reinterpret_cast<pet_data*>( bl );
+			clif_send_petdata( sd, pd, CHANGESTATEPET_ACCESSORY );
+		}
+		break;
+	}
+
+	clif_hat_effects( *bl, SELF, *sd );
+}
+
+//Modifies the type of damage according to target status changes [Skotlex]
+//Aegis data specifies that: 4 endure against single hit sources, 9 against multi-hit.
+static enum e_damage_type clif_calc_delay(const block_list& bl, e_damage_type type, int32 div, int64 damage, int32 delay, t_tick tick) {
+	if (damage < 1)
+		return type;
+
+	// Check if unit has endure
+	if (!status_isendure(bl, tick, true))
+		return type;
+
+	// General change of type based on div against target with endure effect
+	if (div > 1 && type == DMG_SINGLE)
+		type = DMG_MULTI_HIT;
+	else if (div < 2 && type == DMG_MULTI_HIT)
+		type = DMG_SINGLE;
+
+	switch( type ) {
+		case DMG_ENDURE:
+		case DMG_MULTI_HIT_ENDURE:
+		case DMG_SPLASH_ENDURE:
+			return type;
+		case DMG_NORMAL:
+		case DMG_CRITICAL:
+		case DMG_SINGLE:
+		case DMG_MULTI_HIT_CRITICAL:	// DMG_ENDURE despite div > 1
+			return DMG_ENDURE;
+		case DMG_MULTI_HIT:
+			return DMG_MULTI_HIT_ENDURE;
+		case DMG_SPLASH:
+			return DMG_SPLASH_ENDURE;
+	}
+
+	// Custom, unknown result of endure with types not listed
+	return (div > 1 ? DMG_MULTI_HIT_ENDURE : DMG_ENDURE);
+}
+
+/*========================================== [Playtester]
+* Returns hallucination damage the client displays
+*------------------------------------------*/
+static int64 clif_hallucination_damage( const block_list& bl, int64 damage ){
+	const status_change* sc = status_get_sc( &bl );
+
+	if( sc == nullptr ){
+		return damage;
+	}
+
+	if( sc->empty() ){
+		return damage;
+	}
+
+	if( sc->getSCE( SC_HALLUCINATION ) == nullptr ){
+		return damage;
+	}
+
+	if( damage == 0 ){
+		return damage;
+	}
+
+	int32 digit = rnd() % 5 + 1;
+	switch (digit)
+	{
+	case 1:
+		return (rnd() % 10);
+	case 2:
+		return (rnd() % 100);
+	case 3:
+		return (rnd() % 1000);
+	case 4:
+		return (rnd() % 10000);
+	}
+	return (rnd() % 32767);
+}
+
+#define DEFAULT_ANIMATION_SPEED 432
+
+/// Sends a 'damage' packet (src performs action on dst)
+/// 008a <src ID>.L <dst ID>.L <server tick>.L <src speed>.L <dst speed>.L <damage>.W <div>.W <type>.B <damage2>.W (ZC_NOTIFY_ACT)
+/// 02e1 <src ID>.L <dst ID>.L <server tick>.L <src speed>.L <dst speed>.L <damage>.L <div>.W <type>.B <damage2>.L (ZC_NOTIFY_ACT2)
+/// 08c8 <src ID>.L <dst ID>.L <server tick>.L <src speed>.L <dst speed>.L <damage>.L <IsSPDamage>.B <div>.W <type>.B <damage2>.L (ZC_NOTIFY_ACT3)
+/// type:
+///     0 = damage [ damage: total damage, div: amount of hits, damage2: assassin dual-wield damage ]
+///     1 = pick up item
+///     2 = sit down
+///     3 = stand up
+///     4 = damage (endure)
+///     5 = (splash?)
+///     6 = (skill?)
+///     7 = (repeat damage?)
+///     8 = multi-hit damage
+///     9 = multi-hit damage (endure)
+///     10 = critical hit
+///     11 = lucky dodge
+///     12 = (touch skill?)
+///     13 = multi-hit critical
+void clif_damage(block_list& src, block_list& dst, t_tick tick, int32 sdelay, int32 ddelay, int64 sdamage, int16 div, enum e_damage_type type, int64 sdamage2, bool spdamage){
+	int32 damage = (int32)cap_value(sdamage,INT_MIN,INT_MAX);
+	int32 damage2 = (int32)cap_value(sdamage2,INT_MIN,INT_MAX);
+
+	type = clif_calc_delay(dst, type, div, damage+damage2, ddelay, tick);
+
+	damage = static_cast<decltype(damage)>(clif_hallucination_damage(dst, damage));
+	damage2 = static_cast<decltype(damage2)>(clif_hallucination_damage(dst, damage2));
+
+	// Calculate what sdelay to send to the client so it applies damage at the same time as the server
+	if (battle_config.synchronize_damage && src.type == BL_MOB) {
+		// When a clif_damage packet is sent to the client it will also send "sdelay" (amotion) as value.
+		// The client however does not interpret this value as AttackMotion but incorrectly as an inverted
+		// animation speed modifier, with 432 standing for 1x animation speed.
+		// The client will ignore all values above 432, but lower values will speed up the animation.
+		// 216 for example means play the animation at double the speed. 108 is quadruple speed.
+		// Each monster has an attack animation and may define the frame in the attack animation on which
+		// it displays the damage and makes the target flinch / stop. If the damage frame is undefined,
+		// it instead displays the damage / flinch / stop at the beginning of the second to last frame.
+		// We define the time after which the damage frame shows at 1x speed as clientamotion.
+		uint16 clientamotion = std::max((uint16)1, status_get_clientamotion(&src));
+
+		// Knowing when the damage frame happens in the animation allows us to synchronize the timing
+		// between client and server using the formula below.
+		sdelay = sdelay * DEFAULT_ANIMATION_SPEED / clientamotion;
+
+		// Hint: If amotion is larger than clientamotion this results in a value above 432 which makes the
+		// client display the attack at 1x speed. In this case we need to shorten the delay damage timer
+		// on the server to clientamotion ms instead (see battle_delay_damage).
+		sdelay = std::min(sdelay, DEFAULT_ANIMATION_SPEED);
+	}
+
+	PACKET_ZC_NOTIFY_ACT p{};
+
+	p.packetType = HEADER_ZC_NOTIFY_ACT;
+	p.srcID = src.id;
+	p.targetID = dst.id;
+	p.serverTick = client_tick(tick);
+	p.srcSpeed = sdelay;
+	p.dmgSpeed = ddelay;
+
+	if (battle_config.hide_woe_damage && map_flag_gvg(src.m)) {
+		p.damage = damage ? div : 0;
+		p.damage2 = damage2 ? div : 0;
+	} else {
+		p.damage = static_cast<decltype(p.damage)>( std::min( damage, static_cast<decltype(damage)>( std::numeric_limits<decltype(p.damage)>::max() ) ) );
+		p.damage2 = static_cast<decltype(p.damage2)>( std::min( damage2, static_cast<decltype(damage2)>( std::numeric_limits<decltype(p.damage2)>::max() ) ) );
+	}
+
+#if PACKETVER >= 20131223
+	p.isSPDamage = (spdamage) ? 1 : 0; // IsSPDamage - Displays blue digits.
+#endif
+
+	p.div = div;
+	p.type = type;
+
+	if(disguised(&dst)) {
+		clif_send( &p, sizeof(p), &dst, AREA_WOS);
+		p.targetID = disguised_bl_id( dst.id );
+		clif_send( &p, sizeof(p), &dst, SELF);
+	} else
+		clif_send(&p, sizeof(p), &dst, AREA);
+
+	if(disguised(&src)) {
+		p.srcID = disguised_bl_id( src.id );
+		if(damage > 0)
+			p.damage = -1;
+		if(damage2 > 0)
+			p.damage2 = -1;
+		clif_send( &p, sizeof(p), &src, SELF);
+	}
+
+	if(&src == &dst) 
+		unit_setdir(&src, unit_getdir(&src));
+}
+
+/*==========================================
+ * src picks up dst
+ *------------------------------------------*/
+void clif_takeitem( const block_list& src, const block_list& dst){
+	PACKET_ZC_NOTIFY_ACT p{};
+
+	p.packetType = HEADER_ZC_NOTIFY_ACT;
+	p.srcID = src.id;
+	p.targetID = dst.id;
+	p.type = DMG_PICKUP_ITEM;
+
+	clif_send(&p, sizeof(p), &src, AREA);
+}
+
+/*==========================================
+ * inform clients in area that `bl` is sitting
+ *------------------------------------------*/
+void clif_sitting( const block_list& bl){
+	PACKET_ZC_NOTIFY_ACT p{};
+
+	p.packetType = HEADER_ZC_NOTIFY_ACT;
+	p.srcID = bl.id;
+	p.type = DMG_SIT_DOWN;
+
+	clif_send(&p, sizeof(p), &bl, AREA);
+
+	if(disguised(&bl)) {
+		p.srcID = disguised_bl_id( bl.id );
+		clif_send(&p, sizeof(p), &bl, SELF);
+	}
+}
+
+/*==========================================
+ * inform clients in area that `bl` is standing
+ *------------------------------------------*/
+void clif_standing( const block_list& bl ){
+	PACKET_ZC_NOTIFY_ACT p{};
+
+	p.packetType = HEADER_ZC_NOTIFY_ACT;
+	p.srcID = bl.id;
+	p.type = DMG_STAND_UP;
+
+	clif_send(&p, sizeof(p), &bl, AREA);
+
+	if(disguised(&bl)) {
+		p.srcID = disguised_bl_id( bl.id );
+		clif_send(&p, sizeof(p), &bl, SELF);
+	}
+}
+
+
+/// Inform client(s) about a map-cell change.
+/// 0192 <x>.W <y>.W <type>.W <map name>.16B (ZC_UPDATE_MAPINFO)
+void clif_changemapcell( int16 m, int16 x, int16 y, int16 type, send_target target, const block_list* tbl ){
+	PACKET_ZC_UPDATE_MAPINFO p = {};
+
+	p.packetType = HEADER_ZC_UPDATE_MAPINFO;
+	p.x = x;
+	p.y = y;
+	p.type = type;
+	mapindex_getmapname_ext( map_mapid2mapname( m ), p.mapname );
+
+	if( tbl != nullptr ){
+		clif_send( &p, sizeof( p ), tbl, target );
+	}else{
+		block_list dummy_bl = {};
+
+		dummy_bl.type = BL_NUL;
+		dummy_bl.x = x;
+		dummy_bl.y = y;
+		dummy_bl.m = m;
+
+		clif_send( &p, sizeof( p ), &dummy_bl, target );
+	}
+}
+
+
+/// Notifies the client about an item on floor.
+/// 009d <id>.L <name id>.W <identified>.B <x>.W <y>.W <amount>.W <subX>.B <subY>.B (ZC_ITEM_ENTRY)
+void clif_getareachar_item( map_session_data& sd, flooritem_data& fitem ){
+	PACKET_ZC_ITEM_ENTRY p = {};
+
+	p.packetType = HEADER_ZC_ITEM_ENTRY;
+	p.AID = fitem.id;
+	p.itemId = client_nameid( fitem.item.nameid );
+	p.identify = fitem.item.identify;
+	p.x = fitem.x;
+	p.y = fitem.y;
+	p.amount = fitem.item.amount;
+	p.subX = fitem.subx;
+	p.subY = fitem.suby;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+/// Notifes client about Graffiti
+/// 01c9 <id>.L <creator id>.L <x>.W <y>.W <unit id>.B <visible>.B <has msg>.B <msg>.80B (ZC_SKILL_ENTRY2)
+static void clif_graffiti( skill_unit& unit, send_target target, block_list& bl ){
+	packet_graffiti_entry p = {};
+
+	p.PacketType = graffiti_entryType;
+	p.AID = unit.id;
+	p.creatorAID = unit.group->src_id;
+	p.xPos = unit.x;
+	p.yPos = unit.y;
+	p.job = unit.group->unit_id;
+	p.isContens = 1;
+	p.isVisible = 1;
+	safestrncpy( p.msg, unit.group->valstr, sizeof( p.msg ) );
+
+	clif_send( &p, sizeof( p ), &bl, target );
+}
+
+/// Notifies the client of a skill unit.
+/// 011f <id>.L <creator id>.L <x>.W <y>.W <unit id>.B <visible>.B (ZC_SKILL_ENTRY)
+/// 08c7 <length>.W <id> L <creator id>.L <x>.W <y>.W <unit id>.B <range>.W <visible>.B (ZC_SKILL_ENTRY3)
+/// 099f <length>.W <id> L <creator id>.L <x>.W <y>.W <unit id>.L <range>.W <visible>.B (ZC_SKILL_ENTRY4)
+/// 09ca <length>.W <id> L <creator id>.L <x>.W <y>.W <unit id>.L <range>.B <visible>.B <skill level>.B (ZC_SKILL_ENTRY5)
+void clif_getareachar_skillunit(block_list *bl, skill_unit *unit, enum send_target target, bool visible) {
+	int32 header = 0, unit_id = 0, pos = 0, fd = 0, len = -1;
+	unsigned char buf[128];
+
+	nullpo_retv(bl);
+	nullpo_retv(unit);
+
+	if (bl->type == BL_PC)
+		fd = ((TBL_PC*)bl)->fd;
+
+	if (unit->group->state.guildaura)
+		return;
+
+	if (unit->group->state.song_dance&0x1 && unit->val2&(1 << UF_ENSEMBLE))
+		unit_id = unit->val2&(1 << UF_SONG) ? UNT_DISSONANCE : UNT_UGLYDANCE;
+	else if (skill_get_unit_flag(unit->group->skill_id, UF_RANGEDSINGLEUNIT) && !(unit->val2 & (1 << UF_RANGEDSINGLEUNIT)))
+		unit_id = UNT_DUMMYSKILL; // Use invisible unit id for other case of rangedsingle unit
+	else
+		unit_id = unit->group->unit_id;
+
+	if (!visible)
+		unit_id = UNT_DUMMYSKILL; // Hack to makes hidden trap really hidden!
+
+#if PACKETVER >= 3
+	if (unit_id == UNT_GRAFFITI) { // Graffiti [Valaris]
+		clif_graffiti( *unit, target, *bl );
+		return;
+	}
+#endif
+
+#if PACKETVER <= 20120702
+	header = 0x011f;
+//#if PACKETVER < 20110718
+//	header = 0x011f;
+//#elif PACKETVER < 20121212
+//	header = 0x08c7;
+#elif PACKETVER < 20130731
+	header = 0x099f;
+#else
+	header = 0x09ca;
+#endif
+
+	len = packet_len(header);
+	WBUFW(buf,pos) = header;
+	if (header != 0x011f) {
+		WBUFW(buf, pos+2) = len;
+		pos += 2;
+	}
+	WBUFL(buf,pos+2) = unit->id;
+	WBUFL(buf,pos+6) = unit->group->src_id;
+	WBUFW(buf,pos+10) = unit->x;
+	WBUFW(buf,pos+12) = unit->y;
+	switch (header) {
+		case 0x011f:
+			WBUFB(buf,pos+14) = unit_id;
+			WBUFB(buf,pos+15) = visible;
+			break;
+		case 0x08c7:
+			WBUFB(buf,pos+14) = unit_id;
+			WBUFW(buf,pos+15) = unit->range;
+			WBUFB(buf,pos+17) = visible;
+			break;
+		case 0x099f:
+			WBUFL(buf,pos+14) = unit_id;
+			WBUFW(buf,pos+18) = unit->range;
+			WBUFB(buf,pos+20) = visible;
+			break;
+		case 0x09ca:
+			WBUFL(buf,pos+14) = unit_id;
+			WBUFB(buf,pos+18) = (unsigned char)unit->range;
+			WBUFB(buf,pos+19) = visible;

@@ -1,0 +1,500 @@
+		if( mapdata->save.map ){
+			safestrncpy( sd.status.last_point.map, mapindex_id2name( mapdata->save.map ), sizeof( sd.status.last_point.map ) );
+			sd.status.last_point.x = mapdata->save.x;
+			sd.status.last_point.y = mapdata->save.y;
+			return false;
+		}else{
+			// Return the user to his save point
+			return true;
+		}
+	}
+
+	// Check if the last point was an instance
+	if( sd.status.last_point_instanceid == 0 ){
+		// Nothing to do
+		return false;
+	}
+
+	// Check if returning to the instance is allowed in general
+	if( !battle_config.instance_allow_reconnect ){
+		// Return the player to his savepoint
+		return true;
+	}
+
+	std::shared_ptr<s_instance_data> instance_data = util::umap_find( instances, sd.status.last_point_instanceid );
+
+	if( instance_data == nullptr ){
+		// Instance does not exist anymore, return the player to his savepoint
+		return true;
+	}
+
+	switch( instance_data->mode ){
+		case IM_NONE:
+			// Cannot validate
+			break;
+		case IM_CHAR:
+			if( sd.status.char_id != instance_data->owner_id ){
+				// It is a character bound instance and the player is not the owner, return the player to his savepoint
+				return true;
+			}
+			break;
+		case IM_PARTY:
+			if( sd.status.party_id != instance_data->owner_id ){
+				// It is a party bound instance and the player is not in the party, return the player to his savepoint
+				return true;
+			}
+			break;
+		case IM_GUILD:
+			if( sd.status.guild_id != instance_data->owner_id ){
+				// It is a guild bound instance and the player is not in the guild, return the player to his savepoint
+				return true;
+			}
+			break;
+		case IM_CLAN:
+			if( sd.status.clan_id != instance_data->owner_id ){
+				// It is a clan bound instance and the player is not in the clan, return the player to his savepoint
+				return true;
+			}
+			break;
+	}
+
+	int16 imapid = instance_mapid( mapid, sd.status.last_point_instanceid );
+
+	if( imapid < 0 ){
+		// Instance does not contain this map anymore, return the player to his savepoint
+		return true;
+	}
+
+	// Overwrite the stored "source mapname" with the real mapname
+	instance_generate_mapname( mapid, sd.status.last_point_instanceid, sd.status.last_point.map );
+	// X/Y coordinates are already correct and do not need to be modified
+
+	// Dont warp the player back to his savepoint
+	return false;
+}
+
+/*==========================================
+ * No problem with the session id
+ * set the status that has been sent from char server
+ *------------------------------------------*/
+bool pc_authok(map_session_data *sd, uint32 login_id2, time_t expiration_time, int32 group_id, struct mmo_charstatus *st, bool changing_mapservers)
+{
+	t_tick tick = gettick();
+	uint32 ip = session[sd->fd]->client_addr;
+
+	sd->login_id2 = login_id2;
+	sd->group_id = group_id;
+
+	/* load user permissions */
+	pc_group_pc_load(sd);
+
+	memcpy(&sd->status, st, sizeof(*st));
+
+	if (st->sex != sd->status.sex) {
+		clif_authfail_fd(sd->fd, 0);
+		return false;
+	}
+
+	//Set the map-server used job id. [Skotlex]
+	uint64 class_ = pc_jobid2mapid(sd->status.class_);
+	if (class_ == -1 || !job_db.exists(sd->status.class_)) { //Invalid class?
+		ShowError("pc_authok: Invalid class %d for player %s (%d:%d). Class was changed to novice.\n", sd->status.class_, sd->status.name, sd->status.account_id, sd->status.char_id);
+		sd->status.class_ = JOB_NOVICE;
+		sd->class_ = MAPID_NOVICE;
+	} else
+		sd->class_ = class_;
+
+	// Checks and fixes to character status data, that are required
+	// in case of configuration change or stuff, which cannot be
+	// checked on char-server.
+	sd->status.hair = cap_value(sd->status.hair,MIN_HAIR_STYLE,MAX_HAIR_STYLE);
+	sd->status.hair_color = cap_value(sd->status.hair_color,MIN_HAIR_COLOR,MAX_HAIR_COLOR);
+	sd->status.clothes_color = cap_value(sd->status.clothes_color,MIN_CLOTH_COLOR,MAX_CLOTH_COLOR);
+
+	if( !job_db.exists( sd->status.body ) ){
+		sd->status.body = sd->status.class_;
+	}
+
+	//Initializations to null/0 unneeded since map_session_data was filled with 0 upon allocation.
+	sd->state.connect_new = 1;
+
+	sd->followtimer = INVALID_TIMER; // [MouseJstr]
+	sd->invincible_timer = INVALID_TIMER;
+	sd->npc_timer_id = INVALID_TIMER;
+	sd->pvp_timer = INVALID_TIMER;
+	sd->expiration_tid = INVALID_TIMER;
+	sd->autotrade_tid = INVALID_TIMER;
+	sd->respawn_tid = INVALID_TIMER;
+	sd->tid_queue_active = INVALID_TIMER;
+	sd->macro_detect.timer = INVALID_TIMER;
+
+	sd->skill_keep_using.tid = INVALID_TIMER;
+	sd->skill_keep_using.skill_id = 0;
+	sd->skill_keep_using.level = 0;
+	sd->skill_keep_using.target = 0;
+
+#ifdef SECURE_NPCTIMEOUT
+	// Initialize to defaults/expected
+	sd->npc_idle_timer = INVALID_TIMER;
+	sd->npc_idle_tick = tick;
+	sd->npc_idle_type = NPCT_INPUT;
+	sd->state.ignoretimeout = false;
+#endif
+
+	sd->canuseitem_tick = tick;
+	sd->canusecashfood_tick = tick;
+	sd->canequip_tick = tick;
+	sd->cantalk_tick = tick;
+	sd->canskill_tick = tick;
+	sd->cansendmail_tick = tick;
+	sd->idletime = last_tick;
+
+	sd->regen.tick.hp = tick;
+	sd->regen.tick.sp = tick;
+
+	for(int32 i = 0; i < MAX_SPIRITBALL; i++)
+		sd->spirit_timer[i] = INVALID_TIMER;
+
+	if (battle_config.item_auto_get)
+		sd->state.autoloot = 10000;
+
+	if (battle_config.disp_experience)
+		sd->state.showexp = 1;
+	if (battle_config.disp_zeny)
+		sd->state.showzeny = 1;
+#ifdef VIP_ENABLE
+	if (!battle_config.vip_disp_rate)
+		sd->vip.disableshowrate = 1;
+#endif
+
+	if (!(battle_config.display_skill_fail&2))
+		sd->state.showdelay = 1;
+
+	memset(&sd->inventory, 0, sizeof(struct s_storage));
+	memset(&sd->cart, 0, sizeof(struct s_storage));
+	memset(&sd->storage, 0, sizeof(struct s_storage));
+	memset(&sd->premiumStorage, 0, sizeof(struct s_storage));
+	memset(&sd->equip_index, -1, sizeof(sd->equip_index));
+	memset(&sd->equip_switch_index, -1, sizeof(sd->equip_switch_index));
+
+	if( pc_isinvisible(sd) && !pc_can_use_command( sd, "hide", COMMAND_ATCOMMAND ) ){
+		sd->status.option &= ~OPTION_INVISIBLE;
+	}
+
+	sd->sc.option = sd->status.option; //This is the actual option used in battle.
+
+	unit_dataset(sd);
+
+	sd->guild_x = -1;
+	sd->guild_y = -1;
+
+	sd->delayed_damage = 0;
+
+	// Event Timers
+	for( int32 i = 0; i < MAX_EVENTTIMER; i++ )
+		sd->eventtimer[i] = INVALID_TIMER;
+	// Rental Timer
+	sd->rental_timer = INVALID_TIMER;
+
+	for( int32 i = 0; i < 3; i++ )
+		sd->hate_mob[i] = -1;
+
+	sd->quest_log = nullptr;
+	sd->num_quests = 0;
+	sd->avail_quests = 0;
+	sd->save_quest = false;
+	sd->count_rewarp = 0;
+	sd->mail.pending_weight = 0;
+	sd->mail.pending_zeny = 0;
+	sd->mail.pending_slots = 0;
+
+	sd->regs.vars = i64db_alloc(DB_OPT_BASE);
+	sd->regs.arrays = nullptr;
+	sd->vars_dirty = false;
+	sd->vars_ok = false;
+	sd->vars_received = 0x0;
+
+	// Check if the player's last point requires special handling and if conditions apply to return the player to his savepoint
+	if( pc_lastpoint_special( *sd ) ){
+		// The player should be warped back to his savepoint
+		safestrncpy( sd->status.last_point.map, sd->status.save_point.map, sizeof( sd->status.last_point.map ) );
+		sd->status.last_point.x = sd->status.save_point.x;
+		sd->status.last_point.y = sd->status.save_point.y;
+	}
+
+	//warp player
+	enum e_setpos setpos_result = pc_setpos( sd, mapindex_name2id( sd->status.last_point.map ), sd->status.last_point.x, sd->status.last_point.y, CLR_OUTSIGHT );
+	if( setpos_result != SETPOS_OK ){
+		ShowError( "Last_point_map %s not found (error code %d)\n", sd->status.last_point.map, setpos_result );
+
+		// try warping to a default map instead (church graveyard)
+		if (pc_setpos(sd, mapindex_name2id(MAP_PRONTERA), 273, 354, CLR_OUTSIGHT) != SETPOS_OK) {
+			// if we fail again
+			clif_authfail_fd(sd->fd, 0);
+			return false;
+		}
+	}
+
+	clif_inventory_expansion_info( sd );
+	clif_authok(sd);
+
+	//Prevent S. Novices from getting the no-death bonus just yet. [Skotlex]
+	sd->die_counter=-1;
+
+	//display login notice
+	ShowInfo("'" CL_WHITE "%s" CL_RESET "' logged in."
+	         " (AID/CID: '" CL_WHITE "%d/%d" CL_RESET "',"
+	         " IP: '" CL_WHITE "%d.%d.%d.%d" CL_RESET "',"
+	         " Group '" CL_WHITE "%d" CL_RESET "').\n",
+	         sd->status.name, sd->status.account_id, sd->status.char_id,
+	         CONVIP(ip), sd->group_id);
+	// Send friends list
+	clif_friendslist_send( *sd );
+
+	if( !changing_mapservers ) {
+
+		if (battle_config.display_version == 1)
+			pc_show_version(sd);
+
+		// Message of the Day [Valaris]
+		for(int32 i=0; i < MOTD_LINE_SIZE && motd_text[i][0]; i++) {
+			if (battle_config.motd_type)
+				clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], motd_text[i], false, SELF);
+			else
+				clif_displaymessage(sd->fd, motd_text[i]);
+		}
+
+		if (expiration_time != 0)
+			sd->expiration_time = expiration_time;
+
+		/**
+		 * Fixes login-without-aura glitch (the screen won't blink at this point, don't worry :P)
+		 **/
+		clif_changemap( *sd, sd->m, sd->x, sd->y );
+	}
+
+	pc_validate_skill(sd);
+
+	/* [Ind] */
+	sd->sc_display = nullptr;
+	sd->sc_display_count = 0;
+
+	// Player has not yet received the CashShop list
+	sd->status.cashshop_sent = false;
+
+	sd->last_addeditem_index = -1;
+	
+	sd->bonus_script.head = nullptr;
+	sd->bonus_script.count = 0;
+
+	// Initialize BG queue
+	sd->bg_queue_id = 0;
+
+	// Check EXP overflow, since in previous revision EXP on Max Level can be more than 'official' Max EXP
+	if (pc_is_maxbaselv(sd) && sd->status.base_exp > MAX_LEVEL_BASE_EXP) {
+		sd->status.base_exp = MAX_LEVEL_BASE_EXP;
+		clif_updatestatus(*sd, SP_BASEEXP);
+	}
+	if (pc_is_maxjoblv(sd) && sd->status.job_exp > MAX_LEVEL_JOB_EXP) {
+		sd->status.job_exp = MAX_LEVEL_JOB_EXP;
+		clif_updatestatus(*sd, SP_JOBEXP);
+	}
+
+	// Request all registries (auth is considered completed whence they arrive)
+	intif_request_registry(sd,7);
+	return true;
+}
+
+/*==========================================
+ * Closes a connection because it failed to be authenticated from the char server.
+ *------------------------------------------*/
+void pc_authfail(map_session_data *sd)
+{
+	clif_authfail_fd(sd->fd, 0);
+	return;
+}
+
+/**
+ * Player register a bl as hatred
+ * @param sd : player session
+ * @param pos : hate position [0;2]
+ * @param bl : target bl
+ * @return false:failed, true:success
+ */
+bool pc_set_hate_mob(map_session_data *sd, int32 pos, block_list *bl)
+{
+	int32 class_;
+	if (!sd || !bl || pos < 0 || pos > 2)
+		return false;
+	if (sd->hate_mob[pos] != -1)
+	{	//Can't change hate targets.
+		clif_hate_info(sd, pos, sd->hate_mob[pos], 0); //Display current
+		return false;
+	}
+
+	class_ = status_get_class(bl);
+	if (!pcdb_checkid(class_)) {
+		uint32 max_hp = status_get_max_hp(bl);
+		if ((pos == 1 && max_hp < 6000) || (pos == 2 && max_hp < 20000))
+			return false;
+		if (pos != status_get_size(bl))
+			return false; //Wrong size
+	}
+	sd->hate_mob[pos] = class_;
+	pc_setglobalreg(sd, add_str(sg_info[pos].hate_var), class_+1);
+	clif_hate_info(sd, pos, class_, 1);
+	return true;
+}
+
+/*==========================================
+ * Invoked once after the char/account/account2 registry variables are received. [Skotlex]
+ * We didn't receive item information at this point so DO NOT attempt to do item operations here.
+ * See intif_parse_StorageReceived() for item operations [lighta]
+ *------------------------------------------*/
+void pc_reg_received(map_session_data *sd)
+{
+	uint8 i;
+
+	sd->vars_ok = true;
+
+	sd->change_level_2nd = static_cast<unsigned char>(pc_readglobalreg(sd, add_str(JOBCHANGE2ND_VAR)));
+	sd->change_level_3rd = static_cast<unsigned char>(pc_readglobalreg(sd, add_str(JOBCHANGE3RD_VAR)));
+	sd->change_level_4th = static_cast<unsigned char>(pc_readglobalreg(sd, add_str(JOBCHANGE4TH_VAR)));
+	sd->die_counter = static_cast<int32>(pc_readglobalreg(sd, add_str(PCDIECOUNTER_VAR)));
+
+	sd->langtype = static_cast<int32>(pc_readaccountreg(sd, add_str(LANGTYPE_VAR)));
+	if (msg_checklangtype(sd->langtype,true) < 0)
+		sd->langtype = 0; //invalid langtype reset to default
+
+	// Cash shop
+	sd->cashPoints = static_cast<int32>(pc_readaccountreg(sd, add_str(CASHPOINT_VAR)));
+	sd->kafraPoints = static_cast<int32>(pc_readaccountreg(sd, add_str(KAFRAPOINT_VAR)));
+
+	// Cooking Exp
+	sd->cook_mastery = static_cast<int16>(pc_readglobalreg(sd, add_str(COOKMASTERY_VAR)));
+
+	if( (sd->class_&MAPID_FIRSTMASK) == MAPID_TAEKWON )
+	{ // Better check for class rather than skill to prevent "skill resets" from unsetting this
+		sd->mission_mobid = static_cast<int16>(pc_readglobalreg(sd, add_str(TKMISSIONID_VAR)));
+		sd->mission_count = static_cast<unsigned char>(pc_readglobalreg(sd, add_str(TKMISSIONCOUNT_VAR)));
+	}
+
+	if (battle_config.feature_banking)
+		sd->bank_vault = static_cast<int32>(pc_readreg2(sd, BANK_VAULT_VAR));
+
+	if (battle_config.feature_roulette) {
+		sd->roulette_point.bronze = static_cast<int32>(pc_readreg2(sd, ROULETTE_BRONZE_VAR));
+		sd->roulette_point.silver = static_cast<int32>(pc_readreg2(sd, ROULETTE_SILVER_VAR));
+		sd->roulette_point.gold = static_cast<int32>(pc_readreg2(sd, ROULETTE_GOLD_VAR));
+	}
+	sd->roulette.prizeIdx = -1;
+
+	//SG map and mob read [Komurka]
+	for(i=0;i<MAX_PC_FEELHATE;i++) { //for now - someone need to make reading from txt/sql
+		uint16 j;
+
+		if ((j = static_cast<uint16>(pc_readglobalreg(sd, add_str(sg_info[i].feel_var)))) != 0) {
+			sd->feel_map[i].index = j;
+			sd->feel_map[i].m = map_mapindex2mapid(j);
+		} else {
+			sd->feel_map[i].index = 0;
+			sd->feel_map[i].m = -1;
+		}
+		sd->hate_mob[i] = static_cast<int16>(pc_readglobalreg(sd, add_str(sg_info[i].hate_var)))-1;
+	}
+
+	if ((i = pc_checkskill(sd,RG_PLAGIARISM)) > 0) {
+		uint16 skid = static_cast<uint16>(pc_readglobalreg(sd, add_str(SKILL_VAR_PLAGIARISM)));
+		sd->cloneskill_idx = skill_get_index(skid);
+		if (sd->cloneskill_idx > 0) {
+			sd->status.skill[sd->cloneskill_idx].id = skid;
+			sd->status.skill[sd->cloneskill_idx].lv = static_cast<uint8>(pc_readglobalreg(sd, add_str(SKILL_VAR_PLAGIARISM_LV)));
+			if (sd->status.skill[sd->cloneskill_idx].lv > i)
+				sd->status.skill[sd->cloneskill_idx].lv = i;
+			sd->status.skill[sd->cloneskill_idx].flag = SKILL_FLAG_PLAGIARIZED;
+		}
+	}
+	if ((i = pc_checkskill(sd,SC_REPRODUCE)) > 0) {
+		uint16 skid = static_cast<uint16>(pc_readglobalreg(sd, add_str(SKILL_VAR_REPRODUCE)));
+		sd->reproduceskill_idx = skill_get_index(skid);
+		if (sd->reproduceskill_idx > 0) {
+			sd->status.skill[sd->reproduceskill_idx].id = skid;
+			sd->status.skill[sd->reproduceskill_idx].lv = static_cast<uint8>(pc_readglobalreg(sd, add_str(SKILL_VAR_REPRODUCE_LV)));
+			if (i < sd->status.skill[sd->reproduceskill_idx].lv)
+				sd->status.skill[sd->reproduceskill_idx].lv = i;
+			sd->status.skill[sd->reproduceskill_idx].flag = SKILL_FLAG_PLAGIARIZED;
+		}
+	}
+	//Weird... maybe registries were reloaded?
+	if (sd->state.active)
+		return;
+	sd->state.active = 1;
+	sd->state.pc_loaded = false; // Ensure inventory data and status data is loaded before we calculate player stats
+
+	intif_storage_request(sd,TABLE_STORAGE, 0, STOR_MODE_ALL); // Request storage data
+	intif_storage_request(sd,TABLE_CART, 0, STOR_MODE_ALL); // Request cart data
+	intif_storage_request(sd,TABLE_INVENTORY, 0, STOR_MODE_ALL); // Request inventory data
+
+	// Restore IM_CHAR instance to the player
+	for (const auto &instance : instances) {
+		if (instance.second->mode == IM_CHAR && instance.second->owner_id == sd->status.char_id) {
+			sd->instance_id = instance.first;
+			break;
+		}
+	}
+
+	if (sd->status.party_id > 0)
+		party_member_joined( *sd );
+	if (sd->status.guild_id > 0)
+		guild_member_joined(sd);
+	if (sd->status.clan_id > 0)
+		clan_member_joined( *sd );
+#if !( PACKETVER_MAIN_NUM >= 20190403 || PACKETVER_RE_NUM >= 20190320 || PACKETVER_ZERO_NUM >= 20190410 )
+	// Before those clients you could send out the instance info even when the client was still loading the map, afterwards you need to send it later
+	clif_instance_info( *sd );
+#endif
+
+	// pet
+	if (sd->status.pet_id > 0)
+		intif_request_petdata(sd->status.account_id, sd->status.char_id, sd->status.pet_id);
+
+	// Homunculus [albator]
+	if( sd->status.hom_id > 0 )
+		intif_homunculus_requestload(sd->status.account_id, sd->status.hom_id);
+	if( sd->status.mer_id > 0 )
+		intif_mercenary_request(sd->status.mer_id, sd->status.char_id);
+	if( sd->status.ele_id > 0 )
+		intif_elemental_request(sd->status.ele_id, sd->status.char_id);
+
+	map_addiddb(sd);
+	map_delnickdb(sd->status.char_id, sd->status.name);
+	if (!chrif_auth_finished(sd))
+		ShowError("pc_reg_received: Failed to properly remove player %d:%d from logging db!\n", sd->status.account_id, sd->status.char_id);
+
+	chrif_skillcooldown_request(sd->status.account_id, sd->status.char_id);
+	chrif_bsdata_request(sd->status.char_id);
+#ifdef VIP_ENABLE
+	sd->vip.time = 0;
+	sd->vip.enabled = 0;
+	chrif_req_login_operation(sd->status.account_id, sd->status.name, CHRIF_OP_LOGIN_VIP, 0, 1|8, 0);  // request VIP information
+#endif
+	intif_Mail_requestinbox(sd->status.char_id, 0, MAIL_INBOX_NORMAL); // MAIL SYSTEM - Request Mail Inbox
+	intif_request_questlog(sd);
+
+	if (battle_config.feature_achievement) {
+		sd->achievement_data.total_score = 0;
+		sd->achievement_data.level = 0;
+		sd->achievement_data.save = false;
+		sd->achievement_data.count = 0;
+		sd->achievement_data.incompleteCount = 0;
+		sd->achievement_data.achievements = nullptr;
+		intif_request_achievements(sd->status.char_id);
+	}
+
+	if (sd->state.connect_new == 0 && sd->fd) { //Character already loaded map! Gotta trigger LoadEndAck manually.
+		sd->state.connect_new = 1;
+		clif_parse_LoadEndAck(sd->fd, sd);
+
+		if( pc_isinvisible( sd ) ){
+			// TODO: use setlook instead?
+			sd->vd.look[LOOK_BASE] = JT_INVISIBLE;

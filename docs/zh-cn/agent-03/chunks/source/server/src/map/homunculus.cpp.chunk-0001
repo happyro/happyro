@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "homunculus.hpp"
+
+#include <cstdlib>
+
+#include <common/cbasetypes.hpp>
+#include <common/malloc.hpp>
+#include <common/mmo.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utils.hpp>
+
+#include "battle.hpp"
+#include "clif.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp"
+#include "log.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "pc.hpp"
+#include "trade.hpp"
+
+using namespace rathena;
+
+static TIMER_FUNC(hom_hungry);
+
+//For holding the view data of npc classes. [Skotlex]
+static struct view_data hom_viewdb[MAX_HOMUNCULUS_CLASS];
+
+struct s_homun_intimacy_grade {
+	//const char *grade;
+	uint32 min_value;
+};
+
+/// Intimacy grade, order based on enum e_homun_grade
+static struct s_homun_intimacy_grade intimacy_grades[] = {
+	{ /*"Hate with passion",*/   100 },
+	{ /*"Hate",             */   400 },
+	{ /*"Awkward",          */  1100 },
+	{ /*"Shy",              */ 10100 },
+	{ /*"Neutral",          */ 25100 },
+	{ /*"Cordial",          */ 75100 },
+	{ /*"Loyal",            */ 91100 },
+};
+
+const std::string HomExpDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/exp_homun.yml";
+}
+
+uint64 HomExpDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	if (!this->nodesExist(node, { "Level", "Exp" })) {
+		return 0;
+	}
+
+	uint16 level;
+
+	if (!this->asUInt16(node, "Level", level))
+		return 0;
+
+	uint64 exp;
+
+	if (!this->asUInt64(node, "Exp", exp))
+		return 0;
+
+	if (level == 0) {
+		this->invalidWarning(node["Level"], "The minimum level is 1.\n");
+		return 0;
+	}
+	if (level >= MAX_LEVEL) {
+		this->invalidWarning(node["Level"], "Homunculus level %d exceeds maximum level %d, skipping.\n", level, MAX_LEVEL);
+		return 0;
+	}
+
+	std::shared_ptr<s_homun_exp_db> homun_exp = this->find(level);
+	bool exists = homun_exp != nullptr;
+
+	if (!exists) {
+		homun_exp = std::make_shared<s_homun_exp_db>();
+		homun_exp->level = level;
+	}
+
+	homun_exp->exp = static_cast<t_exp>(exp);
+
+	if (!exists)
+		this->put(level, homun_exp);
+
+	return 1;
+}
+
+HomExpDatabase homun_exp_db;
+
+/**
+ * Returns the experience required to level up according to the table.
+ * @param level: Homunculus level
+ * @return Experience
+ */
+t_exp HomExpDatabase::get_nextexp(uint16 level) {
+	auto next_exp = this->find(level);
+	if (next_exp)
+		return next_exp->exp;
+	else
+		return 0;
+}
+
+/**
+* Check if the skill is a valid homunculus skill based skill range or availablity in skill db
+* @param skill_id
+* @return -1 if invalid skill or skill index for homunculus skill in s_homunculus::hskill
+*/
+int16 hom_skill_get_index(uint16 skill_id) {
+	if (!SKILL_CHK_HOMUN(skill_id))
+		return -1;
+	skill_id -= HM_SKILLBASE;
+	if (skill_id >= MAX_HOMUNSKILL)
+		return -1;
+	return skill_id;
+}
+
+/**
+* Get homunculus view data
+* @param class_ Homunculus class
+* @return vd
+*/
+struct view_data* hom_get_viewdata(int32 class_)
+{	//Returns the viewdata for homunculus
+	if (homdb_checkid(class_))
+		return &hom_viewdb[class_-HM_CLASS_BASE];
+	return nullptr;
+}
+
+/**
+* Get homunculus type of specified class_
+* @param class_
+* @return enum homun_type
+*/
+enum homun_type hom_class2type(int32 class_) {
+	int32 mid = hom_class2mapid(class_);
+	if((mid&(HOM_REG|HOM_EVO)) == (HOM_REG|HOM_EVO))
+		return HT_EVO;
+	else if(mid&(HOM_REG))
+		return HT_REG;
+	else if(mid&(HOM_S))
+		return HT_S;
+	else
+		return HT_INVALID;
+}
+
+/**
+* Get homunculus MAPID from specified class
+* @param hom_class
+* @return Homunculus MAPID (see enum hom_mapid)
+*/
+int32 hom_class2mapid(int32 hom_class)
+{
+	switch(hom_class)
+	{
+		// Normal Homunculus
+		case 6001: case 6005:	return MAPID_LIF;
+		case 6002: case 6006:	return MAPID_AMISTR;
+		case 6003: case 6007:	return MAPID_FILIR;
+		case 6004: case 6008:	return MAPID_VANILMIRTH;
+		// Evolved Homunculus
+		case 6009: case 6013:	return MAPID_LIF_E;
+		case 6010: case 6014:	return MAPID_AMISTR_E;
+		case 6011: case 6015:	return MAPID_FILIR_E;
+		case 6012: case 6016:	return MAPID_VANILMIRTH_E;
+		// Homunculus S
+		case 6048:				return MAPID_EIRA;
+		case 6049:				return MAPID_BAYERI;
+		case 6050:				return MAPID_SERA;
+		case 6051:				return MAPID_DIETER;
+		case 6052:				return MAPID_ELANOR;
+
+		default:				return -1;
+	}
+}
+
+/**
+* Add homunculus spirit ball
+* @param hd
+* @param max Maximum number of spirit ball
+*/
+void hom_addspiritball(TBL_HOM *hd, int32 max) {
+	nullpo_retv(hd);
+
+	if (max > MAX_SPIRITBALL)
+		max = MAX_SPIRITBALL;
+	if (hd->homunculus.spiritball < 0)
+		hd->homunculus.spiritball = 0;
+
+	if (hd->homunculus.spiritball && hd->homunculus.spiritball >= max)
+		hd->homunculus.spiritball = max;
+	else
+		hd->homunculus.spiritball++;
+
+	clif_spiritball(hd);
+}
+
+/**
+* Delete homunculus spirit ball
+* @param hd
+* @param count Number spirit ball will be deleted
+* @param type 1 - Update client
+*/
+void hom_delspiritball(TBL_HOM *hd, int32 count, int32 type) {
+	nullpo_retv(hd);
+
+	if (hd->homunculus.spiritball <= 0) {
+		hd->homunculus.spiritball = 0;
+		return;
+	}
+	if (count <= 0)
+		return;
+	if (count > MAX_SPIRITBALL)
+		count = MAX_SPIRITBALL;
+	if (count > hd->homunculus.spiritball)
+		count = hd->homunculus.spiritball;
+
+	hd->homunculus.spiritball -= count;
+	if (!type)
+		clif_spiritball(hd);
+}
+
+/**
+* Set homunculus's dead status
+* @param hd
+* @return flag &1 - Standard dead, &2 - Remove object from map, &4 - Delete object from memory
+*/
+int32 hom_dead(homun_data *hd)
+{
+	//There's no intimacy penalties on death (from Tharis)
+	map_session_data *sd = hd->master;
+
+	//Delete timers when dead.
+	hom_hungry_timer_delete(hd);
+	hd->homunculus.hp = 0;
+
+	if (!sd) //unit remove map will invoke unit free
+		return 3;
+
+#ifdef RENEWAL
+	status_change_end(sd, SC_HOMUN_TIME);
+#endif
+
+	//Remove from map (if it has no intimacy, it is auto-removed from memory)
+	return 3;
+}
+
+/**
+* Vaporize a character's homunculus
+* @param sd
+* @param flag 1: then HP needs to be 80% or above. 2: then set to morph state.
+*/
+int32 hom_vaporize(map_session_data *sd, int32 flag)
+{
+	homun_data *hd;
+
+	nullpo_ret(sd);
+
+	hd = sd->hd;
+	if (!hd || hd->homunculus.vaporize)
+		return 0;
+
+	if (status_isdead(*hd))
+		return 0; //Can't vaporize a dead homun.
+
+	if (flag == HOM_ST_REST && get_percentage(hd->battle_status.hp, hd->battle_status.max_hp) < 80)
+		return 0;
+
+	hd->regen.state.block = 3; //Block regen while vaporized.
+	//Delete timers when vaporized.
+	hom_hungry_timer_delete(hd);
+	hd->homunculus.vaporize = flag ? flag : HOM_ST_REST;
+	if (battle_config.hom_delay_reset_vaporize) {
+		skill_blockhomun_clear(*hd);
+	}
+	status_change_clear(hd, 1);
+	clif_hominfo(sd, sd->hd, 0);
+	hom_save(hd);
+
+#ifdef RENEWAL
+	status_change_end(sd, SC_HOMUN_TIME);
+#endif
+
+	return unit_remove_map(hd, CLR_OUTSIGHT);
+}
+
+/**
+* Delete a homunculus, completely "killing it".
+* @param hd
+*/
+int32 hom_delete(homun_data *hd)
+{
+	map_session_data *sd;
+	nullpo_ret(hd);
+	sd = hd->master;
+
+	if (!sd)
+		return unit_free(hd,CLR_DEAD);
+
+	//This makes it be deleted right away.
+	hd->homunculus.intimacy = 0;
+	// Send homunculus_dead to client
+	hd->homunculus.hp = 0;
+	clif_hominfo(sd, hd, 0);
+	return unit_remove_map(hd,CLR_OUTSIGHT);
+}
+
+/**
+ * Calculates homunculus skill tree for specific evolve/class.
+ * @param hd: Homunculus data
+ * @param skill_tree: Homunculus db skill tree
+ */
+void hom_calc_skilltree_sub(homun_data &hd, std::vector<s_homun_skill_tree_entry> &skill_tree) {
+	bool evolved = false;
+
+	if (hd.homunculus.class_ == hd.homunculusDB->evo_class)
+		evolved = true;
+
+	for (const auto &skit : skill_tree) {
+		uint16 skill_id = skit.id;
+		int16 idx = hom_skill_get_index(skill_id);
+
+		if (skill_id == 0 || idx == -1)
+			continue;
+		if (hd.homunculus.hskill[idx].id)
+			continue; //Skill already known.
+
+		bool fail = false;
+
+		if (!battle_config.skillfree) {
+			if (skit.intimacy > 0 && hd.homunculus.intimacy < skit.intimacy) {
+				continue;
+			}
+			if (skit.evolution && !evolved) {
+				continue;
+			}
+			if (skit.need_level > hd.homunculus.level)
+				continue;
+			for (const auto &needit : skit.need) {
+				if (needit.first > 0 && hom_checkskill(&hd, needit.first) < needit.second) {
+					fail = true;
+					break;
+				}
+			}
+		}
+		if (!fail)
+			hd.homunculus.hskill[idx].id = skill_id;
+	}
+}
+
+/**
+* Calculates homunculus skill tree
+* @param hd: Homunculus data
+*/
+void hom_calc_skilltree(homun_data *hd) {
+	nullpo_retv(hd);
+
+	std::shared_ptr<s_homunculus_db> homun_current = homunculus_db.homun_search(hd->homunculus.class_);
+
+	// If the current class can't be loaded, then for sure there's no prev_class!
+	if (homun_current == nullptr)
+		return;
+
+	std::shared_ptr<s_homunculus_db> homun = homunculus_db.homun_search(hd->homunculus.prev_class);
+
+	/* load previous homunculus form skills first. */
+	if (homun != nullptr) {
+		hom_calc_skilltree_sub(*hd, homun->skill_tree);
+	}
+
+	hom_calc_skilltree_sub(*hd, homun_current->skill_tree);
+
+	clif_homskillinfoblock( *hd );
+}
+
+/**
+* Check skill from homunculus
+* @param hd
+* @param skill_id
+* @return Skill Level or 0 if invalid or unlearned skill
+*/
+int16 hom_checkskill(homun_data *hd,uint16 skill_id)
+{
+	int16 idx = hom_skill_get_index(skill_id);
+	if (idx < 0) // Invalid skill
+		return 0;
+
+	if (!hd)
+		return 0;
+
+	if (hd->homunculus.hskill[idx].id == skill_id)
+		return (hd->homunculus.hskill[idx].lv);
+
+	return 0;
+}
+
+/**
+* Get max level for homunculus skill
+* @param id Skill ID
+* @param b_class
+* @return Skill Level
+*/
+int32 hom_skill_tree_get_max(int32 skill_id, int32 b_class){
+	std::shared_ptr<s_homunculus_db> homun = homunculus_db.homun_search(b_class);
+
+	if (homun == nullptr)
+		return 0;
+
+	for (const auto &skit : homun->skill_tree) {
+		if (skit.id == skill_id)
+			return skit.max;
+	}
+
+	return 0;
+}
+
+ /**
+ * Get required minimum level to learn the skill
+ * @param class_ Homunculus class
+ * @param skill_id Homunculus skill ID
+ * @return Level required or 0 if invalid
+ **/
+uint16 hom_skill_get_min_level(int32 class_, uint16 skill_id) {
+	std::shared_ptr<s_homunculus_db> homun = homunculus_db.homun_search(class_);
+
+	if (homun == nullptr)
+		return 0;
+
+	for (const auto &skit : homun->skill_tree) {
+		if (skit.id == skill_id)
+			return skit.need_level;
+	}
+
+	return 0;
+}
+
+/**
+ * Level up an homunculus skill
+ * @param hd
+ * @param skill_id
+ */
+void hom_skillup(homun_data *hd, uint16 skill_id)
+{
+	int16 idx = 0;
+	nullpo_retv(hd);
+
+	if (hd->homunculus.vaporize)
+		return;
+
+	if ((idx = hom_skill_get_index(skill_id)) < 0)
+		return;
+	if (hd->homunculus.skillpts > 0 &&
+		hd->homunculus.hskill[idx].id &&
+		hd->homunculus.hskill[idx].flag == SKILL_FLAG_PERMANENT && //Don't allow raising while you have granted skills. [Skotlex]
+		hd->homunculus.level >= hom_skill_get_min_level(hd->homunculus.class_, skill_id) &&
+		hd->homunculus.hskill[idx].lv < hom_skill_tree_get_max(skill_id, hd->homunculus.class_)
+		)
+	{
+		hd->homunculus.hskill[idx].lv++;
+		hd->homunculus.skillpts-- ;
+		status_calc_homunculus(hd, SCO_NONE);
+
+		clif_homskillup( *hd, skill_id );
+
+		if (hd->master) {
+			clif_hominfo(hd->master,hd,0);
+		}
+
+		clif_homskillinfoblock( *hd );
+	}
+}
+
+/**
+* Homunculus leveled up
+* @param hd
+*/
+int32 hom_levelup(homun_data *hd)
+{
+	int32 m_class;
+
+	if ((m_class = hom_class2mapid(hd->homunculus.class_)) == -1) {
+		ShowError("hom_levelup: Invalid class %d.\n", hd->homunculus.class_);
+		return 0;
+	}
+
+	struct s_hom_stats *min = nullptr, *max = nullptr;
+
+	/// When homunculus is homunculus S, we check to see if we need to apply previous class stats
+	if(m_class&HOM_S && hd->homunculus.level < battle_config.hom_S_growth_level) {
+		std::shared_ptr<s_homunculus_db> homun_s_db = homunculus_db.homun_search(hd->homunculus.prev_class);
+
+		if (homun_s_db == nullptr) {
+			ShowError("hom_levelup: Failed to find database entry for %d.\n", hd->homunculus.prev_class);
+			return 0;

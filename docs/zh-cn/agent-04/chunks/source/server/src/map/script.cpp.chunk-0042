@@ -1,0 +1,500 @@
+	{// not a npc variable
+		ShowError("buildin_getvariableofnpc: invalid scope (not npc variable)\n");
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	nd = npc_name2id(script_getstr(st,3));
+	if( nd == nullptr || nd->subtype != NPCTYPE_SCRIPT || nd->u.scr.script == nullptr )
+	{// NPC not found or has no script
+		ShowError("buildin_getvariableofnpc: can't find npc %s\n", script_getstr(st,3));
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!nd->u.scr.script->local.vars)
+		nd->u.scr.script->local.vars = i64db_alloc(DB_OPT_RELEASE_DATA);
+
+	push_val2(st->stack, C_NAME, reference_getuid(data), &nd->u.scr.script->local);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Opens a warp portal.
+/// Has no "portal opening" effect/sound, it opens the portal immediately.
+///
+/// warpportal <source x>,<source y>,"<target map>",<target x>,<target y>;
+///
+/// @author blackhole89
+BUILDIN_FUNC(warpportal)
+{
+	int32 spx;
+	int32 spy;
+	uint16 mapindex;
+	int32 tpx;
+	int32 tpy;
+	std::shared_ptr<s_skill_unit_group> group;
+	block_list* bl;
+
+	bl = map_id2bl(st->oid);
+	if( bl == nullptr ) {
+		ShowError("buildin_warpportal: NPC is needed\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	spx = script_getnum(st,2);
+	spy = script_getnum(st,3);
+	mapindex = mapindex_name2id(script_getstr(st, 4));
+	tpx = script_getnum(st,5);
+	tpy = script_getnum(st,6);
+
+	if( mapindex == 0 ) {
+		ShowError("buildin_warpportal: Target map not found %s.\n", script_getstr(st, 4));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	group = skill_unitsetting(bl, AL_WARP, 4, spx, spy, 0);
+	if( group == nullptr )
+		return SCRIPT_CMD_FAILURE;// failed
+	group->val1 = (group->val1<<16)|(int16)0;
+	group->val2 = (tpx<<16) | tpy;
+	group->val3 = mapindex;
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * openmail({<char_id>});
+ **/
+BUILDIN_FUNC(openmail)
+{
+	map_session_data* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+#if PACKETVER < 20150513
+	mail_openmail(sd);
+
+	return SCRIPT_CMD_SUCCESS;
+#else
+	ShowError( "buildin_openmail: This command is not supported for PACKETVER 2015-05-13 or newer.\n" );
+
+	return SCRIPT_CMD_FAILURE;
+#endif
+}
+
+/**
+ * openauction({<char_id>});
+ **/
+BUILDIN_FUNC(openauction)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( !battle_config.feature_auction ) {
+		clif_messagecolor(sd, color_table[COLOR_RED], msg_txt(sd, 517), false, SELF);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	clif_Auction_openwindow(sd);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Retrieves the value of the specified flag of the specified cell.
+///
+/// checkcell("<map name>",<x>,<y>,<type>) -> <bool>
+///
+/// @see cell_chk* constants in src/map/script_constants.hpp for the types
+BUILDIN_FUNC(checkcell)
+{
+	int16 m = map_mapname2mapid(script_getstr(st,2));
+	int16 x = script_getnum(st,3);
+	int16 y = script_getnum(st,4);
+	cell_chk type = (cell_chk)script_getnum(st,5);
+
+	script_pushint(st, map_getcell(m, x, y, type));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Modifies flags of cells in the specified area.
+///
+/// setcell "<map name>",<x1>,<y1>,<x2>,<y2>,<type>,<flag>;
+///
+/// @see cell_* constants in src/map/script_constants.hpp for the types
+BUILDIN_FUNC(setcell)
+{
+	int16 m = map_mapname2mapid(script_getstr(st,2));
+	int16 x1 = script_getnum(st,3);
+	int16 y1 = script_getnum(st,4);
+	int16 x2 = script_getnum(st,5);
+	int16 y2 = script_getnum(st,6);
+	cell_t type = (cell_t)script_getnum(st,7);
+	bool flag = script_getnum(st,8) != 0;
+
+	int32 x,y;
+
+	if( x1 > x2 ) std::swap(x1,x2);
+	if( y1 > y2 ) std::swap(y1,y2);
+
+	for( y = y1; y <= y2; ++y )
+		for( x = x1; x <= x2; ++x )
+			map_setcell(m, x, y, type, flag);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Gets a free cell in the specified area.
+ * getfreecell "<map name>",<rX>,<rY>{,<x>,<y>,<rangeX>,<rangeY>,<flag>};
+ */
+BUILDIN_FUNC(getfreecell)
+{
+	const char *mapn = script_getstr(st, 2), *name_x, *name_y;
+	struct script_data
+		*data_x = script_getdata(st, 3),
+		*data_y = script_getdata(st, 4);
+	block_list* bl = map_id2bl(st->rid);
+	map_session_data *sd = nullptr;
+	int16 m, x = 0, y = 0;
+	int32 rx = -1, ry = -1, flag = 1;
+
+	if (!data_isreference(data_x)) {
+		ShowWarning("script: buildin_getfreecell: rX is not a variable.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (!data_isreference(data_y)) {
+		ShowWarning("script: buildin_getfreecell: rY is not a variable.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+	name_x = reference_getname(data_x),
+	name_y = reference_getname(data_y);
+
+	if (is_string_variable(name_x)) {
+		ShowWarning("script: buildin_getfreecell: rX is a string, must be an INT.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (is_string_variable(name_y)) {
+		ShowWarning("script: buildin_getfreecell: rY is a string, must be an INT.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (not_server_variable(*name_x) || not_server_variable(*name_y)) {
+		if (!script_rid2sd(sd)) {
+			if (not_server_variable(*name_x))
+				ShowError( "buildin_getfreecell: variable '%s' for mapX is not a server variable, but no player is attached!", name_x );
+			else
+				ShowError( "buildin_getfreecell: variable '%s' for mapY is not a server variable, but no player is attached!", name_y );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (script_hasdata(st, 5))
+		x = script_getnum(st, 5);
+
+	if (script_hasdata(st, 6))
+		y = script_getnum(st, 6);
+
+	if (script_hasdata(st, 7))
+		rx = script_getnum(st, 7);
+
+	if (script_hasdata(st, 8))
+		ry = script_getnum(st, 8);
+
+	if (script_hasdata(st, 9))
+		flag = script_getnum(st, 9);
+
+	if (bl && strcmp(mapn, "this") == 0)
+		m = bl->m;
+	else
+		m = map_mapname2mapid(mapn);
+
+	map_search_freecell(bl, m, &x, &y, rx, ry, flag);
+
+	set_reg_num(st, sd, reference_getuid(data_x), name_x, x, data_x->ref);
+	set_reg_num(st, sd, reference_getuid(data_y), name_y, y, data_y->ref);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Mercenary Commands
+ *------------------------------------------*/
+BUILDIN_FUNC(mercenary_create)
+{
+	map_session_data *sd;
+	int32 class_, contract_time;
+
+	if( !script_rid2sd(sd) || sd->md || sd->status.mer_id != 0 )
+		return SCRIPT_CMD_SUCCESS;
+
+	class_ = script_getnum(st,2);
+
+	if( !mercenary_db.exists(class_) )
+		return SCRIPT_CMD_SUCCESS;
+
+	contract_time = script_getnum(st,3);
+	mercenary_create(sd, class_, contract_time);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mercenary_delete)
+{
+	map_session_data *sd;
+	int32 type = 0;
+
+	if( !script_charid2sd(2, sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	if( sd->md == nullptr ) {
+		ShowWarning("buildin_mercenary_delete: Tried to delete a non existant mercenary from player '%s' (AID: %u, CID: %u)\n", sd->status.name, sd->status.account_id, sd->status.char_id);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( script_hasdata(st, 3) ) {
+		type = script_getnum(st, 3);
+		if( type < 0 || type > 3 ) {
+			ShowWarning("buildin_mercenary_delete: invalid type value of %d.\n", type);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	
+	mercenary_delete(sd->md, type);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mercenary_heal)
+{
+	map_session_data *sd;
+	int32 hp, sp;
+
+	if( !script_rid2sd(sd) || sd->md == nullptr )
+		return SCRIPT_CMD_SUCCESS;
+	hp = script_getnum(st,2);
+	sp = script_getnum(st,3);
+
+	status_heal(sd->md, hp, sp, 0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mercenary_sc_start)
+{
+	map_session_data *sd;
+	enum sc_type type;
+	int32 tick, val1;
+
+	if( !script_rid2sd(sd) || sd->md == nullptr )
+		return SCRIPT_CMD_SUCCESS;
+
+	type = (sc_type)script_getnum(st,2);
+	tick = script_getnum(st,3);
+	val1 = script_getnum(st,4);
+
+	status_change_start(nullptr, sd->md, type, 10000, val1, 0, 0, 0, tick, SCSTART_NOTICKDEF);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mercenary_get_calls)
+{
+	map_session_data *sd;
+	int32 guild;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	guild = script_getnum(st,2);
+	switch( guild )
+	{
+		case ARCH_MERC_GUILD:
+			script_pushint(st,sd->status.arch_calls);
+			break;
+		case SPEAR_MERC_GUILD:
+			script_pushint(st,sd->status.spear_calls);
+			break;
+		case SWORD_MERC_GUILD:
+			script_pushint(st,sd->status.sword_calls);
+			break;
+		default:
+			script_pushint(st,0);
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mercenary_set_calls)
+{
+	map_session_data *sd;
+	int32 guild, value, *calls;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	guild = script_getnum(st,2);
+	value = script_getnum(st,3);
+
+	switch( guild )
+	{
+		case ARCH_MERC_GUILD:
+			calls = &sd->status.arch_calls;
+			break;
+		case SPEAR_MERC_GUILD:
+			calls = &sd->status.spear_calls;
+			break;
+		case SWORD_MERC_GUILD:
+			calls = &sd->status.sword_calls;
+			break;
+		default:
+			ShowError("buildin_mercenary_set_calls: Invalid guild '%d'.\n", guild);
+			return SCRIPT_CMD_SUCCESS; // Invalid Guild
+	}
+
+	*calls += value;
+	*calls = cap_value(*calls, 0, INT_MAX);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mercenary_get_faith)
+{
+	map_session_data *sd;
+	int32 guild;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	guild = script_getnum(st,2);
+	switch( guild )
+	{
+		case ARCH_MERC_GUILD:
+			script_pushint(st,sd->status.arch_faith);
+			break;
+		case SPEAR_MERC_GUILD:
+			script_pushint(st,sd->status.spear_faith);
+			break;
+		case SWORD_MERC_GUILD:
+			script_pushint(st,sd->status.sword_faith);
+			break;
+		default:
+			script_pushint(st,0);
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mercenary_set_faith)
+{
+	map_session_data *sd;
+	int32 guild, value, *calls;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	guild = script_getnum(st,2);
+	value = script_getnum(st,3);
+
+	switch( guild )
+	{
+		case ARCH_MERC_GUILD:
+			calls = &sd->status.arch_faith;
+			break;
+		case SPEAR_MERC_GUILD:
+			calls = &sd->status.spear_faith;
+			break;
+		case SWORD_MERC_GUILD:
+			calls = &sd->status.sword_faith;
+			break;
+		default:
+			ShowError("buildin_mercenary_set_faith: Invalid guild '%d'.\n", guild);
+			return SCRIPT_CMD_SUCCESS; // Invalid Guild
+	}
+
+	*calls += value;
+	*calls = cap_value(*calls, 0, INT_MAX);
+	if( mercenary_get_guild(sd->md) == guild )
+		clif_mercenary_updatestatus(sd,SP_MERCFAITH);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*------------------------------------------
+ * Book Reading
+ *------------------------------------------*/
+BUILDIN_FUNC(readbook)
+{
+	map_session_data *sd;
+	int32 book_id, page;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	book_id = script_getnum(st,2);
+	page = script_getnum(st,3);
+
+	clif_readbook(sd->fd, book_id, page);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/******************
+Questlog script commands
+*******************/
+
+/// questinfo <Icon>{,<Map Mark Color>{,<condition>}};
+BUILDIN_FUNC(questinfo)
+{
+	TBL_NPC* nd = map_id2nd(st->oid);
+
+	if (!nd || nd->m == -1) {
+		ShowError("buildin_questinfo: No NPC attached.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 icon = script_getnum(st, 2);
+
+#if PACKETVER >= 20120410
+	switch(icon){
+		case QTYPE_QUEST:
+		case QTYPE_QUEST2:
+		case QTYPE_JOB:
+		case QTYPE_JOB2:
+		case QTYPE_EVENT:
+		case QTYPE_EVENT2:
+		// Warg icons were replaced in this client
+#if PACKETVER < 20170315
+		case QTYPE_WARG:
+		case QTYPE_WARG2:
+#else
+		case QTYPE_CLICKME:
+		case QTYPE_DAILYQUEST:
+		case QTYPE_EVENT3:
+		case QTYPE_JOBQUEST:
+		case QTYPE_JUMPING_PORING:
+#endif
+			// Leave everything as it is
+			break;
+		case QTYPE_NONE:
+		default:
+			// Default to nothing if icon id is invalid.
+			icon = QTYPE_NONE;
+			break;
+	}
+#else
+	if (icon < QTYPE_QUEST || icon > 7) // TODO: check why 7 and not QTYPE_WARG, might be related to icon + 1 below
+		icon = QTYPE_QUEST;
+	else
+		icon = icon + 1;
+#endif
+
+	int32 color = QMARK_NONE;
+
+	if (script_hasdata(st, 3)) {
+		color = script_getnum(st, 3);
+		if (color < QMARK_NONE || color >= QMARK_MAX) {
+			ShowWarning("buildin_questinfo: invalid color '%d', defaulting to QMARK_NONE.\n",color);
+			script_reportfunc(st);

@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#ifndef PC_HPP
+#define PC_HPP
+
+#include <bitset>
+#include <memory>
+#include <vector>
+
+#include <common/cbasetypes.hpp>
+#include <common/database.hpp>
+#include <common/mmo.hpp> // JOB_*, MAX_FAME_LIST, struct fame_list, struct mmo_charstatus
+#include <common/strlib.hpp>// StringBuf
+#include <common/timer.hpp>
+
+#include "battleground.hpp"
+#include "buyingstore.hpp" // struct s_buyingstore
+#include "clif.hpp" //e_wip_block
+#include "itemdb.hpp" // MAX_ITEMGROUP
+#include "map.hpp" // RC_ALL
+#include "mob.hpp" //e_size
+#include "pc_groups.hpp" // s_player_group
+#include "script.hpp" // struct script_reg, struct script_regstr
+#include "searchstore.hpp"  // struct s_search_store_info
+#include "status.hpp" // unit_data
+#include "unit.hpp" // unit_data
+#include "vending.hpp" // struct s_vending
+
+enum AtCommandType : uint8;
+enum e_instance_mode : uint8;
+//enum e_log_chat_type : uint8;
+enum e_log_pick_type : uint32;
+enum sc_type : int16;
+
+class MapGuild;
+
+#define MAX_PC_BONUS 50 /// Max bonus, usually used by item bonus
+#define MAX_PC_FEELHATE 3 /// Max feel hate info
+#define MAX_SPIRITBALL 15 /// Max spirit balls
+#define MAX_DEVOTION 5 /// Max Devotion slots
+#define MAX_SPIRITCHARM 10 /// Max spirit charms
+#define MAX_SOUL_BALL 20 /// Max soul ball
+#define MAX_STELLAR_MARKS 5 /// Max stellar marks
+#define MAX_UNITED_SOULS 12 /// Max united souls
+#define MAX_SERVANTBALL 5 /// Max servant weapons
+#define MAX_SERVANT_SIGN 5 /// Max servant signs
+#define MAX_ABYSSBALL 5 /// Max abyss spheres
+
+#define LANGTYPE_VAR "#langtype"
+#define CASHPOINT_VAR "#CASHPOINTS"
+#define KAFRAPOINT_VAR "#KAFRAPOINTS"
+#define BANK_VAULT_VAR "#BANKVAULT"
+#define ROULETTE_BRONZE_VAR "RouletteBronze"
+#define ROULETTE_SILVER_VAR "RouletteSilver"
+#define ROULETTE_GOLD_VAR "RouletteGold"
+#define COOKMASTERY_VAR "COOK_MASTERY"
+#define PCDIECOUNTER_VAR "PC_DIE_COUNTER"
+#define JOBCHANGE2ND_VAR "jobchange_level"
+#define JOBCHANGE3RD_VAR "jobchange_level_3rd"
+#define JOBCHANGE4TH_VAR "jobchange_level_4th"
+#define TKMISSIONID_VAR "TK_MISSION_ID"
+#define TKMISSIONCOUNT_VAR "TK_MISSION_COUNT"
+#define ATTENDANCE_DATE_VAR "#AttendanceDate"
+#define ATTENDANCE_COUNT_VAR "#AttendanceCounter"
+#define ACHIEVEMENTLEVEL "AchievementLevel"
+
+//Total number of classes (for data storage)
+#define CLASS_COUNT (JOB_MAX - JOB_NOVICE_HIGH + JOB_MAX_BASIC)
+
+//Equip indexes constants. (eg: sd->equip_index[EQI_AMMO] returns the index
+//where the arrows are equipped)
+enum equip_index {
+	EQI_COMPOUND_ON = -1,
+	EQI_ACC_L = 0,
+	EQI_ACC_R,
+	EQI_SHOES,
+	EQI_GARMENT,
+	EQI_HEAD_LOW,
+	EQI_HEAD_MID,
+	EQI_HEAD_TOP,
+	EQI_ARMOR,
+	EQI_HAND_L,
+	EQI_HAND_R,
+	EQI_COSTUME_HEAD_TOP,
+	EQI_COSTUME_HEAD_MID,
+	EQI_COSTUME_HEAD_LOW,
+	EQI_COSTUME_GARMENT,
+	EQI_AMMO,
+	EQI_SHADOW_ARMOR,
+	EQI_SHADOW_WEAPON,
+	EQI_SHADOW_SHIELD,
+	EQI_SHADOW_SHOES,
+	EQI_SHADOW_ACC_R,
+	EQI_SHADOW_ACC_L,
+	EQI_MAX
+};
+
+enum prevent_logout_trigger {
+	PLT_NONE = 0,
+	PLT_LOGIN = 1,
+	PLT_ATTACK = 2,
+	PLT_SKILL = 4,
+	PLT_DAMAGE = 8
+};
+
+enum e_chkitem_result : uint8 {
+	CHKADDITEM_EXIST,
+	CHKADDITEM_NEW,
+	CHKADDITEM_OVERAMOUNT
+};
+
+enum e_additem_result : uint8 {
+	ADDITEM_SUCCESS,
+	ADDITEM_INVALID,
+	ADDITEM_OVERWEIGHT,
+	ADDITEM_ITEM,
+	ADDITEM_OVERITEM,
+	ADDITEM_OVERAMOUNT,
+	ADDITEM_REFUSED_TIME,
+	ADDITEM_STACKLIMIT
+};
+
+enum e_lr_flag : uint8 {
+	LR_FLAG_NONE = 0,
+	LR_FLAG_WEAPON,
+	LR_FLAG_ARROW,
+	LR_FLAG_SHIELD
+};
+
+#ifndef CAPTCHA_ANSWER_SIZE_MIN
+	#define CAPTCHA_ANSWER_SIZE_MIN 1
+#endif
+#ifndef CAPTCHA_ANSWER_SIZE_MAX
+	#define CAPTCHA_ANSWER_SIZE_MAX 16
+#endif
+#ifndef CAPTCHA_BMP_SIZE
+	#define CAPTCHA_BMP_SIZE (2 + 52 + (3 * 220 * 90)) // sizeof("BM") + sizeof(BITMAPV2INFOHEADER) + 24bits 220x90 BMP
+#endif
+#ifndef MAX_CAPTCHA_CHUNK_SIZE
+	#define MAX_CAPTCHA_CHUNK_SIZE 1024
+#endif
+
+struct s_captcha_data {
+	uint16 index;
+	uint16 image_size;
+	char image_data[CAPTCHA_BMP_SIZE];
+	char captcha_answer[CAPTCHA_ANSWER_SIZE_MAX];
+	script_code *bonus_script;
+
+	~s_captcha_data() {
+		if (this->bonus_script)
+			script_free_code(this->bonus_script);
+	}
+};
+
+struct s_macro_detect {
+	std::shared_ptr<s_captcha_data> cd;
+	int32 reporter_aid;
+	int32 retry;
+	int32 timer;
+};
+
+enum e_macro_detect_status : uint8 {
+	MCD_TIMEOUT = 0,
+	MCD_INCORRECT = 1,
+	MCD_GOOD = 2,
+};
+
+enum e_macro_report_status : uint8 {
+	MCR_MONITORING = 0,
+	MCR_NO_DATA = 1,
+	MCR_INPROGRESS = 2,
+};
+
+class CaptchaDatabase : public TypesafeYamlDatabase<int16, s_captcha_data> {
+public:
+	CaptchaDatabase() : TypesafeYamlDatabase("CAPTCHA_DB", 1) {
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef &node) override;
+};
+
+extern CaptchaDatabase captcha_db;
+
+#ifdef VIP_ENABLE
+struct vip_info {
+	uint32 enabled : 1;
+	time_t time;
+	bool disableshowrate; //State to disable clif_display_pinfo(). [Cydh]
+};
+#endif
+
+enum npc_timeout_type {
+	NPCT_INPUT = 0,
+	NPCT_MENU  = 1,
+	NPCT_WAIT  = 2,
+};
+
+/// Enum of Player's Parameter
+enum e_params {
+	PARAM_STR = 0,
+	PARAM_AGI,
+	PARAM_VIT,
+	PARAM_INT,
+	PARAM_DEX,
+	PARAM_LUK,
+	PARAM_POW,
+	PARAM_STA,
+	PARAM_WIS,
+	PARAM_SPL,
+	PARAM_CON,
+	PARAM_CRT,
+	PARAM_MAX
+};
+
+static const char* parameter_names[PARAM_MAX] = {
+	"Str",
+	"Agi",
+	"Vit",
+	"Int",
+	"Dex",
+	"Luk",
+	"Pow",
+	"Sta",
+	"Wis",
+	"Spl",
+	"Con",
+	"Crt"
+};
+
+extern uint32 equip_bitmask[EQI_MAX];
+
+#define equip_index_check(i) ( (i) >= EQI_ACC_L && (i) < EQI_MAX )
+
+/// Miscellaneous item bonus struct
+struct s_item_bonus {
+	uint16 id;
+	int32 val;
+};
+
+/// AddEle bonus struct
+struct s_addele2 {
+	int16 flag, rate;
+	unsigned char ele;
+};
+
+/// AddRace bonus struct
+struct s_addrace2 {
+	int16 flag, rate;
+	unsigned char race;
+};
+
+struct weapon_data {
+	int32 atkmods[SZ_ALL];
+	// all the variables except atkmods get zero'ed in each call of status_calc_pc
+	// NOTE: if you want to add a non-zeroed variable, you need to update the memset call
+	//  in status_calc_pc as well! All the following are automatically zero'ed. [Skotlex]
+	int32 overrefine;
+	int32 star;
+	int32 ignore_def_ele;
+	int32 ignore_def_race;
+	int32 ignore_def_class;
+	int32 def_ratio_atk_ele;
+	int32 def_ratio_atk_race;
+	int32 def_ratio_atk_class;
+	int32 addele[ELE_MAX];
+	int32 addrace[RC_MAX];
+	int32 addclass[CLASS_MAX];
+	int32 addrace2[RC2_MAX];
+	int32 addsize[SZ_MAX];
+	int16 hp_drain_race[RC_MAX];
+	int16 sp_drain_race[RC_MAX];
+	int16 hp_drain_class[CLASS_MAX];
+	int16 sp_drain_class[CLASS_MAX];
+
+	struct drain_data {
+		int16 rate; ///< Success rate 1000 = 100%
+		int16 per;  ///< Drain value/rate per attack
+	} hp_drain_rate, sp_drain_rate;
+
+	std::vector<s_item_bonus> add_dmg;
+	std::vector<s_addele2> addele2;
+	std::vector<s_addrace2> addrace3;
+};
+
+enum e_autospell_flags{
+	AUTOSPELL_FORCE_SELF = 0x0,
+	AUTOSPELL_FORCE_TARGET = 0x1,
+	AUTOSPELL_FORCE_RANDOM_LEVEL = 0x2,
+	AUTOSPELL_FORCE_ALL = 0x3
+};
+
+/// AutoSpell bonus struct
+struct s_autospell {
+	uint16 id, lv, trigger_skill;
+	int16 rate, battle_flag;
+	t_itemid card_id;
+	uint8 flag;
+	bool lock;  // bAutoSpellOnSkill: blocks autospell from triggering again, while being executed
+};
+
+/// AddEff and AddEff2 bonus struct
+struct s_addeffect {
+	enum sc_type sc; /// SC type/effect
+	int32 rate; /// Rate
+	int16 arrow_rate; /// Arrow rate
+	unsigned char flag; /// Flag
+	uint32 duration; /// Duration the effect applied
+};
+
+/// AddEffOnSkill bonus struct
+struct s_addeffectonskill {
+	enum sc_type sc; /// SC type/effect
+	int32 rate; /// Rate
+	int16 skill_id; /// Skill ID
+	unsigned char target; /// Target
+	uint32 duration; /// Duration the effect applied
+};
+
+///Struct of add drop item/group rate
+struct s_add_drop {
+	t_itemid nameid; ///Item ID
+	uint16 group; ///Group ID
+	int32 rate; ///Rate, 1 ~ 10000, -1 ~ -100000
+	int16 race; ///Target Race, bitwise value of 1<<x. if < 0 means Monster ID
+	uint16 class_; ///Target Class, bitwise value of 1<<x
+};
+
+struct s_vanish_bonus {
+	int16 rate; // 1000 = 100%
+	int16 per; // 100 = 100%
+	int32 flag;
+};
+
+/// AutoBonus bonus struct
+struct s_autobonus {
+	int16 rate;
+	uint16 atk_type;
+	uint32 duration;
+	char *bonus_script, *other_script;
+	int32 active;
+	uint32 pos;
+
+	~s_autobonus();
+};
+
+/// Timed bonus 'bonus_script' struct [Cydh]
+struct s_bonus_script_entry {
+	struct script_code *script;
+	StringBuf *script_buf; //Used for comparing and storing on table
+	t_tick tick;
+	uint16 flag;
+	enum efst_type icon;
+	uint8 type; //0 - Ignore; 1 - Buff; 2 - Debuff
+	int32 tid;
+};
+
+/// HP/SP bonus struct
+struct s_regen {
+	int16 value;
+	int32 rate;
+	t_tick tick;
+};
+
+/// Item combo struct
+struct s_combos {
+	script_code *bonus;
+	uint32 id;
+	uint32 pos;
+};
+
+struct s_qi_display {
+	bool is_active;
+	e_questinfo_types icon;
+	e_questinfo_markcolor color;
+};
+
+class map_session_data : public block_list {
+public:
+	struct unit_data ud;
+	struct view_data vd;
+	struct status_data base_status, battle_status;
+	status_change sc;
+	struct regen_data regen;
+	struct regen_data_sub sregen, ssregen;
+	//NOTE: When deciding to add a flag to state or special_state, take into consideration that state is preserved in
+	//status_calc_pc, while special_state is recalculated in each call. [Skotlex]
+	struct s_state {
+		uint32 active : 1; //Marks active player (not active is logging in/out, or changing map servers)
+		uint32 menu_or_input : 1;// if a script is waiting for feedback from the player
+		uint32 dead_sit : 2;
+		e_lr_flag lr_flag;
+		uint32 connect_new : 1;
+		uint32 arrow_atk : 1;
+		uint32 gangsterparadise : 1;
+		uint32 rest : 1;
+		uint32 storage_flag : 3; //0: closed, 1: Normal Storage open, 2: guild storage open [Skotlex], 3: Premium Storage
+		uint32 snovice_dead_flag : 1; //Explosion spirits on death: 0 off, 1 used.
+		uint32 abra_flag : 2; // Abracadabra bugfix by Aru
+		uint32 autocast : 1; // Autospell flag [Inkfish]
+		uint32 autotrade : 3;	//By Fantik. &2 Requested by vending autotrade; &4 Requested by buyingstore autotrade
+		uint32 showdelay :1;
+		uint32 showexp :1;
+		uint32 showzeny :1;
+		uint32 noask :1; // [LuzZza]
+		uint32 trading :1; //[Skotlex] is 1 only after a trade has started.
+		uint32 deal_locked :2; //1: Clicked on OK. 2: Clicked on TRADE
+		uint32 size :2; // for tiny/large types
+		uint32 night :1; //Holds whether or not the player currently has the SI_NIGHT effect on. [Skotlex]
+		uint32 using_fake_npc :1;
+		uint32 rewarp :1; //Signals that a player should warp as soon as he is done loading a map. [Skotlex]
+		uint32 killer : 1;
+		uint32 killable : 1;
+		uint32 doridori : 1;
+		uint32 ignoreAll : 1;
+		uint32 debug_remove_map : 1; // temporary state to track double remove_map's [FlavioJS]
+		uint32 buyingstore : 1;
+		uint32 lesseffect : 1;
+		uint32 vending : 1;
+		uint32 noks : 3; // [Zeph Kill Steal Protection]
+		uint32 changemap : 1;
+		uint32 callshop : 1; // flag to indicate that a script used callshop; on a shop
+		int16 pmap; // Previous map on Map Change
+		uint16 autoloot;
+		t_itemid autolootid[AUTOLOOTITEM_SIZE]; // [Zephyrus]
+		uint16 autoloottype;
+		uint32 autolooting : 1; //performance-saver, autolooting state for @alootid
+		uint32 gmaster_flag : 1;
+		uint32 prevend : 1;//used to flag wheather you've spent 40sp to open the vending or not.
+		bool pending_vending_ui; // flag whether the vending packet should still be sent to this player or not
+		uint32 warping : 1;//states whether you're in the middle of a warp processing
+		uint32 permanent_speed : 1; // When 1, speed cannot be changed through status_calc_pc().
+		bool hold_recalc;
+		uint32 banking : 1; //1 when we using the banking system 0 when closed
+		uint32 hpmeter_visible : 1;
+		unsigned disable_atcommand_on_npc : 1; //Prevent to use atcommand while talking with NPC [Kichi]
+		uint8 isBoundTrading; // Player is currently add bound item to trade list [Cydh]
+		bool ignoretimeout; // Prevent the SECURE_NPCTIMEOUT function from closing current script.
+		uint32 workinprogress : 2; // See clif.hpp::e_workinprogress
+		bool pc_loaded; // Ensure inventory data and status data is loaded before we calculate player stats
+		bool keepshop; // Whether shop data should be removed when the player disconnects
+		bool mail_writing; // Whether the player is currently writing a mail in RODEX or not
+		bool cashshop_open;
+		bool sale_open;
+		bool stylist_open;
+		bool barter_open;
+		bool barter_extended_open;
+		bool enchantgrade_open; // Whether the enchantgrade window is open or not
+		// Bitmask of e_pcblock_action_flag values
+		uint16 block_action;
+		bool refineui_open;
+		t_itemid inventory_expansion_confirmation;
+		uint16 inventory_expansion_amount;
+		t_itemid laphine_synthesis;
+		t_itemid laphine_upgrade;
+		bool roulette_open;
+		t_itemid item_reform;
+		uint64 item_enchant_index;
+	} state;
+	struct {
+		unsigned char no_weapon_damage, no_magic_damage, no_misc_damage;
+		uint32 restart_full_recover : 1;
+		uint32 no_castcancel : 1;
+		uint32 no_castcancel2 : 1;
+		uint32 no_sizefix : 1;
+		uint32 no_gemstone : 2;
+		uint32 intravision : 1; // Maya Purple Card effect [DracoRPG]
+		uint32 perfect_hiding : 1; // [Valaris]
+		uint32 no_knockback : 1;
+		uint32 bonus_coma : 1;
+		uint32 no_mado_fuel : 1; // Disable Magic_Gear_Fuel consumption [Secret]
+		uint32 no_walk_delay : 1;
+	} special_state;
+	uint32 login_id1, login_id2;
+	uint64 class_;	//This is the internal job ID used by the map server to simplify comparisons/queries/etc. [Skotlex]
+	int32 group_id;
+	std::shared_ptr<s_player_group> group;
+	std::bitset<PC_PERM_MAX> permissions; // group permissions have to be copied, because they might be adjusted by atcommand addperm
+	int32 count_rewarp; //count how many time we being rewarped
+
+	int32 langtype;
+	struct mmo_charstatus status;
+
+	// Item Storages
+	struct s_storage storage, premiumStorage;
+	struct s_storage inventory;
+	struct s_storage cart;
+
+	struct item_data* inventory_data[MAX_INVENTORY]; // direct pointers to itemdb entries (faster than doing item_id lookups)
+	int16 equip_index[EQI_MAX];
+	int16 equip_switch_index[EQI_MAX];
+	uint32 weight,max_weight,add_max_weight;
+	int32 cart_weight,cart_num,cart_weight_max;
+	int32 fd;
+	uint16 mapindex;
+	unsigned char head_dir; //0: Look forward. 1: Look right, 2: Look left.
+	t_tick client_tick;

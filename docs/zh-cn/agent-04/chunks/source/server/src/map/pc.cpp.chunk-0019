@@ -1,0 +1,500 @@
+	nullpo_ret(sd);
+
+	if( type < SP_POW || type > SP_CRT ){
+		return 0;
+	}
+
+	int32 base, final_val = pc_getstat(sd, type);
+	int32 trait_points = sd->status.trait_point;
+	int32 max_param = pc_maxparameter(sd, (enum e_params)(PARAM_POW + type - SP_POW));
+
+	base = final_val;
+
+	while (final_val <= max_param && trait_points >= 0) {
+		trait_points -= 1;
+		final_val++;
+	}
+	final_val--;
+
+	return (final_val > base ? final_val - base : 0);
+}
+
+/**
+* Raises a trait stat by the specified amount.
+*
+* Obeys max_traitparameter limits.
+* Subtracts trait status points according to the cost of the increased trait stat points.
+*
+* @param sd       The target character.
+* @param type     The stat to change (see enum _sp)
+* @param increase The stat increase (strictly positive) amount.
+* @retval true  if the trait stat was increased by any amount.
+* @retval false if there were no changes.
+*/
+bool pc_traitstatusup(map_session_data* sd, int32 type, int32 increase)
+{
+	nullpo_ret(sd);
+
+	// check conditions
+	if (type < SP_POW || type > SP_CRT || increase <= 0) {
+		clif_statusupack( *sd, type, false );
+		return false;
+	}
+
+	// check limits
+	int32 current = pc_getstat(sd, type);
+	int32 max_increase = pc_maxtraitparameterincrease(sd, type);
+
+	increase = cap_value(increase, 0, max_increase); // cap to the maximum status points available
+	if (increase <= 0 || current + increase > pc_maxparameter(sd, (enum e_params)(PARAM_POW + type - SP_POW))) {
+		clif_statusupack( *sd, type, false );
+		return false;
+	}
+
+	// check status points
+	int32 needed_points = pc_need_trait_point(sd, type, increase);
+
+	if (needed_points < 0 || needed_points > sd->status.trait_point) { // Sanity check
+		clif_statusupack( *sd, type, false );
+		return false;
+	}
+
+	// set new values
+	int32 final_value = pc_setstat(sd, type, current + increase);
+
+	sd->status.trait_point -= needed_points;
+
+	status_calc_pc(sd, SCO_NONE);
+
+	// update increase cost indicator
+	clif_updatestatus(*sd, static_cast<_sp>( SP_UPOW + type - SP_POW ) );
+
+	// update statpoint count
+	clif_updatestatus(*sd, SP_TRAITPOINT);
+
+	// update stat value
+	clif_statusupack( *sd, type, true, final_value );
+	if (final_value > 255)
+		clif_updatestatus(*sd, static_cast<_sp>( type ) ); // send after the 'ack' to override the truncated value
+
+	//achievement_update_objective(sd, AG_GOAL_STATUS, 1, final_value);
+
+	return true;
+}
+
+/**
+* Raises a trait stat by the specified amount.
+*
+* Obeys max_trait_parameter limits.
+* Does not subtract status points for the cost of the modified stat points.
+*
+* @param sd   The target character.
+* @param type The stat to change (see enum _sp)
+* @param val  The stat increase (or decrease) amount.
+* @return the stat increase amount.
+* @retval 0 if no changes were made.
+*/
+int32 pc_traitstatusup2(map_session_data* sd, int32 type, int32 val)
+{
+	nullpo_ret(sd);
+
+	if (type < SP_POW || type > SP_CRT) {
+		clif_statusupack( *sd, type, false );
+		return 0;
+	}
+
+	int32 need = pc_need_trait_point(sd, type, 1);
+	int32 max = pc_maxparameter(sd, (enum e_params)(PARAM_POW + type - SP_POW)); // set new value
+
+	val = pc_setstat(sd, type, cap_value(pc_getstat(sd, type) + val, 0, max));
+
+	status_calc_pc(sd, SCO_NONE);
+
+	// update increase cost indicator
+	if (need != pc_need_trait_point(sd, type, 1))
+		clif_updatestatus(*sd, static_cast<_sp>( SP_UPOW + type - SP_POW ) );
+
+	// update stat value
+	clif_statusupack( *sd, type, true, val );
+	if (val > 255)
+		clif_updatestatus(*sd, static_cast<_sp>( type ) ); // send after the 'ack' to override the truncated value
+
+	return val;
+}
+
+/*==========================================
+ * Update skill_lv for player sd
+ * Skill point allocation
+ *------------------------------------------*/
+void pc_skillup(map_session_data *sd,uint16 skill_id)
+{
+	uint16 idx = skill_get_index(skill_id);
+
+	nullpo_retv(sd);
+
+	if (!idx) {
+		if (skill_id)
+			ShowError("pc_skillup: Player attempts to level up invalid skill '%d'\n", skill_id);
+		return;
+	}
+
+	// Level up guild skill
+	if (SKILL_CHK_GUILD(skill_id)) {
+		guild_skillup(sd, skill_id);
+		return;
+	}
+	// Level up homunculus skill
+	else if (sd->hd && SKILL_CHK_HOMUN(skill_id)) {
+		hom_skillup(sd->hd, skill_id);
+		return;
+	}
+	else {
+		if( sd->status.skill_point > 0 &&
+			sd->status.skill[idx].id &&
+			sd->status.skill[idx].flag == SKILL_FLAG_PERMANENT && //Don't allow raising while you have granted skills. [Skotlex]
+			sd->status.skill[idx].lv < skill_tree_get_max(skill_id, sd->status.class_) )
+		{
+			sd->status.skill[idx].lv++;
+			sd->status.skill_point--;
+			if( !skill_get_inf(skill_id) || pc_checkskill_summoner(sd, SUMMONER_POWER_LAND) >= 20 || pc_checkskill_summoner(sd, SUMMONER_POWER_SEA) >= 20 )
+				status_calc_pc(sd,SCO_NONE); // Only recalculate for passive skills.
+			else if( sd->status.skill_point == 0 && pc_is_taekwon_ranker(sd) )
+				pc_calc_skilltree(sd); // Required to grant all TK Ranker skills.
+			else
+				pc_check_skilltree(sd); // Check if a new skill can Lvlup
+
+			uint16 lv = sd->status.skill[idx].lv;
+			int32 range = skill_get_range2(sd, skill_id, lv, false);
+			bool upgradable = ( lv < skill_tree_get_max( sd->status.skill[idx].id, sd->status.class_ ) );
+			clif_skillup( *sd, skill_id, lv, range, upgradable );
+			clif_updatestatus(*sd,SP_SKILLPOINT);
+			if( skill_id == GN_REMODELING_CART ) /* cart weight info was updated by status_calc_pc */
+				clif_updatestatus(*sd,SP_CARTINFO);
+			if (pc_checkskill(sd, SG_DEVIL) && ((sd->class_&MAPID_THIRDMASK) == MAPID_STAR_EMPEROR || pc_is_maxjoblv(sd)))
+				clif_status_change(sd, EFST_DEVIL1, 1, 0, 0, 0, 1); //Permanent blind effect from SG_DEVIL.
+			if (!pc_has_permission(sd, PC_PERM_ALL_SKILL)) // may skill everything at any time anyways, and this would cause a huge slowdown
+				clif_skillinfoblock(*sd);
+		}
+		//else
+		//	ShowDebug("Skill Level up failed. ID:%d idx:%d (CID=%d. AID=%d)\n", skill_id, idx, sd->status.char_id, sd->status.account_id);
+	}
+}
+
+/*==========================================
+ * /allskill
+ *------------------------------------------*/
+int32 pc_allskillup(map_session_data *sd)
+{
+	int32 i;
+
+	nullpo_ret(sd);
+
+	for (i = 0; i < MAX_SKILL; i++) {
+		if (sd->status.skill[i].flag != SKILL_FLAG_PERMANENT && sd->status.skill[i].flag != SKILL_FLAG_PERM_GRANTED && sd->status.skill[i].flag != SKILL_FLAG_PLAGIARIZED) {
+			sd->status.skill[i].lv = (sd->status.skill[i].flag == SKILL_FLAG_TEMPORARY) ? 0 : sd->status.skill[i].flag - SKILL_FLAG_REPLACED_LV_0;
+			sd->status.skill[i].flag = SKILL_FLAG_PERMANENT;
+			if (sd->status.skill[i].lv == 0)
+				sd->status.skill[i].id = 0;
+		}
+	}
+
+	if (!pc_grant_allskills(sd, true)) {
+		uint16 sk_id;
+		std::shared_ptr<s_skill_tree> tree = skill_tree_db.find(sd->status.class_);
+
+		if (tree != nullptr && !tree->skills.empty()) {
+			for (const auto &skillsit : tree->skills) {
+				sk_id = skillsit.first;
+				uint16 sk_idx = skill_get_index(sk_id);
+
+				if (sk_idx == 0)
+					continue;
+
+				std::shared_ptr<s_skill_db> skill = skill_db.find(sk_id);
+
+				if (
+					(skill->inf2[INF2_ISQUEST] && !battle_config.quest_skill_learn) ||
+					((skill->inf2[INF2_ISWEDDING] || skill->inf2[INF2_ISSPIRIT])) ||
+					sk_id == SG_DEVIL
+				)
+					continue; //Cannot be learned normally.
+
+				sd->status.skill[sk_idx].id = sk_id;
+				sd->status.skill[sk_idx].lv = skill_tree_get_max(sk_id, sd->status.class_);	// celest
+			}
+		}
+	}
+	status_calc_pc(sd,SCO_NONE);
+	//Required because if you could level up all skills previously,
+	//the update will not be sent as only the lv variable changes.
+	clif_skillinfoblock(*sd);
+	return 0;
+}
+
+/*==========================================
+ * /resetlvl
+ *------------------------------------------*/
+int32 pc_resetlvl(map_session_data* sd,int32 type)
+{
+	int32  i;
+
+	nullpo_ret(sd);
+
+	if (type != 3) //Also reset skills
+		pc_resetskill(sd, 0);
+
+	if(type == 1){
+		sd->status.skill_point=0;
+		sd->status.trait_point = 0;
+		sd->status.base_level=1;
+		sd->status.job_level=1;
+		sd->status.base_exp=0;
+		sd->status.job_exp=0;
+		if(sd->sc.option !=0)
+			sd->sc.option = 0;
+
+		sd->status.str=1;
+		sd->status.agi=1;
+		sd->status.vit=1;
+		sd->status.int_=1;
+		sd->status.dex=1;
+		sd->status.luk=1;
+		sd->status.pow=0;
+		sd->status.sta=0;
+		sd->status.wis=0;
+		sd->status.spl=0;
+		sd->status.con=0;
+		sd->status.crt=0;
+
+		if(sd->status.class_ == JOB_NOVICE_HIGH) {
+			sd->status.status_point=100;	// not 88 [celest]
+			// give platinum skills upon changing
+			pc_skill(sd,NV_FIRSTAID,1,ADDSKILL_PERMANENT);
+			pc_skill(sd,NV_TRICKDEAD,1,ADDSKILL_PERMANENT);
+		}
+	}
+
+	if(type == 2){
+		sd->status.skill_point=0;
+		sd->status.base_level=1;
+		sd->status.job_level=1;
+		sd->status.base_exp=0;
+		sd->status.job_exp=0;
+	}
+	if(type == 3){
+		sd->status.base_level=1;
+		sd->status.base_exp=0;
+	}
+	if(type == 4){
+		sd->status.job_level=1;
+		sd->status.job_exp=0;
+	}
+
+	clif_updatestatus(*sd,SP_STATUSPOINT);
+	clif_updatestatus(*sd,SP_TRAITPOINT);
+	clif_updatestatus(*sd,SP_STR);
+	clif_updatestatus(*sd,SP_AGI);
+	clif_updatestatus(*sd,SP_VIT);
+	clif_updatestatus(*sd,SP_INT);
+	clif_updatestatus(*sd,SP_DEX);
+	clif_updatestatus(*sd,SP_LUK);
+	clif_updatestatus(*sd,SP_POW);
+	clif_updatestatus(*sd,SP_STA);
+	clif_updatestatus(*sd,SP_WIS);
+	clif_updatestatus(*sd,SP_SPL);
+	clif_updatestatus(*sd,SP_CON);
+	clif_updatestatus(*sd,SP_CRT);
+	clif_updatestatus(*sd,SP_BASELEVEL);
+	clif_updatestatus(*sd,SP_JOBLEVEL);
+	clif_updatestatus(*sd,SP_STATUSPOINT);
+	clif_updatestatus(*sd,SP_BASEEXP);
+	clif_updatestatus(*sd,SP_JOBEXP);
+	clif_updatestatus(*sd,SP_NEXTBASEEXP);
+	clif_updatestatus(*sd,SP_NEXTJOBEXP);
+	clif_updatestatus(*sd,SP_SKILLPOINT);
+
+	clif_updatestatus(*sd,SP_USTR);	// Updates needed stat points - Valaris
+	clif_updatestatus(*sd,SP_UAGI);
+	clif_updatestatus(*sd,SP_UVIT);
+	clif_updatestatus(*sd,SP_UINT);
+	clif_updatestatus(*sd,SP_UDEX);
+	clif_updatestatus(*sd,SP_ULUK);	// End Addition
+	clif_updatestatus(*sd,SP_UPOW);
+	clif_updatestatus(*sd,SP_USTA);
+	clif_updatestatus(*sd,SP_UWIS);
+	clif_updatestatus(*sd,SP_USPL);
+	clif_updatestatus(*sd,SP_UCON);
+	clif_updatestatus(*sd,SP_UCRT);
+
+	for(i=0;i<EQI_MAX;i++) { // unequip items that can't be equipped by base 1 [Valaris]
+		if(sd->equip_index[i] >= 0)
+			if( pc_isequip( sd, sd->equip_index[i] ) != ITEM_EQUIP_ACK_OK ){
+				pc_unequipitem(sd,sd->equip_index[i],2);
+			}
+	}
+
+	if ((type == 1 || type == 2 || type == 3) && sd->status.party_id)
+		party_send_levelup(sd);
+
+	status_calc_pc(sd, SCO_FORCE);
+	clif_skillinfoblock(*sd);
+
+	return 0;
+}
+/*==========================================
+ * /resetstate
+ *------------------------------------------*/
+int32 pc_resetstate(map_session_data* sd)
+{
+	nullpo_ret(sd);
+
+	if( sd->status.base_level > pc_maxbaselv( sd ) ){
+		ShowError( "pc_resetstate: Capping the Level to %d to reset the stats of %d:%d, the base level (%d) is greater than the max level supported.\n",
+			pc_maxbaselv( sd ), sd->status.account_id, sd->status.char_id, sd->status.base_level );
+		sd->status.base_level = pc_maxbaselv( sd );
+		clif_updatestatus( *sd, SP_BASELEVEL );
+	}
+
+	sd->status.status_point = statpoint_db.get_table_point( sd->status.base_level );
+	sd->status.trait_point = statpoint_db.get_trait_table_point(sd->status.base_level);
+
+	if( (sd->class_&JOBL_UPPER) || pc_is_primary_fourth(sd->class_) ){
+		sd->status.status_point += battle_config.transcendent_status_points;
+	}
+
+	if (pc_is_trait_job(sd->class_)) {
+		sd->status.trait_point += battle_config.trait_points_job_change;
+	}
+
+	pc_setstat(sd, SP_STR, 1);
+	pc_setstat(sd, SP_AGI, 1);
+	pc_setstat(sd, SP_VIT, 1);
+	pc_setstat(sd, SP_INT, 1);
+	pc_setstat(sd, SP_DEX, 1);
+	pc_setstat(sd, SP_LUK, 1);
+	pc_setstat(sd, SP_POW, 0);
+	pc_setstat(sd, SP_STA, 0);
+	pc_setstat(sd, SP_WIS, 0);
+	pc_setstat(sd, SP_SPL, 0);
+	pc_setstat(sd, SP_CON, 0);
+	pc_setstat(sd, SP_CRT, 0);
+
+	clif_updatestatus(*sd,SP_STR);
+	clif_updatestatus(*sd,SP_AGI);
+	clif_updatestatus(*sd,SP_VIT);
+	clif_updatestatus(*sd,SP_INT);
+	clif_updatestatus(*sd,SP_DEX);
+	clif_updatestatus(*sd,SP_LUK);
+	clif_updatestatus(*sd,SP_POW);
+	clif_updatestatus(*sd,SP_STA);
+	clif_updatestatus(*sd,SP_WIS);
+	clif_updatestatus(*sd,SP_SPL);
+	clif_updatestatus(*sd,SP_CON);
+	clif_updatestatus(*sd,SP_CRT);
+
+	clif_updatestatus(*sd,SP_USTR);	// Updates needed stat points - Valaris
+	clif_updatestatus(*sd,SP_UAGI);
+	clif_updatestatus(*sd,SP_UVIT);
+	clif_updatestatus(*sd,SP_UINT);
+	clif_updatestatus(*sd,SP_UDEX);
+	clif_updatestatus(*sd,SP_ULUK);	// End Addition
+	clif_updatestatus(*sd,SP_UPOW);
+	clif_updatestatus(*sd,SP_USTA);
+	clif_updatestatus(*sd,SP_UWIS);
+	clif_updatestatus(*sd,SP_USPL);
+	clif_updatestatus(*sd,SP_UCON);
+	clif_updatestatus(*sd,SP_UCRT);
+
+	clif_updatestatus(*sd,SP_STATUSPOINT);
+	clif_updatestatus(*sd,SP_TRAITPOINT);
+
+	if( sd->mission_mobid ) { //bugreport:2200
+		sd->mission_mobid = 0;
+		sd->mission_count = 0;
+		pc_setglobalreg(sd, add_str(TKMISSIONID_VAR), 0);
+	}
+
+	status_calc_pc(sd, SCO_NONE);
+
+	return 1;
+}
+
+/*==========================================
+ * /resetskill
+ * if flag&1, perform block resync and status_calc call.
+ * if flag&2, just count total amount of skill points used by player, do not really reset.
+ * if flag&4, just reset the skills if the player class is a bard/dancer type (for changesex.)
+ *------------------------------------------*/
+int32 pc_resetskill(map_session_data* sd, int32 flag)
+{
+	int32 i, skill_point=0;
+	nullpo_ret(sd);
+
+	if( flag&4 && (sd->class_&MAPID_SECONDMASK) != MAPID_BARDDANCER )
+		return 0;
+
+	if( !(flag&2) ) { //Remove stuff lost when resetting skills.
+		/**
+		 * It has been confirmed on official servers that when you reset skills with a ranked Taekwon your skills are not reset (because you have all of them anyway)
+		 **/
+		if( pc_is_taekwon_ranker(sd) )
+			return 0;
+
+		if( pc_checkskill(sd, SG_DEVIL) && ((sd->class_&MAPID_THIRDMASK) == MAPID_STAR_EMPEROR || pc_is_maxjoblv(sd)) )
+			clif_status_load(sd, EFST_DEVIL1, 0); //Remove perma blindness due to skill-reset. [Skotlex]
+		i = sd->sc.option;
+		if( i&OPTION_RIDING && pc_checkskill(sd, KN_RIDING) )
+			i &= ~OPTION_RIDING;
+		if( i&OPTION_FALCON && pc_checkskill(sd, HT_FALCON) )
+			i &= ~OPTION_FALCON;
+		if( i&OPTION_DRAGON && pc_checkskill(sd, RK_DRAGONTRAINING) )
+			i &= ~OPTION_DRAGON;
+		if( i&OPTION_WUG && pc_checkskill(sd, RA_WUGMASTERY) )
+			i &= ~OPTION_WUG;
+		if( i&OPTION_WUGRIDER && pc_checkskill(sd, RA_WUGRIDER) )
+			i &= ~OPTION_WUGRIDER;
+		if( i&OPTION_MADOGEAR && ( sd->class_&MAPID_THIRDMASK ) == MAPID_MECHANIC )
+			i &= ~OPTION_MADOGEAR;
+#ifndef NEW_CARTS
+		if( i&OPTION_CART && pc_checkskill(sd, MC_PUSHCART) )
+			i &= ~OPTION_CART;
+#else
+		if( sd->sc.getSCE(SC_PUSH_CART) )
+			pc_setcart(sd, 0);
+#endif
+		if( i != sd->sc.option )
+			pc_setoption(sd, i);
+
+		if( hom_is_active(sd->hd) && pc_checkskill(sd, AM_CALLHOMUN) )
+			hom_vaporize(sd, HOM_ST_ACTIVE);
+
+		if (sd->sc.getSCE(SC_SPRITEMABLE) && pc_checkskill(sd, SU_SPRITEMABLE))
+			status_change_end(sd, SC_SPRITEMABLE);
+		if (sd->sc.getSCE(SC_SOULATTACK) && pc_checkskill(sd, SU_SOULATTACK))
+			status_change_end(sd, SC_SOULATTACK);
+	}
+
+	for (const auto &skill : skill_db) {
+		uint16 skill_id = skill.second->nameid, idx = skill_get_index(skill_id);
+		uint8 lv = sd->status.skill[idx].lv;
+
+		if (lv == 0 || skill_id == 0)
+			continue;
+
+		if( skill.second->inf2[INF2_ISWEDDING] || skill.second->inf2[INF2_ISSPIRIT] ) //Avoid reseting wedding/linker skills.
+			continue;
+
+		// Don't reset trick dead if not a novice/baby
+		if( skill_id == NV_TRICKDEAD && (sd->class_&MAPID_SECONDMASK) != MAPID_NOVICE )
+		{
+			sd->status.skill[idx].lv = 0;
+			sd->status.skill[idx].flag = SKILL_FLAG_PERMANENT;
+			continue;
+		}
+
+		// do not reset basic skill
+		if (skill_id == NV_BASIC && (sd->class_&MAPID_SECONDMASK) != MAPID_NOVICE )
+			continue;
+
+		if( sd->status.skill[idx].flag == SKILL_FLAG_PERM_GRANTED )
+			continue;

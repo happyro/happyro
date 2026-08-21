@@ -1,0 +1,500 @@
+			}
+
+			// Specific to Boss Class
+			if( status_get_class_( target ) == CLASS_BOSS ){
+				md.damage /= 2;
+			}
+			break;
+#ifdef RENEWAL
+		case NJ_ISSEN:
+			// Official Renewal formula [helvetica]
+			// base damage = currenthp + ((atk * currenthp * skill level) / maxhp)
+			// final damage = base damage + ((mirror image count + 1) / 5 * base damage) - (edef + sdef)
+			// modified def formula
+			{
+				int16 totaldef;
+				struct Damage atk = battle_calc_weapon_attack(src, target, skill_id, skill_lv, 0);
+				status_change *sc = status_get_sc(src);
+
+				md.damage = (int64)sstatus->hp + (atk.damage * (int64)sstatus->hp * skill_lv) / (int64)sstatus->max_hp;
+
+				if (sc && sc->getSCE(SC_BUNSINJYUTSU) && (i = sc->getSCE(SC_BUNSINJYUTSU)->val2) > 0) { // mirror image bonus only occurs if active
+					md.div_ = -(i + 2); // mirror image count + 2
+					md.damage += (md.damage * (((i + 1) * 10) / 5)) / 10;
+				}
+				// modified def reduction, final damage = base damage - (edef + sdef)
+				totaldef = tstatus->def2 + (int16)status_get_def(target);
+				md.damage -= totaldef;
+				md.flag |= BF_WEAPON;
+			}
+			break;
+#endif
+		case GS_FLING:
+			md.damage = (sd ? sd->status.job_level : status_get_lv(src));
+			break;
+		case HVAN_EXPLOSION: //[orn]
+			md.damage = (int64)sstatus->max_hp * (50 + 50 * skill_lv) / 100;
+			break;
+		case RA_CLUSTERBOMB:
+		case RA_FIRINGTRAP:
+		case RA_ICEBOUNDTRAP:
+			md.damage = skill_lv * status_get_dex(src) + status_get_int(src) * 5 ;
+			RE_LVL_TMDMOD();
+			if(sd) {
+				int32 researchskill_lv = pc_checkskill(sd,RA_RESEARCHTRAP);
+				if(researchskill_lv)
+					md.damage = md.damage * 20 * researchskill_lv / (skill_id == RA_CLUSTERBOMB ? 50 : 100);
+				else
+					md.damage = 0;
+			} else
+				md.damage = md.damage * 200 / (skill_id == RA_CLUSTERBOMB ? 50 : 100);
+			nk.set(NK_IGNOREELEMENT);
+			nk.set(NK_IGNOREFLEE);
+			nk.set(NK_IGNOREDEFCARD);
+			break;
+		case NC_MAGMA_ERUPTION_DOTDAMAGE: // 'Eruption' damage
+			md.damage = 800 + 200 * skill_lv;
+			break;
+		case NPC_MAGMA_ERUPTION_DOTDAMAGE:
+			md.damage = 1000 * skill_lv;
+			break;
+		case GN_THORNS_TRAP:
+			md.damage = 100 + 200 * skill_lv + status_get_int(src);
+			break;
+		case RL_B_TRAP:
+			// kRO 2014-02-12: Damage: Caster's DEX, Target's current HP, Skill Level
+			md.damage = status_get_dex(src) * 10 + (skill_lv * 3 * status_get_hp(target)) / 100;
+			if (status_bl_has_mode(target, MD_STATUSIMMUNE))
+				md.damage /= 10;
+			break;
+		case NPC_WIDESUCK:
+			md.damage = tstatus->max_hp * 15 / 100;
+			break;
+		case SU_SV_ROOTTWIST_ATK:
+			md.damage = 100;
+			break;
+		case SP_SOULEXPLOSION:
+			md.damage = tstatus->hp * (20 + 10 * skill_lv) / 100;
+			break;
+		case SJ_NOVAEXPLOSING:
+			// (Base ATK + Weapon ATK) * Ratio
+			md.damage = (sstatus->batk + sstatus->rhw.atk) * (200 + 100 * skill_lv) / 100;
+
+			// Additional Damage
+			md.damage += sstatus->max_hp / (6 - min(5, skill_lv)) + status_get_max_sp(src) * (2 * skill_lv);
+			break;
+		case NPC_CANE_OF_EVIL_EYE:
+			md.damage = 15000;
+			break;
+	}
+
+	if (nk[NK_SPLASHSPLIT]) { // Divide ATK among targets
+		if(mflag > 0)
+			md.damage /= mflag;
+		else
+			ShowError("0 enemies targeted by %d:%s, divide per 0 avoided!\n", skill_id, skill_get_name(skill_id));
+	}
+
+	if (!nk[NK_IGNOREFLEE]) {
+		status_change *sc = status_get_sc(target);
+
+		i = 0; //Temp for "hit or no hit"
+		if(sc && sc->opt1 && sc->opt1 != OPT1_STONEWAIT && sc->opt1 != OPT1_BURNING)
+			i = 1;
+		else {
+			int16
+				flee = tstatus->flee,
+#ifdef RENEWAL
+				hitrate = 0; //Default hitrate
+#else
+				hitrate = 80; //Default hitrate
+#endif
+
+			if(battle_config.agi_penalty_type && battle_config.agi_penalty_target&target->type) {
+				unsigned char attacker_count = unit_counttargeted(target); //256 max targets should be a sane max
+
+				if(attacker_count >= battle_config.agi_penalty_count) {
+					if (battle_config.agi_penalty_type == 1)
+						flee = (flee * (100 - (attacker_count - (battle_config.agi_penalty_count - 1))*battle_config.agi_penalty_num))/100;
+					else //assume type 2: absolute reduction
+						flee -= (attacker_count - (battle_config.agi_penalty_count - 1))*battle_config.agi_penalty_num;
+					if(flee < 1)
+						flee = 1;
+				}
+			}
+
+			hitrate += sstatus->hit - flee;
+#ifdef RENEWAL
+			if( sd ) //in Renewal hit bonus from Vultures Eye is not shown anymore in status window
+				hitrate += pc_checkskill(sd,AC_VULTURE);
+#endif
+			hitrate = cap_value(hitrate, battle_config.min_hitrate, battle_config.max_hitrate);
+
+			if(rnd()%100 < hitrate)
+				i = 1;
+		}
+		if (!i) {
+			md.damage = 0;
+			md.dmg_lv = ATK_FLEE;
+		}
+	}
+
+	md.damage += battle_calc_cardfix(BF_MISC, src, target, nk, s_ele, 0, md.damage, 0, md.flag);
+
+	if (sd && (i = pc_skillatk_bonus(sd, skill_id)))
+		md.damage += (int64)md.damage*i/100;
+
+	if (tsd && (i = pc_sub_skillatk_bonus(tsd, skill_id)))
+		md.damage -= (int64)md.damage*i/100;
+
+	if(!nk[NK_IGNOREELEMENT])
+		md.damage=battle_attr_fix(src, target, md.damage, s_ele, tstatus->def_ele, tstatus->ele_lv);
+
+	//Plant damage
+	if(md.damage < 0)
+		md.damage = 0;
+	else if(md.damage && is_infinite_defense(target, md.flag)) {
+		md.damage = 1;
+	}
+
+	//Apply DAMAGE_DIV_FIX and check for min damage
+	battle_apply_div_fix(&md, skill_id);
+
+	switch(skill_id) {
+		case RA_FIRINGTRAP:
+ 		case RA_ICEBOUNDTRAP:
+			if (md.damage == 1)
+				break;
+			[[fallthrough]];
+		case RA_CLUSTERBOMB:
+			{
+				struct Damage wd = battle_calc_weapon_attack(src,target,skill_id,skill_lv,mflag);
+
+				md.damage += wd.damage;
+			}
+			break;
+		case NJ_ZENYNAGE:
+			if (sd) {
+				if (md.damage > sd->status.zeny)
+					md.damage = sd->status.zeny;
+				pc_payzeny( sd, static_cast<int32>( md.damage ), LOG_TYPE_CONSUME );
+			}
+			break;
+	}
+
+	struct map_data *mapdata = map_getmapdata(target->m);
+
+	md.damage = battle_calc_damage(src,target,&md,md.damage,skill_id,skill_lv);
+	if(mapdata_flag_gvg2(mapdata))
+		md.damage = battle_calc_gvg_damage(src,target,md.damage,skill_id,md.flag);
+	else if(mapdata->getMapFlag(MF_BATTLEGROUND))
+		md.damage = battle_calc_bg_damage(src,target,md.damage,skill_id,md.flag);
+
+	// Skill damage adjustment
+	if ((skill_damage = battle_skill_damage(src,target,skill_id)) != 0)
+		md.damage += (int64)md.damage * skill_damage / 100;
+
+	battle_absorb_damage(target, &md);
+
+	battle_do_reflect(BF_MISC,&md, src, target, skill_id, skill_lv); //WIP [lighta]
+
+	return md;
+}
+
+/**
+ * Calculate vanish damage on a target
+ * @param sd: Player with vanish item
+ * @param target: Target to vanish HP/SP
+ * @param flag: Damage struct battle flag
+ */
+void battle_vanish_damage(map_session_data *sd, block_list *target, int32 flag)
+{
+	nullpo_retv(sd);
+	nullpo_retv(target);
+
+	// bHPVanishRate
+	int16 vanish_hp = 0;
+	if (!sd->hp_vanish.empty()) {
+		for (auto &it : sd->hp_vanish) {
+			if (!(((it.flag)&flag)&BF_WEAPONMASK &&
+				((it.flag)&flag)&BF_RANGEMASK &&
+				((it.flag)&flag)&BF_SKILLMASK))
+				continue;
+			if (it.rate && (it.rate >= 1000 || rnd() % 1000 < it.rate))
+				vanish_hp += it.per;
+		}
+	}
+
+	// bSPVanishRate
+	int16 vanish_sp = 0;
+	if (!sd->sp_vanish.empty()) {
+		for (auto &it : sd->sp_vanish) {
+			if (!(((it.flag)&flag)&BF_WEAPONMASK &&
+				((it.flag)&flag)&BF_RANGEMASK &&
+				((it.flag)&flag)&BF_SKILLMASK))
+				continue;
+			if (it.rate && (it.rate >= 1000 || rnd() % 1000 < it.rate))
+				vanish_sp += it.per;
+		}
+	}
+
+	if (vanish_hp > 0 || vanish_sp > 0)
+		status_percent_damage(sd, target, -vanish_hp, -vanish_sp, false); // Damage HP/SP applied once
+}
+
+/*==========================================
+ * Battle main entry, from skill_attack
+ *------------------------------------------
+ * Credits:
+ *	Original coder unknown
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+struct Damage battle_calc_attack(int32 attack_type,block_list *bl,block_list *target,uint16 skill_id,uint16 skill_lv,int32 flag)
+{
+	struct Damage d;
+
+	switch(attack_type) {
+		case BF_WEAPON: d = battle_calc_weapon_attack(bl,target,skill_id,skill_lv,flag); break;
+		case BF_MAGIC:  d = battle_calc_magic_attack(bl,target,skill_id,skill_lv,flag);  break;
+		case BF_MISC:   d = battle_calc_misc_attack(bl,target,skill_id,skill_lv,flag);   break;
+		default:
+			ShowError("battle_calc_attack: unknown attack type! %d (skill_id=%d, skill_lv=%d)\n", attack_type, skill_id, skill_lv);
+			memset(&d,0,sizeof(d));
+			break;
+		}
+	if( d.damage + d.damage2 < 1 )
+	{	//Miss/Absorbed
+		//Weapon attacks should go through to cause additional effects.
+		if (d.dmg_lv == ATK_DEF /*&& attack_type&(BF_MAGIC|BF_MISC)*/) // Isn't it that additional effects don't apply if miss?
+			d.dmg_lv = ATK_MISS;
+		d.dmotion = 0;
+		if(bl->type == BL_PC)
+			d.div_ = 1;
+		
+		status_change *tsc = status_get_sc(target);
+
+		// Weapon Blocking has the ability to trigger on ATK_MISS as well.
+		if (tsc != nullptr && tsc->getSCE(SC_WEAPONBLOCKING)) {
+			status_change_entry *tsce = tsc->getSCE(SC_WEAPONBLOCKING);
+
+			if (attack_type == BF_WEAPON && rnd() % 100 < tsce->val2) {
+				clif_skill_nodamage(target, *bl, GC_WEAPONBLOCKING, tsce->val1);
+				sc_start(bl, target, SC_WEAPONBLOCK_ON, 100, bl->id, skill_get_time2(GC_WEAPONBLOCKING, tsce->val1));
+			}
+		}
+	}
+	else // Some skills like Weaponry Research will cause damage even if attack is dodged
+		d.dmg_lv = ATK_DEF;
+
+	map_session_data *sd = BL_CAST(BL_PC, bl);
+
+	if (sd && d.damage + d.damage2 > 1)
+		battle_vanish_damage(sd, target, d.flag);
+
+	return d;
+}
+
+/*==========================================
+ * Final damage return function
+ *------------------------------------------
+ * Credits:
+ *	Original coder unknown
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+int64 battle_calc_return_damage(block_list* tbl, block_list *src, int64 *dmg, int32 flag, uint16 skill_id, bool status_reflect){
+	status_change *tsc = status_get_sc(tbl);
+
+	if (tsc) { // These statuses do not reflect any damage (off the target)
+		if (tsc->getSCE(SC_WHITEIMPRISON) || tsc->getSCE(SC_DARKCROW) || tsc->getSCE(SC_KYOMU))
+			return 0;
+	}
+
+	status_change *sc = status_get_sc(src);
+
+	if (sc) {
+		if (skill_id == GN_HELLS_PLANT_ATK && sc->getSCE(SC_HELLS_PLANT))
+			return 0;
+	}
+
+	map_session_data *tsd = BL_CAST(BL_PC, tbl);
+	int64 rdamage = 0, damage = *dmg;
+
+	if (flag & BF_SHORT) {//Bounces back part of the damage.
+		if ( (skill_get_inf2(skill_id, INF2_ISTRAP) || !status_reflect) && tsd && tsd->bonus.short_weapon_damage_return ) {
+			rdamage += damage * tsd->bonus.short_weapon_damage_return / 100;
+		} else if( status_reflect && tsc != nullptr && !tsc->empty() ) {
+			if( tsc->getSCE(SC_REFLECTSHIELD) ) {
+				status_change_entry *sce_d;
+				block_list *d_bl;
+
+				if( (sce_d = tsc->getSCE(SC_DEVOTION)) && (d_bl = map_id2bl(sce_d->val1)) &&
+					((d_bl->type == BL_MER && ((TBL_MER*)d_bl)->master && ((TBL_MER*)d_bl)->master->id == tbl->id) ||
+					(d_bl->type == BL_PC && ((TBL_PC*)d_bl)->devotion[sce_d->val2] == tbl->id)) )
+				{ //Don't reflect non-skill attack if has SC_REFLECTSHIELD from Devotion bonus inheritance
+					if( (!skill_id && battle_config.devotion_rdamage_skill_only && tsc->getSCE(SC_REFLECTSHIELD)->val4) ||
+						!check_distance_bl(tbl,d_bl,sce_d->val3) )
+						return 0;
+				}
+			}
+			if ( tsc->getSCE(SC_REFLECTSHIELD) && skill_id != WS_CARTTERMINATION && skill_id != NPC_MAXPAIN_ATK ) {
+				// Don't reflect non-skill attack if has SC_REFLECTSHIELD from Devotion bonus inheritance
+				if (!skill_id && battle_config.devotion_rdamage_skill_only && tsc->getSCE(SC_REFLECTSHIELD)->val4)
+					rdamage = 0;
+				else {
+					rdamage += damage * tsc->getSCE(SC_REFLECTSHIELD)->val2 / 100;
+				}
+			}
+
+			if (tsc->getSCE(SC_DEATHBOUND) && skill_id != WS_CARTTERMINATION && skill_id != GN_HELLS_PLANT_ATK && !status_bl_has_mode(src,MD_STATUSIMMUNE)) {
+				if (distance_bl(src,tbl) <= 0 || !map_check_dir(map_calc_dir(tbl,src->x,src->y), unit_getdir(tbl))) {
+					int64 rd1 = i64min(damage, status_get_max_hp(tbl)) * tsc->getSCE(SC_DEATHBOUND)->val2 / 100; // Amplify damage.
+
+					*dmg = rd1 * 30 / 100; // Received damage = 30% of amplified damage.
+					clif_skill_damage( *src, *tbl, gettick(), status_get_amotion(src), 0, DMGVAL_IGNORE, 1, RK_DEATHBOUND, tsc->getSCE(SC_DEATHBOUND)->val1, DMG_SINGLE );
+					skill_blown(tbl, src, skill_get_blewcount(RK_DEATHBOUND, tsc->getSCE(SC_DEATHBOUND)->val1), unit_getdir(src), BLOWN_NONE);
+					status_change_end(tbl, SC_DEATHBOUND);
+					rdamage += rd1 * 70 / 100; // Target receives 70% of the amplified damage. [Rytech]
+				}
+			}
+		}
+	} else {
+		if (!status_reflect && tsd && tsd->bonus.long_weapon_damage_return) {
+			rdamage += damage * tsd->bonus.long_weapon_damage_return / 100;
+		}
+	}
+
+	// Config damage adjustment
+	map_data *mapdata = map_getmapdata(src->m);
+
+	if (mapdata_flag_gvg2(mapdata))
+		rdamage = battle_calc_gvg_damage(src, tbl, rdamage, skill_id, flag);
+	else if (mapdata->getMapFlag(MF_BATTLEGROUND))
+		rdamage = battle_calc_bg_damage(src, tbl, rdamage, skill_id, flag);
+	else if (mapdata->getMapFlag(MF_PVP))
+		rdamage = battle_calc_pk_damage(*src, *tbl, rdamage, skill_id, flag);
+
+	// Skill damage adjustment
+	int32 skill_damage = battle_skill_damage(src, tbl, skill_id);
+
+	if (skill_damage != 0) {
+		rdamage += rdamage * skill_damage / 100;
+	}
+
+	int64 reduce = 0;
+	map_session_data* sd = BL_CAST(BL_PC, src);
+
+	if (sd && sd->bonus.reduce_damage_return != 0) {
+		reduce += (sd->bonus.reduce_damage_return);
+	}
+
+	if (sc) {
+		if (status_reflect && sc->getSCE(SC_REFLECTDAMAGE)) {
+			reduce += sc->getSCE(SC_REFLECTDAMAGE)->val2;
+		}
+		if (sc->getSCE(SC_VENOMBLEED) && sc->getSCE(SC_VENOMBLEED)->val3 == 0) {
+			reduce += sc->getSCE(SC_VENOMBLEED)->val2;
+		}
+		if (sc->getSCE(SC_REF_T_POTION))
+			reduce += 100;
+	}
+
+	if (rdamage > 0) {
+		rdamage -= rdamage * i64min(100, reduce) / 100;
+		rdamage = i64max(rdamage, 1);
+	}
+
+	if (rdamage == 0)
+		return 0; // No reflecting damage calculated.
+	else
+		return cap_value(rdamage, 1, status_get_max_hp(tbl));
+}
+
+/** Check for Coma damage
+ * @param sd: Source player
+ * @param bl: Target
+ * @param attack_type: Attack type
+ * @return True if Coma applies, false if Coma does not apply
+ */
+bool battle_check_coma( const map_session_data& sd, const block_list& target, e_battle_flag attack_type )
+{
+	const status_data* tstatus = status_get_status_data(target);
+	const mob_data* dstmd = BL_CAST(BL_MOB,&target);
+
+	// Coma
+	if (sd.special_state.bonus_coma && (!dstmd || (!util::vector_exists(status_get_race2(dstmd), RC2_GVG) && status_get_class(dstmd) != CLASS_BATTLEFIELD))) {
+		int32 rate = 0;
+		rate += sd.indexed_bonus.coma_class[tstatus->class_] + sd.indexed_bonus.coma_class[CLASS_ALL];
+		if(!status_bl_has_mode(&target, MD_STATUSIMMUNE))
+			rate += sd.indexed_bonus.coma_race[tstatus->race] + sd.indexed_bonus.coma_race[RC_ALL];
+		if (attack_type&BF_WEAPON) {
+			rate += sd.indexed_bonus.weapon_coma_class[tstatus->class_] + sd.indexed_bonus.weapon_coma_class[CLASS_ALL];
+			if (!status_bl_has_mode(&target, MD_STATUSIMMUNE)) {
+				rate += sd.indexed_bonus.weapon_coma_ele[tstatus->def_ele] + sd.indexed_bonus.weapon_coma_ele[ELE_ALL];
+				rate += sd.indexed_bonus.weapon_coma_race[tstatus->race] + sd.indexed_bonus.weapon_coma_race[RC_ALL];
+			}
+		}
+		if (rate > 0 && rnd_chance(rate, 10000))
+			return true;
+	}
+	return false;
+}
+
+/**
+ * Calculate Vellum damage on a target
+ * @param sd: Player with vanish item
+ * @param target: Target to vanish HP/SP
+ * @param wd: Damage struct reference
+ * @return True on damage done or false if not
+ */
+bool battle_vellum_damage(map_session_data *sd, block_list *target, struct Damage *wd)
+{
+	nullpo_retr(false, sd);
+	nullpo_retr(false, target);
+	nullpo_retr(false, wd);
+
+	status_data* tstatus = status_get_status_data(*target);
+	// bHPVanishRaceRate
+	int16 vellum_rate_hp = cap_value(sd->hp_vanish_race[tstatus->race].rate + sd->hp_vanish_race[RC_ALL].rate, 0, INT16_MAX);
+	int8 vellum_hp = cap_value(sd->hp_vanish_race[tstatus->race].per + sd->hp_vanish_race[RC_ALL].per, INT8_MIN, INT8_MAX);
+	// bSPVanishRaceRate
+	int16 vellum_rate_sp = cap_value(sd->sp_vanish_race[tstatus->race].rate + sd->sp_vanish_race[RC_ALL].rate, 0, INT16_MAX);
+	int8 vellum_sp = cap_value(sd->sp_vanish_race[tstatus->race].per + sd->sp_vanish_race[RC_ALL].per, INT8_MIN, INT8_MAX);
+
+	// The HP and SP damage bonus from these items don't stack because of the special damage display for SP.
+	// Vellum damage overrides any other damage done as well.
+	if (vellum_hp && vellum_rate_hp && (vellum_rate_hp >= 1000 || rnd() % 1000 < vellum_rate_hp)) {
+		wd->damage = apply_rate(tstatus->max_hp, vellum_hp);
+		wd->damage2 = 0;
+	} else if (vellum_sp && vellum_rate_sp && (vellum_rate_sp >= 1000 || rnd() % 1000 < vellum_rate_sp)) {
+		wd->damage = apply_rate(tstatus->max_sp, vellum_sp);
+		wd->damage2 = 0;
+		wd->isspdamage = true;
+	} else
+		return false;
+
+	return true;
+}
+
+/*===========================================
+ * Perform battle drain effects (HP/SP loss)
+ *-------------------------------------------*/
+void battle_drain(map_session_data *sd, block_list *tbl, int64 rdamage, int64 ldamage, int32 race, int32 class_)
+{
+	struct weapon_data *wd;
+	int64 *damage;
+	int32 thp = 0, // HP gained
+		tsp = 0, // SP gained
+		//rhp = 0, // HP reduced from target
+		//rsp = 0, // SP reduced from target
+		hp = 0, sp = 0;
+
+	if (!CHK_RACE(race) && !CHK_CLASS(class_))
+		return;
+
+	for (int32 i = 0; i < 4; i++) {
+		//First two iterations: Right hand
+		if (i < 2) {
+			wd = &sd->right_weapon;
+			damage = &rdamage;

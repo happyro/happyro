@@ -1,0 +1,500 @@
+/**
+ * UI/Components/EnchantGrade/EnchantGrade.js
+ *
+ * EnchantGrade Window
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ */
+
+import DB from 'DB/DBManager.js';
+import EffectConst from 'DB/Effects/EffectConst.js';
+import Network from 'Network/NetworkManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import EffectManager from 'Renderer/EffectManager.js';
+import Client from 'Core/Client.js';
+import Session from 'Engine/SessionStorage.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import Announce from 'UI/Components/Announce/Announce.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Equipment from 'UI/Components/Equipment/Equipment.js';
+import Inventory from 'UI/Components/Inventory/Inventory.js';
+import ItemCompare from 'UI/Components/ItemCompare/ItemCompare.js';
+import ItemInfo from 'UI/Components/ItemInfo/ItemInfo.js';
+import htmlText from './EnchantGrade.html?raw';
+import cssText from './EnchantGrade.css?raw';
+
+/**
+ * Create Component
+ */
+const EnchantGrade = new GUIComponent('EnchantGrade', cssText);
+
+/**
+ * Helper: query inside shadow root
+ */
+function _root() {
+	return EnchantGrade._shadow || EnchantGrade._host;
+}
+
+/**
+ * Render HTML
+ */
+EnchantGrade.render = () => htmlText;
+
+/**
+ * Variables for current EnchantGrade Session
+ */
+let gradingMaterials = [];
+let EnchantGrade_item_index = 0;
+let EnchantGrade_item_mat = 0;
+let EnchantGrade_result = 0;
+let EnchantGrade_can_cont = true;
+let EnchantGrade_blessing_used = false;
+let EnchantGrade_currentBlessing = 0;
+let EnchantGrade_current_success = 0;
+let materialNormal, materialOver, materialPick, startNormal, startDisable;
+let _materialSlotAbort = null;
+EnchantGrade.imageLoopTimeout = {};
+
+/**
+ * Mapping for Grade Level
+ * @var {Grade} : @var {Grade String}
+ */
+const GradeMapping = {
+	1: 'D',
+	2: 'C',
+	3: 'B',
+	4: 'A'
+};
+
+/**
+ * Mapping for notification messages based on scenarios
+ * @var {scenario} : @var {array of message objects}
+ * message object: { id: messageID, color: hexColor }
+ */
+const scenarioMsgMapping = {
+	initial: [
+		{ id: 3870, color: '#de0808' },
+		{ id: 3871, color: '#00ef5a' },
+		{ id: 3872, color: '#00ef5a' }
+	],
+	waiting: [{ id: 3707, color: '#de0808' }],
+	cannot_proceed: [{ id: 3821, color: '#de0808' }],
+	insufficient: [{ id: 3708, color: '#de0808' }],
+	destroyable: [{ id: 3712, color: '#de0808' }],
+	non_destroyable: [{ id: 3822, color: '#00ef5a' }]
+};
+
+/**
+ * Variables for images to play in between phases
+ */
+const images = {
+	idle: ['bg_gradeitem1.bmp', 'bg_gradeitem2.bmp', 'bg_gradeitem3.bmp', 'bg_gradeitem4.bmp', 'bg_gradeitem5.bmp'],
+	process: ['gradewheel1.bmp', 'gradewheel2.bmp', 'gradewheel3.bmp']
+};
+
+/**
+ * Initialize UI
+ */
+EnchantGrade.init = function init() {
+	const root = _root();
+
+	this._host.style.top = '200px';
+	this._host.style.left = '300px';
+
+	const closeBtn = root.querySelector('.close_btn');
+	if (closeBtn) {
+		closeBtn.addEventListener('click', onEnchantGradeClose);
+	}
+
+	const bigCloseBtn = root.querySelector('.footer .big_close_btn');
+	if (bigCloseBtn) {
+		bigCloseBtn.addEventListener('click', onEnchantGradeClose);
+	}
+
+	this.draggable('.titlebar');
+
+	const dropProxy = root.querySelector('.enchant_drop_proxy');
+	if (dropProxy) {
+		dropProxy.addEventListener('drop', onItemDrop);
+		dropProxy.addEventListener('dragover', stopPropagation);
+	}
+
+	const enchantContainer = root.querySelector('.enchant_container');
+	if (enchantContainer) {
+		enchantContainer.addEventListener('dragstart', e => {
+			const item = e.target.closest('.item');
+			if (item) {
+				onItemDragStart(e);
+			}
+		});
+		enchantContainer.addEventListener('dragend', e => {
+			const item = e.target.closest('.item');
+			if (item) {
+				onItemDragEnd(e);
+			}
+		});
+		enchantContainer.addEventListener('contextmenu', e => {
+			const item = e.target.closest('.item');
+			if (item) {
+				onItemInfo.call(item, e);
+			}
+		});
+		enchantContainer.addEventListener('dblclick', e => {
+			const item = e.target.closest('.item');
+			if (item) {
+				onRemoveItem();
+			}
+		});
+	}
+
+	const materialSlots = root.querySelectorAll('.material_slot');
+	materialSlots.forEach(slot => {
+		slot.addEventListener('contextmenu', e => {
+			const item = e.target.closest('.item');
+			if (item) {
+				onItemInfo.call(item, e);
+			}
+		});
+	});
+
+	const bedContainer = root.querySelector('.BED_container');
+	if (bedContainer) {
+		bedContainer.addEventListener('contextmenu', e => {
+			const item = e.target.closest('.item');
+			if (item) {
+				onItemInfo.call(item, e);
+			}
+		});
+	}
+
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/btn_material.bmp', d => {
+		materialNormal = d;
+		root.querySelectorAll('.material_slot').forEach(slot => {
+			slot.style.backgroundImage = `url(${d})`;
+		});
+	});
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/btn_start_disable.bmp', d => {
+		startDisable = d;
+		const startBtn = root.querySelector('.start_grade');
+		if (startBtn) {
+			startBtn.style.backgroundImage = `url(${d})`;
+		}
+	});
+};
+
+/**
+ * Append to body
+ */
+EnchantGrade.onAppend = function onAppend() {
+	const root = _root();
+	EnchantGrade.hammer = 0;
+
+	const enchantGradeButton = root.querySelector('.EnchantGrade_button');
+	if (enchantGradeButton) {
+		enchantGradeButton.style.display = 'block';
+	}
+
+	setMessages('initial');
+	clearTimeout(EnchantGrade.imageLoopTimeout);
+};
+
+/**
+ * Remove EnchantGrade Window (and so clean up items)
+ */
+EnchantGrade.onRemove = function onRemove() {
+	onRemoveItem();
+	clearEnchantGradeStates();
+};
+
+/**
+ * Completely clean-up variables for grading
+ */
+function clearEnchantGradeStates() {
+	gradingMaterials = [];
+	EnchantGrade_item_index = 0;
+	EnchantGrade_item_mat = 0;
+	EnchantGrade_result = 0;
+	EnchantGrade_can_cont = true;
+	EnchantGrade_blessing_used = false;
+	EnchantGrade_currentBlessing = 0;
+	EnchantGrade_current_success = 0;
+	EnchantGrade.imageLoopTimeout = {};
+}
+
+/**
+ * Stop event propagation
+ */
+function stopPropagation(event) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+}
+
+/**
+ * Open EnchantGrade UI
+ */
+EnchantGrade.onOpenEnchantGradeUI = function onOpenEnchantGradeUI() {
+	EnchantGrade.append();
+
+	const invUI = Inventory.getUI();
+	const isInventoryOpen =
+		invUI && invUI._host ? invUI._host.isConnected && invUI._host.style.display !== 'none' : false;
+
+	if (!isInventoryOpen) {
+		invUI.toggle();
+	}
+
+	const hostEl = EnchantGrade._host;
+	const hostRect = hostEl.getBoundingClientRect();
+	const invHost = invUI._host || (invUI.ui && invUI.ui[0]);
+	const invHeight = invHost ? invHost.offsetHeight : 0;
+
+	if (invHost) {
+		invHost.style.position = 'absolute';
+		invHost.style.top = `${hostRect.top ? hostRect.top + (hostRect.height - invHeight) : 200}px`;
+		invHost.style.left = `${hostRect.left ? hostRect.left + hostRect.width : 300}px`;
+	}
+
+	return false;
+};
+
+/**
+ * Handles sending request to server to close EnchantGrade UI
+ */
+function onEnchantGradeClose() {
+	EnchantGrade.remove();
+
+	const pkt = new PACKET.CZ.GRADE_ENCHANT_CLOSE_UI();
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Function to control phases and image looping
+ * @param {string} phase - The phase to control
+ * @param {boolean} shouldLoop - Whether the phase should loop
+ * @param {number} interval - Interval between image changes in milliseconds
+ * @param {string} targetdiv - The target div to update images
+ * @param {function} callback - A callback function to execute after the phase completes
+ */
+function controlPhase(phase, shouldLoop, interval, targetdiv, callback) {
+	if (EnchantGrade.imageLoopTimeout[phase]) {
+		clearTimeout(EnchantGrade.imageLoopTimeout[phase]);
+		EnchantGrade.imageLoopTimeout[phase] = null;
+	}
+
+	let currentImageIndex = 0;
+	const imageArray = images[phase];
+
+	if (!imageArray) {
+		console.error('Invalid phase:', phase);
+		return;
+	}
+
+	function showImages() {
+		Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/' + imageArray[currentImageIndex], function (data) {
+			const root = _root();
+			const target = root.querySelector(targetdiv);
+			if (target) {
+				target.style.backgroundImage = `url(${data})`;
+				target.style.visibility = 'visible';
+			}
+			currentImageIndex++;
+
+			if (currentImageIndex >= imageArray.length) {
+				if (shouldLoop) {
+					currentImageIndex = 0;
+				} else {
+					EnchantGrade.imageLoopTimeout[phase] = null;
+					if (callback && typeof callback === 'function') {
+						callback();
+					}
+					return;
+				}
+			}
+
+			EnchantGrade.imageLoopTimeout[phase] = setTimeout(showImages, interval);
+		});
+	}
+
+	showImages();
+}
+
+/**
+ * Stops the image loop for a given phase
+ * @param {string} phase - The phase to stop the image loop for
+ */
+function stopPhase(phase) {
+	if (EnchantGrade.imageLoopTimeout[phase]) {
+		clearTimeout(EnchantGrade.imageLoopTimeout[phase]);
+		EnchantGrade.imageLoopTimeout[phase] = null;
+	}
+}
+
+/**
+ * Drop an item from inventory to EnchantGrade UI
+ *
+ * @param {event}
+ */
+function onItemDrop(event) {
+	let item, data;
+	event.stopImmediatePropagation();
+
+	try {
+		data = JSON.parse(event.dataTransfer.getData('Text'));
+		item = data.data;
+	} catch (_e) {
+		return;
+	}
+
+	if (data.type !== 'item' || data.from !== 'Inventory') {
+		return;
+	}
+
+	if (item) {
+		EnchantGrade.onRequestItemEnchantGrade(item);
+	}
+}
+
+/**
+ * Handles sending the server packet request to EnchantGrade an item
+ */
+EnchantGrade.onRequestItemEnchantGrade = function onRequestItemEnchantGrade(item) {
+	const pkt = new PACKET.CZ.GRADE_ENCHANT_SELECT_EQUIPMENT();
+	pkt.index = item.index;
+	Network.sendPacket(pkt);
+};
+
+/**
+ * Enables the item drop proxy to add dropped items in the EnchantGrade window
+ */
+function enableDropProxy() {
+	const root = _root();
+	const proxy = root.querySelector('.enchant_drop_proxy');
+	if (proxy) {
+		proxy.style.display = 'block';
+	}
+	const container = root.querySelector('.enchant_container');
+	if (container) {
+		container.style.visibility = 'hidden';
+	}
+}
+
+/**
+ * Disable the item drop proxy to add dropped items in the EnchantGrade window
+ */
+function disableDropProxy() {
+	const root = _root();
+	const proxy = root.querySelector('.enchant_drop_proxy');
+	if (proxy) {
+		proxy.style.display = 'none';
+	}
+	const container = root.querySelector('.enchant_container');
+	if (container) {
+		container.style.visibility = 'visible';
+	}
+}
+
+/**
+ * Handles the packet received from the server
+ * @param {pkt} - PACKET.ZC.REFINING_MATERIAL_LIST
+ */
+function onEnchantGradeUIUpdateMaterials(pkt) {
+	const root = _root();
+
+	if (pkt && pkt.materialList.length > 0) {
+		disableDropProxy();
+
+		const existingItem = root.querySelector('.enchant_container .item');
+		if (existingItem) {
+			onRemoveItem();
+		}
+
+		EnchantGrade_item_index = pkt.index;
+		EnchantGrade_current_success = pkt.success_chance;
+		const item = Inventory.getUI().getItemByIndex(pkt.index);
+
+		gradingMaterials = pkt.materialList;
+
+		onPopulateMaterials();
+
+		clearTimeout(EnchantGrade.imageLoopTimeout['idle']);
+		controlPhase('idle', true, 225, '.grade_tank_container');
+
+		const it = DB.getItemInfo(item.ITID);
+		const content = root.querySelector('.enchant_container');
+
+		EnchantGrade_can_cont = EnchantGrade_current_success > 0;
+		setMessages(EnchantGrade_can_cont ? 'waiting' : 'cannot_proceed');
+
+		const itemDiv = document.createElement('div');
+		itemDiv.className = 'item';
+		itemDiv.setAttribute('data-index', item.index);
+		itemDiv.setAttribute('draggable', 'true');
+		itemDiv.innerHTML = '<div class="icon"></div><div class="grade"></div>';
+		content.appendChild(itemDiv);
+
+		Client.loadFile(
+			DB.INTERFACE_PATH +
+				'item/' +
+				(item.IsIdentified ? it.identifiedResourceName : it.unidentifiedResourceName) +
+				'.bmp',
+			function (data) {
+				const icon = content.querySelector(`.item[data-index="${item.index}"] .icon`);
+				if (icon) {
+					icon.style.backgroundImage = `url(${data})`;
+				}
+			}
+		);
+
+		if (item.enchantgrade) {
+			Client.loadFile(
+				DB.INTERFACE_PATH + 'grade_enchant/grade_icon' + item.enchantgrade + '.bmp',
+				function (data) {
+					const grade = content.querySelector(`.item[data-index="${item.index}"] .grade`);
+					if (grade) {
+						grade.style.backgroundImage = `url(${data})`;
+					}
+				}
+			);
+		}
+
+		const gradeChance = root.querySelector('.probability');
+		if (gradeChance) {
+			gradeChance.textContent = `${EnchantGrade_current_success}%`;
+		}
+
+		const zenyCost = root.querySelector('.zeny_cost_container');
+		if (zenyCost) {
+			zenyCost.textContent = '0';
+		}
+
+		const bless = pkt.blessing_info;
+		if (!bless || !bless.id) {
+			return;
+		}
+
+		const blessItem = DB.getItemInfo(bless.id);
+		const invBless = Inventory.getUI().getItemById(bless.id);
+		const invCount = invBless ? invBless.count : 0;
+
+		const bedContainer = root.querySelector('.BED_container');
+		if (bedContainer) {
+			bedContainer.innerHTML =
+				`<div class="item" data-index="${bless.id}">` +
+				'<div class="icon"></div>' +
+				'</div>' +
+				`<div class="additional_mat_name" style="margin-right: 3px; margin-left: 7px;">${blessItem.identifiedDisplayName}</div>` +
+				`<div class="additonal_mat_amount">${EnchantGrade_currentBlessing} ea</div>`;
+		}
+
+		Client.loadFile(
+			DB.INTERFACE_PATH +
+				'item/' +
+				(blessItem.IsIdentified ? blessItem.identifiedResourceName : blessItem.unidentifiedResourceName) +
+				'.bmp',
+			data => {
+				const icon = root.querySelector('.BED_container .icon');
+				if (icon) {
+					icon.style.backgroundImage = `url(${data})`;
+				}

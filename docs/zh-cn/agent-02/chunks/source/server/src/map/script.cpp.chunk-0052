@@ -1,0 +1,500 @@
+ **/
+BUILDIN_FUNC(channel_ban) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2);
+	uint32 char_id = script_getnum(st,3);
+	TBL_PC *tsd;
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_ban: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (ch->char_id == char_id) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	tsd = map_charid2sd(char_id);
+	if (tsd && pc_has_permission(tsd,PC_PERM_CHANNEL_ADMIN)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (!idb_exists(ch->banned, char_id)) {
+		struct chan_banentry *cbe;
+		char output[CHAT_SIZE_MAX+1];
+
+		CREATE(cbe, struct chan_banentry, 1);
+		cbe->char_id = char_id;
+		if (tsd) {
+			strcpy(cbe->char_name,tsd->status.name);
+			channel_clean(ch,tsd,0);
+			safesnprintf(output, CHAT_SIZE_MAX, msg_txt(tsd,769), ch->alias, tsd->status.name); // %s %s has been banned.
+		}
+		else
+			safesnprintf(output, CHAT_SIZE_MAX, msg_txt(tsd,769), ch->alias, "****"); // %s %s has been banned.
+		idb_put(ch->banned, char_id, cbe);
+		clif_channel_msg(ch,output,ch->color);
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Ban player from a channel
+ * channel_unban "<chname>",<char_id>;
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_unban) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2);
+	uint32 char_id = script_getnum(st,3);
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_unban: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (ch->char_id == char_id) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (idb_exists(ch->banned, char_id)) {
+		char output[CHAT_SIZE_MAX+1];
+		TBL_PC *tsd = map_charid2sd(char_id);
+		if (tsd)
+			safesnprintf(output, CHAT_SIZE_MAX, msg_txt(tsd,770), ch->alias, tsd->status.name); // %s %s has been unbanned
+		else
+			safesnprintf(output, CHAT_SIZE_MAX, msg_txt(tsd,770), ch->alias, "****"); // %s %s has been unbanned.
+		idb_remove(ch->banned, char_id);
+		clif_channel_msg(ch,output,ch->color);
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Kick player from a channel
+ * channel_kick "<chname>",<char_id>;
+ * channel_kick "<chname>","<char_name>";
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_kick) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2);
+	TBL_PC *tsd = nullptr;
+	int32 res = 1;
+
+	if (script_isstring(st, 3)) {
+		const char *name = script_getstr(st, 3);
+
+		if (!(tsd = map_nick2sd(name,false))) {
+			ShowError("buildin_channel_kick: Player with nick '%s' is not online\n", name);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		int32 char_id = script_getnum(st, 3);
+
+		if (!(tsd = map_charid2sd(char_id))) {
+			ShowError("buildin_channel_kick: Player with char_id '%d' is not online\n", char_id);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (!(ch = channel_name2channel((char *)chname, tsd, 0))) {
+		ShowError("buildin_channel_kick: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (channel_pc_haschan(tsd, ch) < 0 || ch->char_id == tsd->status.char_id || pc_has_permission(tsd,PC_PERM_CHANNEL_ADMIN)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch(ch->type){
+		case CHAN_TYPE_ALLY: res = channel_pcquit(tsd,3); break;
+		case CHAN_TYPE_MAP: res = channel_pcquit(tsd,4); break;
+		default: res = channel_clean(ch,tsd,0); break;
+	}
+	
+	if (res == 0) {
+		char output[CHAT_SIZE_MAX+1];
+		safesnprintf(output, CHAT_SIZE_MAX, msg_txt(tsd,889), ch->alias, tsd->status.name); // "%s %s is kicked"
+		clif_channel_msg(ch,output,ch->color);
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Delete a channel
+ * channel_delete "<chname>";
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_delete) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2);
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("channel_delete: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st,channel_delete(ch,true));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(unloadnpc) {
+	const char *name;
+	npc_data* nd;
+
+	name = script_getstr(st, 2);
+	nd = npc_name2id(name);
+
+	if( nd == nullptr ){
+		ShowError( "buildin_unloadnpc: npc '%s' was not found.\n", name );
+		return SCRIPT_CMD_FAILURE;
+	} else if ( nd->id == st->oid ) {
+		// Supporting self-unload isn't worth the problem it may cause. [Secret]
+		ShowError("buildin_unloadnpc: You cannot self-unload NPC '%s'.\n.", name);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	npc_unload_duplicates(nd);
+	npc_unload(nd, true);
+	npc_read_event_script();
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Duplicate a NPC.
+ * Return the duplicate Unique name on success or empty string on failure.
+ * duplicate "<NPC name>","<map>",<x>,<y>{,"<Duplicate NPC name>"{,<sprite>{,<dir>{,<xs>{,<xy>}}}}};
+ */
+BUILDIN_FUNC(duplicate)
+{
+	const char* old_npcname = script_getstr( st, 2 );
+	npc_data* nd = npc_name2id( old_npcname );
+
+	if( nd == nullptr ){
+		ShowError( "buildin_duplicate: No such NPC '%s'.\n", old_npcname );
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	const char* mapname = script_getstr( st, 3 );
+	int16 mapid = map_mapname2mapid( mapname );
+
+	if( mapid < 0 ){
+		ShowError( "buildin_duplicate: map '%s' in not found!\n", mapname );
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	struct map_data* mapdata = map_getmapdata( mapid );
+
+	if( mapdata == nullptr ){
+		// Should not happen, but who knows...
+		ShowError( "buildin_duplicate: mapdata for '%s' is unavailable!\n", mapname );
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int16 x = script_getnum( st, 4 );
+
+	if( x < 0 || x >= mapdata->xs ){
+		ShowError( "buildin_duplicate: x coordinate %hd is out of bounds for map %s[0-%hd]!\n", x, mapname, mapdata->xs );
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int16 y = script_getnum( st, 5 );
+
+	if( y < 0 || y >= mapdata->ys ){
+		ShowError( "buildin_duplicate: y coordinate %hd is out of bounds for map %s[0-%hd]!\n", y, mapname, mapdata->ys );
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	char name[NPC_NAME_LENGTH + 1];
+
+	if( script_hasdata( st, 6 ) ){
+		const char* new_name = script_getstr( st, 6 );
+
+		if( strlen( new_name ) > NPC_NAME_LENGTH ){
+			ShowError( "buildin_duplicate: new NPC name \"%s\" is too long!\n", new_name );
+			script_pushstrcopy( st, "" );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		safestrncpy( name, new_name, sizeof( name ) );
+	}else{
+		safestrncpy( name, nd->name, sizeof( name ) );
+	}
+
+	int32 class_;
+
+	if( script_hasdata( st, 7 ) ){
+		class_ = script_getnum( st, 7 );
+	}else{
+		class_ = nd->class_;
+	}
+
+	uint8 dir;
+
+	if( script_hasdata( st, 8 ) ){
+		dir = script_getnum( st, 8 );
+	}else{
+		dir = nd->ud.dir;
+	}
+
+	int16 xs;
+
+	if( script_hasdata( st, 9 ) ){
+		xs = script_getnum( st, 9 );
+	}else{
+		xs = nd->u.scr.xs;
+	}
+
+	int16 ys;
+
+	if( script_hasdata( st, 10 ) ){
+		ys = script_getnum( st, 10 );
+	}else{
+		ys = nd->u.scr.ys;
+	}
+
+	npc_data* dnd = npc_duplicate_npc( *nd, name, mapid, x, y, class_, dir, xs, ys );
+
+	if( dnd == nullptr ){
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}else{
+		script_pushstrcopy( st, dnd->exname );
+		return SCRIPT_CMD_SUCCESS;
+	}
+}
+
+/**
+ * Duplicate a NPC for a player.
+ * Return the duplicate Unique name on success or empty string on failure.
+ * duplicate_dynamic("<NPC name>"{,<character ID>});
+ */
+BUILDIN_FUNC(duplicate_dynamic){
+	const char* old_npcname = script_getstr( st, 2 );
+	npc_data* nd = npc_name2id( old_npcname );
+
+	if( nd == nullptr ){
+		ShowError( "buildin_duplicate_dynamic: No such NPC '%s'.\n", old_npcname );
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	map_session_data* sd;
+
+	if( !script_charid2sd( 3, sd ) ){
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	npc_data* dnd = npc_duplicate_npc_for_player( *nd, *sd );
+
+	if( dnd == nullptr ){
+		script_pushstrcopy( st, "" );
+		return SCRIPT_CMD_SUCCESS;
+	}else{
+		script_pushstrcopy( st, dnd->exname );
+		return SCRIPT_CMD_SUCCESS;
+	}
+}
+
+/**
+ * Add an achievement to the player's log
+ * achievementadd(<achievement ID>{,<char ID>});
+ */
+BUILDIN_FUNC(achievementadd) {
+	map_session_data *sd;
+	int32 achievement_id = script_getnum(st, 2);
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (achievement_db.exists(achievement_id) == false) {
+		ShowWarning("buildin_achievementadd: Achievement '%d' doesn't exist.\n", achievement_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !sd->state.pc_loaded ){
+		// Simply ignore it on the first call, because the status will be recalculated after loading anyway
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (achievement_add(sd, achievement_id))
+		script_pushint(st, true);
+	else
+		script_pushint(st, false);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Removes an achievement on a player.
+ * achievementremove(<achievement ID>{,<char ID>});
+ * Just for Atemo. ;)
+ */
+BUILDIN_FUNC(achievementremove) {
+	map_session_data *sd;
+	int32 achievement_id = script_getnum(st, 2);
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (achievement_db.exists(achievement_id) == false) {
+		ShowWarning("buildin_achievementremove: Achievement '%d' doesn't exist.\n", achievement_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if( !sd->state.pc_loaded ){
+		// Simply ignore it on the first call, because the status will be recalculated after loading anyway
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (achievement_remove(sd, achievement_id))
+		script_pushint(st, true);
+	else
+		script_pushint(st, false);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns achievement progress
+ * achievementinfo(<achievement ID>,<type>{,<char ID>});
+ */
+BUILDIN_FUNC(achievementinfo) {
+	map_session_data *sd;
+	int32 achievement_id = script_getnum(st, 2);
+
+	if (!script_charid2sd(4, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (achievement_db.exists(achievement_id) == false) {
+		ShowWarning("buildin_achievementinfo: Achievement '%d' doesn't exist.\n", achievement_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !sd->state.pc_loaded ){
+		script_pushint(st, false);
+		// Simply ignore it on the first call, because the status will be recalculated after loading anyway
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	script_pushint(st, achievement_check_progress(sd, achievement_id, script_getnum(st, 3)));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Award an achievement; Ignores requirements
+ * achievementcomplete(<achievement ID>{,<char ID>});
+ */
+BUILDIN_FUNC(achievementcomplete) {
+	map_session_data *sd;
+	int32 i, achievement_id = script_getnum(st, 2);
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (achievement_db.exists(achievement_id) == false) {
+		ShowWarning("buildin_achievementcomplete: Achievement '%d' doesn't exist.\n", achievement_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	if( !sd->state.pc_loaded ){
+		// Simply ignore it on the first call, because the status will be recalculated after loading anyway
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	ARR_FIND(0, sd->achievement_data.count, i, sd->achievement_data.achievements[i].achievement_id == achievement_id);
+	if (i == sd->achievement_data.count)
+		achievement_add(sd, achievement_id);
+	achievement_update_achievement(sd, achievement_id, true);
+	script_pushint(st, true);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Checks if the achievement exists on player.
+ * achievementexists(<achievement ID>{,<char ID>});
+ */
+BUILDIN_FUNC(achievementexists) {
+	map_session_data *sd;
+	int32 i, achievement_id = script_getnum(st, 2);
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (achievement_db.exists(achievement_id) == false) {
+		ShowWarning("buildin_achievementexists: Achievement '%d' doesn't exist.\n", achievement_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if( !sd->state.pc_loaded ){
+		script_pushint(st, false);
+		// Simply ignore it on the first call, because the status will be recalculated after loading anyway
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	ARR_FIND(0, sd->achievement_data.count, i, sd->achievement_data.achievements[i].achievement_id == achievement_id && sd->achievement_data.achievements[i].completed > 0 );
+	script_pushint(st, i < sd->achievement_data.count ? true : false);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Updates an achievement's value.
+ * achievementupdate(<achievement ID>,<type>,<value>{,<char ID>});
+ */
+BUILDIN_FUNC(achievementupdate) {
+	map_session_data *sd;
+	int32 i, achievement_id, type, value;
+
+	achievement_id = script_getnum(st, 2);
+	type = script_getnum(st, 3);
+	value = script_getnum(st, 4);
+
+	if (!script_charid2sd(5, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (achievement_db.exists(achievement_id) == false) {
+		ShowWarning("buildin_achievementupdate: Achievement '%d' doesn't exist.\n", achievement_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !sd->state.pc_loaded ){

@@ -1,0 +1,76 @@
+	event.dataTransfer.setData('text', event.target.id);
+}
+
+/**
+ * End of dragging an item
+ */
+function onItemDragEnd(event) {
+	const rect = EnchantGrade._host.getBoundingClientRect();
+	const mouseX = event.clientX;
+	const mouseY = event.clientY;
+
+	if (mouseX < rect.left || mouseX > rect.right || mouseY < rect.top || mouseY > rect.bottom) {
+		onRemoveItem();
+	}
+}
+
+/**
+ * EnchantGrade announcement received
+ * @param {object} pkt - PACKET.ZC.GRADE_ENCHANT_BROADCAST_RESULT
+ */
+function onBroadcastEnchantGradeResult(pkt) {
+	if (pkt) {
+		const item = DB.getItemInfo(pkt.itemId);
+		const itemName = item.identifiedDisplayName;
+		let messageID;
+		switch (pkt.status) {
+			case 0:
+				messageID = 3719;
+				break;
+			case 1:
+				messageID = 3718;
+				break;
+			default:
+				break;
+		}
+
+		const message = DB.getMessage(messageID)
+			.replace('%s', pkt.char_name)
+			.replace('%s', GradeMapping[pkt.grade])
+			.replace('%s', itemName);
+		ChatBox.addText(message, ChatBox.TYPE.ANNOUNCE, ChatBox.FILTER.PUBLIC_CHAT, '#FFB563');
+		Announce.append();
+		Announce.set(message, '#FFB563');
+	}
+}
+
+/**
+ * Play an effect on the client
+ * @param {number} effectId - The id of the effect to play
+ * @param {number} duration - The duration of the effect in milliseconds
+ * @param {function} [onEnd] - A callback to execute when the effect ends
+ */
+function playEffect(effectId, duration, onEnd) {
+	const EF_Init_Par = {
+		effectId: effectId,
+		ownerAID: Session.AID
+	};
+
+	EffectManager.spam(EF_Init_Par);
+
+	if (onEnd) {
+		setTimeout(onEnd, duration);
+	}
+}
+
+/**
+ * Packet Hooks to functions
+ */
+Network.hookPacket(PACKET.ZC.GRADE_ENCHANT_MATERIAL_LIST, onEnchantGradeUIUpdateMaterials);
+Network.hookPacket(PACKET.ZC.GRADE_ENCHANT_ACK, onEnchantGradeResult);
+Network.hookPacket(PACKET.ZC.GRADE_ENCHANT_BROADCAST_RESULT, onBroadcastEnchantGradeResult);
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(EnchantGrade);

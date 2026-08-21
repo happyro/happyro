@@ -1,0 +1,321 @@
+
+	if(idata->keep_timer != INVALID_TIMER) {
+		delete_timer(idata->keep_timer, instance_delete_timer);
+		idata->keep_timer = INVALID_TIMER;
+	}
+	if(idata->idle_timer != INVALID_TIMER) {
+		delete_timer(idata->idle_timer, instance_delete_timer);
+		idata->idle_timer = INVALID_TIMER;
+	}
+
+	if (mode == IM_CHAR && sd)
+		sd->instance_id = 0;
+	else if (mode == IM_PARTY && pd)
+		pd->instance_id = 0;
+	else if (mode == IM_GUILD && gd)
+		gd->instance_id = 0;
+	else if (mode == IM_CLAN && cd)
+		cd->instance_id = 0;
+
+	if (mode != IM_NONE) {
+		if(type != IN_NOTIFY)
+			clif_instance_changestatus(instance_id, type, 0);
+		else
+			clif_instance_changewait(instance_id, 0xffff);
+	}
+
+	if( idata->regs.vars ) {
+		db_destroy(idata->regs.vars);
+		idata->regs.vars = nullptr;
+	}
+
+	if( idata->regs.arrays )
+		idata->regs.arrays->destroy(idata->regs.arrays, script_free_array_db);
+
+	ShowInfo("[Instance] Destroyed: %s (%d)\n", instance_db.find(idata->id)->name.c_str(), instance_id);
+
+	instances.erase(instance_id);
+
+	return true;
+}
+
+/**
+ * Warp a user into an instance
+ * @param sd: Player to warp
+ * @param instance_id: Instance to warp to
+ * @param name: Map name
+ * @param x: X coordinate
+ * @param y: Y coordinate
+ * @return e_instance_enter value
+ */
+e_instance_enter instance_enter(map_session_data *sd, int32 instance_id, const char *name, int16 x, int16 y)
+{
+	nullpo_retr(IE_OTHER, sd);
+	
+	std::shared_ptr<s_instance_db> db = instance_search_db_name(name);
+
+	if (!db) {
+		ShowError("instance_enter: Unknown instance \"%s\".\n", name);
+		return IE_OTHER;
+	}
+
+	// If one of the two coordinates was not given or is below zero, we use the entry point from the database
+	if (x < 0 || y < 0) {
+		x = db->enter.x;
+		y = db->enter.y;
+	}
+
+	std::shared_ptr<s_instance_data> idata = nullptr;
+	struct party_data *pd;
+	std::shared_ptr<MapGuild> gd;
+	struct clan *cd;
+	e_instance_mode mode;
+
+	if (instance_id <= 0) // Default party checks will be used
+		mode = IM_PARTY;
+	else {
+		if (!(idata = util::umap_find(instances, instance_id)))
+			return IE_NOINSTANCE;
+		mode = idata->mode;
+	}
+
+	switch(mode) {
+		case IM_NONE:
+			break;
+		case IM_CHAR:
+			if (sd->instance_id == 0) // Player must have an instance
+				return IE_NOINSTANCE;
+			if (idata->owner_id != sd->status.char_id)
+				return IE_OTHER;
+			break;
+		case IM_PARTY:
+			if (sd->status.party_id == 0) // Character must be in instance party
+				return IE_NOMEMBER;
+			if (!(pd = party_search(sd->status.party_id)))
+				return IE_NOMEMBER;
+			if (pd->instance_id == 0 || idata == nullptr) // Party must have an instance
+				return IE_NOINSTANCE;
+			if (idata->owner_id != pd->party.party_id)
+				return IE_OTHER;
+			break;
+		case IM_GUILD:
+			if (sd->status.guild_id == 0) // Character must be in instance guild
+				return IE_NOMEMBER;
+			if (!(gd = guild_search(sd->status.guild_id)))
+				return IE_NOMEMBER;
+			if (gd->instance_id == 0) // Guild must have an instance
+				return IE_NOINSTANCE;
+			if (idata->owner_id != gd->guild.guild_id)
+				return IE_OTHER;
+			break;
+		case IM_CLAN:
+			if (sd->status.clan_id == 0) // Character must be in instance clan
+				return IE_NOMEMBER;
+			if (!(cd = clan_search(sd->status.clan_id)))
+				return IE_NOMEMBER;
+			if (cd->instance_id == 0) // Clan must have an instance
+				return IE_NOINSTANCE;
+			if (idata->owner_id != cd->id)
+				return IE_OTHER;
+			break;
+	}
+
+	if (idata->state != INSTANCE_BUSY)
+		return IE_OTHER;
+	if (idata->id != db->id)
+		return IE_OTHER;
+
+	int16 m;
+
+	// Does the instance match?
+	if ((m = instance_mapid(db->enter.map, instance_id)) < 0)
+		return IE_OTHER;
+
+	if (pc_setpos(sd, map_id2index(m), x, y, CLR_OUTSIGHT))
+		return IE_OTHER;
+
+	return IE_OK;
+}
+
+/**
+ * Request some info about the instance
+ * @param sd: Player to display info to
+ * @param instance_id: Instance to request
+ * @return True on success or false on failure
+ */
+bool instance_reqinfo(map_session_data *sd, int32 instance_id)
+{
+	nullpo_retr(false, sd);
+
+	std::shared_ptr<s_instance_data> idata = util::umap_find(instances, instance_id);
+
+	if (!idata || !instance_db.find(idata->id))
+		return false;
+
+	// Say it's created if instance is not busy
+	if(idata->state == INSTANCE_IDLE) {
+		for (int32 i = 0; i < instance_wait.id.size(); i++) {
+			if (instance_wait.id[i] == instance_id) {
+				clif_instance_create(instance_id, i + 1);
+				sd->instance_mode = idata->mode;
+				break;
+			}
+		}
+	} else if (idata->state == INSTANCE_BUSY) { // Give info on the instance if busy
+		int32 map_instance_id = map_getmapdata(sd->m)->instance_id;
+		if (map_instance_id == 0 || map_instance_id == instance_id) {
+			clif_instance_status(instance_id, static_cast<uint32>(idata->keep_limit), static_cast<uint32>(idata->idle_limit));
+			sd->instance_mode = idata->mode;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Add players to the instance (for timers) -- Unused?
+ * @param instance_id: Instance to add
+ * @return True on success or false on failure
+ */
+bool instance_addusers(int32 instance_id)
+{
+	std::shared_ptr<s_instance_data> idata = util::umap_find(instances, instance_id);
+
+	if(!idata || idata->state != INSTANCE_BUSY)
+		return false;
+
+	// Stop the idle timer if we had one
+	instance_stopidletimer(idata, instance_id);
+
+	// Start the instance keep timer
+	instance_startkeeptimer(idata, instance_id);
+
+	return true;
+}
+
+/**
+ * Delete players from the instance (for timers)
+ * @param instance_id: Instance to remove
+ * @return True on success or false on failure
+ */
+bool instance_delusers(int32 instance_id)
+{
+	std::shared_ptr<s_instance_data> idata = util::umap_find(instances, instance_id);
+
+	if(!idata || idata->state != INSTANCE_BUSY)
+		return false;
+
+	int32 users = 0;
+
+	// If no one is in the instance, start the idle timer
+	for (const auto &it : idata->map)
+		users += max(map_getmapdata(it.m)->users,0);
+
+	// We check the actual map.users before being updated, hence the 1
+	// The instance should be empty if users are now <= 1
+	if(users <= 1)
+		instance_startidletimer(idata, instance_id);
+
+	return true;
+}
+
+/**
+ * Reloads the instance in runtime (reloadscript)
+ */
+void do_reload_instance(void)
+{
+	for (const auto &it : instances) {
+		std::shared_ptr<s_instance_data> idata = it.second;
+
+		if (!idata || idata->map.empty())
+			continue;
+		else {
+			// First we load the NPCs again
+			if(!idata->nonpc)
+				instance_addnpc(idata);
+
+			// Create new keep timer
+			if (std::shared_ptr<s_instance_db> db = instance_db.find(idata->id); db != nullptr) {
+				// Save the expire time
+				idata->keep_limit = time(nullptr) + db->limit;
+
+				// Recreate a timer and save the associated timer ID
+				if (idata->keep_timer != INVALID_TIMER)
+					delete_timer(idata->keep_timer, instance_delete_timer);
+				idata->keep_timer = add_timer(gettick() + db->limit * 1000, instance_delete_timer, it.first, 0);
+			}
+		}
+	}
+
+	// Reset player to instance beginning
+	struct s_mapiterator *iter = mapit_getallusers();
+	map_session_data *sd;
+
+	for (sd = (TBL_PC *)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC *)mapit_next(iter)) {
+		struct map_data *mapdata = map_getmapdata(sd->m);
+
+		if (sd && mapdata->instance_id > 0) {
+			struct party_data *pd;
+			std::shared_ptr<MapGuild> gd;
+			struct clan *cd;
+			int32 instance_id;
+			std::shared_ptr<s_instance_data> idata = util::umap_find(instances, map[sd->m].instance_id);
+			std::shared_ptr<s_instance_db> db = instance_db.find(idata->id);
+
+			switch (idata->mode) {
+				case IM_NONE:
+					continue;
+				case IM_CHAR:
+					if (sd->instance_id != mapdata->instance_id) // Someone who is not instance owner is on instance map
+						continue;
+					instance_id = sd->instance_id;
+					break;
+				case IM_PARTY:
+					if ((!(pd = party_search(sd->status.party_id)) || pd->instance_id != mapdata->instance_id)) // Someone not in party is on instance map
+						continue;
+					instance_id = pd->instance_id;
+					break;
+				case IM_GUILD:
+					if (!(gd = guild_search(sd->status.guild_id)) || gd->instance_id != mapdata->instance_id) // Someone not in guild is on instance map
+						continue;
+					instance_id = gd->instance_id;
+					break;
+				case IM_CLAN:
+					if (!(cd = clan_search(sd->status.clan_id)) || cd->instance_id != mapdata->instance_id) // Someone not in clan is on instance map
+						continue;
+					instance_id = cd->instance_id;
+					break;
+				default:
+					ShowError("do_reload_instance: Unexpected instance mode for instance %s (id=%d, mode=%u).\n", (db) ? db->name.c_str() : "Unknown", mapdata->instance_id, (uint8)idata->mode);
+					continue;
+			}
+			if (db && instance_enter(sd, instance_id, db->name.c_str(), -1, -1) == IE_OK) { // All good
+				clif_displaymessage(sd->fd, msg_txt(sd, 515)); // Instance has been reloaded
+				instance_reqinfo(sd, instance_id);
+			} else // Something went wrong
+				ShowError("do_reload_instance: Error setting character at instance start: character_id=%d instance=%s.\n", sd->status.char_id, db->name.c_str());
+		}
+	}
+	mapit_free(iter);
+}
+
+/**
+ * Initializes the instance database
+ */
+void do_init_instance(void) {
+	instance_start = map_num;
+	instance_db.load();
+	instance_wait.timer = INVALID_TIMER;
+
+	add_timer_func_list(instance_delete_timer,"instance_delete_timer");
+	add_timer_func_list(instance_subscription_timer,"instance_subscription_timer");
+}
+
+/**
+ * Finalizes the instances and instance database
+ */
+void do_final_instance(void) {
+	// Since instance_destroy() modifies the unordered_map, make sure iteration always restarts.
+	for (auto it = instances.begin(); it != instances.end(); it = instances.begin())
+		instance_destroy(it->first);
+}

@@ -1,0 +1,500 @@
+							reset_entry->given = 0;
+						}
+					}
+					return entry;
+				}
+			}
+			break;
+		}
+	}
+	// Return nullptr on fail
+	return nullptr;
+}
+
+/**
+* Return a random group entry from Item Group
+* @param group_id
+* @param sub_group
+* @param search_type: see e_group_algorithm_type
+* @return Item group entry or nullptr on fail
+*/
+std::shared_ptr<s_item_group_entry> ItemGroupDatabase::get_random_entry(uint16 group_id, uint8 sub_group, e_group_algorithm_type algorithm) {
+	std::shared_ptr<s_item_group_db> group = this->find(group_id);
+
+	if (group == nullptr) {
+		ShowError("get_random_entry: Invalid group id %hu.\n", group_id);
+		return nullptr;
+	}
+	if (group->random.empty()) {
+		ShowError("get_random_entry: No item entries for group id %hu.\n", group_id);
+		return nullptr;
+	}
+	if (group->random.count(sub_group) == 0) {
+		ShowError("get_random_entry: No item entries for group id %hu and sub group %hu.\n", group_id, sub_group);
+		return nullptr;
+	}
+
+	return this->get_random_itemsubgroup(group->random[sub_group], algorithm);
+}
+
+/** [Cydh]
+* Gives item(s) to the player based on item group
+* @param sd: Player that obtains item from item group
+* @param identify
+* @param data: item data selected in a subgroup
+*/
+void ItemGroupDatabase::pc_get_itemgroup_sub( map_session_data& sd, bool identify, std::shared_ptr<s_item_group_entry> data ){
+	if (data == nullptr)
+		return;
+
+	item tmp = {};
+
+	tmp.nameid = data->nameid;
+	tmp.bound = data->bound;
+	tmp.identify = identify ? identify : itemdb_isidentified(data->nameid);
+	tmp.expire_time = (data->duration) ? (uint32)(time(nullptr) + data->duration*60) : 0;
+	if (data->isNamed) {
+		tmp.card[0] = itemdb_isequip(data->nameid) ? CARD0_FORGE : CARD0_CREATE;
+		tmp.card[1] = 0;
+		tmp.card[2] = GetWord( sd.status.char_id, 0 );
+		tmp.card[3] = GetWord( sd.status.char_id, 1 );
+	}
+
+	uint16 get_amt = 0;
+
+	if (itemdb_isstackable(data->nameid) && data->isStacked)
+		get_amt = data->amount;
+	else
+		get_amt = 1;
+
+	tmp.amount = get_amt;
+
+	// Do loop for non-stackable item
+	for (uint16 i = 0; i < data->amount; i += get_amt) {
+		tmp.unique_id = data->GUID ? pc_generate_unique_id( &sd ) : 0; // Generate GUID
+
+		if( itemdb_isequip( data->nameid ) ){
+			if( data->refineMinimum > 0 && data->refineMaximum > 0 ){
+				tmp.refine = static_cast<uint8>( rnd_value<uint16>( data->refineMinimum, data->refineMaximum ) );
+			}else if( data->refineMinimum > 0 ){
+				tmp.refine = static_cast<uint8>( rnd_value<uint16>( data->refineMinimum, MAX_REFINE ) );
+			}else if( data->refineMaximum > 0 ){
+				tmp.refine = static_cast<uint8>( rnd_value<uint16>( 1, data->refineMaximum ) );
+			}else{
+				tmp.refine = 0;
+			}
+
+			if( data->minimumEnchantgrade > ENCHANTGRADE_NONE && data->maximumEnchantgrade > ENCHANTGRADE_NONE ){
+				tmp.enchantgrade = static_cast<uint8>( rnd_value<uint16>( data->minimumEnchantgrade, data->maximumEnchantgrade ) );
+			}else if( data->minimumEnchantgrade > ENCHANTGRADE_NONE ){
+				tmp.enchantgrade = static_cast<uint8>( rnd_value<uint16>( data->minimumEnchantgrade, MAX_ENCHANTGRADE ) );
+			}else if( data->maximumEnchantgrade > ENCHANTGRADE_NONE ){
+				tmp.enchantgrade = static_cast<uint8>( rnd_value<uint16>( ENCHANTGRADE_NONE, data->maximumEnchantgrade ) );
+			}else{
+				tmp.enchantgrade = static_cast<uint8>( ENCHANTGRADE_NONE );
+			}
+
+			if( data->randomOptionGroup != nullptr ){
+				memset( tmp.option, 0, sizeof( tmp.option ) );
+
+				data->randomOptionGroup->apply( tmp );
+			}
+		}
+
+		e_additem_result flag = pc_additem( &sd, &tmp, get_amt, LOG_TYPE_SCRIPT );
+
+		if( flag == ADDITEM_SUCCESS ){
+			if( data->isAnnounced ){
+				intif_broadcast_obtain_special_item( &sd, data->nameid, sd.itemid, ITEMOBTAIN_TYPE_BOXITEM );
+			}
+		}else{
+			clif_additem( &sd, 0, 0, flag );
+		}
+	}
+}
+
+/** [Cydh]
+* Find item(s) that will be obtained by player based on Item Group
+* @param group_id: The group ID that will be gained by player
+* @param nameid: The item that trigger this item group
+* @return val: 0:success, 2:invalid item group
+*/
+uint8 ItemGroupDatabase::pc_get_itemgroup( uint16 group_id, bool identify, map_session_data& sd ){
+	std::shared_ptr<s_item_group_db> group = this->find(group_id);
+
+	if (group == nullptr) {
+		ShowError("pc_get_itemgroup: Invalid group id '%d' specified.\n",group_id);
+		return 2;
+	}
+	if (group->random.empty())
+		return 0;
+
+	for (const auto &random : group->random) {
+		switch( random.second->algorithm ) {
+			case GROUP_ALGORITHM_RANDOM:
+			case GROUP_ALGORITHM_SHAREDPOOL:
+				this->pc_get_itemgroup_sub( sd, identify, this->get_random_itemsubgroup( random.second ) );
+				break;
+			case GROUP_ALGORITHM_ALL:
+				for (const auto &it : random.second->data)
+					this->pc_get_itemgroup_sub( sd, identify, it.second );
+				break;
+		}
+	}
+
+	return 0;
+}
+
+/** Searches for the item_data. Use this to check if item exists or not.
+* @param nameid
+* @return *item_data if item is exist, or nullptr if not
+*/
+std::shared_ptr<item_data> itemdb_exists(t_itemid nameid) {
+	return item_db.find(nameid);
+}
+
+/// Returns name type of ammunition [Cydh]
+const char *itemdb_typename_ammo (e_ammo_type ammo) {
+	switch (ammo) {
+		case AMMO_ARROW:		return "Arrow";
+		case AMMO_DAGGER:		return "Throwable Dagger";
+		case AMMO_BULLET:		return "Bullet";
+		case AMMO_SHELL:		return "Shell";
+		case AMMO_GRENADE:		return "Grenade";
+		case AMMO_SHURIKEN:		return "Shuriken";
+		case AMMO_KUNAI:		return "Kunai";
+		case AMMO_CANNONBALL:	return "Cannonball";
+		case AMMO_THROWWEAPON:	return "Throwable Item/Sling Item";
+	}
+	return "Ammunition";
+}
+
+/// Returns human readable name for given item type.
+/// @param type Type id to retrieve name for ( IT_* ).
+const char* itemdb_typename(enum item_types type)
+{
+	switch(type)
+	{
+		case IT_HEALING:        return "Potion/Food";
+		case IT_USABLE:         return "Usable";
+		case IT_ETC:            return "Etc.";
+		case IT_WEAPON:         return "Weapon";
+		case IT_ARMOR:          return "Armor";
+		case IT_CARD:           return "Card";
+		case IT_PETEGG:         return "Pet Egg";
+		case IT_PETARMOR:       return "Pet Accessory";
+		case IT_AMMO:           return "Arrow/Ammunition";
+		case IT_DELAYCONSUME:   return "Delay-Consume Usable";
+		case IT_SHADOWGEAR:     return "Shadow Equipment";
+		case IT_CASH:           return "Cash Usable";
+	}
+	return "Unknown Type";
+}
+
+/**
+ * Converts the jobmask from the format in itemdb to the format used by the map server.
+ * @param bclass: Pointer to store itemdb format
+ * @param jobmask: Job Mask to convert
+ * @param active: Whether the flag is active or not
+ * @author: Skotlex
+ */
+static void itemdb_jobid2mapid(uint64 bclass[3], e_mapid jobmask, bool active)
+{
+	uint64 temp_mask[3] = { 0 };
+
+	if (jobmask != MAPID_ALL) {
+		// Calculate the required bit to set
+		uint64 job = 1ULL << ( jobmask & MAPID_FIRSTMASK );
+
+		// 2-1
+		if( ( jobmask & JOBL_2_1 ) != 0 ){
+			temp_mask[1] |= job;
+		// 2-2
+		}else if( ( jobmask & JOBL_2_2 ) != 0 ){
+			temp_mask[2] |= job;
+		// Basejob
+		}else{
+			temp_mask[0] |= job;
+		}
+	} else {
+		temp_mask[0] = temp_mask[1] = temp_mask[2] = MAPID_ALL;
+	}
+
+	for (int32 i = 0; i < ARRAYLENGTH(temp_mask); i++) {
+		if (temp_mask[i] == 0)
+			continue;
+
+		if (active)
+			bclass[i] |= temp_mask[i];
+		else
+			bclass[i] &= ~temp_mask[i];
+	}
+}
+
+/*==========================================
+ * Loads an item from the db. If not found, it will return the dummy item.
+ * @param nameid
+ * @return *item_data or *dummy_item if item not found
+ *------------------------------------------*/
+struct item_data* itemdb_search(t_itemid nameid) {
+	std::shared_ptr<item_data> id;
+
+	if (!(id = item_db.find(nameid))) {
+		ShowWarning("itemdb_search: Item ID %u does not exists in the item_db. Using dummy data.\n", nameid);
+		id = item_db.find(ITEMID_DUMMY);
+	}
+	return id.get();
+}
+
+/** Checks if item is equip type or not
+* @param id Item data
+* @return True if item is equip, false otherwise
+*/
+bool itemdb_isequip2( const item_data *id ) {
+	nullpo_ret(id);
+	switch (id->type) {
+		case IT_WEAPON:
+		case IT_ARMOR:
+		case IT_AMMO:
+		case IT_SHADOWGEAR:
+			return true;
+		default:
+			return false;
+	}
+}
+
+/** Checks if item is stackable or not
+* @param id Item data
+* @return True if item is stackable, false otherwise
+*/
+bool itemdb_isstackable2( const item_data *id )
+{
+	nullpo_ret(id);
+	return id->isStackable();
+}
+
+/*==========================================
+ * Trade Restriction functions [Skotlex]
+ *------------------------------------------*/
+bool itemdb_isdropable_sub( const item_data *item, int32 gmlv, int32 unused ) {
+	return (item && (!(item->flag.trade_restriction.drop) || gmlv >= item->gm_lv_trade_override));
+}
+
+bool itemdb_cantrade_sub( const item_data* item, int32 gmlv, int32 gmlv2 ) {
+	return (item && (!(item->flag.trade_restriction.trade) || gmlv >= item->gm_lv_trade_override || gmlv2 >= item->gm_lv_trade_override));
+}
+
+bool itemdb_canpartnertrade_sub( const item_data* item, int32 gmlv, int32 gmlv2 ) {
+	return (item && (item->flag.trade_restriction.trade_partner || gmlv >= item->gm_lv_trade_override || gmlv2 >= item->gm_lv_trade_override));
+}
+
+bool itemdb_cansell_sub( const item_data* item, int32 gmlv, int32 unused ) {
+	return (item && (!(item->flag.trade_restriction.sell) || gmlv >= item->gm_lv_trade_override));
+}
+
+bool itemdb_cancartstore_sub( const item_data* item, int32 gmlv, int32 unused ) {
+	return (item && (!(item->flag.trade_restriction.cart) || gmlv >= item->gm_lv_trade_override));
+}
+
+bool itemdb_canstore_sub( const item_data* item, int32 gmlv, int32 unused ) {
+	return (item && (!(item->flag.trade_restriction.storage) || gmlv >= item->gm_lv_trade_override));
+}
+
+bool itemdb_canguildstore_sub( const item_data* item, int32 gmlv, int32 unused ) {
+	return (item && (!(item->flag.trade_restriction.guild_storage) || gmlv >= item->gm_lv_trade_override));
+}
+
+bool itemdb_canmail_sub( const item_data* item, int32 gmlv, int32 unused ) {
+	return (item && (!(item->flag.trade_restriction.mail) || gmlv >= item->gm_lv_trade_override));
+}
+
+bool itemdb_canauction_sub( const item_data* item, int32 gmlv, int32 unused ) {
+	return (item && (!(item->flag.trade_restriction.auction) || gmlv >= item->gm_lv_trade_override));
+}
+
+bool itemdb_isrestricted( const item* item, int32 gmlv, int32 gmlv2, bool (*func)(const item_data*, int32, int32) )
+{
+	const item_data* item_data = itemdb_search(item->nameid);
+	int32 i;
+
+	if (!func(item_data, gmlv, gmlv2))
+		return false;
+
+	if(item_data->slots == 0 || itemdb_isspecial(item->card[0]))
+		return true;
+
+	for(i = 0; i < item_data->slots; i++) {
+		if (!item->card[i]) continue;
+		if (!func(itemdb_search(item->card[i]), gmlv, gmlv2))
+			return false;
+	}
+	return true;
+}
+
+bool itemdb_ishatched_egg( const item* item ) {
+	if (item && item->card[0] == CARD0_PET && item->attribute == 1)
+		return true;
+	return false;
+}
+
+/** Specifies if item-type should drop unidentified.
+* @param nameid ID of item
+*/
+char itemdb_isidentified(t_itemid nameid) {
+	int32 type=itemdb_type(nameid);
+	switch (type) {
+		case IT_WEAPON:
+		case IT_ARMOR:
+		case IT_PETARMOR:
+		case IT_SHADOWGEAR:
+			return 0;
+		default:
+			return 1;
+	}
+}
+
+const std::string ItemGroupDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/item_group_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the item_group_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 ItemGroupDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string group_name;
+
+	if (!this->asString(node, "Group", group_name))
+		return 0;
+
+	std::string group_name_constant = "IG_" + group_name;
+	int64 constant;
+
+	if (!script_get_constant(group_name_constant.c_str(), &constant) || constant < IG_BLUEBOX) {
+		if (strncasecmp(group_name.c_str(), "IG_", 3) != 0)
+			this->invalidWarning(node["Group"], "Invalid group %s.\n", group_name.c_str());
+		else
+			this->invalidWarning(node["Group"], "Invalid group %s. Note that 'IG_' is automatically appended to the group name.\n", group_name.c_str());
+		return 0;
+	}
+
+	uint16 id = static_cast<uint16>(constant);
+
+	std::shared_ptr<s_item_group_db> group = this->find(id);
+	bool exists = group != nullptr;
+
+	if (!exists) {
+		group = std::make_shared<s_item_group_db>();
+		group->id = id;
+	}
+
+	if (this->nodeExists(node, "SubGroups")) {
+		const auto& subNode = node["SubGroups"];
+
+		for (const auto& subit : subNode) {
+			if (this->nodeExists(subit, "Clear")) {
+				uint16 id;
+
+				if (!this->asUInt16(subit, "Clear", id))
+					continue;
+
+				if (group->random.erase(id) == 0)
+					this->invalidWarning(subit["Clear"], "The SubGroup %hu doesn't exist in the group %s. Clear failed.\n", id, group_name.c_str());
+
+				continue;
+			}
+
+			if (!this->nodesExist(subit, { "SubGroup", "List" })) {
+				continue;
+			}
+
+			uint16 subgroup;
+
+			if (!this->asUInt16(subit, "SubGroup", subgroup))
+				continue;
+
+			std::shared_ptr<s_item_group_random> random = util::umap_find(group->random, subgroup);
+			bool random_exists = random != nullptr;
+
+			if (!random_exists) {
+				random = std::make_shared<s_item_group_random>();
+				group->random[subgroup] = random;
+			}
+
+			if (this->nodeExists(subit, "Algorithm")) {
+				std::string sub_str;
+
+				if (!this->asString(subit, "Algorithm", sub_str))
+					return 0;
+
+				std::string sub_constant_str = "GROUP_ALGORITHM_" + sub_str;
+				int64 constant_str;
+
+				if (!script_get_constant(sub_constant_str.c_str(), &constant_str)) {
+					this->invalidWarning(subit["Algorithm"], "Invalid algorithm %s.\n", sub_str.c_str());
+					continue;
+				}
+
+				random->algorithm = static_cast<e_group_algorithm_type>(constant_str);
+			} else {
+				if (!random_exists) {
+					random->algorithm = GROUP_ALGORITHM_SHAREDPOOL;
+				}
+			}
+
+			const auto& listNode = subit["List"];
+
+			for (const auto& listit : listNode) {
+				uint32 index;
+
+				if (!this->asUInt32(listit, "Index", index))
+					continue;
+
+				if (this->nodeExists(listit, "Clear")) {
+					bool active;
+
+					if (!this->asBool(listit, "Clear", active) || !active)
+						continue;
+
+					if (random->data.erase(index) == 0)
+						this->invalidWarning(listit["Clear"], "Index %u doesn't exist in the SubGroup %hu (group %s). Clear failed.\n", index, subgroup, group_name.c_str());
+
+					continue;
+				}
+
+				std::shared_ptr<s_item_group_entry> entry = util::umap_find(random->data, index);
+				bool entry_exists = entry != nullptr;
+
+				if (!entry_exists) {
+					if (!this->nodesExist(listit, { "Item" }))
+						return 0;
+
+					entry = std::make_shared<s_item_group_entry>();
+					random->data[index] = entry;
+				}
+
+				std::shared_ptr<item_data> item = nullptr;
+
+				if (this->nodeExists(listit, "Item")) {
+					std::string item_name;
+
+					if (!this->asString(listit, "Item", item_name))
+						continue;
+
+					item = item_db.search_aegisname( item_name.c_str() );
+
+					if (item == nullptr) {
+						this->invalidWarning(listit["Item"], "Unknown Item %s.\n", item_name.c_str());
+						continue;
+					}
+				} else {
+					if (!entry_exists) {
+						item = item_db.find( entry->nameid );
+					}
+				}
+
+				// (shouldn't happen)
+				if (item == nullptr) {
+					this->invalidWarning(listit["index"], "Missing Item definition for Index %u.\n", index);
+					continue;

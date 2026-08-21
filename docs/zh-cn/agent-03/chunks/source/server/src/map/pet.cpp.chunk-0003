@@ -1,0 +1,500 @@
+			intif_save_petdata(sd->status.account_id,pet);
+			sd->status.pet_id = 0;
+
+			return false;
+		}
+
+		//The pet_id value was lost? odd... restore it.
+		sd->status.pet_id = pet->pet_id;
+	}
+
+	std::shared_ptr<s_pet_db> pet_db_ptr = pet_db.find(pet->class_);
+
+	if( pet_db_ptr == nullptr ){
+		sd->status.pet_id = 0;
+
+		return false;
+	}
+
+	pd = (pet_data *)aCalloc(1,sizeof(pet_data));
+	new(pd) pet_data();
+	sd->pd = pd;
+	pd->type = BL_PET;
+	pd->id = npc_get_new_npc_id();
+
+	pd->master = sd;
+	pd->db = mob_db.find(pet->class_);
+	memcpy(&pd->pet, pet, sizeof(struct s_pet));
+	status_set_viewdata(pd, pet->class_);
+	unit_dataset(pd);
+	pd->ud.dir = sd->ud.dir;
+
+	pd->m = sd->m;
+	pd->x = sd->x;
+	pd->y = sd->y;
+	unit_calc_pos(pd, sd->x, sd->y, sd->ud.dir);
+	pd->x = pd->ud.to_x;
+	pd->y = pd->ud.to_y;
+
+	map_addiddb(pd);
+	status_calc_pet(pd,SCO_FIRST);
+
+	pd->last_thinktime = gettick();
+	pd->state.skillbonus = 0;
+
+	if( pet_db_ptr != nullptr ) {
+		if( battle_config.pet_status_support )
+			run_script(pet_db_ptr->pet_support_script,0,sd->id,0);
+
+		if( pet_db_ptr->pet_bonus_script )
+			status_calc_pc(sd,SCO_NONE);
+
+		if( battle_config.pet_hungry_delay_rate != 100 )
+			interval = pet_db_ptr->hungry_delay * battle_config.pet_hungry_delay_rate / 100;
+		else
+			interval = pet_db_ptr->hungry_delay;
+		if (pd->pet.hungry <= PET_HUNGRY_NONE)
+			interval = 20000; // While starving, it's every 20 seconds
+	}
+
+	interval = max(interval, 1);
+
+	pd->pet_hungry_timer = add_timer(gettick() + interval, pet_hungry, sd->id, 0);
+	pd->masterteleport_timer = INVALID_TIMER;
+
+	if( !pet->rename_flag ){
+		safestrncpy( sd->pd->pet.name, pd->db->jname.c_str(), NAME_LENGTH );
+	}
+
+	return true;
+}
+
+/**
+ * Begin hatching a pet.
+ * @param sd : player requesting
+ * @param pet : pet requesting
+ */
+int32 pet_birth_process(map_session_data *sd, struct s_pet *pet)
+{
+	nullpo_retr(1, sd);
+
+	Assert((sd->status.pet_id == 0 || sd->pd == 0) || sd->pd->master == sd);
+
+	if(sd->status.pet_id && pet->incubate == 1) {
+		sd->status.pet_id = 0;
+
+		return 1;
+	}
+
+	pet->incubate = 0;
+	pet->account_id = sd->status.account_id;
+	pet->char_id = sd->status.char_id;
+	sd->status.pet_id = pet->pet_id;
+
+	if(!pet_data_init(sd, pet)) {
+		return 1;
+	}
+
+	intif_save_petdata(sd->status.account_id,pet);
+	
+	if (save_settings&CHARSAVE_PET)
+		chrif_save(sd, CSAVE_INVENTORY); //is it REALLY Needed to save the char for hatching a pet? [Skotlex]
+
+	if(sd->prev != nullptr) {
+		if(map_addblock(sd->pd))
+			return 1;
+
+		clif_spawn(sd->pd);
+		clif_send_petdata( sd, *sd->pd, CHANGESTATEPET_INIT );
+		clif_send_petdata( sd, *sd->pd, CHANGESTATEPET_HAIRSTYLE );
+#if PACKETVER >= 20180704
+		clif_send_petdata( sd, *sd->pd, CHANGESTATEPET_UPDATE_EGG );
+#endif
+		clif_send_petdata( nullptr, *sd->pd, CHANGESTATEPET_ACCESSORY );
+		clif_send_petstatus( *sd, *sd->pd );
+		clif_pet_autofeed_status(sd,true);
+	}
+
+	Assert((sd->status.pet_id == 0 || sd->pd == 0) || sd->pd->master == sd);
+
+	return 0;
+}
+
+/**
+ * Finalize hatching process and load pet to client.
+ * @param account_id : account ID of owner
+ * @param p : pet requesting
+ * @param flag : 1:stop loading of pet
+ * @return 0:success, 1:failure
+ */
+int32 pet_recv_petdata(uint32 account_id,struct s_pet *p,int32 flag)
+{
+	map_session_data *sd;
+
+	sd = map_id2sd(account_id);
+
+	if(sd == nullptr)
+		return 1;
+
+	if(flag == 1) {
+		sd->status.pet_id = 0;
+
+		return 1;
+	}
+
+	if(p->incubate == 1) {
+		int32 i = pet_egg_search(sd, p->pet_id);
+
+		if(i == -1) {
+			ShowError("pet_recv_petdata: Hatching pet (%d:%s) aborted, couldn't find egg in inventory!\n",p->pet_id, p->name);
+			sd->status.pet_id = 0;
+
+			return 1;
+		}
+
+		// Hide egg from inventory.
+		// Set pet egg to broken, before the inventory gets saved
+		sd->inventory.u.items_inventory[i].attribute = 1;
+
+		// Hatch the pet
+		pet_birth_process( sd, p );
+	} else {
+		pet_data_init(sd,p);
+
+		if(sd->pd && sd->prev != nullptr) {
+			if(map_addblock(sd->pd))
+				return 1;
+
+			clif_spawn(sd->pd);
+			clif_send_petdata( sd, *sd->pd, CHANGESTATEPET_INIT );
+			clif_send_petdata( sd, *sd->pd, CHANGESTATEPET_HAIRSTYLE );
+			clif_send_petdata( nullptr, *sd->pd, CHANGESTATEPET_ACCESSORY );
+			clif_send_petstatus( *sd, *sd->pd );
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * Selected pet egg to hatch.
+ * @param sd : player requesting
+ * @param egg_index : egg index value in inventory
+ * @return 0
+ */
+int32 pet_select_egg(map_session_data *sd,int16 egg_index)
+{
+	nullpo_ret(sd);
+
+	if(egg_index < 0 || egg_index >= MAX_INVENTORY)
+		return 0; //Forged packet!
+
+	if(sd->state.trading)	//The player have trade in progress.
+		return 0;
+
+	std::shared_ptr<s_pet_db> pet = pet_db_search(sd->inventory.u.items_inventory[egg_index].nameid, PET_EGG);
+	if (!pet) {
+		ShowError("pet does not exist, egg id %u\n", sd->inventory.u.items_inventory[egg_index].nameid);
+		return 0;
+	}
+
+	if(sd->inventory.u.items_inventory[egg_index].card[0] == CARD0_PET)
+		intif_request_petdata(sd->status.account_id, sd->status.char_id, MakeDWord(sd->inventory.u.items_inventory[egg_index].card[1], sd->inventory.u.items_inventory[egg_index].card[2]) );
+	else
+		ShowError("wrong egg item inventory %d\n",egg_index);
+
+	return 0;
+}
+
+/**
+ * Display the success/failure roulette wheel when trying to catch monster.
+ * @param sd : player requesting
+ * @param item_id : item ID of the taming item used
+ */
+void pet_catch_process_start( map_session_data& sd, t_itemid item_id, e_pet_catch_flag flag ){
+	if (map_getmapflag(sd.m, MF_NOPETCAPTURE)) {
+		clif_displaymessage(sd.fd, msg_txt(&sd, 669)); // You can't catch any pet on this map.
+		return;
+	}
+
+	std::shared_ptr<s_pet_catch_process> process = util::umap_find( pet_catchprocesses, sd.status.char_id );
+
+	if( process == nullptr ){
+		process = std::make_shared<s_pet_catch_process>();
+		pet_catchprocesses[sd.status.char_id] = process;
+	}else{
+		// Reuse previously allocated memory and restart the process
+	}
+
+	process->char_id = sd.status.char_id;
+	process->taming_item = item_id;
+	process->flag = flag;
+
+	clif_catch_process(sd);
+}
+
+/**
+ * Begin the actual catching process of a monster.
+ * @param sd : player requesting
+ * @param target_id : monster ID of pet to catch
+ */
+void pet_catch_process_end( map_session_data& sd, int32 target_id ){
+	std::shared_ptr<s_pet_catch_process> process = util::umap_find( pet_catchprocesses, sd.status.char_id );
+
+	if( process == nullptr ){
+		clif_pet_roulette(sd, false);
+
+		return;
+	}
+
+	mob_data* md = map_id2md( target_id );
+
+	if(md == nullptr || md->prev == nullptr) { // Invalid inputs/state, abort capture.
+		clif_pet_roulette( sd, false );
+		pet_catchprocesses.erase( sd.status.char_id );
+
+		return;
+	}
+
+	if (map_getmapflag(sd.m, MF_NOPETCAPTURE)) {
+		clif_pet_roulette( sd, false );
+		pet_catchprocesses.erase( sd.status.char_id );
+		clif_displaymessage(sd.fd, msg_txt(&sd, 669)); // You can't catch any pet on this map.
+
+		return;
+	}
+
+	//FIXME: delete taming item here, if this was an item-invoked capture and the item was flagged as delay-consume [ultramage]
+
+	std::shared_ptr<s_pet_db> pet = pet_db.find(md->mob_id);
+
+	if (pet == nullptr) {
+		clif_pet_roulette(sd, false);
+		pet_catchprocesses.erase( sd.status.char_id );
+
+		return;
+	}
+
+	switch( process->flag ){
+		case PET_CATCH_NORMAL:
+			// If the taming item used is different from the taming item according to the pet database
+			if( process->taming_item != pet->itemID ){
+				clif_pet_roulette( sd, false );
+				pet_catchprocesses.erase( sd.status.char_id );
+
+				return;
+			}
+			break;
+
+		case PET_CATCH_UNIVERSAL_NO_BOSS:
+			// PET_CATCH_UNIVERSAL_NO_BOSS is used for universal lures (except bosses for now).
+			if( status_has_mode( &md->status, MD_STATUSIMMUNE ) ){
+				clif_pet_roulette( sd, false );
+				pet_catchprocesses.erase( sd.status.char_id );
+
+				return;
+			}
+			break;
+
+		case PET_CATCH_UNIVERSAL_ALL:
+			// No checks, catch anything.
+			break;
+	}
+
+	if( battle_config.pet_distance_check && distance_bl( &sd, md ) > battle_config.pet_distance_check ){
+		clif_pet_roulette(sd, false);
+		pet_catchprocesses.erase( sd.status.char_id );
+
+		return;
+	}
+
+	if (!pc_inventoryblank(&sd)) {
+		clif_pet_roulette(sd, false);
+		pet_catchprocesses.erase( sd.status.char_id );
+		clif_msg_color( sd, MSI_CANT_GET_ITEM_BECAUSE_COUNT, color_table[COLOR_RED] );
+
+		return;
+	}
+
+	status_change* tsc = status_get_sc( md );
+
+	if( battle_config.pet_hide_check && tsc && ( tsc->getSCE(SC_HIDING) || tsc->getSCE(SC_CLOAKING) || tsc->getSCE(SC_CAMOUFLAGE) || tsc->getSCE(SC_NEWMOON) || tsc->getSCE(SC_CLOAKINGEXCEED) ) ){
+		clif_pet_roulette( sd, false );
+		pet_catchprocesses.erase( sd.status.char_id );
+
+		return;
+	}
+
+	int32 pet_catch_rate = 0;
+	if( battle_config.pet_legacy_formula ){
+		pet_catch_rate = ( pet->capture + ( sd.status.base_level - md->level ) * 30 + sd.battle_status.luk * 20 ) * ( 200 - get_percentage( md->status.hp, md->status.max_hp ) ) / 100;
+	}else{
+		pet_catch_rate = pet->capture + ( ( 100 - get_percentage( md->status.hp, md->status.max_hp ) ) * pet->capture ) / 100;
+	}
+
+	if(pet_catch_rate < 1)
+		pet_catch_rate = 1;
+
+	if(battle_config.pet_catch_rate != 100)
+		pet_catch_rate = (pet_catch_rate*battle_config.pet_catch_rate)/100;
+
+	if(rnd_chance(pet_catch_rate, 10000)) {
+		achievement_update_objective(&sd, AG_TAMING, 1, md->mob_id);
+		unit_remove_map(md,CLR_OUTSIGHT);
+		status_kill(md);
+		clif_pet_roulette( sd, true );
+
+		std::shared_ptr<s_mob_db> mdb = mob_db.find(pet->class_);
+
+		intif_create_pet(sd.status.account_id, sd.status.char_id, pet->class_, mdb->lv, pet->EggID, 0, pet->intimate, 100, 0, 1, mdb->jname.c_str());
+	} else {
+		clif_pet_roulette( sd, false );
+	}
+
+	pet_catchprocesses.erase( sd.status.char_id );
+
+	return;
+}
+
+/**
+ * Is invoked _only_ when a new pet has been created is a product of packet 0x3880
+ * see mapif_pet_created@int_pet.cpp for more information.
+ * Handles new pet data from inter-server and prepares item information to add pet egg.
+ * @param account_id : account ID of owner
+ * @param pet_class : class of pet
+ * @param pet_id : pet ID otherwise means failure
+ * @return true : success, false : failure
+ **/
+bool pet_get_egg(uint32 account_id, int16 pet_class, int32 pet_id ) {
+	map_session_data *sd;
+	struct item tmp_item;
+	int32 ret = 0;
+
+	if( pet_id == 0 || pet_class == 0 )
+		return false;
+
+	sd = map_id2sd(account_id);
+
+	if( sd == nullptr )
+		return false;
+
+	// i = pet_search_petDB_index(sd->catch_target_class,PET_CLASS);
+	// issue: 8150
+	// Before this change in cases where more than one pet egg were requested in a short
+	// period of time it wasn't possible to know which kind of egg was being requested after
+	// the first request. [Panikon]
+	std::shared_ptr<s_pet_db> pet = pet_db.find(pet_class);
+
+	if(!pet) {
+		intif_delete_petdata(pet_id);
+
+		return false;
+	}
+
+	memset(&tmp_item,0,sizeof(tmp_item));
+	tmp_item.nameid = pet->EggID;
+	tmp_item.identify = 1;
+	tmp_item.card[0] = CARD0_PET;
+	tmp_item.card[1] = GetWord(pet_id,0);
+	tmp_item.card[2] = GetWord(pet_id,1);
+	tmp_item.card[3] = 0; //New pets are not named.
+	tmp_item.card[3] |= pet_get_card3_intimacy( pet->intimate ); // Store intimacy status based on initial intimacy
+
+	if((ret = pc_additem(sd,&tmp_item,1,LOG_TYPE_PICKDROP_PLAYER))) {
+		clif_additem(sd, 0, 0, ret);
+		intif_delete_petdata(pet_id);
+
+		return false;
+	}
+
+	return true;
+}
+
+static int32 pet_unequipitem(map_session_data *sd, pet_data *pd);
+static int32 pet_ai_sub_hard_lootsearch(block_list *bl,va_list ap);
+
+/**
+ * Pet menu options.
+ * @param sd : player requesting
+ * @param menunum : menu option chosen
+ * @return 0:success, 1:failure
+ */
+int32 pet_menu(map_session_data *sd,int32 menunum)
+{
+	nullpo_ret(sd);
+
+	if (sd->pd == nullptr)
+		return 1;
+
+	//You lost the pet already.
+	if(!sd->status.pet_id || sd->pd->pet.intimate <= PET_INTIMATE_NONE || sd->pd->pet.incubate)
+		return 1;
+
+	switch(menunum) {
+		case 0:
+			clif_send_petstatus( *sd, *sd->pd );
+			break;
+		case 1:
+			pet_food(sd, sd->pd);
+			break;
+		case 2:
+			pet_performance(sd, sd->pd);
+			break;
+		case 3:
+			pet_return_egg(sd, sd->pd);
+			break;
+		case 4:
+			pet_unequipitem(sd, sd->pd);
+			break;
+	}
+
+	return 0;
+}
+
+/**
+ * Apply pet's new name.
+ * @param sd : player requesting
+ * @param name : new pet name
+ * @return 0:success, 1:failure
+ */
+int32 pet_change_name( const map_session_data* sd, char* name )
+{
+	int32 i;
+	pet_data *pd;
+
+	nullpo_retr(1, sd);
+
+	pd = sd->pd;
+
+	if((pd == nullptr) || (pd->pet.rename_flag == 1 && !battle_config.pet_rename))
+		return 1;
+
+	for(i = 0; i < NAME_LENGTH && name[i]; i++) {
+		if( !(name[i]&0xe0) || name[i]==0x7f)
+			return 1;
+	}
+
+	return intif_rename_pet(sd, name);
+}
+
+/**
+ * Request to change pet's name.
+ * @param sd : player requesting
+ * @param name : new pet name
+ * @param flag : 1:cannot use this name
+ * @return 1:success, 0:failure
+ */
+int32 pet_change_name_ack(map_session_data *sd, char* name, int32 flag)
+{
+	pet_data *pd = sd->pd;
+
+	if (!pd)
+		return 0;
+
+	normalize_name(name," ");//bugreport:3032
+
+	if ( !flag || !strlen(name) ) {
+		clif_displaymessage(sd->fd, msg_txt(sd,280)); // You cannot use this name for your pet.
+		clif_send_petstatus( *sd, *pd ); //Send status so client knows pet name change got rejected.
+		return 0;
+	}

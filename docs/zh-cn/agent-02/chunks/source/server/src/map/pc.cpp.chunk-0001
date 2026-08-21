@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "pc.hpp"
+
+#include <cmath>
+#include <cstdlib>
+#include <map>
+
+#ifdef MAP_GENERATOR
+#include <fstream>
+#include <iostream>
+#include <nlohmann/json.hpp>
+#endif
+
+#include <common/cbasetypes.hpp>
+#include <common/core.hpp> // get_svn_revision()
+#include <common/database.hpp>
+#include <common/ers.hpp>  // ers_destroy
+#include <common/grfio.hpp>
+#include <common/malloc.hpp>
+#include <common/mmo.hpp> //NAME_LENGTH
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp> // session[]
+#include <common/strlib.hpp> // safestrncpy()
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "atcommand.hpp" // get_atcommand_level()
+#include "battle.hpp" // battle_config
+#include "battleground.hpp"
+#include "buyingstore.hpp"  // struct s_buyingstore
+#include "channel.hpp"
+#include "chat.hpp"
+#include "chrif.hpp"
+#include "clan.hpp"
+#include "clif.hpp"
+#include "date.hpp" // is_day_of_*()
+#include "duel.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp" // MAX_ITEMGROUP
+#include "log.hpp"
+#include "map.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "party.hpp" // party_search()
+#include "pc_groups.hpp"
+#include "pet.hpp" // pet_unlocktarget()
+#include "quest.hpp"
+#include "skill.hpp" // skill_isCopyable()
+#include "script.hpp" // struct script_reg, struct script_regstr
+#include "searchstore.hpp"  // struct s_search_store_info
+#include "status.hpp" // OPTION_*, struct weapon_atk
+#include "storage.hpp"
+#include "unit.hpp" // unit_stop_attack(), unit_stop_walking()
+#include "vending.hpp" // struct s_vending
+
+using namespace rathena;
+
+JobDatabase job_db;
+
+CaptchaDatabase captcha_db;
+const char *macro_allowed_answer_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+
+int32 pc_split_atoui(char* str, uint32* val, char sep, int32 max);
+static inline bool pc_attendance_rewarded_today( map_session_data* sd );
+
+#define PVP_CALCRANK_INTERVAL 1000	// PVP calculation interval
+
+PlayerStatPointDatabase statpoint_db;
+
+SkillTreeDatabase skill_tree_db;
+
+// timer for night.day implementation
+int32 day_timer_tid = INVALID_TIMER;
+int32 night_timer_tid = INVALID_TIMER;
+
+struct eri *pc_sc_display_ers = nullptr;
+struct eri *num_reg_ers;
+struct eri *str_reg_ers;
+int32 pc_expiration_tid = INVALID_TIMER;
+
+struct fame_list smith_fame_list[MAX_FAME_LIST];
+struct fame_list chemist_fame_list[MAX_FAME_LIST];
+struct fame_list taekwon_fame_list[MAX_FAME_LIST];
+
+const std::string AttendanceDatabase::getDefaultLocation(){
+	return std::string(db_path) + "/attendance.yml";
+}
+
+/**
+ * Reads and parses an entry from the attendance_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 AttendanceDatabase::parseBodyNode(const ryml::NodeRef& node){
+	uint32 start;
+
+	if( !this->asUInt32( node, "Start", start ) ){
+		return 0;
+	}
+
+	std::shared_ptr<s_attendance_period> attendance_period = this->find( start );
+	bool exists = attendance_period != nullptr;
+
+	if( !exists ){
+		if( !this->nodeExists( node, "End" ) ){
+			this->invalidWarning( node, "Node \"End\" is missing.\n" );
+			return 0;
+		}
+
+		if( !this->nodeExists( node, "Rewards" ) ){
+			this->invalidWarning( node, "Node \"Rewards\" is missing.\n" );
+			return 0;
+		}
+
+		attendance_period = std::make_shared<s_attendance_period>();
+
+		attendance_period->start = start;
+	}
+
+	// If it does not exist yet, we need to check it for sure
+	bool requiresCollisionDetection = !exists;
+
+	if( this->nodeExists( node, "End" ) ){
+		uint32 end;
+
+		if( !this->asUInt32( node, "End", end ) ){
+			return 0;
+		}
+
+		// If the period is outdated already, we do not even bother parsing
+		if( end < date_get( DT_YYYYMMDD ) ){
+			this->invalidWarning( node, "Node \"End\" date %u has already passed, skipping.\n", end );
+			return 0;
+		}
+
+		if( !exists || attendance_period->end != end ){
+			requiresCollisionDetection = true;
+			attendance_period->end = end;
+		}
+	}
+
+	// Collision detection
+	if( requiresCollisionDetection ){
+		bool collision = false;
+
+		for( std::pair<const uint32,std::shared_ptr<s_attendance_period>>& pair : *this ){
+			std::shared_ptr<s_attendance_period> period = pair.second;
+
+			if( exists && period->start == attendance_period->start ){
+				// Dont compare to yourself
+				continue;
+			}
+
+			// Check if start is inside another period
+			if( period->start <= attendance_period->start && start <= period->end ){
+				this->invalidWarning( node, "Node \"Start\" period %u intersects with period %u-%u, skipping.\n", attendance_period->start, period->start, period->end );
+				collision = true;
+				break;
+			}
+
+			// Check if end is inside another period
+			if( period->start <= attendance_period->end && attendance_period->end <= period->end ){
+				this->invalidWarning( node, "Node \"End\" period %u intersects with period %u-%u.\n", attendance_period->start, period->start, period->end );
+				collision = true;
+				break;
+			}
+		}
+
+		if( collision ){
+			return 0;
+		}
+	}
+
+	if( this->nodeExists( node, "Rewards" ) ){
+		const auto& rewardsNode = node["Rewards"];
+
+		for( const auto& rewardNode : rewardsNode ){
+			uint32 day;
+
+			if( !this->asUInt32( rewardNode, "Day", day ) ){
+				continue;
+			}
+
+			day -= 1;
+
+			std::shared_ptr<s_attendance_reward> reward = util::map_find( attendance_period->rewards, day );
+			bool reward_exists = reward != nullptr;
+
+			if( !reward_exists ){
+				if( !this->nodeExists( rewardNode, "ItemId" ) ){
+					this->invalidWarning( rewardNode, "Node \"ItemId\" is missing.\n" );
+					return 0;
+				}
+
+				reward = std::make_shared<s_attendance_reward>();
+			}
+
+			if( this->nodeExists( rewardNode, "ItemId" ) ){
+				t_itemid item_id;
+
+				if( !this->asUInt32( rewardNode, "ItemId", item_id ) ){
+					continue;
+				}
+
+				if( !item_db.exists( item_id ) ){
+					ShowError( "pc_attendance_load: Unknown item ID %u for day %d.\n", item_id, day + 1 );
+					continue;
+				}
+
+				reward->item_id = item_id;
+			}
+
+			if( this->nodeExists( rewardNode, "Amount" ) ){
+				uint16 amount;
+
+				if( !this->asUInt16( rewardNode, "Amount", amount ) ){
+					continue;
+				}
+
+				if( amount == 0 ){
+					ShowWarning( "pc_attendance_load: Invalid reward count %hu for day %d. Defaulting to 1...\n", amount, day + 1 );
+					amount = 1;
+				}else if( amount > MAX_AMOUNT ){
+					ShowError( "pc_attendance_load: Reward count %hu above maximum %hu for day %d. Defaulting to %hu...\n", amount, MAX_AMOUNT, day + 1, MAX_AMOUNT );
+					amount = MAX_AMOUNT;
+				}
+
+				reward->amount = amount;
+			}else{
+				if( !reward_exists ){
+					reward->amount = 1;
+				}
+			}
+
+			if( !reward_exists ){
+				attendance_period->rewards[day] = reward;
+			}
+		}
+
+		bool missing_day = false;
+
+		for( int32 day = 0; day < attendance_period->rewards.size(); day++ ){
+			if( attendance_period->rewards.find( day ) == attendance_period->rewards.end() ){
+				ShowError( "pc_attendance_load: Reward for day %d is missing.\n", day + 1 );
+				missing_day = true;
+				break;
+			}
+		}
+
+		if( missing_day ){
+			return 0;
+		}
+	}
+
+	if( !exists ){
+		this->put( start, attendance_period );
+	}
+
+	return 1;
+}
+
+AttendanceDatabase attendance_db;
+
+const std::string ReputationDatabase::getDefaultLocation(){
+	return std::string( db_path ) + "/reputation.yml";
+}
+
+uint64 ReputationDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	int64 id;
+
+	if( !this->asInt64( node, "Id", id ) ){
+		return 0;
+	}
+
+	std::shared_ptr<s_reputation> reputation = this->find( id );
+	bool exists = reputation != nullptr;
+
+	if( !exists ){
+		if( !this->nodesExist( node, { "Name", "Variable" } ) ){
+			return 0;
+		}
+
+		reputation = std::make_shared<s_reputation>();
+		reputation->id = id;
+	}
+
+	if( this->nodeExists( node, "Name" ) ){
+		std::string name;
+
+		if( !this->asString( node, "Name", name ) ){
+			return 0;
+		}
+
+		reputation->name = name;
+	}
+
+	if( this->nodeExists( node, "Variable" ) ){
+		std::string variable;
+
+		if( !this->asString( node, "Variable", variable ) ){
+			return 0;
+		}
+
+		if( variable.length() > 32 ){
+			this->invalidWarning( node, "Variable name \"%s\" exceeds maximum length 32.\n", variable.c_str() );
+			return 0;
+		}
+
+		reputation->variable = variable;
+	}
+
+	if( this->nodeExists( node, "Minimum" ) ){
+		int64 minimum;
+
+		if( !this->asInt64( node, "Minimum", minimum ) ){
+			return 0;
+		}
+
+		reputation->minimum = minimum;
+	}else{
+		if( !exists ){
+			reputation->minimum = INT64_MIN;
+		}
+	}
+
+	if( this->nodeExists( node, "Maximum" ) ){
+		int64 maximum;
+
+		if( !this->asInt64( node, "Maximum", maximum ) ){
+			return 0;
+		}
+
+		reputation->maximum = maximum;
+	}else{
+		if( !exists ){
+			reputation->maximum = INT64_MIN;
+		}
+	}
+
+#ifdef MAP_GENERATOR
+	if (this->nodeExists(node, "Visibility")) {
+		std::string visibility;
+		if (!this->asString(node, "Visibility", visibility)) {
+			return 0;
+		}
+		if (visibility == "Always")
+			reputation->visibility = s_reputation::e_visibility::ALWAYS;
+		else if (visibility == "Never")
+			reputation->visibility = s_reputation::e_visibility::NEVER;
+		else if (visibility == "Exist")
+			reputation->visibility = s_reputation::e_visibility::EXIST;
+		else {
+			this->invalidWarning(node, "Visibility \"%s\" unknown.\n", visibility.c_str());
+			return 0;
+		}
+	} else {
+		if (!exists) {
+			reputation->visibility = s_reputation::e_visibility::ALWAYS;
+		}
+	}
+#endif
+
+	if( !exists ){
+		this->put( id, reputation );
+	}
+
+	return 1;
+}
+
+ReputationDatabase reputation_db;
+
+const std::string ReputationGroupDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/reputation_group.yml";
+}
+
+uint64 ReputationGroupDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	int64 id;
+
+	if (!this->asInt64(node, "Id", id)) {
+		return 0;
+	}
+
+	std::shared_ptr<s_reputationgroup> group = this->find(id);
+	bool exists = group != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, {"Name", "ReputeList"})) {
+			return 0;
+		}
+
+		group = std::make_shared<s_reputationgroup>();
+		group->id = id;
+	}
+
+	if (this->nodeExists(node, "Name")) {
+		std::string name;
+		if (!this->asString(node, "Name", name)) {
+			return 0;
+		}
+		group->name = name;
+	}
+
+	if (this->nodeExists(node, "ScriptName")) {
+		std::string script_name;
+		if (!this->asString(node, "ScriptName", script_name)) {
+			return 0;
+		}
+		group->script_name = script_name;
+	}
+
+	if (this->nodeExists(node, "ReputeList")) {
+		const auto& reputelist = node[c4::to_csubstr("ReputeList")];
+		for (const auto& repute : reputelist) {
+			int64 repute_id;
+			try {
+				repute >> repute_id;
+			} catch (std::runtime_error const&) {
+				this->invalidWarning(node, "Value \"%s\" cannot be parsed as int64.\n", repute.val().str);
+				continue;
+			}
+
+			if (!reputation_db.find(repute_id)) {
+				this->invalidWarning(node, "Reputation id %lld does not exist in reputation_db!\n", repute_id);
+				continue;
+			}
+
+			group->reputations.push_back(repute_id);
+		}
+	}
+
+
+	if (!exists) {
+		this->put(id, group);
+	}
+
+	return 1;
+}
+
+ReputationGroupDatabase reputationgroup_db;
+
+void pc_reputation_generate() {
+#ifdef MAP_GENERATOR
+	const std::string filePrefix = "generated/clientside/data/contentdata/";
+	auto reputeInfo = nlohmann::json::object();
+	for (const auto& pair : reputation_db) {
+		auto id = pair.first;
+		auto rep = pair.second;
+		nlohmann::json node;
+		switch (rep->visibility) {
+		case s_reputation::e_visibility::ALWAYS:
+			node["Invisible"] = "VISIBLE_TRUE";
+			break;
+		case s_reputation::e_visibility::NEVER:
+			node["Invisible"] = "VISIBLE_FALSE";
+			break;
+		case s_reputation::e_visibility::EXIST:
+			node["Invisible"] = "VISIBLE_EXIST";
+			break;
+		}
+		node["MaxPoint_Negative"] = std::abs(rep->minimum);
+		node["MaxPoint_Positive"] = std::abs(rep->maximum);
+		node["Name"] = rep->name;
+
+		reputeInfo[std::to_string(id)] = node;
+	}
+
+	auto j = nlohmann::json::object();
+	j["reputeInfo"] = reputeInfo;
+	// std::cout << j.dump(2) << "\n";
+
+	auto bson = nlohmann::json::to_bson(j);
+
+	auto reputation_file = std::ofstream(filePrefix + "./reputeinfodata.bson", std::ios::binary);
+	if (!reputation_file) {
+		ShowError("Failed to create reputation file.\n");
+		ShowError("Maybe the file directory \"%s\" does not exist?\n", filePrefix.c_str());
+		ShowInfo("Create the directory and rerun map-server-generator\n");
+		exit(1);
+	}
+
+	reputation_file.write((const char *)&bson[0], bson.size());
+
+	auto reputeGroupInfo = nlohmann::json::object();
+	for (const auto& pair : reputationgroup_db) {
+		auto id = pair.first;
+		auto group = pair.second;
+		nlohmann::json node;
+
+		node["ID"] = group->script_name;

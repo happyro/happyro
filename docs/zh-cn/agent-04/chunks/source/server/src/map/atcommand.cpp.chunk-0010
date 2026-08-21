@@ -1,0 +1,500 @@
+	clif_displaymessage(fd, msg_txt(sd,257)); // Player database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadmotd){
+	nullpo_retr(-1, sd);
+
+	pc_read_motd();
+	clif_displaymessage(fd, msg_txt(sd,268)); // Reloaded the Message of the Day.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadquestdb){
+	nullpo_retr(-1, sd);
+
+	if (quest_db.reload())
+		clif_displaymessage(fd, msg_txt(sd,1377)); // Quest database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadmsgconf){
+	nullpo_retr(-1, sd);
+
+	map_msg_reload();
+	clif_displaymessage(fd, msg_txt(sd,463)); // Message configuration has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadinstancedb){
+	nullpo_retr(-1, sd);
+
+	if (instance_db.reload())
+		clif_displaymessage(fd, msg_txt(sd,516)); // Instance database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadachievementdb){
+	nullpo_retr(-1, sd);
+
+	achievement_db_reload();
+	clif_displaymessage(fd, msg_txt(sd,771)); // Achievement database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadattendancedb){
+	nullpo_retr(-1, sd);
+
+	attendance_db.reload();
+	clif_displaymessage(fd, msg_txt(sd, 795)); // Attendance database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadbarterdb){
+	nullpo_retr(-1, sd);
+
+	barter_db.reload();
+	clif_displaymessage(fd, msg_txt(sd, 830)); // Barter database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadlogconf){
+	nullpo_retr(-1, sd);
+
+	log_config_read(LOG_CONF_NAME);
+	clif_displaymessage(fd, msg_txt(sd,1536)); // Log configuration has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC( reload ){
+	static const struct{
+		const char* type;
+		int32 (*func)( const int32 fd, map_session_data* sd, const char* command, const char* message );
+	} types[] = {
+		{ "achievementdb", atcommand_reloadachievementdb },
+		{ "atcommand", atcommand_reloadatcommand },
+		{ "attendancedb", atcommand_reloadattendancedb },
+		{ "barterdb", atcommand_reloadbarterdb },
+		{ "battleconf", atcommand_reloadbattleconf },
+		{ "cashdb", atcommand_reloadcashdb },
+		{ "instancedb", atcommand_reloadinstancedb },
+		{ "itemdb", atcommand_reloaditemdb },
+		{ "logconf", atcommand_reloadlogconf },
+		{ "mobdb", atcommand_reloadmobdb },
+		{ "motd", atcommand_reloadmotd },
+		{ "msgconf", atcommand_reloadmsgconf },
+		{ "pcdb", atcommand_reloadpcdb },
+		{ "script", atcommand_reloadscript },
+		{ "skilldb", atcommand_reloadskilldb },
+		{ "statusdb", atcommand_reloadstatusdb },
+		{ "questdb", atcommand_reloadquestdb },
+	};
+
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message) {
+		if (const char* help = atcommand_help_string(command); help != nullptr) {
+			clif_displaymessage(fd, help);
+		}
+		return -1;
+	}
+
+	// Case insensitive full string search
+	for( const auto& type : types ){
+		if( strcasecmp( type.type, message ) == 0 ){
+			if( pc_can_use_command( sd, type.type, COMMAND_ATCOMMAND ) ){
+				return type.func( fd, sd, type.type, "" );
+			}else{
+				return -1;
+			}
+		}
+	}
+
+	// Case sensitive partial string search
+	for( const auto& type : types ){
+		if( strstr( type.type, message ) != nullptr ){
+			if( pc_can_use_command( sd, type.type, COMMAND_ATCOMMAND ) ){
+				return type.func( fd, sd, type.type, "" );
+			}else{
+				return -1;
+			}
+		}
+	}
+
+	// No valid type specified
+	if( const char* help = atcommand_help_string( command ); help != nullptr ){
+		clif_displaymessage( fd, help );
+	}
+
+	return -1;
+}
+
+/*==========================================
+ * @partysharelvl <share_range> [Akinari]
+ * Updates char server party share level range in runtime
+ * Temporary - Permanent update in inter_athena.conf
+ *------------------------------------------*/
+ACMD_FUNC(partysharelvl) {
+	uint32 share_lvl;
+
+	nullpo_retr(-1, sd);
+
+	if(!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1322)); // Please enter an amount.
+		return -1;
+	} else {
+		share_lvl = min(abs(atoi(message)),MAX_LEVEL);
+        }
+
+	if(intif_party_sharelvlupdate(share_lvl)) //Successfully updated
+		clif_displaymessage(fd, msg_txt(sd,1478)); // Party share level range has been changed successfully.
+	else //Char server offline
+		clif_displaymessage(fd, msg_txt(sd,1479)); // Failed to update configuration. Character server is offline.
+
+	return 0;
+}
+
+/*==========================================
+ * @mapinfo [0-3] <map name> by MC_Cameri
+ * => Shows information about the map [map name]
+ * 0 = no additional information
+ * 1 = Show users in that map and their location
+ * 2 = Shows NPCs in that map
+ * 3 = Shows the chats in that map
+ *------------------------------------------*/
+ACMD_FUNC(mapinfo) {
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+	chat_data *cd = nullptr;
+	char direction[12];
+	int32 i, m_id, chat_num = 0, list = 0, vend_num = 0;
+	uint16 m_index;
+	char mapname[MAP_NAME_LENGTH];
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	memset(mapname, '\0', sizeof(mapname));
+	memset(direction, '\0', sizeof(direction));
+
+	sscanf(message, "%11d %11[^\n]", &list, mapname);
+
+	if (list < 0 || list > 3) {
+		clif_displaymessage(fd, msg_txt(sd,1038)); // Please enter at least one valid list number (usage: @mapinfo <0-3> <map>).
+		return -1;
+	}
+
+	if (mapname[0] == '\0') {
+		safestrncpy(mapname, mapindex_id2name(sd->mapindex), MAP_NAME_LENGTH);
+		m_id =  map_mapindex2mapid(sd->mapindex);
+	} else {
+		m_id = map_mapname2mapid(mapname);
+	}
+
+	if (m_id < 0) {
+		clif_displaymessage(fd, msg_txt(sd,1)); // Map not found.
+		return -1;
+	}
+	m_index = mapindex_name2id(mapname); //This one shouldn't fail since the previous seek did not.
+
+	clif_displaymessage(fd, msg_txt(sd,1039)); // ------ Map Info ------
+
+	// count chats (for initial message)
+	chat_num = 0;
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) ) {
+		if( pl_sd->mapindex == m_index ) {
+			if( pl_sd->state.vending )
+				vend_num++;
+			else if( (cd = (chat_data*)map_id2bl(pl_sd->chatID)) != nullptr && cd->usersd[0] == pl_sd )
+				chat_num++;
+		}
+	}
+	mapit_free(iter);
+
+	struct map_data *mapdata = map_getmapdata(m_id);
+
+	sprintf(atcmd_output, msg_txt(sd,1040), mapname, mapdata->users, mapdata->npc_num, chat_num, vend_num); // Map: %s | Players: %d | NPCs: %d | Chats: %d | Vendings: %d
+	clif_displaymessage(fd, atcmd_output);
+	clif_displaymessage(fd, msg_txt(sd,1041)); // ------ Map Flags ------
+	if (map_getmapflag(m_id, MF_TOWN))
+		clif_displaymessage(fd, msg_txt(sd,1042)); // Town Map
+	if (map_getmapflag(m_id, MF_RESTRICTED)){
+		sprintf(atcmd_output, " Restricted (zone %d)",mapdata->zone);
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	if (battle_config.autotrade_mapflag == map_getmapflag(m_id, MF_AUTOTRADE))
+		clif_displaymessage(fd, msg_txt(sd,1043)); // Autotrade Enabled
+	else
+		clif_displaymessage(fd, msg_txt(sd,1044)); // Autotrade Disabled
+
+	if (map_getmapflag(m_id, MF_BATTLEGROUND)){
+		sprintf(atcmd_output, msg_txt(sd,1045),map_getmapflag(m_id, MF_BATTLEGROUND)); // Battlegrounds ON (type %d)
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	/* Skill damage adjustment info [Cydh] */
+	if (mapdata->getMapFlag(MF_SKILL_DAMAGE)) {
+		clif_displaymessage(fd,msg_txt(sd,1052)); // Skill Damage Adjustments:
+		sprintf(atcmd_output, msg_txt(sd, 1053), // > [Map] %d%%, %d%%, %d%%, %d%% | Caster:%d
+			mapdata->damage_adjust.rate[SKILLDMG_PC],
+			mapdata->damage_adjust.rate[SKILLDMG_MOB],
+			mapdata->damage_adjust.rate[SKILLDMG_BOSS],
+			mapdata->damage_adjust.rate[SKILLDMG_OTHER],
+			mapdata->damage_adjust.caster);
+		clif_displaymessage(fd, atcmd_output);
+		if (!mapdata->skill_damage.empty()) {
+			clif_displaymessage(fd, msg_txt(sd, 1054)); // > [Map Skill] Name : Player, Monster, Boss Monster, Other | Caster
+			for (const auto& skilldmg : mapdata->skill_damage) {
+				sprintf(atcmd_output,"     %s : %d%%, %d%%, %d%%, %d%% | %d",
+					skill_get_name(skilldmg.first),
+					skilldmg.second.rate[SKILLDMG_PC],
+					skilldmg.second.rate[SKILLDMG_MOB],
+					skilldmg.second.rate[SKILLDMG_BOSS],
+					skilldmg.second.rate[SKILLDMG_OTHER],
+					skilldmg.second.caster);
+				clif_displaymessage(fd,atcmd_output);
+			}
+		}
+	}
+
+	if (map_getmapflag(m_id, MF_SKILL_DURATION)) {
+		clif_displaymessage(fd, msg_txt(sd, 1055)); // Skill Duration Adjustments:
+		for (const auto &it : mapdata->skill_duration) {
+			sprintf(atcmd_output, " > %s : %d%%", skill_get_name(it.first), it.second);
+			clif_displaymessage(fd, atcmd_output);
+		}
+	}
+
+	strcpy(atcmd_output,msg_txt(sd,1046)); // PvP Flags:
+	if (map_getmapflag(m_id, MF_PVP))
+		strcat(atcmd_output, " Pvp ON |");
+	if (map_getmapflag(m_id, MF_PVP_NOGUILD))
+		strcat(atcmd_output, " NoGuild |");
+	if (map_getmapflag(m_id, MF_PVP_NOPARTY))
+		strcat(atcmd_output, " NoParty |");
+	if (map_getmapflag(m_id, MF_PVP_NIGHTMAREDROP))
+		strcat(atcmd_output, " NightmareDrop |");
+	if (map_getmapflag(m_id, MF_PVP_NOCALCRANK))
+		strcat(atcmd_output, " NoCalcRank |");
+	clif_displaymessage(fd, atcmd_output);
+
+	strcpy(atcmd_output,msg_txt(sd,1047)); // GvG Flags:
+	if (map_getmapflag(m_id, MF_GVG))
+		strcat(atcmd_output, " GvG ON |");
+	if (map_getmapflag(m_id, MF_GVG_DUNGEON))
+		strcat(atcmd_output, " GvG Dungeon |");
+	if (map_getmapflag(m_id, MF_GVG_CASTLE))
+		strcat(atcmd_output, " GvG Castle |");
+	if (map_getmapflag(m_id, MF_GVG_TE))
+		strcat(atcmd_output, " GvG TE |");
+	if (map_getmapflag(m_id, MF_GVG_TE_CASTLE))
+		strcat(atcmd_output, " GvG TE Castle |");
+	if (map_getmapflag(m_id, MF_GVG_NOPARTY))
+		strcat(atcmd_output, " NoParty |");
+	clif_displaymessage(fd, atcmd_output);
+
+	strcpy(atcmd_output,msg_txt(sd,1048)); // Teleport Flags:
+	if (map_getmapflag(m_id, MF_NOTELEPORT))
+		strcat(atcmd_output, " NoTeleport |");
+	if (map_getmapflag(m_id, MF_MONSTER_NOTELEPORT))
+		strcat(atcmd_output, " Monster NoTeleport |");
+	if (map_getmapflag(m_id, MF_NOWARP))
+		strcat(atcmd_output, " NoWarp |");
+	if (map_getmapflag(m_id, MF_NOWARPTO))
+		strcat(atcmd_output, " NoWarpTo |");
+	if (map_getmapflag(m_id, MF_NORETURN))
+		strcat(atcmd_output, " NoReturn |");
+	if (map_getmapflag(m_id, MF_NOGO))
+		strcat(atcmd_output, " NoGo |"); //
+	if (map_getmapflag(m_id, MF_NOMEMO))
+		strcat(atcmd_output, "  NoMemo |");
+	if (map_getmapflag(m_id, MF_PRIVATEAIRSHIP_SOURCE))
+		strcat(atcmd_output, " PrivateAirship_Source |");
+	if (map_getmapflag(m_id, MF_PRIVATEAIRSHIP_DESTINATION))
+		strcat(atcmd_output, " PrivateAirship_Destination |");
+	clif_displaymessage(fd, atcmd_output);
+
+	sprintf(atcmd_output, msg_txt(sd,1065),  // No Exp Penalty: %s | No Zeny Penalty: %s
+		(map_getmapflag(m_id, MF_NOEXPPENALTY)) ? msg_txt(sd,1066) : msg_txt(sd,1067), (map_getmapflag(m_id, MF_NOZENYPENALTY)) ? msg_txt(sd,1066) : msg_txt(sd,1067)); // On / Off
+	clif_displaymessage(fd, atcmd_output);
+
+	if (map_getmapflag(m_id, MF_NOSAVE)) {
+		if (!mapdata->save.map)
+			clif_displaymessage(fd, msg_txt(sd,1068)); // No Save (Return to last Save Point)
+		else if (mapdata->save.x == -1 || mapdata->save.y == -1 ) {
+			sprintf(atcmd_output, msg_txt(sd,1069), mapindex_id2name(mapdata->save.map)); // No Save, Save Point: %s,Random
+			clif_displaymessage(fd, atcmd_output);
+		}
+		else {
+			sprintf(atcmd_output, msg_txt(sd,1070), // No Save, Save Point: %s,%d,%d
+				mapindex_id2name(mapdata->save.map),mapdata->save.x,mapdata->save.y);
+			clif_displaymessage(fd, atcmd_output);
+		}
+	}
+
+	strcpy(atcmd_output,msg_txt(sd,1049)); // Weather Flags:
+	if (map_getmapflag(m_id, MF_SNOW))
+		strcat(atcmd_output, " Snow |");
+	if (map_getmapflag(m_id, MF_FOG))
+		strcat(atcmd_output, " Fog |");
+	if (map_getmapflag(m_id, MF_SAKURA))
+		strcat(atcmd_output, " Sakura |");
+	if (map_getmapflag(m_id, MF_CLOUDS))
+		strcat(atcmd_output, " Clouds |");
+	if (map_getmapflag(m_id, MF_CLOUDS2))
+		strcat(atcmd_output, "  Clouds2 |");
+	if (map_getmapflag(m_id, MF_FIREWORKS))
+		strcat(atcmd_output, " Fireworks |");
+	if (map_getmapflag(m_id, MF_LEAVES))
+		strcat(atcmd_output, "  Leaves |");
+	if (map_getmapflag(m_id, MF_NIGHTENABLED))
+		strcat(atcmd_output, "  Displays Night |");
+	clif_displaymessage(fd, atcmd_output);
+
+	strcpy(atcmd_output,msg_txt(sd,1050)); // Other Flags:
+	if (map_getmapflag(m_id, MF_NOBRANCH))
+		strcat(atcmd_output, " NoBranch |");
+	if (map_getmapflag(m_id, MF_NOTRADE))
+		strcat(atcmd_output, " NoTrade |");
+	if (map_getmapflag(m_id, MF_NOVENDING))
+		strcat(atcmd_output, " NoVending |");
+	if (map_getmapflag(m_id, MF_NOBUYINGSTORE))
+		strcat(atcmd_output, " NoBuyingstore |");
+	if (map_getmapflag(m_id, MF_NODROP))
+		strcat(atcmd_output, " NoDrop |");
+	if (map_getmapflag(m_id, MF_NOSKILL))
+		strcat(atcmd_output, " NoSkill |");
+	if (map_getmapflag(m_id, MF_NOICEWALL))
+		strcat(atcmd_output, " NoIcewall |");
+	if (map_getmapflag(m_id, MF_ALLOWKS))
+		strcat(atcmd_output, " AllowKS |");
+	if (map_getmapflag(m_id, MF_RESET))
+		strcat(atcmd_output, " Reset |");
+	if (map_getmapflag(m_id, MF_HIDEMOBHPBAR))
+		strcat(atcmd_output, " HideMobHPBar |");
+	if (map_getmapflag(m_id, MF_NOCOMMAND))
+		strcat(atcmd_output, " NoCommand |");
+	if (map_getmapflag(m_id, MF_NOBASEEXP))
+		strcat(atcmd_output, " NoBaseEXP |");
+	if (map_getmapflag(m_id, MF_NOJOBEXP))
+		strcat(atcmd_output, " NoJobEXP |");
+	if (map_getmapflag(m_id, MF_NOMOBLOOT))
+		strcat(atcmd_output, " NoMobLoot |");
+	if (map_getmapflag(m_id, MF_NOMVPLOOT))
+		strcat(atcmd_output, " NoMVPLoot |");
+	if (map_getmapflag(m_id, MF_NORENEWALEXPPENALTY))
+		strcat(atcmd_output, " NoRenewalExpPenalty |");
+	if (map_getmapflag(m_id, MF_NORENEWALDROPPENALTY))
+		strcat(atcmd_output, " NoRenewalDropPenalty |");
+	if (map_getmapflag(m_id, MF_PARTYLOCK))
+		strcat(atcmd_output, " PartyLock |");
+	if (map_getmapflag(m_id, MF_GUILDLOCK))
+		strcat(atcmd_output, " GuildLock |");
+	if (map_getmapflag(m_id, MF_LOADEVENT))
+		strcat(atcmd_output, " Loadevent |");
+	if (map_getmapflag(m_id, MF_NODYNAMICNPC))
+		strcat(atcmd_output, " NoDynamicNPC |");
+	if (map_getmapflag(m_id, MF_NOMAPCHANNELAUTOJOIN))
+		strcat(atcmd_output, " NoMapChannelAutoJoin |");
+	if (map_getmapflag(m_id, MF_NOUSECART))
+		strcat(atcmd_output, " NoUsecart |");
+	if (map_getmapflag(m_id, MF_NOITEMCONSUMPTION))
+		strcat(atcmd_output, " NoItemConsumption |");
+	if (map_getmapflag(m_id, MF_NOSUNMOONSTARMIRACLE))
+		strcat(atcmd_output, " NoSunMoonStarMiracle |");
+	if (map_getmapflag(m_id, MF_FORCEMINEFFECT))
+		strcat(atcmd_output, " ForceMinEffect |");
+	if (map_getmapflag(m_id, MF_NOLOCKON))
+		strcat(atcmd_output, " NoLockOn |");
+	if (map_getmapflag(m_id, MF_NOTOMB))
+		strcat(atcmd_output, " NoTomb |");
+	if (map_getmapflag(m_id, MF_NOCOSTUME))
+		strcat(atcmd_output, " NoCostume |");
+	if (map_getmapflag(m_id, MF_NOBANK))
+		strcat(atcmd_output, " NoBank |");
+	if (map_getmapflag(m_id, MF_NOCASHSHOP))
+		strcat(atcmd_output, " NoCashShop |");
+	if (map_getmapflag(m_id, MF_NORODEX))
+		strcat(atcmd_output, " NoRODex |");
+	if (map_getmapflag(m_id, MF_NOPETCAPTURE))
+		strcat(atcmd_output, " NoPetCapture |");
+	clif_displaymessage(fd, atcmd_output);
+
+	switch (list) {
+	case 0:
+		// Do nothing. It's list 0, no additional display.
+		break;
+	case 1:
+		clif_displaymessage(fd, msg_txt(sd,480)); // ----- Players in Map -----
+		iter = mapit_getallusers();
+		for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+		{
+			if (pl_sd->mapindex == m_index) {
+				sprintf(atcmd_output, msg_txt(sd,481), // Player '%s' (session #%d) | Location: %d,%d
+				        pl_sd->status.name, pl_sd->fd, pl_sd->x, pl_sd->y);
+				clif_displaymessage(fd, atcmd_output);
+			}
+		}
+		mapit_free(iter);
+		break;
+	case 2:
+		clif_displaymessage(fd, msg_txt(sd,482)); // ----- NPCs in Map -----
+		for (i = 0; i < mapdata->npc_num;)
+		{
+			npc_data *nd = mapdata->npc[i];
+			switch(nd->ud.dir) {
+			case DIR_NORTH:		strcpy(direction, msg_txt(sd,491)); break; // North
+			case DIR_NORTHWEST:	strcpy(direction, msg_txt(sd,492)); break; // North West
+			case DIR_WEST:		strcpy(direction, msg_txt(sd,493)); break; // West
+			case DIR_SOUTHWEST:	strcpy(direction, msg_txt(sd,494)); break; // South West
+			case DIR_SOUTH:		strcpy(direction, msg_txt(sd,495)); break; // South
+			case DIR_SOUTHEAST:	strcpy(direction, msg_txt(sd,496)); break; // South East
+			case DIR_EAST:		strcpy(direction, msg_txt(sd,497)); break; // East
+			case DIR_NORTHEAST:	strcpy(direction, msg_txt(sd,498)); break; // North East
+			default:			strcpy(direction, msg_txt(sd,499)); break; // Unknown
+			}
+			if(strcmp(nd->name,nd->exname) == 0)
+				sprintf(atcmd_output, msg_txt(sd,490), // NPC %d: %s | Direction: %s | Sprite: %d | Location: %d %d
+				    ++i, nd->name, direction, nd->class_, nd->x, nd->y);
+			else
+				sprintf(atcmd_output, msg_txt(sd,489), // NPC %d: %s::%s | Direction: %s | Sprite: %d | Location: %d %d
+				++i, nd->name, nd->exname, direction, nd->class_, nd->x, nd->y);
+			clif_displaymessage(fd, atcmd_output);
+		}
+		break;
+	case 3:
+		clif_displaymessage(fd, msg_txt(sd,483)); // ----- Chats in Map -----
+		iter = mapit_getallusers();
+		for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+		{
+			if ((cd = (chat_data*)map_id2bl(pl_sd->chatID)) != nullptr &&
+			    pl_sd->mapindex == m_index &&
+			    cd->usersd[0] == pl_sd)
+			{
+				sprintf(atcmd_output, msg_txt(sd,484), // Chat: %s | Player: %s | Location: %d %d
+					cd->title, pl_sd->status.name, cd->x, cd->y);
+				clif_displaymessage(fd, atcmd_output);
+				sprintf(atcmd_output, msg_txt(sd,485), //    Users: %d/%d | Password: %s | Public: %s
+					cd->users, cd->limit, cd->pass, (cd->pub) ? msg_txt(sd,486) : msg_txt(sd,487)); // Yes / No
+				clif_displaymessage(fd, atcmd_output);
+			}
+		}
+		mapit_free(iter);
+		break;
+	default: // normally impossible to arrive here
+		clif_displaymessage(fd, msg_txt(sd,488)); // Please enter at least one valid list number (usage: @mapinfo <0-3> <map>).
+		return -1;
+		break;
+	}
+

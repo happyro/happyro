@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "mercenary.hpp"
+
+#include <cmath>
+#include <cstdlib>
+#include <map>
+
+#include <common/cbasetypes.hpp>
+#include <common/malloc.hpp>
+#include <common/mmo.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "clif.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp"
+#include "log.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "pc.hpp"
+#include "trade.hpp"
+
+using namespace rathena;
+
+MercenaryDatabase mercenary_db;
+
+/**
+* Get View Data of Mercenary by Class ID
+* @param class_ The Class ID
+* @return View Data of Mercenary
+**/
+struct view_data *mercenary_get_viewdata( uint16 class_ ){
+	std::shared_ptr<s_mercenary_db> db = mercenary_db.find(class_);
+
+	if( db ){
+		return &db->vd;
+	}else{
+		return nullptr;
+	}
+}
+
+/**
+* Create a new Mercenary for Player
+* @param sd The Player
+* @param class_ Mercenary Class
+* @param lifetime Contract duration
+* @return false if failed, true otherwise
+**/
+bool mercenary_create(map_session_data *sd, uint16 class_, uint32 lifetime) {
+	nullpo_retr(false,sd);
+
+	std::shared_ptr<s_mercenary_db> db = mercenary_db.find(class_);
+
+	if (db == nullptr) {
+		ShowError("mercenary_create: Unknown mercenary class %d.\n", class_);
+		return false;
+	}
+
+	s_mercenary merc = {};
+
+	merc.char_id = sd->status.char_id;
+	merc.class_ = class_;
+	merc.hp = db->status.max_hp;
+	merc.sp = db->status.max_sp;
+	merc.life_time = lifetime;
+
+	// Request Char Server to create this mercenary
+	intif_mercenary_create(&merc);
+
+	return true;
+}
+
+/**
+* Get current Mercenary lifetime
+* @param md The Mercenary
+* @return The Lifetime
+**/
+t_tick mercenary_get_lifetime( const s_mercenary_data* md ) {
+	if( md == nullptr || md->contract_timer == INVALID_TIMER )
+		return 0;
+
+	const struct TimerData *td = get_timer(md->contract_timer);
+	return (td != nullptr) ? DIFF_TICK(td->tick, gettick()) : 0;
+}
+
+/**
+* Get Guild type of Mercenary
+* @param md Mercenary
+* @return enum e_MercGuildType
+**/
+e_MercGuildType mercenary_get_guild( const s_mercenary_data* md ){
+	if( md == nullptr || md->db == nullptr )
+		return NONE_MERC_GUILD;
+
+	uint16 class_ = md->db->class_;
+
+	if( class_ >= MERID_MER_ARCHER01 && class_ <= MERID_MER_ARCHER10 )
+		return ARCH_MERC_GUILD;
+	if( class_ >= MERID_MER_LANCER01 && class_ <= MERID_MER_LANCER10 )
+		return SPEAR_MERC_GUILD;
+	if( class_ >= MERID_MER_SWORDMAN01 && class_ <= MERID_MER_SWORDMAN10 )
+		return SWORD_MERC_GUILD;
+
+	return NONE_MERC_GUILD;
+}
+
+/**
+* Get Faith value of Mercenary
+* @param md Mercenary
+* @return the Faith value
+**/
+int32 mercenary_get_faith( const s_mercenary_data* md ) {
+	const map_session_data* sd;
+
+	if( md == nullptr || md->db == nullptr || (sd = md->master) == nullptr )
+		return 0;
+
+	e_MercGuildType guild = mercenary_get_guild(md);
+
+	switch( guild ){
+		case ARCH_MERC_GUILD:
+			return sd->status.arch_faith;
+		case SPEAR_MERC_GUILD:
+			return sd->status.spear_faith;
+		case SWORD_MERC_GUILD:
+			return sd->status.sword_faith;
+		case NONE_MERC_GUILD:
+		default:
+			return 0;
+	}
+}
+
+/**
+* Set faith value of Mercenary
+* @param md The Mercenary
+* @param value Faith Value
+**/
+void mercenary_set_faith(s_mercenary_data *md, int32 value) {
+	map_session_data *sd;
+
+	if( md == nullptr || md->db == nullptr || (sd = md->master) == nullptr )
+		return;
+
+	e_MercGuildType guild = mercenary_get_guild(md);
+	int32 *faith = nullptr;
+
+	switch( guild ){
+		case ARCH_MERC_GUILD:
+			faith = &sd->status.arch_faith;
+			break;
+		case SPEAR_MERC_GUILD:
+			faith = &sd->status.spear_faith;
+			break;
+		case SWORD_MERC_GUILD:
+			faith = &sd->status.sword_faith;
+			break;
+		case NONE_MERC_GUILD:
+			return;
+	}
+
+	*faith += value;
+	*faith = cap_value(*faith, 0, SHRT_MAX);
+	clif_mercenary_updatestatus(sd, SP_MERCFAITH);
+}
+
+/**
+* Get Mercenary's calls
+* @param md Mercenary
+* @return Number of calls
+**/
+int32 mercenary_get_calls( const s_mercenary_data* md ) {
+	map_session_data *sd;
+
+	if( md == nullptr || md->db == nullptr || (sd = md->master) == nullptr )
+		return 0;
+
+	e_MercGuildType guild = mercenary_get_guild(md);
+
+	switch( guild ){
+		case ARCH_MERC_GUILD:
+			return sd->status.arch_calls;
+		case SPEAR_MERC_GUILD:
+			return sd->status.spear_calls;
+		case SWORD_MERC_GUILD:
+			return sd->status.sword_calls;
+		case NONE_MERC_GUILD:
+		default:
+			return 0;
+	}
+}
+
+/**
+* Set Mercenary's calls
+* @param md Mercenary
+* @param value
+**/
+void mercenary_set_calls( s_mercenary_data* md, int32 value ) {
+	map_session_data *sd;
+
+	if( md == nullptr || md->db == nullptr || (sd = md->master) == nullptr )
+		return;
+
+	e_MercGuildType guild = mercenary_get_guild(md);
+	int32 *calls = nullptr;
+
+	switch( guild ){
+		case ARCH_MERC_GUILD:
+			calls = &sd->status.arch_calls;
+			break;
+		case SPEAR_MERC_GUILD:
+			calls = &sd->status.spear_calls;
+			break;
+		case SWORD_MERC_GUILD:
+			calls = &sd->status.sword_calls;
+			break;
+		case NONE_MERC_GUILD:
+			return;
+	}
+
+	*calls += value;
+	*calls = cap_value(*calls, 0, INT_MAX);
+}
+
+/**
+* Save Mercenary data
+* @param md Mercenary
+**/
+void mercenary_save(s_mercenary_data *md) {
+	md->mercenary.hp = md->battle_status.hp;
+	md->mercenary.sp = md->battle_status.sp;
+	md->mercenary.life_time = mercenary_get_lifetime(md);
+
+	// Clear skill cooldown array.
+	for (uint16 i = 0; i < MAX_SKILLCOOLDOWN; i++)
+		md->mercenary.scd[i] = {};
+	
+	// Store current cooldown entries.
+	uint16 count = 0;
+	t_tick tick = gettick();
+
+	for (const auto &entry : md->scd) {
+		const TimerData *timer = get_timer(entry.second);
+
+		if (timer == nullptr || timer->func != skill_blockmerc_end || DIFF_TICK(timer->tick, tick) < 0)
+			continue;
+
+		md->mercenary.scd[count] = { entry.first, DIFF_TICK(timer->tick, tick) };
+
+		count++;
+	}
+
+	intif_mercenary_save(&md->mercenary);
+}
+
+/**
+* Ends contract of Mercenary
+**/
+static TIMER_FUNC(merc_contract_end){
+	map_session_data *sd;
+	s_mercenary_data *md;
+
+	if( (sd = map_id2sd(id)) == nullptr )
+		return 1;
+	if( (md = sd->md) == nullptr )
+		return 1;
+
+	if( md->contract_timer != tid )
+	{
+		ShowError("merc_contract_end %d != %d.\n", md->contract_timer, tid);
+		return 0;
+	}
+
+	md->contract_timer = INVALID_TIMER;
+	mercenary_delete(md, 0); // Mercenary soldier's duty hour is over.
+
+	return 0;
+}
+
+/**
+* Delete Mercenary
+* @param md Mercenary
+* @param reply
+**/
+int32 mercenary_delete(s_mercenary_data *md, int32 reply) {
+	map_session_data *sd = md->master;
+	md->mercenary.life_time = 0;
+
+	mercenary_contract_stop(md);
+
+	if( !sd )
+		return unit_free(md, CLR_OUTSIGHT);
+
+	if( md->devotion_flag )
+	{
+		md->devotion_flag = 0;
+		status_change_end(sd, SC_DEVOTION);
+	}
+
+	switch( reply )
+	{
+		case 0:
+			// +1 Loyalty on Contract ends.
+			mercenary_set_faith(md, 1);
+			clif_msg( *sd, MSI_MER_FINISH );
+			break; 
+		case 1:
+			// -1 Loyalty on Mercenary killed
+			mercenary_set_faith(md, -1);
+			clif_msg( *sd, MSI_MER_DIE );
+			break; 
+	}
+
+	return unit_remove_map(md, CLR_OUTSIGHT);
+}
+
+/**
+* Stop contract of Mercenary
+* @param md Mercenary
+**/
+void mercenary_contract_stop(s_mercenary_data *md) {
+	nullpo_retv(md);
+	if( md->contract_timer != INVALID_TIMER )
+		delete_timer(md->contract_timer, merc_contract_end);
+	md->contract_timer = INVALID_TIMER;
+}
+
+/**
+* Init contract of Mercenary
+* @param md Mercenary
+**/
+void merc_contract_init(s_mercenary_data *md) {
+	if( md->contract_timer == INVALID_TIMER )
+		md->contract_timer = add_timer(gettick() + md->mercenary.life_time, merc_contract_end, md->master->id, 0);
+
+	md->regen.state.block = 0;
+}
+
+/**
+ * Received mercenary data from char-serv
+ * @param merc : mercenary datas
+ * @param flag : if inter-serv request was successful
+ * @return false:failure, true:success
+ */
+bool mercenary_recv_data(s_mercenary *merc, bool flag)
+{
+	map_session_data *sd;
+	t_tick tick = gettick();
+
+	if( (sd = map_charid2sd(merc->char_id)) == nullptr )
+		return false;
+
+	std::shared_ptr<s_mercenary_db> db = mercenary_db.find(merc->class_);
+
+	if( !flag || !db ){ // Not created - loaded - DB info
+		sd->status.mer_id = 0;
+		return false;
+	}
+
+	s_mercenary_data *md;
+
+	if( !sd->md ) {
+		sd->md = md = (s_mercenary_data*)aCalloc(1,sizeof(s_mercenary_data));
+		new (sd->md) s_mercenary_data();
+
+		md->type = BL_MER;
+		md->id = npc_get_new_npc_id();
+		md->devotion_flag = 0;
+
+		md->master = sd;
+		md->db = db;
+		memcpy(&md->mercenary, merc, sizeof(s_mercenary));
+		status_set_viewdata(md, md->mercenary.class_);
+		unit_dataset(md);
+		md->ud.dir = sd->ud.dir;
+
+		md->m = sd->m;
+		md->x = sd->x;
+		md->y = sd->y;
+		unit_calc_pos(md, sd->x, sd->y, sd->ud.dir);
+		md->x = md->ud.to_x;
+		md->y = md->ud.to_y;
+
+		// Ticks need to be initialized before adding bl to map_addiddb
+		md->regen.tick.hp = tick;
+		md->regen.tick.sp = tick;
+
+		map_addiddb(md);
+		status_calc_mercenary(md, SCO_FIRST);
+		md->contract_timer = INVALID_TIMER;
+		md->masterteleport_timer = INVALID_TIMER;
+		merc_contract_init(md);
+	} else {
+		memcpy(&sd->md->mercenary, merc, sizeof(s_mercenary));
+		md = sd->md;
+	}
+
+	if( sd->status.mer_id == 0 )
+		mercenary_set_calls(md, 1);
+	sd->status.mer_id = merc->mercenary_id;
+
+	if( md && md->prev == nullptr && sd->prev != nullptr ) {
+		if(map_addblock(md))
+			return false;
+		clif_spawn(md);
+		clif_mercenary_info(sd);
+		clif_mercenary_skillblock(sd);
+	}
+
+	// Apply any active skill cooldowns.
+	for (uint16 i = 0; i < ARRAYLENGTH(md->mercenary.scd); i++) {
+		skill_blockmerc_start(*md, md->mercenary.scd[i].skill_id, md->mercenary.scd[i].tick);
+	}
+
+	return true;
+}
+
+/**
+* Heals Mercenary
+* @param md Mercenary
+* @param hp HP amount
+* @param sp SP amount
+**/
+void mercenary_heal(s_mercenary_data *md, int32 hp, int32 sp) {
+	if (md->master == nullptr)
+		return;
+	if( hp )
+		clif_mercenary_updatestatus(md->master, SP_HP);
+	if( sp )
+		clif_mercenary_updatestatus(md->master, SP_SP);
+}
+
+/**
+ * Delete Mercenary
+ * @param md: Mercenary
+ * @return false for status_damage
+ */
+bool mercenary_dead(s_mercenary_data *md) {
+	mercenary_delete(md, 1);
+	return false;
+}
+
+/**
+* Gives bonus to Mercenary
+* @param md Mercenary
+**/
+void mercenary_killbonus( s_mercenary_data *md ) {
+	std::vector<sc_type> scs = { SC_MERC_FLEEUP, SC_MERC_ATKUP, SC_MERC_HPUP, SC_MERC_SPUP, SC_MERC_HITUP };
+
+	sc_start(md,md, util::vector_random(scs), 100, rnd_value(1, 5), 300000); //Bonus lasts for 5 minutes
+}
+
+/**
+* Mercenary does kill
+* @param md Mercenary
+**/
+void mercenary_kills( s_mercenary_data *md ){
+	if(md->mercenary.kill_count <= (INT_MAX-1)) //safe cap to INT_MAX
+		md->mercenary.kill_count++;
+
+	if( (md->mercenary.kill_count % 50) == 0 )
+	{
+		mercenary_set_faith(md, 1);
+		mercenary_killbonus(md);
+	}
+
+	if( md->master )
+		clif_mercenary_updatestatus(md->master, SP_MERCKILLS);
+}
+
+/**
+* Check if Mercenary has the skill
+* @param md Mercenary
+* @param skill_id The skill
+* @return Skill Level or 0 if Mercenary doesn't have the skill
+**/
+uint16 mercenary_checkskill( const s_mercenary_data* md, uint16 skill_id ) {
+	if (!md || !md->db)
+		return 0;
+	auto skill_level = util::umap_find(md->db->skill, skill_id);
+	return skill_level ? *skill_level : 0;
+}
+
+const std::string MercenaryDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/mercenary_db.yml";
+}
+
+/*
+ * Reads and parses an entry from the mercenary_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 MercenaryDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	uint32 id;

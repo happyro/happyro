@@ -1,0 +1,500 @@
+			clif_updatestatus(*sd, static_cast<_sp>( SP_USTR + i ) );
+		}
+
+		if (pc_is_trait_job(sd->class_)) {
+			clonestat_check(pow, PARAM_POW);
+			clonestat_check(sta, PARAM_STA);
+			clonestat_check(wis, PARAM_WIS);
+			clonestat_check(spl, PARAM_SPL);
+			clonestat_check(con, PARAM_CON);
+			clonestat_check(crt, PARAM_CRT);
+
+			for (i = PARAM_POW; i < PARAM_MAX; i++) {
+				clif_updatestatus(*sd, static_cast<_sp>( SP_POW + i - PARAM_POW ) );
+				clif_updatestatus(*sd, static_cast<_sp>( SP_UPOW + i - PARAM_POW ) );
+			}
+
+		}
+
+		status_calc_pc(sd, SCO_FORCE);
+	}
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	sprintf(atcmd_output, msg_txt(sd, 738), "status"); // Clone '%s' is done.
+	clif_displaymessage(fd, atcmd_output);
+
+#undef clonestat_check
+	return 0;
+}
+
+/**
+ * Adopt a character.
+ * Usage: @adopt <char name>
+ * https://rathena.org/board/topic/104014-suggestion-add-adopt-or-etc/
+ */
+ACMD_FUNC(adopt)
+{
+	TBL_PC *b_sd;
+	enum adopt_responses response;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		sprintf(atcmd_output, msg_txt(sd, 435), command); // Please enter a player name (usage: %s <char name>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if ((b_sd = map_nick2sd(atcmd_player_name,false)) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd, 3)); // Character not found.
+		return -1;
+	}
+
+	response = pc_try_adopt(sd, map_charid2sd(sd->status.partner_id), b_sd);
+
+	if (response == ADOPT_ALLOWED) {
+		TBL_PC *p_sd = map_charid2sd(sd->status.partner_id);
+
+		b_sd->adopt_invite = sd->status.account_id;
+		clif_Adopt_request(b_sd, sd, p_sd->status.account_id);
+		return 0;
+	}
+
+	if (response < ADOPT_MORE_CHILDREN) // No displaymessage for client-type responses
+		clif_displaymessage(fd, msg_txt(sd, 744 + response - 1));
+	return -1;
+}
+
+/**
+ * Opens the limited sale window.
+ * Usage: @limitedsale or client command /limitedsale on supported clients
+ */
+ACMD_FUNC(limitedsale){
+	nullpo_retr(-1, sd);
+
+	clif_sale_open(sd);
+
+	return 0;
+}
+
+/**
+ * Displays camera information from the client.
+ * Usage: @camerainfo or client command /viewpointvalue or /setcamera on supported clients
+ */
+ACMD_FUNC(camerainfo){
+	nullpo_retr(-1, sd);
+
+	if( message == nullptr || message[0] == '\0' ){
+		clif_camerainfo( sd, true );
+		return 0;
+	}
+
+	float range = 0;
+	float rotation = 0;
+	float latitude = 0;
+
+	if( sscanf( message, "%f %f %f", &range, &rotation, &latitude ) < 3 ){
+		clif_displaymessage( fd, msg_txt( sd, 793 ) ); // Usage @camerainfo range rotation latitude
+		return -1;
+	}
+
+	clif_camerainfo( sd, false, range, rotation, latitude );
+
+	return 0;
+}
+
+ACMD_FUNC(resurrect) {
+	nullpo_retr(-1, sd);
+
+	if (!pc_revive_item(sd))
+		return -1;
+
+	return 0;
+}
+
+ACMD_FUNC(setquest){
+	int32 quest_id = 0;
+	nullpo_retr(-1, sd);
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%11d", &quest_id) < 1 || quest_id == 0) {
+		sprintf(atcmd_output, msg_txt(sd,1505), command); // Usage: %s <quest ID>
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	if (!quest_search(quest_id)) {
+		sprintf(atcmd_output,  msg_txt(sd,1506), quest_id); // Quest %d not found in DB.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (quest_check(sd, quest_id, HAVEQUEST) >= 0) {
+		sprintf(atcmd_output,  msg_txt(sd,1507), quest_id); // Character already has quest %d.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	quest_add(sd, quest_id);
+	pc_show_questinfo(sd);
+
+	return 0;
+}
+
+ACMD_FUNC(erasequest) {
+	int32 quest_id = 0;
+	nullpo_retr(-1, sd);
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%11d", &quest_id) < 1 || quest_id == 0) {
+		sprintf(atcmd_output, msg_txt(sd,1505), command); // Usage: %s <quest ID>
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	if (!quest_search(quest_id)) {
+		sprintf(atcmd_output,  msg_txt(sd,1506), quest_id); // Quest %d not found in DB.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (quest_check(sd, quest_id, HAVEQUEST) < 0) {
+		sprintf(atcmd_output,  msg_txt(sd,1508), quest_id); // Character doesn't have quest %d.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	quest_delete(sd, quest_id);
+	pc_show_questinfo(sd);
+
+	return 0;
+}
+
+ACMD_FUNC(completequest){
+	int32 quest_id = 0;
+	nullpo_retr(-1, sd);
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%11d", &quest_id) < 1 || quest_id == 0) {
+		sprintf(atcmd_output, msg_txt(sd,1505), command); // Usage: %s <quest ID>
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	if (!quest_search(quest_id)) {
+		sprintf(atcmd_output,  msg_txt(sd,1506), quest_id); // Quest %d not found in DB.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (quest_check(sd, quest_id, HAVEQUEST) < 0)
+		quest_add(sd, quest_id);
+	if (quest_check(sd, quest_id, HAVEQUEST) < 2)
+		quest_update_status(sd, quest_id, Q_COMPLETE);
+	pc_show_questinfo(sd);
+
+	return 0;
+}
+
+ACMD_FUNC(checkquest){
+	int32 quest_id = 0;
+	nullpo_retr(-1, sd);
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%11d", &quest_id) < 1 || quest_id == 0) {
+		sprintf(atcmd_output, msg_txt(sd,1505), command); // Usage: %s <quest ID>
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	if (!quest_search(quest_id)) {
+		sprintf(atcmd_output,  msg_txt(sd,1506), quest_id); // Quest %d not found in DB.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	sprintf(atcmd_output, msg_txt(sd,1509), quest_id); // Checkquest value for quest %d
+	clif_displaymessage(fd, atcmd_output);
+	sprintf(atcmd_output, msg_txt(sd,1510), quest_check(sd, quest_id, HAVEQUEST));	// HAVEQUEST : %d
+	clif_displaymessage(fd, atcmd_output);
+	sprintf(atcmd_output, msg_txt(sd,1511), quest_check(sd, quest_id, HUNTING));	// HUNTING   : %d
+	clif_displaymessage(fd, atcmd_output);
+	sprintf(atcmd_output, msg_txt(sd,1512), quest_check(sd, quest_id, PLAYTIME));	// PLAYTIME  : %d
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/**
+ * Opens the refineUI
+ * Usage: @refineui
+ */
+ACMD_FUNC(refineui)
+{
+	nullpo_retr(-1, sd);
+
+#if PACKETVER < 20161012
+	clif_displaymessage(fd, msg_txt(sd, 773)); // This command requires packet version 2016-10-12 or newer.
+	return -1;
+#else
+	if( !battle_config.feature_refineui ){
+		clif_displaymessage(fd, msg_txt(sd, 774)); // This command is disabled via configuration.
+		return -1;
+	}
+
+	if( sd->state.refineui_open ){
+		clif_displaymessage(fd, msg_txt(sd, 775)); // You have already opened the refine UI.
+		return -1;
+	}
+
+	clif_refineui_open(sd);
+	return 0;
+#endif
+}
+
+ACMD_FUNC( stylist ){
+	nullpo_retr(-1, sd);
+
+#if PACKETVER < 20151104
+	clif_displaymessage( fd, msg_txt( sd, 798 ) ); // This command requires packet version 2015-11-04 or newer.
+	return -1;
+#else
+	if( !battle_config.feature_stylist ){
+		clif_displaymessage( fd, msg_txt( sd, 774 ) ); // This command is disabled via configuration.
+		return -1;
+	}
+
+	if( sd->state.stylist_open ){
+		clif_displaymessage( fd, msg_txt( sd, 799 ) ); // You have already opened the stylist UI.
+		return -1;
+	}
+
+	clif_ui_open( *sd, OUT_UI_STYLIST, 0 );
+	return 0;
+#endif
+}
+
+/**
+ * Add fame point(s) to a player
+ * Usage: @addfame <amount>
+ */
+ACMD_FUNC(addfame)
+{
+	nullpo_retr(-1, sd);
+
+	int32 famepoint = 0;
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%11d", &famepoint) < 1 || famepoint == 0) {
+		sprintf(atcmd_output, msg_txt(sd, 1516), command); // Usage: %s <fame points>.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (!pc_addfame(*sd, famepoint)) {
+		sprintf(atcmd_output, msg_txt(sd, 1517), job_name(sd->status.class_)); // Cannot add fame to class '%s'.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	sprintf(atcmd_output, msg_txt(sd, 1518), famepoint, sd->status.name); // %d points were added to '%s'.
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/**
+ * Opens the enchantgrade UI
+ * Usage: @enchantgradeui
+ */
+ACMD_FUNC( enchantgradeui ){
+	nullpo_retr( -1, sd );
+
+#if !( PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724 )
+	sprintf( atcmd_output, msg_txt( sd, 798 ), "2020-07-24" ); // This command requires packet version %s or newer.
+	clif_displaymessage( fd, atcmd_output );
+	return -1;
+#else
+	clif_ui_open( *sd, OUT_UI_ENCHANTGRADE, 0 );
+	return 0;
+#endif
+}
+
+ACMD_FUNC( roulette ){
+	nullpo_retr( -1, sd );
+
+#if PACKETVER < 20141022
+	sprintf( atcmd_output, msg_txt( sd, 798 ), "2014-10-22" ); // This command requires packet version %s or newer.
+	clif_displaymessage( fd, atcmd_output );
+	return -1;
+#else
+	if( !battle_config.feature_roulette ){
+		clif_displaymessage( fd, msg_txt( sd, 1497 ) ); // Roulette is disabled
+		return -1;
+	}
+
+	clif_roulette_open( sd );
+	return 0;
+#endif
+}
+
+/**
+ * Replaces a card ID in an equip
+ * Usage: @setcard <equip position> <slot> <card_id>
+ */
+ACMD_FUNC(setcard)
+{
+	nullpo_retr(-1, sd);
+
+	int32 position = 0, slot, card_id;
+
+	if (!message || !*message || sscanf(message, "%11d %11d %11d", &position, &slot, &card_id) < 3) {
+		memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+		clif_displaymessage(fd, msg_txt(sd,1527)); // Please enter the position, the slot number and the card ID (usage: @setcard <equip position> <slot> <card_id>).
+		sprintf(atcmd_output, msg_txt(sd,997), EQP_HEAD_LOW); // %d: Lower Headgear
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,998), EQP_HAND_R); // %d: Right Hand
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,999), EQP_GARMENT); // %d: Garment
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1000), EQP_ACC_L); // %d: Left Accessory
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1001), EQP_ARMOR); // %d: Body Armor
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1002), EQP_HAND_L); // %d: Left Hand
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1003), EQP_SHOES); // %d: Shoes
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1004), EQP_ACC_R); // %d: Right Accessory
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1005), EQP_HEAD_TOP); // %d: Top Headgear
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1006), EQP_HEAD_MID); // %d: Mid Headgear
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	if (position < EQP_HEAD_LOW || position > EQP_HEAD_MID) {
+		clif_displaymessage(fd, msg_txt(sd,1531)); // Invalid position.
+		return -1;
+	}
+	if (slot < 0 || slot >= MAX_SLOTS) {
+		clif_displaymessage(fd, msg_txt(sd,1532)); // Invalid slot number.
+		return -1;
+	}
+	if (card_id != 0) {
+		std::shared_ptr<item_data> item_data = item_db.find( card_id );
+
+		if (item_data == nullptr) {
+			clif_displaymessage(fd, msg_txt(sd,1530)); // Invalid card ID.
+			return -1;
+		}
+		if (item_data->type != IT_CARD) {
+			clif_displaymessage(fd, msg_txt(sd,1529)); // The item type must be a card or enchant.
+			return -1;
+		}
+	}
+
+	int16 i = pc_checkequip(sd, position);
+
+	if (i < 0) {
+		clif_displaymessage(fd, msg_txt(sd,1528)); // You are not wearing any equipment in this position.
+		return -1;
+	}
+
+	int32 current_position = sd->inventory.u.items_inventory[i].equip;
+
+	pc_unequipitem(sd, i, 3);
+	log_pick_pc( sd, LOG_TYPE_COMMAND, -1, &sd->inventory.u.items_inventory[i] );
+	sd->inventory.u.items_inventory[i].card[slot] = card_id;
+	log_pick_pc( sd, LOG_TYPE_COMMAND, 1, &sd->inventory.u.items_inventory[i] );
+	clif_delitem( *sd, i, 1, 0 );
+	clif_additem(sd, i, 1, 0);
+	pc_equipitem(sd, i, current_position);
+	return 0;
+}
+
+int32 atcommand_macrochecker_sub( block_list* bl, va_list ap ){
+	uint32 reporter_aid = va_arg( ap, uint32 );
+	uint32 reporter_gmlv = va_arg( ap, uint32 );
+
+	map_session_data* tsd = reinterpret_cast<map_session_data*>( bl );
+
+	// Dont start the macro checking on self
+	if( tsd->status.account_id == reporter_aid ){
+		return 0;
+	}
+
+	// Dont start it on other GMs with same or higher level
+	if( pc_get_group_level( tsd ) >= reporter_gmlv ){
+		return 0;
+	}
+
+	// Dont start it on autotraders
+	if( !session_isActive( tsd->fd ) ){
+		return 0;
+	}
+
+	// Start the macro checking on the player
+	pc_macro_reporter_process( *tsd, reporter_aid );
+
+	return 1;
+}
+
+ACMD_FUNC(macrochecker){
+	int16 mapid;
+
+	if( !message || !*message ){
+		mapid = sd->m;
+	}else{
+		mapid = map_mapname2mapid( message );
+
+		if( mapid < 0 ){
+			clif_macro_checker( *sd, MACROCHECKER_UNKNOWN_MAP );
+			return -1;
+		}
+	}
+
+	map_data* mapdata = map_getmapdata( mapid );
+
+	if( !mapdata ){
+		// Should not happen
+		return -1;
+	}
+
+	if( mapdata->getMapFlag( MF_NOMACROCHECKER ) ){
+		clif_macro_checker( *sd, MACROCHECKER_MAPFLAG );
+		return -1;
+	}
+
+	if( DIFF_TICK( gettick(), mapdata->last_macrocheck ) < battle_config.macrochecker_delay ){
+		clif_macro_checker( *sd, MACROCHECKER_COOLDOWN );
+		return -1;
+	}
+
+	int32 count = map_foreachinmap( atcommand_macrochecker_sub, mapid, BL_PC, sd->status.account_id, pc_get_group_level( sd ) );
+
+	clif_macro_checker( *sd, MACROCHECKER_SUCCESS );
+
+	sprintf( atcmd_output, msg_txt( sd, 1538 ), count ); // Macro detection has been started on %d players.
+	clif_displaymessage( fd, atcmd_output );
+
+	if( count > 0 ){
+		mapdata->last_macrocheck = gettick();
+	}
+
+	return 0;
+}
+
+#include <custom/atcommand.inc>
+
+/**
+ * Fills the reference of available commands in atcommand DBMap
+ **/
+#define ACMD_DEF(x) { #x, atcommand_ ## x, nullptr, nullptr, 0 }
+#define ACMD_DEF2(x2, x) { x2, atcommand_ ## x, nullptr, nullptr, 0 }
+// Define with restriction
+#define ACMD_DEFR(x, r) { #x, atcommand_ ## x, nullptr, nullptr, r }
+#define ACMD_DEF2R(x2, x, r) { x2, atcommand_ ## x, nullptr, nullptr, r }
+void atcommand_basecommands(void) {
+	/**
+	 * Command reference list, place the base of your commands here
+	 * TODO: List all commands that causing crash
+	 **/

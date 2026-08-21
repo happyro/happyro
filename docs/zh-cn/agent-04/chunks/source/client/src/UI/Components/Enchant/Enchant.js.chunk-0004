@@ -1,0 +1,487 @@
+	const action = event.currentTarget.dataset.action;
+	if (event.currentTarget.classList.contains('disabled')) {
+		return;
+	}
+	EnchantState.action = action;
+	refreshUI();
+}
+
+function onPerfectChange(event) {
+	EnchantState.selectedPerfect = event.currentTarget.value;
+	refreshUI();
+}
+
+function onUpgradeChange(event) {
+	EnchantState.selectedUpgradeSlot = parseInt(event.currentTarget.value, 10);
+	refreshUI();
+}
+
+function onEnchantListSelect(event) {
+	const entry = event.target.closest('.enchant_entry');
+	if (!entry) {
+		return;
+	}
+	if (entry.classList.contains('disabled')) {
+		return;
+	}
+	const key = entry.dataset.key;
+	if (EnchantState.action === 'perfect') {
+		EnchantState.selectedPerfect = key;
+		refreshUI();
+		return;
+	}
+	if (EnchantState.action === 'upgrade') {
+		const slotNum = parseInt(key, 10);
+		if (!isNaN(slotNum)) {
+			EnchantState.selectedUpgradeSlot = slotNum;
+			refreshUI();
+		}
+	}
+}
+
+function onItemSelect(event) {
+	const entry = event.target.closest('.item_entry');
+	if (!entry) {
+		return;
+	}
+	const index = parseInt(entry.dataset.index, 10);
+	if (isNaN(index)) {
+		return;
+	}
+	const inventoryUI = Inventory.getUI && Inventory.getUI();
+	const item = inventoryUI && inventoryUI.getItemByIndex ? inventoryUI.getItemByIndex(index) : null;
+	if (!item) {
+		return;
+	}
+	Enchant.onRequestItemEnchant(item);
+}
+
+function onRequestAction() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const actionBtn = root.querySelector('.action_btn');
+	if (actionBtn && actionBtn.classList.contains('disabled')) {
+		return;
+	}
+	if (!EnchantState.group || !EnchantState.item) {
+		setStatus('Select an item first.', true);
+		return;
+	}
+	let pkt;
+	const slotNum = EnchantState.selectedSlot;
+	const itemIndex = EnchantState.itemIndex;
+
+	if (EnchantState.action === 'random') {
+		if (slotNum === null) {
+			setStatus('No available enchant slot.', true);
+			return;
+		}
+		pkt = new PACKET.CZ.REQUEST_RANDOM_ENCHANT();
+		pkt.enchant_group = EnchantState.groupId;
+		pkt.index = itemIndex;
+	} else if (EnchantState.action === 'perfect') {
+		if (slotNum === null || !EnchantState.selectedPerfect) {
+			setStatus('Select a perfect enchant.', true);
+			return;
+		}
+		const slotData = EnchantState.group.slots[slotNum];
+		const perfectEntry = slotData ? slotData.perfect[EnchantState.selectedPerfect] : null;
+		const perfectId = perfectEntry ? perfectEntry.id || DB.getItemIdfromBase(perfectEntry.base) : 0;
+		if (!perfectEntry || !perfectId) {
+			setStatus('Invalid perfect enchant selection.', true);
+			return;
+		}
+		pkt = new PACKET.CZ.REQUEST_PERFECT_ENCHANT();
+		pkt.enchant_group = EnchantState.groupId;
+		pkt.index = itemIndex;
+		pkt.ITID = perfectId;
+	} else if (EnchantState.action === 'upgrade') {
+		if (slotNum === null) {
+			setStatus('Select an upgrade slot.', true);
+			return;
+		}
+		pkt = new PACKET.CZ.REQUEST_UPGRADE_ENCHANT();
+		pkt.enchant_group = EnchantState.groupId;
+		pkt.index = itemIndex;
+		pkt.slot = slotNum;
+	} else if (EnchantState.action === 'reset') {
+		pkt = new PACKET.CZ.REQUEST_RESET_ENCHANT();
+		pkt.enchant_group = EnchantState.groupId;
+		pkt.index = itemIndex;
+	}
+
+	if (!pkt) {
+		return;
+	}
+
+	playIntroEffect(EnchantState.action);
+
+	EnchantState.pending = {
+		action: EnchantState.action,
+		slot: slotNum,
+		itemIndex: itemIndex,
+		item: EnchantState.item
+	};
+
+	EnchantState.pendingLock = true;
+	root.querySelectorAll('.close, .close_btn').forEach(btn => {
+		btn.disabled = true;
+	});
+	Network.sendPacket(pkt);
+	setStatus('Request sent...', false);
+}
+
+function applyEnchantResult(item, action, slotNum, itid) {
+	if (!item) {
+		return;
+	}
+	if (action === 'reset') {
+		const baseSlots = getBaseSlotCount(item);
+		const slotOrder =
+			EnchantState.group && EnchantState.group.slotOrder && EnchantState.group.slotOrder.length
+				? EnchantState.group.slotOrder
+				: [0, 1, 2, 3];
+		slotOrder.forEach(orderSlot => {
+			if (orderSlot >= baseSlots) {
+				setSlotValue(item, orderSlot, 0);
+			}
+		});
+		return;
+	}
+	if (slotNum !== null && itid) {
+		setSlotValue(item, slotNum, itid);
+	}
+}
+
+function onEnchantResult(pkt) {
+	if (!EnchantState.pending) {
+		return;
+	}
+	const message = DB.getMessage(pkt.msgId) || 'Enchant result: ' + pkt.msgId;
+	const isSuccess = pkt.msgId === 3857;
+	ChatBox.addText(message, ChatBox.TYPE.BLUE, ChatBox.FILTER.PUBLIC_LOG);
+	playResultEffect(EnchantState.pending.action, isSuccess);
+	if (isSuccess) {
+		applyEnchantResult(EnchantState.pending.item, EnchantState.pending.action, EnchantState.pending.slot, pkt.ITID);
+		if (ItemInfo.ui && ItemInfo.ui.is(':visible') && ItemInfo.uid === EnchantState.pending.item.ITID) {
+			ItemInfo.setItem(EnchantState.pending.item);
+		}
+	}
+	Enchant.remove();
+}
+
+function onRequestClose() {
+	if (EnchantState.pendingLock) {
+		setStatus('Request in progress...', false);
+		return;
+	}
+	if (PACKETVER.value >= 20211103) {
+		const pkt = new PACKET.CZ.CLOSE_UI_ENCHANT();
+		Network.sendPacket(pkt);
+	}
+	Enchant.remove();
+}
+
+Enchant.onKeyDown = function onKeyDown(event) {
+	if (Enchant.isEditableFocused()) {
+		return;
+	}
+	if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && Enchant.ui.is(':visible')) {
+		onRequestClose();
+	}
+};
+
+Enchant.init = function init() {
+	const root = _root();
+	this.ui.css({ top: 200, left: 360 });
+	this.draggable(root.querySelector('.titlebar'));
+	preloadEnchantEffectDurations();
+
+	Client.loadFiles(
+		[
+			DB.INTERFACE_PATH + 'enchantui/bg_subpage.bmp',
+			DB.INTERFACE_PATH + 'enchantui/bg_subpageb.bmp',
+			DB.INTERFACE_PATH + 'enchantui/bg_subpagey.bmp'
+		],
+		function (normal, upgrade, reset) {
+			EnchantAssets.subpage.normal = normal;
+			EnchantAssets.subpage.upgrade = upgrade;
+			EnchantAssets.subpage.reset = reset;
+			updateSubpageSkin();
+		}
+	);
+
+	Client.loadFiles(
+		[
+			DB.INTERFACE_PATH + 'enchantui/bg_enc_menu0.bmp',
+			DB.INTERFACE_PATH + 'enchantui/bg_enc_menu1.bmp',
+			DB.INTERFACE_PATH + 'enchantui/bg_enc_menu2.bmp',
+			DB.INTERFACE_PATH + 'enchantui/bg_enc_menu3.bmp'
+		],
+		function (menu0, menu1, menu2, menu3) {
+			EnchantAssets.menuTabs.random = menu0;
+			EnchantAssets.menuTabs.perfect = menu1;
+			EnchantAssets.menuTabs.upgrade = menu2;
+			EnchantAssets.menuTabs.reset = menu3;
+			updateMenuSkin();
+		}
+	);
+
+	Client.loadFiles(
+		[
+			DB.INTERFACE_PATH + 'enchantui/btn_enc.bmp',
+			DB.INTERFACE_PATH + 'enchantui/btn_enc_over.bmp',
+			DB.INTERFACE_PATH + 'enchantui/btn_enc_press.bmp',
+			DB.INTERFACE_PATH + 'enchantui/btn_enc_dis.bmp'
+		],
+		function (normal, hover, down, disabled) {
+			EnchantAssets.actionButton.normal = normal;
+			EnchantAssets.actionButton.hover = hover;
+			EnchantAssets.actionButton.down = down;
+			EnchantAssets.actionButton.disabled = disabled;
+			bindActionButtonSkin();
+			const actionBtn = _root() ? _root().querySelector('.action_btn') : null;
+			if (actionBtn) {
+				updateActionButtonSkin(actionBtn, !actionBtn.classList.contains('disabled'));
+			}
+		}
+	);
+
+	Client.loadFiles(
+		[
+			DB.INTERFACE_PATH + 'enchantui/scroll_arrow_up.bmp',
+			DB.INTERFACE_PATH + 'enchantui/scroll_arrow_dowm.bmp',
+			DB.INTERFACE_PATH + 'enchantui/scroll_bg.bmp',
+			DB.INTERFACE_PATH + 'enchantui/scroll_btn.bmp'
+		],
+		applyScrollSkin
+	);
+
+	root.querySelectorAll('.close, .close_btn').forEach(btn => {
+		btn.addEventListener('click', onRequestClose);
+	});
+
+	const itemList = root.querySelector('.item_list');
+	if (itemList) {
+		itemList.addEventListener('click', onItemSelect);
+		itemList.addEventListener('mouseover', e => {
+			const slot = e.target.closest('.item_slot');
+			if (slot) {
+				onIconOver({ currentTarget: slot });
+			}
+		});
+		itemList.addEventListener('mouseout', e => {
+			const slot = e.target.closest('.item_slot');
+			if (slot) {
+				onIconOut();
+			}
+		});
+		itemList.addEventListener('contextmenu', e => {
+			const slot = e.target.closest('.item_slot');
+			if (slot) {
+				onIconInfo({
+					currentTarget: slot,
+					preventDefault: () => e.preventDefault(),
+					stopImmediatePropagation: () => e.stopImmediatePropagation()
+				});
+			}
+		});
+	}
+
+	const actionTabs = root.querySelector('.action_tabs');
+	if (actionTabs) {
+		actionTabs.addEventListener('click', e => {
+			const tab = e.target.closest('.tab');
+			if (tab) {
+				onActionSelect({ currentTarget: tab });
+			}
+		});
+	}
+
+	const perfectSelect = root.querySelector('.perfect_select');
+	if (perfectSelect) {
+		perfectSelect.addEventListener('change', onPerfectChange);
+	}
+
+	const upgradeSelect = root.querySelector('.upgrade_select');
+	if (upgradeSelect) {
+		upgradeSelect.addEventListener('change', onUpgradeChange);
+	}
+
+	const materialList = root.querySelector('.material_list');
+	if (materialList) {
+		materialList.addEventListener('mouseover', e => {
+			const icon = e.target.closest('.icon');
+			if (icon) {
+				onIconOver({ currentTarget: icon });
+			}
+		});
+		materialList.addEventListener('mouseout', e => {
+			const icon = e.target.closest('.icon');
+			if (icon) {
+				onIconOut();
+			}
+		});
+		materialList.addEventListener('contextmenu', e => {
+			const icon = e.target.closest('.icon');
+			if (icon) {
+				onIconInfo({
+					currentTarget: icon,
+					preventDefault: () => e.preventDefault(),
+					stopImmediatePropagation: () => e.stopImmediatePropagation()
+				});
+			}
+		});
+	}
+
+	const slotList = root.querySelector('.slot_list');
+	if (slotList) {
+		slotList.addEventListener('mouseover', e => {
+			const icon = e.target.closest('.slot_icon');
+			if (icon) {
+				onIconOver({ currentTarget: icon });
+			}
+		});
+		slotList.addEventListener('mouseout', e => {
+			const icon = e.target.closest('.slot_icon');
+			if (icon) {
+				onIconOut();
+			}
+		});
+		slotList.addEventListener('contextmenu', e => {
+			const icon = e.target.closest('.slot_icon');
+			if (icon) {
+				onIconInfo({
+					currentTarget: icon,
+					preventDefault: () => e.preventDefault(),
+					stopImmediatePropagation: () => e.stopImmediatePropagation()
+				});
+			}
+		});
+	}
+
+	const enchantList = root.querySelector('.enchant_list');
+	if (enchantList) {
+		enchantList.addEventListener('click', onEnchantListSelect);
+		enchantList.addEventListener('mouseover', e => {
+			const icon = e.target.closest('.entry_icon');
+			if (icon) {
+				onIconOver({ currentTarget: icon });
+			}
+		});
+		enchantList.addEventListener('mouseout', e => {
+			const icon = e.target.closest('.entry_icon');
+			if (icon) {
+				onIconOut();
+			}
+		});
+		enchantList.addEventListener('contextmenu', e => {
+			const icon = e.target.closest('.entry_icon');
+			if (icon) {
+				onIconInfo({
+					currentTarget: icon,
+					preventDefault: () => e.preventDefault(),
+					stopImmediatePropagation: () => e.stopImmediatePropagation()
+				});
+			}
+		});
+	}
+
+	const actionBtn = root.querySelector('.action_btn');
+	if (actionBtn) {
+		actionBtn.addEventListener('click', onRequestAction);
+	}
+};
+
+Enchant.onAppend = function onAppend() {
+	setStatus('', false);
+	refreshUI();
+};
+
+Enchant.onRemove = function onRemove() {
+	const root = _root();
+	clearState();
+	if (root) {
+		root.querySelectorAll('.close, .close_btn').forEach(btn => {
+			btn.disabled = false;
+		});
+		root.querySelectorAll('.slot_entry').forEach(entry => {
+			entry.classList.remove('locked', 'active');
+			entry.title = '';
+		});
+		root.querySelectorAll('.slot_icon').forEach(icon => {
+			icon.style.backgroundImage = '';
+		});
+		const materialList = root.querySelector('.material_list');
+		if (materialList) {
+			materialList.innerHTML = '';
+		}
+		const enchantList = root.querySelector('.enchant_list');
+		if (enchantList) {
+			enchantList.innerHTML = '';
+		}
+		const perfectSelect = root.querySelector('.perfect_select');
+		if (perfectSelect) {
+			perfectSelect.innerHTML = '';
+		}
+		const upgradeSelect = root.querySelector('.upgrade_select');
+		if (upgradeSelect) {
+			upgradeSelect.innerHTML = '';
+		}
+		const upgradeResult = root.querySelector('.upgrade_result');
+		if (upgradeResult) {
+			upgradeResult.textContent = '';
+		}
+		const zenyCost = root.querySelector('.zeny_cost');
+		if (zenyCost) {
+			zenyCost.textContent = '';
+		}
+		const itemList = root.querySelector('.item_list');
+		if (itemList) {
+			itemList.innerHTML = '';
+		}
+		const previewItem = root.querySelector('.preview_item');
+		if (previewItem) {
+			previewItem.style.backgroundImage = '';
+		}
+	}
+	hideHoverOverlay();
+	setStatus('', false);
+};
+
+Enchant.onOpenEnchantUI = function onOpenEnchantUI(groupId) {
+	clearState();
+	EnchantState.groupId = Number(groupId);
+	EnchantState.group = DB.getEnchantGroup(EnchantState.groupId);
+	if (!EnchantState.group) {
+		UIManager.showErrorBox('Enchant data missing for group ' + groupId + '.');
+	}
+	Enchant.append();
+	Enchant.ui.show();
+	Enchant.focus();
+	refreshUI();
+};
+
+Enchant.onRequestItemEnchant = function onRequestItemEnchant(item) {
+	const result = validateItem(item);
+	if (!result.ok) {
+		setStatus(result.message, true);
+		return;
+	}
+	EnchantState.item = item;
+	EnchantState.itemIndex = item.index;
+	EnchantState.selectedPerfect = null;
+	EnchantState.selectedUpgradeSlot = null;
+	EnchantState.selectedSlot = null;
+	setStatus('', false);
+	refreshUI();
+};
+
+Enchant.isEnchantOpen = function isEnchantOpen() {
+	return Enchant.ui && Enchant.ui.is(':visible');
+};
+
+Network.hookPacket(PACKET.ZC.RESPONSE_ENCHANT, onEnchantResult);
+export default UIManager.addComponent(Enchant);

@@ -1,0 +1,236 @@
+				? SkillEffect[skillId].beginCastEffectId
+				: [SkillEffect[skillId].beginCastEffectId];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: destAID,
+					startTick: tick,
+					otherAID: srcAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+	}
+
+	/**
+	 * Spam a item on a target
+	 *
+	 * @param {number} item id
+	 * @param {number} target aid
+	 * @param {Array} position
+	 * @param {number} tick
+	 */
+	static spamItem(itemId, destAID, position, tick, srcAID) {
+		let effects, EF_Init_Par;
+		if (!(itemId in ItemEffect)) {
+			return;
+		}
+
+		if (ItemEffect[itemId].effectId) {
+			effects = Array.isArray(ItemEffect[itemId].effectId)
+				? ItemEffect[itemId].effectId
+				: [ItemEffect[itemId].effectId];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: destAID,
+					position: position,
+					startTick: tick,
+					otherAID: srcAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+
+		if (ItemEffect[itemId].effectIdOnCaster && srcAID) {
+			effects = Array.isArray(ItemEffect[itemId].effectIdOnCaster)
+				? ItemEffect[itemId].effectIdOnCaster
+				: [ItemEffect[itemId].effectIdOnCaster];
+
+			effects.forEach(effectId => {
+				EF_Init_Par = {
+					effectId: effectId,
+					ownerAID: srcAID,
+					position: position,
+					startTick: tick,
+					otherAID: destAID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			});
+		}
+	}
+
+	/**
+	 * Spawn a hat effect attached to an entity
+	 */
+	static spamHatEffect(Params) {
+		if (!Params || !Preferences.effect) {
+			return;
+		}
+
+		const init = Params.Init || {};
+		const ownerAID = init.ownerAID;
+		const ownerEntity = init.ownerEntity || EntityManager.get(ownerAID);
+		if (!ownerEntity) {
+			return;
+		}
+
+		const eff = Params.effect || {};
+		if (!ownerEntity._hatEffects) {
+			ownerEntity._hatEffects = {};
+		}
+
+		const resource = (eff.file || eff.resourceFileName || '').toString();
+
+		// EffectTable fallback
+		if (!resource && eff.hatEffectID != null) {
+			const startTick = init.startTick || Renderer.tick;
+			const hatEffectID = eff.hatEffectID;
+
+			if (hatEffectID in EffectDB) {
+				const effectEntries = EffectDB[hatEffectID];
+				effectEntries.forEach((effectEntry, i) => {
+					const EF_Inst_Par = {
+						effectID: hatEffectID,
+						duplicateID: i,
+						startTick: startTick + (effectEntry.timeBetweenDupli || 200) * i
+					};
+
+					EffectManager.spamEffect({
+						effect: effectEntry,
+						Inst: EF_Inst_Par,
+						Init: {
+							effectId: hatEffectID,
+							position: ownerEntity.position,
+							ownerEntity: ownerEntity,
+							startTick: startTick,
+							duration: effectEntry.duration || 0,
+							persistent: true,
+							repeatEnd: 0,
+							repeatDelay: effectEntry.repeatDelay || 0,
+							renderBeforeEntities: true
+						}
+					});
+				});
+			}
+
+			if (eff.effectID != null) {
+				ownerEntity._hatEffects[eff.effectID] = { type: 'effect', effectTableId: eff.hatEffectID };
+			}
+			return;
+		}
+
+		// STR attachment
+		if (/\.str$/i.test(resource)) {
+			const uid = 'hat-str-' + ownerAID + '-' + (eff.effectID || Date.now());
+			const strPath = 'data/texture/effect/' + resource.replace(/\\/g, '/');
+
+			ownerEntity.attachments.add({
+				uid: uid,
+				strFile: strPath,
+				head: eff.isAttachedHead || eff.head || false,
+				repeat: true,
+				xOffset: eff.xOffset || eff.hatEffectPosX || 0,
+				yOffset: eff.yOffset || eff.hatEffectPos || 0,
+				renderBefore: !!eff.isRenderBeforeCharacter
+			});
+
+			if (eff.effectID != null) {
+				ownerEntity._hatEffects[eff.effectID] = { type: 'str', uid: uid };
+			}
+		}
+	}
+
+	/**
+	 * Remove a hat effect from an entity
+	 */
+	static removeHatEffect(ownerAID, effectID) {
+		if (ownerAID == null || effectID == null) {
+			return;
+		}
+		const entity = EntityManager.get(ownerAID);
+		if (!entity) {
+			return;
+		}
+
+		const attachments = entity.attachments;
+		const hatEffects = entity._hatEffects;
+		const info = hatEffects && hatEffects[effectID] ? hatEffects[effectID] : null;
+
+		if (attachments && typeof attachments.remove === 'function') {
+			if (info && info.uid) {
+				attachments.remove(info.uid);
+			} else {
+				attachments.remove('hat-str-' + ownerAID + '-' + effectID);
+			}
+
+			if (info && info.type === 'effect' && info.effectTableId) {
+				attachments.remove(info.effectTableId);
+			}
+		}
+
+		if (hatEffects) {
+			delete hatEffects[effectID];
+		}
+	}
+
+	static debug() {
+		console.log('%c[DEBUG] EffectManager _list: ', 'color:#F5B342', _list);
+	}
+
+	/**
+	 * Remove an effect
+	 *
+	 * @param {effect}
+	 * @param {mixed} effect owner ID
+	 */
+	static remove(effect, AID, effectID) {
+		if (!effect || !(effect.name in _list)) {
+			Object.keys(_list).forEach(key => clean(key, AID, effectID));
+		} else {
+			clean(effect.name, AID, effectID);
+		}
+
+		// Remove entity effects
+		if (!(AID == null)) {
+			const entity = EntityManager.get(AID);
+			if (entity) {
+				if (entity.objecttype === entity.constructor.TYPE_EFFECT) {
+					EntityManager.remove(AID); // Whole entity is an effect, just remove it
+				} else if (!(effectID == null)) {
+					entity.attachments.remove(effectID); // Only remove attached effect
+
+					// Cleanup hat effects tracking if present
+					if (entity._hatEffects && entity._hatEffects[effectID]) {
+						delete entity._hatEffects[effectID];
+					}
+				}
+			}
+		}
+	}
+	/**
+	 * Stops an effect's repeat
+	 *
+	 * @param {effect}
+	 * @param {mixed} effect owner ID
+	 * @param {mixed} effect ID
+	 */
+	static endRepeat(effect, AID, effectID) {
+		if (!effect || !(effect.name in _list)) {
+			Object.keys(_list).forEach(key => cleanRepeat(key, AID, effectID));
+			return;
+		}
+
+		cleanRepeat(effect.name, AID, effectID);
+	}
+}
+
+/**
+ * Export
+ */
+export default EffectManager;

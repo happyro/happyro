@@ -1,0 +1,254 @@
+	WBUFB(buf,74) = msg->type;
+	chmapif_sendall(buf, 75);
+}
+
+/*==========================================
+ * Return Mail
+ *------------------------------------------*/
+void mapif_Mail_return( int32 fd, uint32 char_id, int32 mail_id, uint32 account_id_receiver, uint32 account_id_sender ){
+	struct mail_message msg;
+
+	if( !mail_loadmessage( mail_id, &msg ) ){
+		return;
+	}
+
+	if( msg.dest_id != char_id ){
+		return;
+	}
+
+	if( !mapif_Mail_delete( 0, char_id, mail_id, account_id_receiver ) ){
+		// Stop processing to not duplicate the mail
+		return;
+	}
+
+	// If it was sent by the server we do not want to return the mail
+	if( msg.send_id == 0 ){
+		return;
+	}
+
+	// If we do not want to return mails without any attachments and the request was not sent by a user
+	if( fd <= 0 && !charserv_config.mail_return_empty ){
+		int32 i;
+
+		ARR_FIND( 0, MAIL_MAX_ITEM, i, msg.item[i].nameid > 0 );
+
+		if( i == MAIL_MAX_ITEM && msg.zeny == 0 ){
+			return;
+		}
+	}
+
+	char temp_[MAIL_TITLE_LENGTH + 3];
+
+	// swap sender and receiver
+	std::swap( msg.send_id, msg.dest_id );
+	safestrncpy( temp_, msg.send_name, NAME_LENGTH );
+	safestrncpy( msg.send_name, msg.dest_name, NAME_LENGTH );
+	safestrncpy( msg.dest_name, temp_, NAME_LENGTH );
+
+	// set reply message title
+	snprintf( temp_, sizeof( temp_ ), "RE:%s", msg.title );
+	safestrncpy( msg.title, temp_, sizeof( temp_ ) );
+
+	msg.status = MAIL_NEW;
+	msg.type = MAIL_INBOX_RETURNED;
+	msg.timestamp = time( nullptr );
+
+	int32 new_mail = mail_savemessage( &msg );
+	mapif_Mail_new( &msg );
+
+	// If the char server triggered this, check if we have to notify a map server
+	if( fd <= 0 ){
+		std::shared_ptr<struct online_char_data> character = util::umap_find( char_get_onlinedb(), account_id_sender );
+
+		// Check for online players
+		if( character != nullptr && character->server >= 0 ){
+			fd = map_server[character->server].fd;
+		}else{
+			// The request was triggered inside the character server or the player is offline now
+			return;
+		}
+	}
+
+	WFIFOHEAD(fd,11);
+	WFIFOW(fd,0) = 0x384c;
+	WFIFOL(fd,2) = char_id;
+	WFIFOL(fd,6) = mail_id;
+	WFIFOB(fd,10) = (new_mail == 0);
+	WFIFOSET(fd,11);
+}
+
+void mapif_parse_Mail_return(int32 fd)
+{
+	mapif_Mail_return(fd, RFIFOL(fd,2), RFIFOL(fd,6));
+}
+
+/*==========================================
+ * Send Mail
+ *------------------------------------------*/
+void mapif_Mail_send(int32 fd, struct mail_message* msg)
+{
+	int32 len = sizeof(struct mail_message) + 4;
+
+	WFIFOHEAD(fd,len);
+	WFIFOW(fd,0) = 0x384d;
+	WFIFOW(fd,2) = len;
+	memcpy(WFIFOP(fd,4), msg, sizeof(struct mail_message));
+	WFIFOSET(fd,len);
+}
+
+void mapif_parse_Mail_send(int32 fd)
+{
+	struct mail_message msg;
+	char esc_name[NAME_LENGTH*2+1];
+	char *data;
+	size_t len;
+
+	if(RFIFOW(fd,2) != 8 + sizeof(struct mail_message))
+		return;
+
+	memcpy(&msg, RFIFOP(fd,8), sizeof(struct mail_message));
+
+	if( msg.dest_id != 0 ){
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT `char_id`, `name` FROM `%s` WHERE `char_id` = '%u'", schema_config.char_db, msg.dest_id) ){
+			Sql_ShowDebug(sql_handle);
+			return;
+		}
+		
+		msg.dest_id = 0;
+		msg.dest_name[0] = '\0';
+
+		if( SQL_SUCCESS == Sql_NextRow(sql_handle) ){
+			Sql_GetData(sql_handle, 0, &data, nullptr);
+			msg.dest_id = atoi(data);
+			Sql_GetData(sql_handle, 1, &data, &len);
+			safestrncpy(msg.dest_name, data, NAME_LENGTH);
+		}
+
+		Sql_FreeResult(sql_handle);
+	}
+
+	// Try to find the Dest Char by Name
+	Sql_EscapeStringLen(sql_handle, esc_name, msg.dest_name, strnlen(msg.dest_name, NAME_LENGTH));
+	if ( SQL_ERROR == Sql_Query(sql_handle, "SELECT `account_id`, `char_id` FROM `%s` WHERE `name` = '%s'", schema_config.char_db, esc_name) ){
+		Sql_ShowDebug(sql_handle);
+	}else if ( SQL_SUCCESS == Sql_NextRow(sql_handle) ){
+#if PACKETVER < 20150513
+		uint32 account_id = RFIFOL(fd,4);
+
+		Sql_GetData(sql_handle, 0, &data, nullptr);
+		if (atoi(data) != account_id)
+		{ // Cannot send mail to char in the same account
+			Sql_GetData(sql_handle, 1, &data, nullptr);
+			msg.dest_id = atoi(data);
+		}
+#else
+		// In RODEX you can even send mails to yourself
+		Sql_GetData(sql_handle, 1, &data, nullptr);
+		msg.dest_id = atoi(data);
+#endif
+	}
+	Sql_FreeResult(sql_handle);
+	msg.status = MAIL_NEW;
+
+	if( msg.dest_id > 0 )
+		msg.id = mail_savemessage(&msg);
+
+	mapif_Mail_send(fd, &msg); // notify sender
+	mapif_Mail_new(&msg); // notify recipient
+}
+
+bool mail_sendmail(int32 send_id, const char* send_name, int32 dest_id, const char* dest_name, const char* title, const char* body, int32 zeny, struct item *item, int32 amount)
+{
+	struct mail_message msg;
+	memset(&msg, 0, sizeof(struct mail_message));
+
+	msg.send_id = send_id;
+	safestrncpy(msg.send_name, send_name, NAME_LENGTH);
+	msg.dest_id = dest_id;
+	safestrncpy(msg.dest_name, dest_name, NAME_LENGTH);
+	safestrncpy(msg.title, title, MAIL_TITLE_LENGTH);
+	safestrncpy(msg.body, body, MAIL_BODY_LENGTH);
+	msg.zeny = zeny;
+	if( item != nullptr ){
+		int32 i;
+
+		for( i = 0; i < amount && i < MAIL_MAX_ITEM; i++ ){
+			memcpy(&msg.item[i], &item[i], sizeof(struct item));
+		}
+	}
+
+	msg.timestamp = time(nullptr);
+	msg.type = MAIL_INBOX_NORMAL;
+
+	if( !mail_savemessage(&msg) ){
+		return false;
+	}
+
+	mapif_Mail_new(&msg);
+	return true;
+}
+
+void mapif_Mail_receiver_send( int32 fd, int32 requesting_char_id, int32 char_id, int32 class_, int32 base_level, const char* name ){
+	WFIFOHEAD(fd,38);
+	WFIFOW(fd,0) = 0x384e;
+	WFIFOL(fd,2) = requesting_char_id;
+	WFIFOL(fd,6) = char_id;
+	WFIFOW(fd,10) = class_;
+	WFIFOW(fd,12) = base_level;
+	strncpy(WFIFOCP(fd, 14), name, NAME_LENGTH);
+	WFIFOSET(fd,38);
+}
+
+void mapif_parse_Mail_receiver_check( int32 fd ){
+	char name[NAME_LENGTH], esc_name[NAME_LENGTH * 2 + 1];
+	uint32 char_id = 0;
+	uint16 class_ = 0, base_level = 0;
+
+	safestrncpy( name, RFIFOCP(fd, 6), NAME_LENGTH );
+
+	// Try to find the Dest Char by Name
+	Sql_EscapeStringLen( sql_handle, esc_name, name, strnlen( name, NAME_LENGTH ) );
+
+	if( SQL_ERROR == Sql_Query( sql_handle, "SELECT `char_id`,`class`,`base_level` FROM `%s` WHERE `name` = '%s'", schema_config.char_db, esc_name ) ){
+		Sql_ShowDebug(sql_handle);
+	}else if( SQL_SUCCESS == Sql_NextRow(sql_handle) ){
+		char *data;
+
+		Sql_GetData(sql_handle, 0, &data, nullptr); char_id = atoi(data);
+		Sql_GetData(sql_handle, 1, &data, nullptr); class_ = atoi(data);
+		Sql_GetData(sql_handle, 2, &data, nullptr); base_level = atoi(data);
+	}
+
+	Sql_FreeResult(sql_handle);
+	mapif_Mail_receiver_send( fd, RFIFOL(fd, 2), char_id, class_, base_level, name );
+}
+
+/*==========================================
+ * Packets From Map Server
+ *------------------------------------------*/
+int32 inter_mail_parse_frommap(int32 fd)
+{
+	switch(RFIFOW(fd,0))
+	{
+		case 0x3048: mapif_parse_Mail_requestinbox(fd); break;
+		case 0x3049: mapif_parse_Mail_read(fd); break;
+		case 0x304a: mapif_parse_Mail_getattach(fd); break;
+		case 0x304b: mapif_parse_Mail_delete(fd); break;
+		case 0x304c: mapif_parse_Mail_return(fd); break;
+		case 0x304d: mapif_parse_Mail_send(fd); break;
+		case 0x304e: mapif_parse_Mail_receiver_check(fd); break;
+		default:
+			return 0;
+	}
+	return 1;
+}
+
+int32 inter_mail_sql_init(void)
+{
+	return 1;
+}
+
+void inter_mail_sql_final(void)
+{
+	return;
+}

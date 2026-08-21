@@ -1,0 +1,500 @@
+	st->state = END;
+
+	npc_data* nd = map_id2nd( st->oid );
+
+	if( nd != nullptr && nd->dynamicnpc.owner_char_id != 0 ){
+		nd->dynamicnpc.last_interaction = gettick();
+	}
+
+	if( st->mes_active )
+		st->mes_active = 0;
+
+	if (sd){
+		if (sd->state.callshop == 0){
+			// If a menu/select/prompt is active, close it.
+			clif_scriptclose( *sd, st->oid );
+		}else
+			sd->state.callshop = 0;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Checks if the player has that effect state (option).
+///
+/// checkoption(<option>{,<char_id>}) -> <bool>
+BUILDIN_FUNC(checkoption)
+{
+	int32 option;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	option = script_getnum(st,2);
+	if( sd->sc.option&option )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Checks if the player is in that body state (opt1).
+///
+/// checkoption1(<opt1>{,<char_id>}) -> <bool>
+BUILDIN_FUNC(checkoption1)
+{
+	int32 opt1;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	opt1 = script_getnum(st,2);
+	if( sd->sc.opt1 == opt1 )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Checks if the player has that health state (opt2).
+///
+/// checkoption2(<opt2>{,<char_id>}) -> <bool>
+BUILDIN_FUNC(checkoption2)
+{
+	int32 opt2;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	opt2 = script_getnum(st,2);
+	if( sd->sc.opt2&opt2 )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Changes the effect state (option) of the player.
+/// <flag> defaults to 1
+/// <flag>=0 : removes the option
+/// <flag>=other : adds the option
+///
+/// setoption <option>{,<flag>{,<char_id>}};
+BUILDIN_FUNC(setoption)
+{
+	int32 option;
+	int32 flag = 1;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	option = script_getnum(st,2);
+	if( script_hasdata(st,3) )
+		flag = script_getnum(st,3);
+	else if( !option ){// Request to remove everything.
+		flag = 0;
+		option = OPTION_FALCON|OPTION_RIDING;
+#ifndef NEW_CARTS
+		option |= OPTION_CART;
+#endif
+	}
+	if( flag ){// Add option
+		if( option&OPTION_WEDDING && !battle_config.wedding_modifydisplay )
+			option &= ~OPTION_WEDDING;// Do not show the wedding sprites
+		pc_setoption(sd, sd->sc.option|option);
+	} else// Remove option
+		pc_setoption(sd, sd->sc.option&~option);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns if the player has a cart.
+///
+/// checkcart({char_id}) -> <bool>
+///
+/// @author Valaris
+BUILDIN_FUNC(checkcart)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( pc_iscarton(sd) )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets the cart of the player.
+/// <type> defaults to 1
+/// <type>=0 : removes the cart
+/// <type>=1 : Normal cart
+/// <type>=2 : Wooden cart
+/// <type>=3 : Covered cart with flowers and ferns
+/// <type>=4 : Wooden cart with a Panda doll on the back
+/// <type>=5 : Normal cart with bigger wheels, a roof and a banner on the back
+///
+/// setcart {<type>{,<char_id>}};
+BUILDIN_FUNC(setcart)
+{
+	int32 type = 1;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( script_hasdata(st,2) )
+		type = script_getnum(st,2);
+	pc_setcart(sd, type);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns if the player has a falcon.
+///
+/// checkfalcon({char_id}) -> <bool>
+///
+/// @author Valaris
+BUILDIN_FUNC(checkfalcon)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( pc_isfalcon(sd) )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets if the player has a falcon or not.
+/// <flag> defaults to 1
+///
+/// setfalcon {<flag>{,<char_id>}};
+BUILDIN_FUNC(setfalcon)
+{
+	int32 flag = 1;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( script_hasdata(st,2) )
+		flag = script_getnum(st,2);
+
+	pc_setfalcon(sd, flag);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns if the player is riding.
+///
+/// checkriding({char_id}) -> <bool>
+///
+/// @author Valaris
+BUILDIN_FUNC(checkriding)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( pc_isriding(sd) )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets if the player is riding.
+/// <flag> defaults to 1
+///
+/// setriding {<flag>{,<char_id>}};
+BUILDIN_FUNC(setriding)
+{
+	int32 flag = 1;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( script_hasdata(st,2) )
+		flag = script_getnum(st,2);
+	pc_setriding(sd, flag);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns if the player has a warg.
+///
+/// checkwug({char_id}) -> <bool>
+///
+BUILDIN_FUNC(checkwug)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( pc_iswug(sd) || pc_isridingwug(sd) )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns if the player is wearing MADO Gear.
+///
+/// checkmadogear({<char_id>}) -> <bool>
+///
+BUILDIN_FUNC(checkmadogear)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( pc_ismadogear(sd) )
+		script_pushint(st, 1);
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets if the player is riding MADO Gear.
+/// <flag> defaults to true
+/// <type> defaults to MADO_ROBOT
+///
+/// setmadogear {<flag>{,type{,<char_id>}}};
+BUILDIN_FUNC(setmadogear)
+{
+	bool flag = true;
+	TBL_PC* sd;
+	uint16 type = MADO_ROBOT;
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( script_hasdata(st,2) )
+		flag = script_getnum(st,2) != 0;
+	if (script_hasdata(st, 3)) {
+		type = script_getnum(st, 3);
+
+		if (type == MADO_UNUSED || type >= MADO_MAX) {
+			ShowError("buildin_setmadogear: Invalid mado gear type %hu, defaulting to robot...\n", type);
+			type = MADO_ROBOT;
+		}
+	}
+
+	pc_setmadogear(sd, flag, static_cast<e_mado_type>(type));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets the save point of the player.
+///
+/// save "<map name>",<x>,<y>{,{<range x>,<range y>,}<char_id>}
+/// savepoint "<map name>",<x>,<y>{,{<range x>,<range y>,}<char_id>}
+BUILDIN_FUNC(savepoint)
+{
+	int32 x, y, m, cid_pos = 5;
+	uint16 map_idx;
+	const char* str;
+	TBL_PC* sd;
+
+	if (script_lastdata(st) > 5)
+		cid_pos = 7;
+
+	if (!script_charid2sd(cid_pos,sd))
+		return SCRIPT_CMD_FAILURE;// no player attached, report source
+
+	str = script_getstr(st, 2);
+
+	map_idx = mapindex_name2id(str);
+	if( !map_idx )
+		return SCRIPT_CMD_FAILURE;
+
+	x = script_getnum(st,3);
+	y = script_getnum(st,4);
+	m = map_mapindex2mapid(map_idx);
+
+	if (cid_pos == 7) {
+		int32 dx = script_getnum(st,5), dy = script_getnum(st,6),
+			x1 = x + dx, y1 = y + dy,
+			x0 = x - dx, y0 = y - dy;
+		uint8 n = 10;
+		do {
+			x = rnd_value(x0, x1);
+			y = rnd_value(y0, y1);
+		} while (m != -1 && (--n) > 0 && !map_getcell(m, x, y, CELL_CHKPASS));
+	}
+
+	// Check for valid coordinates if map in local map-server
+	if (m != -1 && !map_getcell(m, x, y, CELL_CHKPASS)) {
+		ShowError("buildin_savepoint: Invalid coordinates %d,%d at map %s.\n", x, y, str);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	pc_setsavepoint(sd, map_idx, x, y);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * GetTimeTick(0: System Tick, 1: Time Second Tick, 2: Unix epoch)
+ *------------------------------------------*/
+BUILDIN_FUNC(gettimetick)	/* Asgard Version */
+{
+	int32 type;
+	time_t timer;
+	struct tm *t;
+
+	type=script_getnum(st,2);
+
+	switch(type){
+	case 2:
+		//type 2:(Get the number of seconds elapsed since 00:00 hours, Jan 1, 1970 UTC
+		//        from the system clock.)
+		script_pushint(st,(int32)time(nullptr));
+		break;
+	case 1:
+		//type 1:(Second Ticks: 0-86399, 00:00:00-23:59:59)
+		time(&timer);
+		t=localtime(&timer);
+		script_pushint(st,((t->tm_hour)*3600+(t->tm_min)*60+t->tm_sec));
+		break;
+	case 0:
+	default:
+		//type 0:(System Ticks)
+		script_pushint(st,gettick());
+		break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * GetTime(Type)
+ *
+ * Returns the current value of a certain date type.
+ * Possible types are:
+ * - DT_SECOND Current seconds
+ * - DT_MINUTE Current minute
+ * - DT_HOUR Current hour
+ * - DT_DAYOFWEEK Day of current week
+ * - DT_DAYOFMONTH Day of current month
+ * - DT_MONTH Current month
+ * - DT_YEAR Current year
+ * - DT_DAYOFYEAR Day of current year
+ *
+ * If none of the above types is supplied -1 will be returned to the script
+ * and the script source will be reported into the mapserver console.
+ *------------------------------------------*/
+BUILDIN_FUNC(gettime)
+{
+	int32 type;
+
+	type = script_getnum(st,2);
+
+	if( type <= DT_MIN || type >= DT_MAX ){
+		ShowError( "buildin_gettime: Invalid date type %d\n", type );
+		script_reportsrc(st);
+		script_pushint(st,-1);
+	}else{
+		script_pushint(st,date_get((enum e_date_type)type));
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns the current server time or the provided time in a readable format.
+ * gettimestr(<"time_format">,<max_length>{,<time_tick>});
+ */
+BUILDIN_FUNC(gettimestr)
+{
+	char *tmpstr;
+	const char *fmtstr;
+	int32 maxlen;
+	time_t now;
+
+	fmtstr = script_getstr(st,2);
+	maxlen = script_getnum(st,3);
+
+	if (script_hasdata(st, 4)) {
+		if (script_getnum(st, 4) < 0) {
+			ShowWarning("buildin_gettimestr: a positive value must be supplied to be valid.\n");
+			return SCRIPT_CMD_FAILURE;
+		} else
+			now = (time_t)script_getnum(st, 4);
+	} else
+		now = time(nullptr);
+
+	tmpstr = (char *)aMalloc((maxlen+1)*sizeof(char));
+	strftime(tmpstr,maxlen,fmtstr,localtime(&now));
+	tmpstr[maxlen] = '\0';
+
+	script_pushstr(st,tmpstr);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Open player storage
+ *------------------------------------------*/
+BUILDIN_FUNC(openstorage)
+{
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	storage_storageopen(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(guildopenstorage)
+{
+	TBL_PC* sd;
+	int32 ret;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	ret = storage_guild_storageopen(sd);
+	script_pushint(st,ret);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(guildopenstorage_log){
+#if PACKETVER < 20140205
+	ShowError( "buildin_guildopenstorage_log: This command requires PACKETVER 2014-02-05 or newer.\n" );
+	return SCRIPT_CMD_FAILURE;
+#else
+	map_session_data* sd;
+
+	if( !script_charid2sd( 2, sd ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint( st, storage_guild_log_read( sd ) );
+
+	return SCRIPT_CMD_SUCCESS;
+#endif
+}
+
+BUILDIN_FUNC(guild_has_permission){

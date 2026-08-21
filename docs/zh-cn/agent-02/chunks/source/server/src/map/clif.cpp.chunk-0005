@@ -1,0 +1,500 @@
+		}
+	}
+
+	clif_send( packet, packet->packetLength, sd, SELF );
+#endif
+}
+
+void clif_homskillup( const homun_data& hd, uint16 skill_id ){
+#if PACKETVER >= 20050531
+	int16 idx = hom_skill_get_index( skill_id );
+
+	if( idx == -1 ){
+		return;
+	}
+
+	map_session_data* sd = hd.master;
+
+	if( sd == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_HOSKILLINFO_UPDATE packet{};
+
+	packet.packetType = HEADER_ZC_HOSKILLINFO_UPDATE;
+	packet.skill_id = skill_id;
+	packet.Level = hd.homunculus.hskill[idx].lv;
+	packet.SP = skill_get_sp(skill_id,hd.homunculus.hskill[idx].lv);
+	packet.AttackRange = skill_get_range2(&hd,skill_id,hd.homunculus.hskill[idx].lv,false);
+	packet.upgradable = (hd.homunculus.level < hom_skill_get_min_level(hd.homunculus.class_, skill_id) || hd.homunculus.hskill[idx].lv >= hom_skill_tree_get_max(skill_id, hd.homunculus.class_)) ? 0 : 1;
+
+	clif_send( &packet, sizeof( packet ), sd, SELF );
+#endif
+}
+
+/// Result of request to feed a homun/merc.
+/// 022f <result>.B <name id>.W (ZC_FEED_MER)
+/// result:
+///     0 = failure
+///     1 = success
+void clif_hom_food( const map_session_data& sd, int32 foodid, bool success ){
+	PACKET_ZC_FEED_MER packet{};
+
+	packet.packetType = HEADER_ZC_FEED_MER;
+	packet.result = success;
+	packet.itemId = client_nameid( foodid );
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies the client, that it is walking.
+/// 0087 <walk start time>.L <walk data>.6B (ZC_NOTIFY_PLAYERMOVE)
+void clif_walkok( const map_session_data& sd ){
+	PACKET_ZC_NOTIFY_PLAYERMOVE packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_PLAYERMOVE;
+	packet.moveStartTime = client_tick(gettick());
+	WBUFPOS2(packet.moveData, 0, sd.x, sd.y, sd.ud.to_x, sd.ud.to_y, 8, 8);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies clients in an area, that an other visible object is walking.
+/// Note: unit must not be self
+void clif_move( const struct unit_data& ud )
+{
+	const block_list* bl = ud.bl;
+	const view_data* vd = status_get_viewdata(bl);
+
+	if (bl == nullptr || vd == nullptr)
+		return;
+
+	// This performance check is needed to keep GM-hidden objects from being notified to bots.
+	if (vd->look[LOOK_BASE] == JT_INVISIBLE)
+		return;
+
+	// Hide NPC from Maya Purple card
+	if( clif_npc_mayapurple( *bl ) ){
+		return;
+	}
+
+	const status_change* sc = nullptr;
+
+	if ((sc = status_get_sc(bl)) && sc->option & (OPTION_HIDE | OPTION_CLOAK | OPTION_INVISIBLE | OPTION_CHASEWALK))
+		clif_ally_only = true;
+
+	clif_set_unit_walking( *bl, nullptr, ud, AREA_WOS );
+
+	clif_refresh_clothcolor( *bl, AREA_WOS );
+
+	switch (bl->type) {
+	case BL_PC:
+		{
+			const map_session_data* sd = static_cast<const map_session_data*>( bl );
+			if (sd->state.size == SZ_BIG) // tiny/big players [Valaris]
+				clif_specialeffect(sd, EF_GIANTBODY2, AREA);
+			else if (sd->state.size == SZ_MEDIUM)
+				clif_specialeffect(sd, EF_BABYBODY2, AREA);
+		}
+	break;
+	case BL_MOB:
+		{
+			const mob_data* md  = static_cast<const mob_data*>( bl );
+			if (md->special_state.size == SZ_BIG) // tiny/big mobs [Valaris]
+				clif_specialeffect(md, EF_GIANTBODY2, AREA);
+			else if (md->special_state.size == SZ_MEDIUM)
+				clif_specialeffect(md, EF_BABYBODY2, AREA);
+		}
+	break;
+	case BL_PET:
+		// If the pet wears equip
+		if( vd->look[LOOK_HEAD_BOTTOM] != 0 ){
+			const pet_data& pd = *static_cast<const pet_data*>( bl );
+			clif_send_petdata( nullptr, pd, CHANGESTATEPET_ACCESSORY );
+		}
+		break;
+	}
+
+	clif_ally_only = false;
+}
+
+
+/*==========================================
+ * Delays the map_quit of a player after they are disconnected. [Skotlex]
+ *------------------------------------------*/
+static TIMER_FUNC(clif_delayquit){
+	map_session_data *sd = nullptr;
+
+	//Remove player from map server
+	if ((sd = map_id2sd(id)) != nullptr && sd->fd == 0) //Should be a disconnected player.
+		map_quit(sd);
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+void clif_quitsave(int32 fd,map_session_data *sd) {
+	if (!battle_config.prevent_logout ||
+		sd->canlog_tick == 0 ||
+		DIFF_TICK(gettick(), sd->canlog_tick) > battle_config.prevent_logout)
+		map_quit(sd);
+	else if (session_isValid(sd->fd)) {
+		//Disassociate session from player (session is deleted after this function was called)
+		//And set a timer to make him quit later.
+		session[sd->fd]->session_data = nullptr;
+		sd->fd = 0;
+		add_timer(gettick() + 10000, clif_delayquit, sd->id, 0);
+	}
+}
+
+/// Notifies the client of a position change to coordinates on given map (ZC_NPCACK_MAPMOVE).
+/// 0091 <map name>.16B <x>.W <y>.W
+void clif_changemap( const map_session_data& sd, int16 m, uint16 x, uint16 y ){
+	PACKET_ZC_NPCACK_MAPMOVE packet{};
+
+	packet.packetType = HEADER_ZC_NPCACK_MAPMOVE;
+	mapindex_getmapname_ext(map_mapid2mapname(m), packet.mapName);
+	packet.xPos = x;
+	packet.yPos = y;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies the client of a position change to coordinates on given map, which is on another map-server.
+/// 0092 <map name>.16B <x>.W <y>.W <ip>.L <port>.W (ZC_NPCACK_SERVERMOVE)
+/// 0ac7 <map name>.16B <x>.W <y>.W <ip>.L <port>.W <unknown>.128B (ZC_NPCACK_SERVERMOVE_DOMAIN)
+void clif_changemapserver( const map_session_data& sd, const char* map, uint16 x, uint16 y, uint32 ip, uint16 port ){
+	PACKET_ZC_NPCACK_SERVERMOVE packet{};
+
+	packet.packetType = HEADER_ZC_NPCACK_SERVERMOVE;
+
+	mapindex_getmapname_ext(map, packet.mapName);
+	packet.xPos = x;
+	packet.yPos = y;
+	packet.ip = htonl(ip);
+	packet.port = ntows(htons(port)); // [!] LE byte order here [!]
+#if PACKETVER >= 20170315
+	safestrncpy( packet.domain, "", sizeof( packet.domain ) );
+#endif
+
+#ifdef DEBUG
+	ShowDebug( "Sending the client (%d %d.%d.%d.%d) to map-server with ip %d.%d.%d.%d and port %hu\n", sd.status.account_id, CONVIP(session[sd.fd]->client_addr), CONVIP(ip), port );
+#endif
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// In many situations (knockback, backslide, etc.) Aegis sends both clif_slide and clif_fixpos
+/// This function combines both calls and allows to simplify the calling code
+void clif_blown( const block_list* bl )
+{
+	clif_slide(*bl, bl->x, bl->y);
+	clif_fixpos( *bl );
+}
+
+
+/// Visually moves(slides) a character to x,y. If the target cell
+/// isn't walkable, the char doesn't move at all. If the char is
+/// sitting it will stand up.
+/// 0088 <id>.L <x>.W <y>.W (ZC_STOPMOVE)
+void clif_fixpos( const block_list& bl ){	
+	PACKET_ZC_STOPMOVE packet = {};
+
+	packet.packetType = HEADER_ZC_STOPMOVE;
+	packet.AID = bl.id;
+	packet.xPos = bl.x;
+	packet.yPos = bl.y;
+
+	clif_send( &packet, sizeof( packet ), &bl, AREA);
+
+	if( disguised( &bl ) ){
+		packet.AID = disguised_bl_id( bl.id );
+		clif_send( &packet, sizeof( packet ), &bl, SELF );
+	}
+}
+
+
+/// Displays the buy/sell dialog of an NPC shop.
+/// 00c4 <shop id>.L (ZC_SELECT_DEALTYPE)
+void clif_npcbuysell( const map_session_data& sd, const npc_data& nd ){
+	PACKET_ZC_SELECT_DEALTYPE packet{};
+
+	packet.packetType = HEADER_ZC_SELECT_DEALTYPE;
+	packet.npcId = nd.id;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Presents list of items, that can be bought in an NPC shop.
+/// 00c6 <packet len>.W { <price>.L <discount price>.L <item type>.B <name id>.W }* (ZC_PC_PURCHASE_ITEMLIST)
+void clif_buylist( const map_session_data& sd, const npc_data& nd ){
+	PACKET_ZC_PC_PURCHASE_ITEMLIST* p = reinterpret_cast<PACKET_ZC_PC_PURCHASE_ITEMLIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_PC_PURCHASE_ITEMLIST;
+	p->packetLength = sizeof( *p );
+
+	for( int32 i = 0, count = 0, discount = npc_shop_discount( &nd ); i < nd.u.shop.count; i++ ){
+		int32 val = nd.u.shop.shop_item[i].value;
+
+		p->items[count].price = val;
+		p->items[count].discountPrice = ( discount ) ? pc_modifybuyvalue( &sd, val ) : val;
+		p->items[count].itemType = itemtype( nd.u.shop.shop_item[i].nameid );
+		p->items[count].itemId = client_nameid( nd.u.shop.shop_item[i].nameid );
+#if PACKETVER_MAIN_NUM >= 20210203 || PACKETVER_RE_NUM >= 20211103
+		std::shared_ptr<item_data> id = item_db.find(nd.u.shop.shop_item[i].nameid);
+
+		p->items[count].viewSprite = id->look;
+		p->items[count].location = pc_equippoint_sub( &sd, id.get() );
+#endif
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+		count++;
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+}
+
+
+/// Presents list of items, that can be sold to an NPC shop.
+/// 00c7 <packet len>.W { <index>.W <price>.L <overcharge price>.L }* (ZC_PC_SELL_ITEMLIST)
+void clif_selllist( const map_session_data& sd){
+	if( !sd.npc_shopid ){
+		return;
+	}
+
+	npc_data* nd = map_id2nd( sd.npc_shopid );
+
+	if( nd == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_PC_SELL_ITEMLIST *packet = reinterpret_cast<PACKET_ZC_PC_SELL_ITEMLIST*>(packet_buffer);
+
+	packet->packetType = HEADER_ZC_PC_SELL_ITEMLIST;
+	packet->packetLength = sizeof( *packet );
+
+	for( int32 i = 0, c = 0; i < MAX_INVENTORY; i++ ){
+		if( sd.inventory.u.items_inventory[i].nameid <= 0 ){
+			continue;
+		}
+
+		if( sd.inventory_data[i] == nullptr ){
+			continue;
+		}
+
+		if( !pc_can_sell_item( &sd, &sd.inventory.u.items_inventory[i], nd->subtype ) ){
+			continue;
+		}
+
+		int32 price;
+
+		if( battle_config.rental_item_novalue && sd.inventory.u.items_inventory[i].expire_time ){
+			price = 0;
+		}else{
+			price = sd.inventory_data[i]->value_sell;
+
+			if( price < 0 ){
+				continue;
+			}
+		}
+
+		packet->items[c].index = client_index(i);
+		packet->items[c].price = price;
+		packet->items[c].overcharge = pc_modifysellvalue( &sd, price );
+
+		packet->packetLength += sizeof( packet->items[0] );
+		c++;
+	}
+	
+	clif_send( packet, packet->packetLength, &sd, SELF );
+}
+
+/// Closes shop (CZ_NPC_TRADE_QUIT).
+/// 09d4
+void clif_parse_NPCShopClosed(int32 fd, map_session_data *sd) {
+	// TODO: State tracking?
+	sd->npc_shopid = 0;
+}
+
+/**
+ * Presents list of items, that can be sold to a Market shop.
+ * @author: Ind and Yommy
+ **/
+/// 0x9d5 <packet len>.W { <name id>.W <type>.B <price>.L <qty>.L <weight>.W }* (ZC_NPC_MARKET_OPEN)
+void clif_npc_market_open( map_session_data& sd, npc_data& nd ){
+#if PACKETVER >= 20131223
+	if( sd.state.trading ){
+		return;
+	}
+
+	PACKET_ZC_NPC_MARKET_OPEN* p = reinterpret_cast<PACKET_ZC_NPC_MARKET_OPEN*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_NPC_MARKET_OPEN;
+	p->packetLength = sizeof( *p );
+
+	for( int32 i = 0, count = 0; i < nd.u.shop.count; i++ ){
+		struct npc_item_list *item = &nd.u.shop.shop_item[i];
+
+		if( !item->nameid ){
+			continue;
+		}
+
+		std::shared_ptr<item_data> id = item_db.find(item->nameid);
+
+		if( !id ){
+			continue;
+		}
+
+		PACKET_ZC_NPC_MARKET_OPEN_sub& entry = p->list[count];
+
+		entry.nameid = client_nameid( item->nameid );
+		entry.type = itemtype( item->nameid );
+		entry.price = item->value;
+		entry.qty = item->qty;
+		entry.weight = id->weight;
+#if PACKETVER_MAIN_NUM >= 20210203 || PACKETVER_RE_NUM >= 20211103
+		entry.location = pc_equippoint_sub( &sd, id.get() );
+#endif
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( entry ) );
+		count++;
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+
+	sd.state.trading = 1;
+#endif
+}
+
+
+/// Closes the Market shop window.
+void clif_parse_NPCMarketClosed(int32 fd, map_session_data *sd) {
+	nullpo_retv(sd);
+	sd->npc_shopid = 0;
+	sd->state.trading = 0;
+}
+
+
+/// Purchase item from Market shop.
+/// 0x9d7 <packet len>.W <count>.B { <name id>.W <qty>.W <price>.L }* (ZC_NPC_MARKET_PURCHASE_RESULT)
+void clif_npc_market_purchase_ack( map_session_data& sd, e_purchase_result res, std::vector<s_npc_buy_list>& list ){
+#if PACKETVER >= 20131223
+	npc_data *nd = map_id2nd( sd.npc_shopid );
+
+	if( nd == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_NPC_MARKET_PURCHASE_RESULT* p = reinterpret_cast<PACKET_ZC_NPC_MARKET_PURCHASE_RESULT*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_NPC_MARKET_PURCHASE_RESULT;
+	p->PacketLength = sizeof( *p );
+
+#if PACKETVER_MAIN_NUM >= 20190807 || PACKETVER_RE_NUM >= 20190807 || PACKETVER_ZERO_NUM >= 20190814
+	p->result = ( res == e_purchase_result::PURCHASE_SUCCEED ? 0 : -1 );
+#else
+	p->result = ( res == e_purchase_result::PURCHASE_SUCCEED ? 1 : 0 );
+#endif
+
+	if( res == e_purchase_result::PURCHASE_SUCCEED ){
+		for( int32 i = 0, j, count = 0; i < list.size(); i++ ){
+			ARR_FIND( 0, nd->u.shop.count, j, list[i].nameid == nd->u.shop.shop_item[j].nameid );
+
+			// Not found
+			if( j == nd->u.shop.count ){
+				continue;
+			}
+
+			p->list[count].ITID = client_nameid( list[i].nameid );
+			p->list[count].qty = list[i].qty;
+			p->list[count].price = nd->u.shop.shop_item[j].value;
+			p->PacketLength += static_cast<decltype(p->PacketLength)>( sizeof( p->list[0] ) );
+			count++;
+		}
+	}
+
+	clif_send( p, p->PacketLength, &sd, SELF );
+#endif
+}
+
+
+/// Purchase item from Market shop.
+/// 0x9d6 <len>.W { <name id>.W <qty>.L } (CZ_NPC_MARKET_PURCHASE)
+void clif_parse_NPCMarketPurchase(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20131223
+	if( sd == nullptr ){
+		return;
+	}
+
+	if( !sd->npc_shopid ){
+		return;
+	}
+
+	const PACKET_CZ_NPC_MARKET_PURCHASE* p = reinterpret_cast<PACKET_CZ_NPC_MARKET_PURCHASE*>( RFIFOP( fd, 0 ) );
+
+	int32 count = ( p->PacketLength - sizeof( *p ) ) / sizeof( p->list[0] );
+
+	std::vector<s_npc_buy_list> items;
+
+	items.reserve( count );
+
+	for( int32 i = 0; i < count; i++ ){
+		s_npc_buy_list item = {};
+
+		item.nameid = p->list[i].ITID;
+		item.qty = p->list[i].qty;
+
+		items.push_back( item );
+	}
+
+	e_purchase_result res = npc_buylist( sd, items );
+	clif_npc_market_purchase_ack( *sd, res, items );
+#endif
+}
+
+
+/// Displays an NPC dialog message.
+/// 00b4 <packet len>.W <npc id>.L <message>.?B (ZC_SAY_DIALOG)
+/// Client behavior (dialog window):
+/// - disable mouse targeting
+/// - open the dialog window
+/// - set npcid of dialog window (0 by default)
+/// - if set to clear on next mes, clear contents
+/// - append this text
+void clif_scriptmes( const map_session_data& sd, uint32 npcid, const char *mes ){
+	PACKET_ZC_SAY_DIALOG* p = reinterpret_cast<PACKET_ZC_SAY_DIALOG*>( packet_buffer );
+
+	int16 length = (int16)( strlen( mes ) + 1 );
+
+	p->PacketType = HEADER_ZC_SAY_DIALOG;
+	p->PacketLength = sizeof( *p ) + length;
+	p->NpcID = npcid;
+	safestrncpy( p->message, mes, length );
+
+	clif_send( p, p->PacketLength, &sd, SELF );
+}
+
+
+/// Adds a 'next' button to an NPC dialog.
+/// 00b5 <npc id>.L (ZC_WAIT_DIALOG)
+/// Client behavior (dialog window):
+/// - disable mouse targeting
+/// - open the dialog window
+/// - add 'next' button
+/// When 'next' is pressed:
+/// - 00B9 <npcid of dialog window>.L
+/// - set to clear on next mes
+/// - remove 'next' button
+void clif_scriptnext( const map_session_data& sd, uint32 npcid ){
+	PACKET_ZC_WAIT_DIALOG p = {};
+
+	p.PacketType = HEADER_ZC_WAIT_DIALOG;
+	p.NpcID = npcid;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );

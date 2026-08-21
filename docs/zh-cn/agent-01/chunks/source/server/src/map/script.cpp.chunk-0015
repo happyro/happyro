@@ -1,0 +1,500 @@
+	oid = va_arg(ap, int32);
+	type = va_arg(ap, int32);
+	x = va_arg(ap, int32);
+	y = va_arg(ap, int32);
+	id = va_arg(ap, int32);
+	color = va_arg(ap, int32);
+
+	clif_viewpoint( *reinterpret_cast<map_session_data*>( bl ), oid, type, x, y, id, color );
+
+	return 0;
+}
+
+BUILDIN_FUNC(viewpointmap) {
+	const char* map = script_getstr(st, 2);
+	int16 mapid = map_mapname2mapid(map);
+
+	if (mapid < 0) {
+		ShowError("buildin_viewpointmap: Unknown map name %s.\n", map);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	map_foreachinmap(buildin_viewpointmap_sub, mapid, BL_PC, st->oid, script_getnum(st, 3), script_getnum(st, 4), script_getnum(st, 5), script_getnum(st, 6), script_getnum(st, 7));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Set random options for new item
+ * @param st Script state
+ * @param it Temporary item data
+ * @param funcname Function name
+ * @param x First position of random option id array from the script
+ **/
+static bool script_getitem_randomoption(struct script_state *st, map_session_data* sd, struct item *it, const char *funcname, int32 x) {
+	int32 i, opt_id_n;
+	struct script_data *opt_id = script_getdata(st,x);
+	struct script_data *opt_val = script_getdata(st,x+1);
+	struct script_data *opt_param = script_getdata(st,x+2);
+	const char *opt_id_var = reference_getname(opt_id);
+	const char *opt_val_var = reference_getname(opt_val);
+	const char *opt_param_var = reference_getname(opt_param);
+	int32 opt_id_id, opt_id_idx;
+	int32 opt_val_id, opt_val_idx;
+	int32 opt_param_id, opt_param_idx;
+	struct reg_db *opt_id_ref = nullptr, *opt_val_ref = nullptr, *opt_param_ref = nullptr;
+
+	// Check if the variable requires a player
+	if( not_server_variable(opt_id_var[0]) && sd == nullptr ){
+		// If no player is attached
+		if( !script_rid2sd(sd) ){
+			ShowError( "buildin_%s: variable \"%s\" was not a server variable, but no player was attached.\n", funcname, opt_id_var );
+			return false;
+		}
+	}
+
+	if( !data_isreference(opt_id) || !script_array_src( st, sd, opt_id_var, reference_getref(opt_id) ) ){
+		ShowError( "buildin_%s: The option id parameter is not an array.\n", funcname );
+		return false;
+	}
+
+	if (is_string_variable(opt_id_var)) {
+		ShowError("buildin_%s: The array %s is not numeric type.\n", funcname, opt_id_var);
+		return false;
+	}
+
+	// Check if the variable requires a player
+	if( not_server_variable(opt_val_var[0]) && sd == nullptr ){
+		// If no player is attached
+		if( !script_rid2sd(sd) ){
+			ShowError( "buildin_%s: variable \"%s\" was not a server variable, but no player was attached.\n", funcname, opt_val_var );
+			return false;
+		}
+	}
+
+	if( !data_isreference(opt_val) || !script_array_src( st, sd, opt_val_var, reference_getref(opt_val) ) ){
+		ShowError( "buildin_%s: The option value parameter is not an array.\n", funcname );
+		return false;
+	}
+
+	if (is_string_variable(opt_val_var)) {
+		ShowError("buildin_%s: The array %s is not numeric type.\n", funcname, opt_val_var);
+		return false;
+	}
+
+	// Check if the variable requires a player
+	if( not_server_variable(opt_param_var[0]) && sd == nullptr ){
+		// If no player is attached
+		if( !script_rid2sd(sd) ){
+			ShowError( "buildin_%s: variable \"%s\" was not a server variable, but no player was attached.\n", funcname, opt_param_var );
+			return false;
+		}
+	}
+
+	if( !data_isreference(opt_param) || !script_array_src( st, sd, opt_param_var, reference_getref(opt_param) ) ){
+		ShowError( "buildin_%s: The option param parameter is not an array.\n", funcname );
+		return false;
+	}
+
+	if (is_string_variable(opt_param_var)) {
+		ShowError("buildin_%s: The array %s is not numeric type.\n", funcname, opt_param_var);
+		return false;
+	}
+
+	opt_id_ref = reference_getref(opt_id);
+	opt_id_n = script_array_highest_key(st, sd, opt_id_var, opt_id_ref);
+
+	opt_val_ref = reference_getref(opt_val);
+	opt_param_ref = reference_getref(opt_param);
+
+	opt_id_id = reference_getid(opt_id);
+	opt_val_id = reference_getid(opt_val);
+	opt_param_id = reference_getid(opt_param);
+
+	opt_id_idx = reference_getindex(opt_id);
+	opt_val_idx = reference_getindex(opt_val);
+	opt_param_idx = reference_getindex(opt_param);
+	
+	for (i = 0; i < opt_id_n && i < MAX_ITEM_RDM_OPT; i++) {
+		it->option[i].id = (int16)get_val2_num( st, reference_uid( opt_id_id, opt_id_idx + i ), opt_id_ref );
+		it->option[i].value = (int16)get_val2_num( st, reference_uid( opt_val_id, opt_val_idx + i ), opt_val_ref );
+		it->option[i].param = (char)get_val2_num( st, reference_uid( opt_param_id, opt_param_idx + i ), opt_param_ref );
+	}
+	return true;
+}
+
+/**
+ * Sub function for counting items
+ * @param items: Item array to search
+ * @param id: Item data to search for
+ * @param size: Maximum size of array
+ * @param expanded: If the script command has extra arguments
+ * @param random_option: If the struct command has random option arguments
+ * @param st: Script state (required for random options)
+ * @param sd: Player data (required for random options)
+ * @param rental: Whether or not to count rental items
+ * @return Total count of item being searched
+ */
+static int32 script_countitem_sub(struct item *items, std::shared_ptr<item_data> id, int32 size, int32 expanded, struct script_state *st, map_session_data *sd = nullptr, bool rental = false) {
+
+	nullpo_retr(-1, items);
+	nullpo_retr(-1, st);
+
+	int32 count = 0;
+
+	if (!expanded) { // For non-expanded functions
+		t_itemid nameid = id->nameid;
+
+		for (int32 i = 0; i < size; i++) {
+			item *itm = &items[i];
+
+			if (itm == nullptr || itm->nameid == 0 || itm->amount < 1)
+				continue;
+			if (itm->nameid == nameid && ((rental && itm->expire_time > 0) || (!rental && itm->expire_time == 0)))
+				count += itm->amount;
+		}
+	} else { // For expanded functions
+		item it = {};
+		int32 offset = 10;
+
+		it.nameid = id->nameid;
+		it.identify = script_getnum(st,3);
+		it.refine  = script_getnum(st,4);
+		it.attribute = script_getnum(st,5);
+		it.card[0] = script_getnum(st,6);
+		it.card[1] = script_getnum(st,7);
+		it.card[2] = script_getnum(st,8);
+		it.card[3] = script_getnum(st,9);
+
+		if (expanded&4) {
+			it.enchantgrade = script_getnum(st,10);
+
+			offset = 11;
+		}
+
+		if (expanded&2) {
+			if (!sd) {
+				ShowError("buildin_countitem3: Player not attached.\n");
+				return -1;
+			}
+
+			bool res = script_getitem_randomoption(st, sd, &it, "countitem3", offset);
+
+			if (!res)
+				return -1;
+		}
+
+		for (int32 i = 0; i < size; i++) {
+			item *itm = &items[i];
+
+			if (itm == nullptr || itm->nameid == 0 || itm->amount < 1)
+				continue;
+			if (itm->nameid != it.nameid || itm->identify != it.identify || itm->refine != it.refine || itm->attribute != it.attribute || itm->enchantgrade != it.enchantgrade)
+				continue;
+			if ((!rental && itm->expire_time > 0) || (rental && itm->expire_time == 0))
+				continue;
+			if (memcmp(it.card, itm->card, sizeof(it.card)))
+				continue;
+			if (expanded&2) {
+				uint8 j;
+
+				for (j = 0; j < MAX_ITEM_RDM_OPT; j++) {
+					if (itm->option[j].id != it.option[j].id || itm->option[j].value != it.option[j].value || itm->option[j].param != it.option[j].param)
+						break;
+				}
+				if (j != MAX_ITEM_RDM_OPT)
+					continue;
+			}
+
+			count += items[i].amount;
+		}
+	}
+
+	return count;
+}
+
+/**
+ * Returns number of items in inventory
+ * countitem(<nameID>{,<accountID>})
+ * countitem2(<nameID>,<Identified>,<Refine>,<Attribute>,<Card0>,<Card1>,<Card2>,<Card3>{,<accountID>}) [Lupus]
+ * countitem3(<item id>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<accountID>})
+ * countitem3("<item name>",<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<accountID>})
+ * countitem4(<item id>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<accountID>})
+ * countitem4("<item name>",<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<accountID>})
+ */
+BUILDIN_FUNC(countitem)
+{
+	TBL_PC *sd;
+	char *command = (char *)script_getfuncname(st);
+	int32 aid = 3;
+	int32 expanded = 0;
+
+	if (command[strlen(command)-1] == '2') {
+		expanded = 1;
+		aid = 10;
+	}
+	else if (command[strlen(command)-1] == '3') {
+		expanded = 3;
+		aid = 13;
+	}
+	else if (command[strlen(command)-1] == '4') {
+		expanded = 7;
+		aid = 14;
+	}
+
+	if (!script_accid2sd(aid, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	std::shared_ptr<item_data> id;
+
+	if (script_isstring(st, 2)) // item name
+		id = item_db.searchname( script_getstr( st, 2 ) );
+	else // item id
+		id = item_db.find( script_getnum( st, 2 ) );
+
+	if (!id) {
+		ShowError("buildin_%s: Invalid item '%s'.\n", command, script_getstr(st, 2)); // returns string, regardless of what it was
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 count = script_countitem_sub(sd->inventory.u.items_inventory, id, MAX_INVENTORY, expanded, st, sd);
+	if (count < 0) {
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st, count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns number of items in cart
+ * cartcountitem(<nameID>{,<accountID>})
+ * cartcountitem2(<nameID>,<Identified>,<Refine>,<Attribute>,<Card0>,<Card1>,<Card2>,<Card3>{,<accountID>})
+ */
+BUILDIN_FUNC(cartcountitem)
+{
+	TBL_PC *sd;
+	char *command = (char *)script_getfuncname(st);
+	int32 aid = 3;
+	int32 expanded = 0;
+
+	if (command[strlen(command) - 1] == '2') {
+		expanded = 1;
+		aid = 10;
+	}
+
+	if (!script_accid2sd(aid, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if (!pc_iscarton(sd)) {
+		ShowError("buildin_%s: Player doesn't have cart (CID:%d).\n", command, sd->status.char_id);
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	std::shared_ptr<item_data> id;
+
+	if (script_isstring(st, 2)) // item name
+		id = item_db.searchname( script_getstr( st, 2 ) );
+	else // item id
+		id = item_db.find( script_getnum( st, 2 ) );
+
+	if (!id) {
+		ShowError("buildin_%s: Invalid item '%s'.\n", command, script_getstr(st, 2)); // returns string, regardless of what it was
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 count = script_countitem_sub(sd->cart.u.items_cart, id, MAX_CART, expanded, st);
+	if (count < 0) {
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st, count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns number of items in storage
+ * storagecountitem(<nameID>{,<accountID>})
+ * storagecountitem2(<nameID>,<Identified>,<Refine>,<Attribute>,<Card0>,<Card1>,<Card2>,<Card3>{,<accountID>})
+ */
+BUILDIN_FUNC(storagecountitem)
+{
+	TBL_PC *sd;
+	char *command = (char *)script_getfuncname(st);
+	int32 aid = 3;
+	int32 expanded = 0;
+
+	if (command[strlen(command) - 1] == '2') {
+		expanded = 1;
+		aid = 10;
+	}
+
+	if (!script_accid2sd(aid, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	std::shared_ptr<item_data> id;
+
+	if (script_isstring(st, 2)) // item name
+		id = item_db.searchname( script_getstr( st, 2 ) );
+	else // item id
+		id = item_db.find( script_getnum( st, 2 ) );
+
+	if (!id) {
+		ShowError("buildin_%s: Invalid item '%s'.\n", command, script_getstr(st, 2)); // returns string, regardless of what it was
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (sd->state.storage_flag != 0) {
+		script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	int32 count = script_countitem_sub(sd->storage.u.items_storage, id, MAX_STORAGE, expanded, st);
+	if (count < 0) {
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st, count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns number of items in guild storage
+ * guildstoragecountitem(<nameID>{,<accountID>})
+ * guildstoragecountitem2(<nameID>,<Identified>,<Refine>,<Attribute>,<Card0>,<Card1>,<Card2>,<Card3>{,<accountID>})
+ */
+BUILDIN_FUNC(guildstoragecountitem)
+{
+	TBL_PC *sd;
+	char *command = (char *)script_getfuncname(st);
+	int32 aid = 3;
+	int32 expanded = 0;
+
+	if (command[strlen(command) - 1] == '2') {
+		expanded = 1;
+		aid = 10;
+	}
+
+	if (!script_accid2sd(aid, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	std::shared_ptr<item_data> id;
+
+	if (script_isstring(st, 2)) // item name
+		id = item_db.searchname( script_getstr( st, 2 ) );
+	else // item id
+		id = item_db.find( script_getnum( st, 2 ) );
+
+	if (!id) {
+		ShowError("buildin_%s: Invalid item '%s'.\n", command, script_getstr(st, 2)); // returns string, regardless of what it was
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	struct s_storage *gstor = guild2storage(sd->status.guild_id);
+
+	if (!gstor || (gstor && sd->state.storage_flag != 0)) {
+		script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	gstor->lock = true;
+
+	int32 count = script_countitem_sub(gstor->u.items_guild, id, MAX_GUILD_STORAGE, expanded, st);
+
+	storage_guild_storageclose(sd);
+	gstor->lock = false;
+
+	if (count < 0) {
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st, count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns number of rental items in inventory
+ * rentalcountitem(<nameID>{,<accountID>})
+ * rentalcountitem2(<nameID>,<Identified>,<Refine>,<Attribute>,<Card0>,<Card1>,<Card2>,<Card3>{,<accountID>})
+ * rentalcountitem3(<item id>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<accountID>})
+ * rentalcountitem3("<item name>",<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<accountID>})
+ */
+BUILDIN_FUNC(rentalcountitem)
+{
+	char *command = (char *)script_getfuncname(st);
+	int32 aid = 3;
+	int32 expanded = 0;
+
+	if (command[strlen(command) - 1] == '2') {
+		expanded = 1;
+		aid = 10;
+	}
+	else if (command[strlen(command) - 1] == '3') {
+		expanded = 3;
+		aid = 13;
+	}
+	else if (command[strlen(command) - 1] == '4') {
+		expanded = 7;
+		aid = 14;
+	}
+
+	map_session_data *sd;
+
+	if (!script_accid2sd(aid, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	std::shared_ptr<item_data> id;
+
+	if (script_isstring(st, 2)) // item name
+		id = item_db.searchname( script_getstr( st, 2 ) );
+	else // item id
+		id = item_db.find( script_getnum( st, 2 ) );
+
+	if (!id) {
+		ShowError("buildin_%s: Invalid item '%s'.\n", command, script_getstr(st, 2)); // returns string, regardless of what it was
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 count = script_countitem_sub(sd->inventory.u.items_inventory, id, MAX_INVENTORY, expanded, st, sd, true);
+	if (count < 0) {
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st, count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Check if item with this amount can fit in inventory
+ * Checking : weight, stack amount >(MAX_AMOUNT), slots amount >(MAX_INVENTORY)
+ * Return
+ *	0 : fail
+ *	1 : success (npc side only)
+ *------------------------------------------*/
+BUILDIN_FUNC(checkweight)
+{
+	int32 slots = 0;
+	uint16 amount2 = 0;
+	uint32 weight = 0, i, nbargs;
+	std::shared_ptr<item_data> id;
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	nbargs = script_lastdata(st)+1;
+	if(nbargs%2) {
+		ShowError("buildin_checkweight: Invalid nb of args should be a multiple of 2.\n");
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+	slots = pc_inventoryblank(sd); //nb of empty slot
+
+	for (i = 2; i < nbargs; i += 2) {
+		t_itemid nameid;

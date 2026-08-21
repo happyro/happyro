@@ -1,0 +1,500 @@
+			break;
+
+		case 'rsw':
+			img = 'map';
+			break;
+
+		case 'str':
+			img = 'fx';
+			break;
+	}
+
+	return img;
+}
+
+/**
+ * Display real thumbnails for each known file
+ */
+function displayImagesThumbnail() {
+	const actionID = _actionID + 0;
+
+	function cleanUp() {
+		URL.revokeObjectURL(this.src);
+	}
+
+	function process() {
+		if (actionID !== _actionID) {
+			return;
+		}
+
+		const root = Viewer.getRoot();
+		const nodes = Array.from(root.querySelectorAll('.img')).slice(0, 5);
+		let load = 0;
+		const total = nodes.length;
+
+		if (!total) {
+			return;
+		}
+
+		nodes.forEach(el => {
+			const path = el.getAttribute('data-path');
+
+			Client.getFile(path, data => {
+				Memory.remove(path);
+				el.classList.remove('img');
+				el.classList.add('thumb');
+
+				const url = getImageThumbnail(path, data);
+
+				if (url) {
+					const img = el.querySelector('img');
+					if (url.match(/^blob:/)) {
+						img.onload = img.onerror = img.onabort = cleanUp;
+					}
+					img.decoding = 'async';
+					img.src = url;
+				}
+
+				if (++load >= total) {
+					setTimeout(process, 4);
+				}
+			});
+		});
+	}
+
+	process();
+}
+
+/**
+ * Generate thumbnail for a file
+ *
+ * @param {string} filename
+ * @param {ArrayBuffer} data
+ * @return {string|null} url generated
+ */
+function getImageThumbnail(filename, data) {
+	let canvas;
+	const ext = filename.substr(-3).toLowerCase();
+
+	switch (ext) {
+		case 'spr': {
+			const spr = new Sprite(data);
+			canvas = spr.getCanvasFromFrame(0);
+			return canvas.toDataURL();
+		}
+
+		case 'pal': {
+			canvas = document.createElement('canvas');
+			const ctx = canvas.getContext('2d');
+			const palette = new Uint8Array(data);
+
+			canvas.width = 16;
+			canvas.height = 16;
+			const imageData = ctx.createImageData(canvas.width, canvas.height);
+
+			for (let i = 0, count = imageData.data.length; i < count; i += 4) {
+				imageData.data[i + 0] = palette[i + 0];
+				imageData.data[i + 1] = palette[i + 1];
+				imageData.data[i + 2] = palette[i + 2];
+				imageData.data[i + 3] = 255;
+			}
+
+			ctx.putImageData(imageData, 0, 0);
+			return canvas.toDataURL();
+		}
+
+		case 'tga': {
+			const tga = new Targa();
+			tga.load(new Uint8Array(data));
+			return tga.getDataURL();
+		}
+
+		default:
+			return URL.createObjectURL(new Blob([data], { type: `image/${ext}` }));
+	}
+}
+
+/**
+ * User click on directory, open it
+ */
+function onDirectoryClick(iconEl) {
+	moveToDirectory(`${iconEl.getAttribute('data-path')}/`, true);
+}
+
+/**
+ * User click on an audio file, play it
+ */
+function onAudioClick(iconEl) {
+	const root = Viewer.getRoot();
+	const path = iconEl.getAttribute('data-path');
+	const box = root.querySelector('#preview .box');
+	const progress = root.querySelector('#progress');
+	const preview = root.querySelector('#preview');
+
+	progress.style.display = 'block';
+
+	Client.loadFile(path, url => {
+		const audio = document.createElement('audio');
+		audio.src = url;
+		audio.controls = true;
+		audio.play();
+		audio.addEventListener('click', e => e.stopPropagation());
+
+		box.style.top = `${(window.innerHeight - 100) / 2}px`;
+		box.appendChild(audio);
+
+		progress.style.display = 'none';
+		preview.style.display = 'block';
+		preview.addEventListener(
+			'click',
+			() => {
+				preview.style.display = 'none';
+				const audioEl = box.querySelector('audio');
+				if (audioEl) {
+					audioEl.remove();
+				}
+			},
+			{ once: true }
+		);
+	});
+}
+
+/**
+ * User click on an image, render it
+ */
+function onImageClick(iconEl) {
+	const root = Viewer.getRoot();
+	const path = iconEl.getAttribute('data-path');
+	const box = root.querySelector('#preview .box');
+	const progress = root.querySelector('#progress');
+	const preview = root.querySelector('#preview');
+
+	progress.style.display = 'block';
+
+	Client.getFile(path, data => {
+		let i, count, canvas;
+
+		switch (path.substr(-3)) {
+			case 'spr': {
+				const spr = new Sprite(data);
+				box.style.top = '200px';
+
+				for (i = 0, count = spr.frames.length; i < count; ++i) {
+					canvas = spr.getCanvasFromFrame(i);
+					if (canvas) {
+						box.appendChild(canvas);
+					}
+				}
+				break;
+			}
+
+			case 'pal': {
+				const palette = new Uint8Array(data);
+				canvas = document.createElement('canvas');
+				const ctx = canvas.getContext('2d');
+
+				canvas.width = 128;
+				canvas.height = 128;
+
+				for (i = 0, count = palette.length; i < count; i += 4) {
+					ctx.fillStyle = `rgb(${palette[i + 0]},${palette[i + 1]},${palette[i + 2]})`;
+					ctx.fillRect((((i / 4) | 0) % 16) * 8, ((((i / 4) | 0) / 16) | 0) * 8, 8, 8);
+				}
+
+				box.style.top = `${window.innerHeight / 2 - 64}px`;
+				box.appendChild(canvas);
+				break;
+			}
+
+			case 'tga': {
+				const tga = new Targa();
+				tga.load(new Uint8Array(data));
+				box.style.top = `${window.innerHeight / 2 - 64}px`;
+				box.appendChild(tga.getCanvas());
+				break;
+			}
+
+			default: {
+				const url = URL.createObjectURL(new Blob([data], { type: `image/${path.substr(-3)}` }));
+				const img = new Image();
+				img.decoding = 'async';
+				img.src = url;
+				img.onload = function () {
+					box.style.top = `${(window.innerHeight - this.height) / 2}px`;
+					box.appendChild(this);
+					URL.revokeObjectURL(url);
+				};
+				break;
+			}
+		}
+
+		preview.style.display = 'block';
+		progress.style.display = 'none';
+		preview.addEventListener(
+			'click',
+			() => {
+				preview.style.display = 'none';
+				box.querySelectorAll('img, canvas').forEach(el => el.remove());
+			},
+			{ once: true }
+		);
+	});
+}
+
+/**
+ * User click on a model, render it using ModelViewer
+ */
+const onObjectClick = (() => {
+	let ready = false;
+	let App = null;
+	const element = document.createElement('div');
+
+	function initApp() {
+		if (App) return true;
+		if (typeof ROBrowser === 'undefined') return false;
+		App = new ROBrowser({
+			target: element,
+			type: ROBrowser.TYPE.FRAME, // eslint-disable-line no-undef
+			application: ROBrowser.APP.MODELVIEWER, // eslint-disable-line no-undef
+			development: Configs.get('development', false),
+			api: true,
+			width: 500,
+			height: 400,
+			version: Configs.get('version', '')
+		});
+		return true;
+	}
+
+	function onMessage(event) {
+		if (typeof event.data !== 'object') {
+			return;
+		}
+
+		switch (event.data.type) {
+			case 'SYNC':
+				ready = true;
+				App.onload();
+				break;
+
+			case 'SET_HOST':
+			case 'CLEAN_GRF':
+				return;
+
+			default:
+				Thread.send(event.data.type, event.data.data, function () {
+					App._APP.postMessage(
+						{
+							arguments: Array.prototype.slice.call(arguments, 0),
+							uid: event.data.uid
+						},
+						location.origin
+					);
+				});
+		}
+	}
+
+	function synchronise() {
+		if (!ready) {
+			App._APP.postMessage({ type: 'init' }, location.origin);
+			setTimeout(synchronise, 100);
+		}
+	}
+
+	return iconEl => {
+		if (!initApp()) return;
+		const root = Viewer.getRoot();
+		const path = iconEl.getAttribute('data-path').replace(/\\/g, '/');
+		const box = root.querySelector('#preview .box');
+		const preview = root.querySelector('#preview');
+
+		box.style.top = `${(window.innerHeight - 400) * 0.5}px`;
+		element.style.display = 'block';
+
+		preview.style.display = 'block';
+
+		preview.addEventListener(
+			'click',
+			() => {
+				preview.style.display = 'none';
+				element.style.display = 'none';
+				App._APP.postMessage({ type: 'stop' }, location.origin);
+				window.removeEventListener('message', onMessage, false);
+			},
+			{ once: true }
+		);
+
+		window.addEventListener('message', onMessage, false);
+
+		if (!ready) {
+			box.appendChild(element);
+
+			App.start();
+			App.onReady = () => {
+				App._APP.frameElement.style.border = '1px solid grey';
+				App._APP.frameElement.style.backgroundColor = '#45484d';
+				synchronise();
+			};
+			App.onload = () => {
+				App._APP.postMessage({ type: 'load', data: path }, location.origin);
+			};
+		} else {
+			App._APP.postMessage({ type: 'load', data: path }, location.origin);
+		}
+	};
+})();
+
+/**
+ * User click on an effect, render it using StrViewer
+ */
+const onEffectClick = (() => {
+	let ready = false;
+	let App = null;
+	const element = document.createElement('div');
+
+	function initApp() {
+		if (App) return true;
+		if (typeof ROBrowser === 'undefined') return false;
+		App = new ROBrowser({
+			target: element,
+			type: ROBrowser.TYPE.FRAME, // eslint-disable-line no-undef
+			application: ROBrowser.APP.STRVIEWER, // eslint-disable-line no-undef
+			development: Configs.get('development', false),
+			api: true,
+			width: 400,
+			height: 400,
+			version: Configs.get('version', '')
+		});
+		return true;
+	}
+
+	function onMessage(event) {
+		if (typeof event.data !== 'object') {
+			return;
+		}
+
+		switch (event.data.type) {
+			case 'SYNC':
+				ready = true;
+				App.onload();
+				break;
+
+			case 'SET_HOST':
+			case 'CLEAN_GRF':
+				return;
+
+			default:
+				Thread.send(event.data.type, event.data.data, function () {
+					App._APP.postMessage(
+						{
+							arguments: Array.prototype.slice.call(arguments, 0),
+							uid: event.data.uid
+						},
+						location.origin
+					);
+				});
+		}
+	}
+
+	function synchronise() {
+		if (!ready) {
+			App._APP.postMessage({ type: 'init' }, location.origin);
+			setTimeout(synchronise, 100);
+		}
+	}
+
+	return iconEl => {
+		if (!initApp()) return;
+		const root = Viewer.getRoot();
+		const path = iconEl.getAttribute('data-path').replace(/\\/g, '/');
+		const box = root.querySelector('#preview .box');
+		const preview = root.querySelector('#preview');
+
+		box.style.top = `${(window.innerHeight - 400) * 0.5}px`;
+		preview.style.display = 'block';
+		element.style.display = 'block';
+
+		preview.addEventListener(
+			'click',
+			() => {
+				preview.style.display = 'none';
+				element.style.display = 'none';
+				App._APP.postMessage({ type: 'stop' }, location.origin);
+				window.removeEventListener('message', onMessage, false);
+			},
+			{ once: true }
+		);
+
+		window.addEventListener('message', onMessage, false);
+
+		if (!ready) {
+			box.appendChild(element);
+
+			App.start();
+			App.onReady = () => {
+				App._APP.frameElement.style.border = '1px solid grey';
+				App._APP.frameElement.style.backgroundColor = 'black';
+				synchronise();
+			};
+			App.onload = () => {
+				App._APP.postMessage({ type: 'load', data: path }, location.origin);
+			};
+		} else {
+			App._APP.postMessage({ type: 'load', data: path }, location.origin);
+		}
+	};
+})();
+
+/**
+ * User click on a map, render it using MapViewer
+ */
+const onWorldClick = (() => {
+	let ready = false;
+	let App = null;
+	const element = document.createElement('div');
+
+	function initApp() {
+		if (App) return true;
+		if (typeof ROBrowser === 'undefined') return false;
+		App = new ROBrowser({
+			target: element,
+			type: ROBrowser.TYPE.FRAME, // eslint-disable-line no-undef
+			application: ROBrowser.APP.MAPVIEWER, // eslint-disable-line no-undef
+			development: Configs.get('development', false),
+			api: true,
+			width: 600,
+			height: 480,
+			version: Configs.get('version', '')
+		});
+		return true;
+	}
+
+	function onMessage(event) {
+		if (typeof event.data !== 'object') {
+			return;
+		}
+
+		switch (event.data.type) {
+			case 'SYNC':
+				ready = true;
+				App.onload();
+				break;
+
+			case 'SET_HOST':
+			case 'CLEAN_GRF':
+				return;
+
+			default:
+				Thread.send(event.data.type, event.data.data, function () {
+					App._APP.postMessage(
+						{
+							arguments: Array.prototype.slice.call(arguments, 0),
+							uid: event.data.uid
+						},
+						location.origin
+					);
+				});
+		}
+	}
+
+	function threadRedirect(type) {
+		Thread.hook(type, data => {

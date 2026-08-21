@@ -1,0 +1,500 @@
+
+						// The Infinity ABR appears to have a much higher attack then other
+						// ABR's and im guessing has a much higher MaxHP due to it being a AP
+						// costing summon. [Rytech]
+						if (ud->skill_id == MT_SUMMON_ABR_INFINITY) {
+							status->max_hp += 20000;
+							status->rhw.atk += 1400; // 70% of 2000
+							status->rhw.atk2 += 2000;
+						}
+					}
+					break;
+				case BO_WOODENWARRIOR:
+				case BO_WOODEN_FAIRY:
+				case BO_CREEPER:
+				case BO_HELLTREE: {
+						map_session_data *msd = BL_CAST(BL_PC, mbl);
+						status_data* mstatus = status_get_status_data(*mbl);
+
+						// TODO: check if mstatus is dummy_status? Can never be nullptr [Lemongrass]
+						if (msd == nullptr || mstatus == nullptr)
+							break;
+
+						uint8 bionic_mastery = pc_checkskill(msd, BO_BIONICS_M);
+
+						// Custom formulas for bionic's.
+						// Its unknown how the summoner's stats affects the bionic's stats.
+						// I decided to do something similar to elementals for now until I know.
+						// Also added hit increase from Bionic-Mastery for balance reasons. [Rytech]
+						status->max_hp = (5000 + 40000 * bionic_mastery) * mstatus->vit / 100;
+						//status->max_sp = (50 + 20 * bionic_mastery) * mstatus->int_ / 100;// Wait what??? Bionic Mastery increases MaxSP? They have SP???
+						status->rhw.atk = (2 * mstatus->batk + 600 * bionic_mastery) * 70 / 100;
+						status->rhw.atk2 = 2 * mstatus->batk + 600 * bionic_mastery;
+						status->def = mstatus->def + 20 * bionic_mastery;
+						status->mdef = mstatus->mdef + 4 * bionic_mastery;
+						status->hit = mstatus->hit + 5 * bionic_mastery / 2;
+						status->flee = mstatus->flee + 10 * bionic_mastery;
+						status->speed = mstatus->speed;
+
+						// The Hell Tree bionic appears to have a much higher attack then other
+						// bionic's and im guessing has a much higher MaxHP due to it being a AP
+						// costing summon. [Rytech]
+						if (ud->skill_id == BO_HELLTREE) {
+							status->max_hp += 20000;
+							status->rhw.atk += 1400; // 70% of 2000
+							status->rhw.atk2 += 2000;
+						}
+					}
+					break;
+			}
+			status->hp = status->max_hp;
+		}
+	}
+
+	if (opt&SCO_FIRST) // Initial battle status
+		memcpy(&md->status, status, sizeof(struct status_data));
+
+	return 1;
+}
+
+/**
+ * Calculates the stats of the given pet
+ * @param pd: Pet object
+ * @param opt: Whether or not it is the first calculation
+		This will only be false when a pet levels up
+ * @return 1
+ * @author [Skotlex]
+ */
+void status_calc_pet_(pet_data *pd, uint8 opt)
+{
+	nullpo_retv(pd);
+
+	if (opt&SCO_FIRST) {
+		memcpy(&pd->status, &pd->db->status, sizeof(struct status_data));
+		pd->status.mode = MD_CANMOVE; // Pets discard all modes, except walking
+		pd->status.class_ = CLASS_NORMAL;
+		pd->status.speed = pd->get_pet_walk_speed();
+
+		if(battle_config.pet_attack_support || battle_config.pet_damage_support) {
+			// Attack support requires the pet to be able to attack
+			pd->status.mode = static_cast<e_mode>(pd->status.mode|MD_CANATTACK);
+		}
+	}
+
+	if (battle_config.pet_lv_rate && pd->master) {
+		map_session_data *sd = pd->master;
+		int32 lv;
+
+		lv =sd->status.base_level*battle_config.pet_lv_rate/100;
+		if (lv < 0)
+			lv = 1;
+		if (lv != pd->pet.level || opt&SCO_FIRST) {
+			struct status_data *bstat = &pd->db->status, *status = &pd->status;
+
+			pd->pet.level = lv;
+			if (!(opt&SCO_FIRST)) // Lv Up animation
+				clif_misceffect( *pd, NOTIFYEFFECT_BASE_LEVEL_UP );
+			status->rhw.atk = (bstat->rhw.atk*lv)/pd->db->lv;
+			status->rhw.atk2 = (bstat->rhw.atk2*lv)/pd->db->lv;
+			status->str = (bstat->str*lv)/pd->db->lv;
+			status->agi = (bstat->agi*lv)/pd->db->lv;
+			status->vit = (bstat->vit*lv)/pd->db->lv;
+			status->int_ = (bstat->int_*lv)/pd->db->lv;
+			status->dex = (bstat->dex*lv)/pd->db->lv;
+			status->luk = (bstat->luk*lv)/pd->db->lv;
+
+			status->rhw.atk = cap_value(status->rhw.atk, 1, battle_config.pet_max_atk1);
+			status->rhw.atk2 = cap_value(status->rhw.atk2, 2, battle_config.pet_max_atk2);
+			status->str = cap_value(status->str,1,battle_config.pet_max_stats);
+			status->agi = cap_value(status->agi,1,battle_config.pet_max_stats);
+			status->vit = cap_value(status->vit,1,battle_config.pet_max_stats);
+			status->int_= cap_value(status->int_,1,battle_config.pet_max_stats);
+			status->dex = cap_value(status->dex,1,battle_config.pet_max_stats);
+			status->luk = cap_value(status->luk,1,battle_config.pet_max_stats);
+
+			status_calc_misc(pd, &pd->status, lv);
+
+			if (!(opt&SCO_FIRST)) // Not done the first time because the pet is not visible yet
+				clif_send_petstatus( *sd, *pd );
+		}
+	} else if (opt&SCO_FIRST) {
+		status_calc_misc(pd, &pd->status, pd->db->lv);
+		if (!battle_config.pet_lv_rate && pd->pet.level != pd->db->lv)
+			pd->pet.level = pd->db->lv;
+	}
+
+	// Support rate modifier (1000 = 100%)
+	pd->rate_fix = min(1000 * (pd->pet.intimate - battle_config.pet_support_min_friendly) / (1000 - battle_config.pet_support_min_friendly) + 500, USHRT_MAX);
+	pd->rate_fix = min(apply_rate(pd->rate_fix, battle_config.pet_support_rate), USHRT_MAX);
+}
+
+/**
+ * Get HP bonus modifiers
+ * @param bl: block_list that will be checked
+ * @param type: type of e_status_bonus (STATUS_BONUS_FIX or STATUS_BONUS_RATE)
+ * @return bonus: total bonus for HP
+ * @author [Cydh]
+ */
+static int32 status_get_hpbonus(block_list *bl, enum e_status_bonus type) {
+	int32 bonus = 0;
+
+	if (type == STATUS_BONUS_FIX) {
+		status_change *sc = status_get_sc(bl);
+
+		//Only for BL_PC
+		if (bl->type == BL_PC) {
+			map_session_data *sd = map_id2sd(bl->id);
+			uint16 skill_lv;
+
+			bonus += sd->bonus.hp;
+			if ((skill_lv = pc_checkskill(sd,CR_TRUST)) > 0)
+				bonus += skill_lv * 200;
+			if (pc_checkskill(sd,SU_SPRITEMABLE) > 0)
+				bonus += 1000;
+			if (pc_checkskill(sd, SU_POWEROFSEA) > 0) {
+				bonus += 1000;
+				if (pc_checkskill_summoner(sd, SUMMONER_POWER_SEA) >= 20)
+					bonus += 3000;
+			}
+			if ((skill_lv = pc_checkskill(sd, NV_BREAKTHROUGH)) > 0)
+				bonus += 350 * skill_lv + (skill_lv > 4 ? 250 : 0);
+			if ((skill_lv = pc_checkskill(sd, NV_TRANSCENDENCE)) > 0)
+				bonus += 350 * skill_lv + (skill_lv > 4 ? 250 : 0);
+		}
+
+		//Bonus by SC
+		// !CHECKME: status_get_hpbonus shouldn't be used for SC from usable items
+		if (sc) {
+			if(sc->getSCE(SC_INCMHP))
+				bonus += sc->getSCE(SC_INCMHP)->val1;
+			if(sc->getSCE(SC_EARTH_INSIGNIA) && sc->getSCE(SC_EARTH_INSIGNIA)->val1 == 2)
+				bonus += 500;
+			if (sc->getSCE(SC_PROMOTE_HEALTH_RESERCH))
+				bonus += sc->getSCE(SC_PROMOTE_HEALTH_RESERCH)->val3;
+			if(sc->getSCE(SC_SOLID_SKIN_OPTION))
+				bonus += 2000;
+			if(sc->getSCE(SC_MARIONETTE))
+				bonus -= 1000;
+			if(sc->getSCE(SC_SWORDCLAN))
+				bonus += 30;
+			if(sc->getSCE(SC_ARCWANDCLAN))
+				bonus += 30;
+			if(sc->getSCE(SC_GOLDENMACECLAN))
+				bonus += 30;
+			if(sc->getSCE(SC_CROSSBOWCLAN))
+				bonus += 30;
+#ifdef RENEWAL
+			if (sc->getSCE(SC_ANGELUS))
+				bonus += sc->getSCE(SC_ANGELUS)->val1 * 50;
+#endif
+			if (sc->getSCE(SC_OVERCOMING_CRISIS))
+				bonus += sc->getSCE(SC_OVERCOMING_CRISIS)->val3;
+		}
+	} else if (type == STATUS_BONUS_RATE) {
+		status_change *sc = status_get_sc(bl);
+
+		//Bonus by SC
+		// !CHECKME: status_get_hpbonus shouldn't be used for SC from usable items
+		if (sc) {
+			//Increasing
+			if(sc->getSCE(SC_INCMHPRATE))
+				bonus += sc->getSCE(SC_INCMHPRATE)->val1;
+			if(sc->getSCE(SC_APPLEIDUN))
+				bonus += sc->getSCE(SC_APPLEIDUN)->val2;
+			if(sc->getSCE(SC_DELUGE))
+				bonus += sc->getSCE(SC_DELUGE)->val2;
+			if(sc->getSCE(SC_BERSERK))
+				bonus += 200; //+200%
+			if(sc->getSCE(SC_MERC_HPUP))
+				bonus += sc->getSCE(SC_MERC_HPUP)->val2;
+			if(sc->getSCE(SC_EPICLESIS))
+				bonus += sc->getSCE(SC_EPICLESIS)->val2;
+			if(sc->getSCE(SC_FRIGG_SONG))
+				bonus += sc->getSCE(SC_FRIGG_SONG)->val2;
+			if(sc->getSCE(SC_LERADSDEW))
+				bonus += sc->getSCE(SC_LERADSDEW)->val3;
+			if(sc->getSCE(SC_FORCEOFVANGUARD))
+				bonus += (3 * sc->getSCE(SC_FORCEOFVANGUARD)->val1);
+			if(sc->getSCE(SC_INSPIRATION))
+				bonus += (4 * sc->getSCE(SC_INSPIRATION)->val1);
+			if(sc->getSCE(SC_RAISINGDRAGON))
+				bonus += sc->getSCE(SC_RAISINGDRAGON)->val1;
+			if(sc->getSCE(SC_GT_REVITALIZE))
+				bonus += sc->getSCE(SC_GT_REVITALIZE)->val2;
+			if(sc->getSCE(SC_ANGRIFFS_MODUS))
+				bonus += (5 * sc->getSCE(SC_ANGRIFFS_MODUS)->val1);
+			if(sc->getSCE(SC_PETROLOGY_OPTION))
+				bonus += sc->getSCE(SC_PETROLOGY_OPTION)->val2;
+			if(sc->getSCE(SC_POWER_OF_GAIA))
+				bonus += sc->getSCE(SC_POWER_OF_GAIA)->val3;
+			if(sc->getSCE(SC_CURSED_SOIL_OPTION))
+				bonus += sc->getSCE(SC_CURSED_SOIL_OPTION)->val2;
+			if(sc->getSCE(SC_UPHEAVAL_OPTION))
+				bonus += sc->getSCE(SC_UPHEAVAL_OPTION)->val2;
+			if(sc->getSCE(SC_LAUDAAGNUS))
+				bonus += 2 + (sc->getSCE(SC_LAUDAAGNUS)->val1 * 2);
+#ifdef RENEWAL
+			if (sc->getSCE(SC_NIBELUNGEN) && sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_HPRATE)
+				bonus += 30;
+#endif
+			if(sc->getSCE(SC_LUNARSTANCE))
+				bonus += sc->getSCE(SC_LUNARSTANCE)->val2;
+			if (sc->getSCE(SC_LUXANIMA))
+				bonus += sc->getSCE(SC_LUXANIMA)->val3;
+			if (sc->getSCE(SC_FIRM_FAITH))
+				bonus += sc->getSCE(SC_FIRM_FAITH)->val2;
+
+			//Decreasing
+			if (sc->getSCE(SC_VENOMBLEED) && sc->getSCE(SC_VENOMBLEED)->val3 == 1)
+				bonus -= 15;
+			if(sc->getSCE(SC_BEYONDOFWARCRY))
+				bonus -= sc->getSCE(SC_BEYONDOFWARCRY)->val3;
+			if(sc->getSCE(SC__WEAKNESS))
+				bonus -= sc->getSCE(SC__WEAKNESS)->val2;
+			if(sc->getSCE(SC_EQC))
+				bonus -= sc->getSCE(SC_EQC)->val3;
+		}
+		// Max rate reduce is -100%
+		bonus = cap_value(bonus,-100,INT_MAX);
+	}
+
+	return min(bonus,INT_MAX);
+}
+
+/**
+* HP bonus rate from equipment
+*/
+static int32 status_get_hpbonus_equip(TBL_PC *sd) {
+	int32 bonus = 0;
+
+	bonus += sd->hprate;
+
+	return bonus -= 100; //Default hprate is 100, so it should be add 0%
+}
+
+/**
+* HP bonus rate from usable items
+*/
+static int32 status_get_hpbonus_item(block_list *bl) {
+	int32 bonus = 0;
+
+	// status_change *sc = status_get_sc(bl);
+
+	//Bonus by SC
+	// if (sc) {
+	// }
+
+	// Max rate reduce is -100%
+	return cap_value(bonus, -100, INT_MAX);
+}
+
+/**
+ * Get SP bonus modifiers
+ * @param bl: block_list that will be checked
+ * @param type: type of e_status_bonus (STATUS_BONUS_FIX or STATUS_BONUS_RATE)
+ * @return bonus: total bonus for SP
+ * @author [Cydh]
+ */
+static int32 status_get_spbonus(block_list *bl, enum e_status_bonus type) {
+	int32 bonus = 0;
+
+	if (type == STATUS_BONUS_FIX) {
+		status_change *sc = status_get_sc(bl);
+
+		//Only for BL_PC
+		if (bl->type == BL_PC) {
+			map_session_data *sd = map_id2sd(bl->id);
+			uint16 skill_lv;
+
+			bonus += sd->bonus.sp;
+			if ((skill_lv = pc_checkskill(sd,SL_KAINA)) > 0)
+				bonus += 30 * skill_lv;
+			if ((skill_lv = pc_checkskill(sd,RA_RESEARCHTRAP)) > 0)
+				bonus += 200 + 20 * skill_lv;
+			if ((skill_lv = pc_checkskill(sd,WM_LESSON)) > 0)
+				bonus += 30 * skill_lv;
+			if (pc_checkskill(sd,SU_SPRITEMABLE) > 0)
+				bonus += 100;
+			if (pc_checkskill(sd, SU_POWEROFSEA) > 0) {
+				bonus += 100;
+				if (pc_checkskill_summoner(sd, SUMMONER_POWER_SEA) >= 20)
+					bonus += 300;
+			}
+			if ((skill_lv = pc_checkskill(sd, NV_BREAKTHROUGH)) > 0)
+				bonus += 30 * skill_lv + (skill_lv > 4 ? 50 : 0);
+			if ((skill_lv = pc_checkskill(sd, NV_TRANSCENDENCE)) > 0)
+				bonus += 30 * skill_lv + (skill_lv > 4 ? 50 : 0);
+		}
+
+		//Bonus by SC
+		// !CHECKME: status_get_spbonus shouldn't be used for SC from usable items
+		if (sc) {
+			if(sc->getSCE(SC_INCMSP))
+				bonus += sc->getSCE(SC_INCMSP)->val1;
+			if(sc->getSCE(SC_EARTH_INSIGNIA) && sc->getSCE(SC_EARTH_INSIGNIA)->val1 == 3)
+				bonus += 50;
+			if(sc->getSCE(SC_SWORDCLAN))
+				bonus += 10;
+			if(sc->getSCE(SC_ARCWANDCLAN))
+				bonus += 10;
+			if(sc->getSCE(SC_GOLDENMACECLAN))
+				bonus += 10;
+			if(sc->getSCE(SC_CROSSBOWCLAN))
+				bonus += 10;
+		}
+	} else if (type == STATUS_BONUS_RATE) {
+		status_change *sc = status_get_sc(bl);
+
+		//Only for BL_PC
+		if (bl->type == BL_PC) {
+			map_session_data *sd = map_id2sd(bl->id);
+			uint8 i;
+
+			if((i = pc_checkskill(sd,HP_MEDITATIO)) > 0)
+				bonus += i;
+			if((i = pc_checkskill(sd,HW_SOULDRAIN)) > 0)
+				bonus += 2 * i;
+#ifdef RENEWAL
+			if ((i = pc_checkskill(sd, (sd->status.sex ? BA_MUSICALLESSON : DC_DANCINGLESSON))) > 0)
+				bonus += i;
+			if (sc->getSCE(SC_NIBELUNGEN) && sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_SPRATE)
+				bonus += 30;
+#endif
+		}
+
+		//Bonus by SC
+		// !CHECKME: status_get_spbonus shouldn't be used for SC from usable items
+		if (sc) {
+			//Increasing
+			if(sc->getSCE(SC_INCMSPRATE))
+				bonus += sc->getSCE(SC_INCMSPRATE)->val1;
+			if(sc->getSCE(SC_RAISINGDRAGON))
+				bonus += sc->getSCE(SC_RAISINGDRAGON)->val1;
+			if(sc->getSCE(SC_SERVICE4U))
+				bonus += sc->getSCE(SC_SERVICE4U)->val2;
+			if(sc->getSCE(SC_MERC_SPUP))
+				bonus += sc->getSCE(SC_MERC_SPUP)->val2;
+			if (sc->getSCE(SC_LUXANIMA))
+				bonus += sc->getSCE(SC_LUXANIMA)->val3;
+
+			//Decreasing
+			if (sc->getSCE(SC_MELODYOFSINK))
+				bonus -= sc->getSCE(SC_MELODYOFSINK)->val3;
+		}
+		// Max rate reduce is -100%
+		bonus = cap_value(bonus,-100,INT_MAX);
+	}
+
+	return min(bonus,INT_MAX);
+}
+
+/**
+* SP bonus rate from equipment
+*/
+static int32 status_get_spbonus_equip(TBL_PC *sd) {
+	int32 bonus = 0;
+
+	bonus += sd->sprate;
+
+	return bonus -= 100; //Default sprate is 100, so it should be add 0%
+}
+
+/**
+* SP bonus rate from usable items
+*/
+static int32 status_get_spbonus_item(block_list *bl) {
+	int32 bonus = 0;
+
+	status_change *sc = status_get_sc(bl);
+
+	//Bonus by SC
+	if (sc) {
+		if (sc->getSCE(SC_ENERGY_DRINK_RESERCH))
+			bonus += sc->getSCE(SC_ENERGY_DRINK_RESERCH)->val3;
+	}
+
+	// Max rate reduce is -100%
+	return cap_value(bonus, -100, INT_MAX);
+}
+
+/**
+ * Get AP bonus modifiers
+ * @param bl: block_list that will be checked
+ * @param type: type of e_status_bonus (STATUS_BONUS_FIX or STATUS_BONUS_RATE)
+ * @return bonus: total bonus for AP
+ */
+static int32 status_get_apbonus(block_list *bl, enum e_status_bonus type) {
+	int32 bonus = 0;
+
+	if (type == STATUS_BONUS_FIX) {
+		status_change *sc = status_get_sc(bl);
+
+		//Only for BL_PC
+		if (bl->type == BL_PC) {
+			map_session_data *sd = map_id2sd(bl->id);
+			//uint16 skill_lv;
+
+			bonus += sd->bonus.ap;
+			//if ((skill_lv = pc_checkskill(sd, NV_BASIC)) > 0)
+			//	bonus += 100 * skill_lv;
+		}
+
+		//Bonus by SC
+		if (sc) {
+			//if (sc->getSCE(SC_NONE))
+			//	bonus += sc->getSCE(SC_NONE)->val1;
+		}
+	} else if (type == STATUS_BONUS_RATE) {
+		status_change *sc = status_get_sc(bl);
+
+		//Only for BL_PC
+		if (bl->type == BL_PC) {
+			map_session_data *sd = map_id2sd(bl->id);
+			//uint8 i;
+
+			//if ((i = pc_checkskill(sd, NV_BASIC)) > 0)
+			//	bonus += 100 * i;
+		}
+
+		//Bonus by SC
+		if (sc) {
+			//if (sc->getSCE(SC_NONE))
+			//	bonus += sc->getSCE(SC_NONE)->val1;
+		}
+		// Max rate reduce is -100%
+		bonus = cap_value(bonus, -100, INT_MAX);
+	}
+
+	return min(bonus, INT_MAX);
+}
+
+/**
+ * AP bonus rate from equipment
+ * @param sd: Player data
+ * @return AP rate
+ */
+static int32 status_get_apbonus_equip(TBL_PC *sd) {
+	int32 bonus = 0;
+
+	bonus += sd->aprate;
+
+	return bonus -= 100; //Default aprate is 100, so it should be add 0%
+}
+
+/**
+ * AP bonus rate from usable items
+ * @param bl: Object to check against
+ * @return AP bonus
+ */
+static int32 status_get_apbonus_item(block_list *bl) {
+	int32 bonus = 0;
+
+	status_change *sc = status_get_sc(bl);
+
+	//Bonus by SC
+	if (sc) {
+		//if (sc->getSCE(SC_NONE))
+		//	bonus += sc->getSCE(SC_NONE)->val1;
+	}
+
+	// Max rate reduce is -100%

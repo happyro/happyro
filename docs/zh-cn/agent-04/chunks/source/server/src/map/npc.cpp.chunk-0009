@@ -1,0 +1,500 @@
+ */
+static const char* npc_parse_shop(char* w1, char* w2, char* w3, char* w4, const char* start, const char* buffer, const char* filepath)
+{
+	char *p, point_str[32];
+	int32 m, is_discount = 0;
+	uint16 dir;
+	int16 x, y;
+	t_itemid nameid = 0;
+	npc_data *nd;
+	enum npc_subtype type;
+
+	if( strcmp(w1,"-") == 0 )
+	{// 'floating' shop?
+		x = y = dir = 0;
+		m = -1;
+	}
+	else
+	{// w1=<map name>,<x>,<y>,<facing>
+		char mapname[MAP_NAME_LENGTH_EXT];
+		if( sscanf(w1, "%15[^,],%6hd,%6hd,%4hd", mapname, &x, &y, &dir) != 4
+		||	strchr(w4, ',') == nullptr )
+		{
+			ShowError("npc_parse_shop: Invalid shop definition in file '%s', line '%d'.\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,start-buffer), w1, w2, w3, w4);
+			return strchr(start,'\n');// skip and continue
+		}
+
+		m = map_mapname2mapid(mapname);
+	}
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if( m != -1 && ( x < 0 || x >= mapdata->xs || y < 0 || y >= mapdata->ys ) ) {
+		ShowWarning("npc_parse_shop: coordinates %d/%d are out of bounds in map %s(%dx%d), in file '%s', line '%d'\n", x, y, mapdata->name, mapdata->xs, mapdata->ys,filepath,strline(buffer,start-buffer));
+	}
+
+	if( !strcasecmp(w2,"cashshop") )
+		type = NPCTYPE_CASHSHOP;
+	else if( !strcasecmp(w2,"itemshop") )
+		type = NPCTYPE_ITEMSHOP;
+	else if( !strcasecmp(w2,"pointshop") )
+		type = NPCTYPE_POINTSHOP;
+	else if( !strcasecmp(w2, "marketshop") )
+		type = NPCTYPE_MARKETSHOP;
+	else
+		type = NPCTYPE_SHOP;
+
+	p = strchr(w4,',');
+	memset(point_str,'\0',sizeof(point_str));
+
+	switch(type) {
+		case NPCTYPE_ITEMSHOP: {
+			if (sscanf(p,",%u:%11d,",&nameid,&is_discount) < 1) {
+				ShowError("npc_parse_shop: Invalid item cost definition in file '%s', line '%d'. Ignoring the rest of the line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,start-buffer), w1, w2, w3, w4);
+				return strchr(start,'\n'); // skip and continue
+			}
+			if (!item_db.exists(nameid)) {
+				ShowWarning("npc_parse_shop: Invalid item ID cost in file '%s', line '%d' (id '%u').\n", filepath, strline(buffer,start-buffer), nameid);
+				return strchr(start,'\n'); // skip and continue
+			}
+			p = strchr(p+1,',');
+			break;
+		}
+		case NPCTYPE_POINTSHOP: {
+			if (sscanf(p, ",%31[^,:]:%11d,",point_str,&is_discount) < 1) {
+				ShowError("npc_parse_shop: Invalid item cost definition in file '%s', line '%d'. Ignoring the rest of the line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,start-buffer), w1, w2, w3, w4);
+				return strchr(start,'\n'); // skip and continue
+			}
+			switch(point_str[0]) {
+				case '$':
+				case '.':
+				case '\'':
+					ShowWarning("npc_parse_shop: Invalid item cost variable type (must be permanent character or account based) in file '%s', line '%d'. Ignoring the rest of the line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,start-buffer), w1, w2, w3, w4);
+					return strchr(start,'\n'); // skip and continue
+					break;
+			}
+			if (point_str[strlen(point_str) - 1] == '$') {
+				ShowWarning("npc_parse_shop: Invalid item cost variable type (must be integer) in file '%s', line '%d'. Ignoring the rest of the line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,start-buffer), w1, w2, w3, w4);
+				return strchr(start,'\n'); // skip and continue
+			}
+			p = strchr(p+1,',');
+			break;
+		}
+		case NPCTYPE_MARKETSHOP:
+#if PACKETVER < 20131223
+			ShowError("npc_parse_shop: (MARKETSHOP) Feature is disabled, need client 20131223 or newer. Ignoring file '%s', line '%d\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer, start - buffer), w1, w2, w3, w4);
+			return strchr(start, '\n'); // skip and continue
+#else
+			is_discount = 0;
+			break;
+#endif
+		default:
+			if( sscanf( p, ",%31[^,:]:%11d,", point_str, &is_discount ) == 2 ){
+				is_discount = 1;
+			}else{
+				if( !strcasecmp( point_str, "yes" ) ){
+					is_discount = 1;
+				}else if( !strcasecmp( point_str, "no" ) ){
+					is_discount = 0;
+				}else{
+					ShowError( "npc_parse_shop: unknown discount setting %s\n", point_str );
+					return strchr( start, '\n' ); // skip and continue
+				}
+
+				p = strchr( p + 1, ',' );
+			}
+			break;
+	}
+	
+	nd = npc_create_npc(m, x, y);
+	nd->u.shop.count = 0;
+	while ( p ) {
+		t_itemid nameid2;
+		int32 qty = -1;
+		int32 value;
+		bool skip = false;
+
+		if( p == nullptr )
+			break;
+		switch(type) {
+			case NPCTYPE_MARKETSHOP:
+#if PACKETVER >= 20131223
+				if (sscanf(p, ",%u:%11d:%11d", &nameid2, &value, &qty) != 3) {
+					ShowError("npc_parse_shop: (MARKETSHOP) Invalid item definition in file '%s', line '%d'. Ignoring the rest of the line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer, start - buffer), w1, w2, w3, w4);
+					skip = true;
+				}
+#endif
+				break;
+			default:
+				if (sscanf(p, ",%u:%11d", &nameid2, &value) != 2) {
+					ShowError("npc_parse_shop: Invalid item definition in file '%s', line '%d'. Ignoring the rest of the line...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer, start - buffer), w1, w2, w3, w4);
+					skip = true;
+				}
+				break;
+		}
+
+		if (skip)
+			break;
+
+		std::shared_ptr<item_data> id = item_db.find(nameid2);
+
+		if( id == nullptr ) {
+			ShowWarning("npc_parse_shop: Invalid sell item in file '%s', line '%d' (id '%u').\n", filepath, strline(buffer,start-buffer), nameid2);
+			p = strchr(p+1,',');
+			continue;
+		}
+		if( value < 0 ) {
+			if (type == NPCTYPE_SHOP || type == NPCTYPE_MARKETSHOP) value = id->value_buy;
+			else value = 0; // Cashshop doesn't have a "buy price" in the item_db
+		}
+		if (value == 0 && (type == NPCTYPE_SHOP || type == NPCTYPE_MARKETSHOP)) { // NPC selling items for free!
+			ShowWarning("npc_parse_shop: Item %s [%u] is being sold for FREE in file '%s', line '%d'.\n",
+				id->name.c_str(), nameid2, filepath, strline(buffer,start-buffer));
+		}
+		if( ( type == NPCTYPE_SHOP || type == NPCTYPE_MARKETSHOP ) && value*0.75 < id->value_sell*1.24 ) { // Exploit possible: you can buy and sell back with profit
+			ShowWarning("npc_parse_shop: Item %s [%u] discounted buying price (%d->%d) is less than overcharged selling price (%d->%d) at file '%s', line '%d'.\n",
+				id->name.c_str(), nameid2, value, (int32)(value*0.75), id->value_sell, (int32)(id->value_sell*1.24), filepath, strline(buffer,start-buffer));
+		}
+		if (type == NPCTYPE_MARKETSHOP && qty < -1) {
+			ShowWarning("npc_parse_shop: Item %s [%u] is stocked with invalid value %hd, changed to unlimited (-1). File '%s', line '%d'.\n",
+				id->name.c_str(), nameid2, qty, filepath, strline(buffer,start-buffer));
+			qty = -1;
+		}
+		//for logs filters, atcommands and iteminfo script command
+		if( id->maxchance == 0 )
+			id->maxchance = -1; // -1 would show that the item's sold in NPC Shop
+		
+#if PACKETVER >= 20131223
+		if (nd->u.shop.count && type == NPCTYPE_MARKETSHOP) {
+			uint16 i;
+			// Duplicate entry? Replace the value
+			ARR_FIND(0, nd->u.shop.count, i, nd->u.shop.shop_item[i].nameid == nameid);
+			if (i != nd->u.shop.count) {
+				nd->u.shop.shop_item[i].qty = qty;
+				nd->u.shop.shop_item[i].value = value;
+				p = strchr(p+1,',');
+				continue;
+			}
+		}
+#endif
+
+		RECREATE(nd->u.shop.shop_item, struct npc_item_list,nd->u.shop.count+1);
+
+		nd->u.shop.shop_item[nd->u.shop.count].nameid = nameid2;
+		nd->u.shop.shop_item[nd->u.shop.count].value = value;
+#if PACKETVER >= 20131223
+		nd->u.shop.shop_item[nd->u.shop.count].flag = 0;
+		if (type == NPCTYPE_MARKETSHOP )
+			nd->u.shop.shop_item[nd->u.shop.count].qty = qty;
+#endif
+		nd->u.shop.count++;
+		p = strchr(p+1,',');
+	}
+	if( nd->u.shop.count == 0 ) {
+		ShowWarning("npc_parse_shop: Ignoring empty shop in file '%s', line '%d'.\n", filepath, strline(buffer,start-buffer));
+		nd->~npc_data();
+		aFree(nd);
+		return strchr(start,'\n');// continue
+	}
+
+	if( type == NPCTYPE_ITEMSHOP ){
+		// Item shop currency
+		nd->u.shop.itemshop_nameid = nameid;
+	}else if( type == NPCTYPE_POINTSHOP ){
+		// Point shop currency
+		safestrncpy( nd->u.shop.pointshop_str, point_str, strlen( point_str ) + 1 );
+	}
+
+	nd->u.shop.discount = is_discount > 0;
+
+	npc_parsename(nd, w3, start, buffer, filepath);
+	nd->class_ = m == -1 ? JT_FAKENPC : npc_parseview(w4, start, buffer, filepath);
+	nd->speed = DEFAULT_NPC_WALK_SPEED;
+
+	++npc_shop;
+	nd->type = BL_NPC;
+	nd->subtype = type;
+#if PACKETVER >= 20131223
+	// Insert market data to table
+	if (nd->subtype == NPCTYPE_MARKETSHOP) {
+		uint16 i;
+		for (i = 0; i < nd->u.shop.count; i++)
+			npc_market_tosql(nd->exname, &nd->u.shop.shop_item[i]);
+	}
+#endif
+	if( m >= 0 )
+	{// normal shop npc
+		map_addnpc(m,nd);
+		if(map_addblock(nd))
+			return strchr(start,'\n');
+		unit_dataset(nd);
+		nd->ud.dir = (uint8)dir;
+		if( nd->class_ != JT_FAKENPC ){
+			status_set_viewdata(nd, nd->class_);
+			if( map_getmapdata(nd->m)->users )
+				clif_spawn(nd);
+		}
+	} else
+	{// 'floating' shop?
+		map_addiddb(nd);
+	}
+	strdb_put(npcname_db, nd->exname, nd);
+	return strchr(start,'\n');// continue
+}
+
+/** [Cydh]
+* Check if the shop is affected by discount or not
+* @param type Type of NPC shop (enum npc_subtype)
+* @param discount Discount flag of NPC shop
+* @return bool 'true' is discountable, 'false' otherwise
+*/
+bool npc_shop_discount( const npc_data* nd ){
+	switch( nd->subtype ){
+		case NPCTYPE_ITEMSHOP:
+			return nd->u.shop.discount || ( battle_config.discount_item_point_shop&1 );
+		case NPCTYPE_POINTSHOP:
+			return nd->u.shop.discount || ( battle_config.discount_item_point_shop&2 );
+		default:
+			return nd->u.shop.discount;
+	}
+}
+
+/**
+ * NPC other label
+ * Not sure, seem to add label in a chainlink
+ * @see DBApply
+ */
+int32 npc_convertlabel_db(DBKey key, DBData *data, va_list ap)
+{
+	const char* lname = (const char*)key.str;
+	int32 lpos = db_data2i(data);
+	struct npc_label_list** label_list;
+	int32* label_list_num;
+	const char* filepath;
+	struct npc_label_list* label;
+	const char *p;
+
+	nullpo_ret(label_list = va_arg(ap,struct npc_label_list**));
+	nullpo_ret(label_list_num = va_arg(ap,int32*));
+	nullpo_ret(filepath = va_arg(ap,const char*));
+
+	// In case of labels not terminated with ':', for user defined function support
+	p = lname;
+	while( ISALNUM(*p) || *p == '_' )
+		++p;
+
+	size_t len = p - lname;
+
+	// here we check if the label fit into the buffer
+	if( len > NAME_LENGTH )
+	{
+		ShowError("npc_parse_script: label name longer than %d chars! '%s'\n (%s)", NAME_LENGTH, lname, filepath);
+		return 0;
+	}
+
+	if( *label_list == nullptr )
+	{
+		*label_list = (struct npc_label_list *) aCalloc (1, sizeof(struct npc_label_list));
+		*label_list_num = 0;
+	} else
+		*label_list = (struct npc_label_list *) aRealloc (*label_list, sizeof(struct npc_label_list)*(*label_list_num+1));
+	label = *label_list+*label_list_num;
+
+	safestrncpy(label->name, lname, sizeof(label->name));
+	label->pos = lpos;
+	++(*label_list_num);
+
+	return 0;
+}
+
+// Skip the contents of a script.
+static const char* npc_skip_script(const char* start, const char* buffer, const char* filepath)
+{
+	const char* p;
+	int32 curly_count;
+
+	if( start == nullptr )
+		return nullptr;// nothing to skip
+
+	// initial bracket (assumes the previous part is ok)
+	p = strchr(start,'{');
+	if( p == nullptr )
+	{
+		ShowError("npc_skip_script: Missing left curly in file '%s', line'%d'.", filepath, strline(buffer,start-buffer));
+		return nullptr;// can't continue
+	}
+
+	// skip everything
+	for( curly_count = 1; curly_count > 0 ; )
+	{
+		p = skip_space(p+1) ;
+		if( *p == '}' )
+		{// right curly
+			--curly_count;
+		}
+		else if( *p == '{' )
+		{// left curly
+			++curly_count;
+		}
+		else if( *p == '"' )
+		{// string
+			for( ++p; *p != '"' ; ++p )
+			{
+				if( *p == '\\' && (unsigned char)p[-1] <= 0x7e )
+					++p;// escape sequence (not part of a multibyte character)
+				else if( *p == '\0' )
+				{
+					script_error(buffer, filepath, 0, "Unexpected end of string.", p);
+					return nullptr;// can't continue
+				}
+				else if( *p == '\n' )
+				{
+					script_error(buffer, filepath, 0, "Unexpected newline at string.", p);
+					return nullptr;// can't continue
+				}
+			}
+		}
+		else if( *p == '\0' )
+		{// end of buffer
+			ShowError("Missing %d right curlys at file '%s', line '%d'.\n", curly_count, filepath, strline(buffer,p-buffer));
+			return nullptr;// can't continue
+		}
+	}
+
+	return p+1;// return after the last '}'
+}
+
+/**
+ * Parses a npc script.
+ * Line definition :
+ * <map name>,<x>,<y>,<facing>%TAB%script(<state)%TAB%<NPC Name>%TAB%<sprite id>,{<code>}
+ * <map name>,<x>,<y>,<facing>%TAB%script(<state)%TAB%<NPC Name>%TAB%<sprite id>,<triggerX>,<triggerY>,{<code>} * @TODO missing cashshop line definition
+ * @param w1 : word 1 before tab (<from map name>,<x>,<y>,<facing>)
+ * @param w2 : word 2 before tab (script), keyword that sent us in this parsing
+ * @param w3 : word 3 before tab (<NPC Name>)
+ * @param w4 : word 4 before tab (<sprited id>,<code>)
+ * @param start : index to start parsing
+ * @param buffer : lines to parses
+ * @param filepath : filename with path wich we are parsing
+ * @return new index for next parsing
+ */
+static const char* npc_parse_script(char* w1, char* w2, char* w3, char* w4, const char* start, const char* buffer, const char* filepath) {
+	int16 dir = 0;
+	int16 m, x, y, xs = 0, ys = 0; // [Valaris] thanks to fov
+	struct script_code *script;
+	int32 i;
+	const char* end;
+	const char* script_start;
+
+	struct npc_label_list* label_list;
+	int32 label_list_num;
+	npc_data* nd;
+
+	if( strcmp(w1, "-") == 0 )
+	{// floating npc
+		x = 0;
+		y = 0;
+		m = -1;
+	}
+	else
+	{// npc in a map
+		char mapname[MAP_NAME_LENGTH_EXT];
+
+		if( sscanf(w1, "%15[^,],%6hd,%6hd,%4hd", mapname, &x, &y, &dir) != 4 )
+		{
+			ShowError("npc_parse_script: Invalid placement format for a script in file '%s', line '%d'. Skipping the rest of file...\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,start-buffer), w1, w2, w3, w4);
+			return nullptr;// unknown format, don't continue
+		}
+		m = map_mapname2mapid(mapname);
+	}
+
+	script_start = strstr(start,",{");
+	end = strchr(start,'\n');
+	if( strstr(w4,",{") == nullptr || script_start == nullptr || (end != nullptr && script_start > end) )
+	{
+		ShowError("npc_parse_script: Missing left curly ',{' in file '%s', line '%d'. Skipping the rest of the file.\n * w1=%s\n * w2=%s\n * w3=%s\n * w4=%s\n", filepath, strline(buffer,start-buffer), w1, w2, w3, w4);
+		return nullptr;// can't continue
+	}
+	++script_start;
+
+	end = npc_skip_script(script_start, buffer, filepath);
+	if( end == nullptr )
+		return nullptr;// (simple) parse error, don't continue
+
+	script = parse_script(script_start, filepath, strline(buffer,script_start-buffer), SCRIPT_USE_LABEL_DB);
+	label_list = nullptr;
+	label_list_num = 0;
+	if( script )
+	{
+		DBMap* label_db = script_get_label_db();
+		label_db->foreach(label_db, npc_convertlabel_db, &label_list, &label_list_num, filepath);
+		db_clear(label_db); // not needed anymore, so clear the db
+	}
+
+	nd = npc_create_npc(m, x, y);
+
+	if( sscanf(w4, "%*[^,],%6hd,%6hd", &xs, &ys) == 2 )
+	{// OnTouch area defined
+		nd->u.scr.xs = xs;
+		nd->u.scr.ys = ys;
+	}
+	else
+	{// no OnTouch area
+		nd->u.scr.xs = -1;
+		nd->u.scr.ys = -1;
+	}
+
+	npc_parsename(nd, w3, start, buffer, filepath);
+	nd->class_ = m == -1 ? JT_FAKENPC : npc_parseview(w4, start, buffer, filepath);
+	nd->speed = DEFAULT_NPC_WALK_SPEED;
+	nd->u.scr.script = script;
+	nd->u.scr.label_list = label_list;
+	nd->u.scr.label_list_num = label_list_num;
+
+	++npc_script;
+	nd->type = BL_NPC;
+	nd->subtype = NPCTYPE_SCRIPT;
+
+	if( m >= 0 )
+	{
+		map_addnpc(m, nd);
+		unit_dataset(nd);
+		nd->ud.dir = (uint8)dir;
+		npc_setcells(nd);
+		if(map_addblock(nd))
+			return nullptr;
+		if( nd->class_ != JT_FAKENPC )
+		{
+			status_set_viewdata(nd, nd->class_);
+			if( map_getmapdata(nd->m)->users )
+				clif_spawn(nd);
+		}
+	}
+	else
+	{
+		// we skip map_addnpc, but still add it to the list of ID's
+		map_addiddb(nd);
+	}
+	strdb_put(npcname_db, nd->exname, nd);
+
+	// Check if there is a <state> in w2
+	if (strcasecmp("script", w2) < 0) {
+		char state_name[128];
+		size_t length = strlen(w2);
+		int32 shift = 7;
+
+		// state name
+		if (w2[shift-1] != '(' || w2[length-1] != ')' || length <= shift || length-shift >= sizeof(state_name))
+			ShowWarning("npc_parse_script: Invalid npc state in file '%s', line '%d', defaulting to visible. w2=%s\n", filepath, strline(buffer,start-buffer), w2);
+		else {
+			safestrncpy(state_name, w2+shift, length-shift);
+			if (strcasecmp("CLOAKED", state_name) == 0)
+				nd->state = NPCVIEW_CLOAKON;
+			else if (strcasecmp("HIDDEN", state_name) == 0)
+				nd->state = NPCVIEW_HIDEON;
+			else if (strcasecmp("DISABLED", state_name) == 0)
+				nd->state = NPCVIEW_DISABLE;
+			else
+				ShowWarning("npc_parse_script: Invalid npc state in file '%s', line '%d', defaulting to visible. w2=%s\n", filepath, strline(buffer,start-buffer), w2);
+			if (nd->state != NPCVIEW_ENABLE)
+				npc_enable_target(*nd, 0, nd->state);

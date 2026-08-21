@@ -1,0 +1,500 @@
+//===== rAthena Script =======================================
+//= Hidden Flower Garden
+//===== Description: =========================================
+//= [Walkthrough Conversion]
+//= Episode 17.2 Hidden Flower Garden
+//= Episode 17.2 Security Area 1 & 2
+//= Note:
+// - NPC_LOCKON_LASER skill is currently no implemented.
+//===== Changelog: ===========================================
+//= 1.0 Initial release [crazyarashi]
+//= 1.1 Optimizations and cleanup [Everade]
+//= 1.2 Cleanup [Capuche]
+//= 1.3 Updated monsters spawn times (significantly reduced). [Atemo]
+//============================================================
+
+ba_maison,120,320,0	script	#herbs_chk	HIDDEN_WARP_NPC,3,3,{
+	end;
+OnTouch:
+	//You can start this quest without registering on alpha
+	if (isbegin_quest(12497) == 0) {	// story
+		cloakoffnpcself( "#he_admin1" );
+		specialeffect EF_WHITEBODY, AREA, "#he_admin1";
+		npctalk "Stand back from the perimeter of the security area. Outsiders are prohibited from accessing it.", "#he_admin1", bc_self;
+		end;
+	}
+	// daily
+	cloakoffnpcself( "#he_admin2" );
+	specialeffect EF_WHITEBODY, AREA, "#he_admin2";
+	end;
+}
+
+ba_maison,120,321,5	script(CLOAKED)	#he_admin1	MD_ASSISTANT,{
+	if (ep17_2_main < 1)
+		end;
+	mes "[Flower Garden Manager]";
+	mes "An unregistered guest has been detected.";
+	next;
+	.@party_id = getcharid(1);
+	if (!is_party_leader()) {
+		mes "[Flower Garden Manager]";
+		mes "You cannot proceed to the next step, if you do not have the authority of the party leader.";
+		close;
+	}
+	.@party_name$ = getpartyname(.@party_id);
+	mes "[Flower Garden Manager]";
+	mes "If you're an administrator who lost authority, you can get the authority reissued through an authentication procedure.";
+	next;
+	.@md_name$ = "Hidden Flower Garden";
+
+	if (instance_live_info(ILI_NAME,instance_id(IM_PARTY)) == .@md_name$)
+		.@menu$ = "^FF0000Enter^000000";
+
+	switch( select( "Quit and Stand Back.", "Authenticate Identity", .@menu$ ) ) {
+	case 1:
+		mes "[Flower Garden Manager]";
+		mes "A wise choice.";
+		close;
+	case 2:
+		if (instance_create(.@md_name$) == -3)
+			dispbottom "The reservation of the instance '" + .@md_name$ + "' has failed due to an active instance.";
+		end;
+	case 3:
+		if (!is_party_leader()) {	// shouldn't happen
+			mes "[Flower Garden Manager]";
+			mes "You cannot proceed to the next step, if you do not have the authority of the party leader.";
+			close;
+		}
+		if (instance_enter(.@md_name$) != IE_OK) {
+			mes "[Flower Garden Manager]";
+			mes "You can only move to the place when the party manager has completed all permits. Please re-check your issued access area.";
+			close;
+		}
+		mapannounce "ba_maison", "" + strcharinfo(0) + " of the party, " + .@party_name$ + ", is entering the " + .@md_name$ + ".", bc_map, "0x00FF99";
+		end;
+	}
+	end;
+}
+
+ba_maison,120,321,5	script(CLOAKED)	#he_admin2	MD_ASSISTANT,{
+	if (ep17_2_main < 1)
+		end;
+	if (isbegin_quest(12497) != 2)
+		end;
+	switch( checkquest(12498,PLAYTIME) ) {
+	case -1:
+		break;
+	case 0:
+	case 1:
+		mes "[Flower Garden Manager]";
+		mes "You just entered the security area.";
+		mes "Please rest your body for a day as Sigma ordered.";
+		close;
+	case 2:
+		erasequest 12498;
+		break;
+	}
+	mes "[Flower Garden Manager]";
+	mes "Your identity been identified. You may enter the security area. How may I help you?";
+	next;
+	if (BaseLevel >= 150)
+		.@menu$[0] = "1st Security Zone.";
+	if (BaseLevel >= 180)
+		.@menu$[1] = "^FF00002nd Security Zone.^000000";
+
+	switch( select( "Stand back.", "Identity Authentication", "Enter Zone" ) ) {
+	case 1:
+		mes "[Flower Garden Manager]";
+		mes "Alright.";
+		close;
+	case 2:
+		switch( select( "Stand back.", .@menu$[0], .@menu$[1] ) ) {
+		case 1:
+			mes "[Flower Garden Manager]";
+			mes "Alright.";
+			close;
+		case 2:
+			.@md_name$ = "Security Area 1";
+			break;
+		case 3:
+			.@md_name$ = "Security Area 2";
+			break;
+		}
+		if (!is_party_leader()) {
+			mes "[Flower Garden Manager]";
+			mes "Only the party leader can start the identity verification. Let's leave it up to person in charge.";
+			close;
+		}
+		if (instance_create(.@md_name$) == -3)
+			dispbottom "The reservation of the instance '" + .@md_name$ + "' has failed due to an active instance.";
+		end;
+	case 3:
+		switch( select( .@menu$[0], .@menu$[1] ) ) {
+		case 1:
+			.@md_name$ = "Security Area 1";
+			.@qid = 12499;
+			.@qid2 = 12500;
+			break;
+		case 2:
+			.@md_name$ = "Security Area 2";
+			.@qid = 12500;
+			.@qid2 = 12499;
+			break;
+		}
+		if (instance_enter(.@md_name$) != IE_OK) {
+			mes "[Flower Garden Manager]";
+			mes "You can only move to the place when the party manager has completed all permits. Please re-check your issued access area.";
+			close;
+		}
+		setquest 12498;
+		if (isbegin_quest(.@qid) > 0)
+			erasequest .@qid;
+		if (isbegin_quest(.@qid2) > 0)
+			erasequest .@qid2;
+		setquest .@qid;
+		mapannounce "ba_maison", "" + strcharinfo(0) + " of the party, " + getpartyname( getcharid(1) ) + ", is entering the " + .@md_name$ + ".", bc_map, "0x00FF99";
+		end;
+	}
+	end;
+}
+
+
+1@herbs,1,1,0	script	#hidden_flower_garden_control	-1,{
+	end;
+OnInstanceInit:
+	'map_herbs$ = instance_mapname("1@herbs");
+
+	// story
+	'action = 0;
+	'pimp = 0;
+	'guard_count = 0;
+	'hidden_garden = 0;
+	'npc_is_talking = false;
+
+	// daily
+	'room = 0;
+	deletearray 'spawn_mobs;
+	deletearray 'summon;
+	end;
+}
+
+1@herbs,56,278,4	script	#BMD000001	4_SYS_MSG,{
+	if ('npc_is_talking)
+		end;
+	if ('hidden_garden == 0) {
+		mes "It appears to be a hologram of an automatic doll. You can see a strange glass on the middle panel with the word ^0000FF[Enter the pattern on the touch screen]^000000 and other several buttons.";
+		while(1) {
+			next;
+			if (select( "Leave it alone", "Touch the screen", .@menu$ ) == 1) {
+				mes "The hologram faded.";
+				close;
+			}
+			specialeffect EF_AGIUP2;
+			progressbar_npc "3131FF",1;
+			if (.@menu$ != "" || rand(1,5) == 1)
+				break;
+			specialeffect EF_HALLUTIME;
+			mes "^FF0000ERROR^000000";
+			mes "^FF0000Pattern does not match.^000000";
+			.@menu$ = "^FF0000Try entering a different pattern^000000";
+		}
+		specialeffect EF_GUARD4;
+		mes "^0000FFPattern recognized.^000000";
+		mes "Running the sleep mode release protocol. Pattern input by ^0000CD" + strcharinfo(0) + "^000000 has been recognized.";
+		close2;
+		'admin$ = strcharinfo(0);
+		donpcevent instance_npcname("#BMD000001") + "::OnTalk01";
+		end;
+	}
+	if ('hidden_garden == 1) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		setpcblock PCBLOCK_NPC, true;
+		npctalk "I'm an automatic doll that was designed to work only if your mana synchronizes with Varmundt's mana over a certain level.";
+		sleep2 5000;
+		npctalk "[" + 'admin$ + "]" + " has a 73.6% mana similarity to that of Varmundt. Who exactly are you [" + 'admin$ + "]?";
+		sleep2 5000;
+		setpcblock PCBLOCK_NPC, false;
+		select("An adventurer who stumbled upon this place");
+		setpcblock PCBLOCK_NPC, true;
+		npctalk "It's strange. I've never seen an outsider with a mana pattern that matches more than 70% to that of Varmundt's.";
+		sleep2 5000;
+		setpcblock PCBLOCK_NPC, false;
+		.@s = select( "I had the opportunity to meet Varmundt before.", "I don't know why." );
+		setpcblock PCBLOCK_NPC, true;
+		sleep2 1000;
+		if (.@s == 1) {
+			npctalk "There is a possibility that you have a similar mana pattern due to frequent contact with him in any form.";
+			sleep2 5000;
+		}
+		while(1) {
+			npctalk "Okay. From now on, I will set [" + 'admin$ + "] as our temporary administrator and take action accordingly. Do you agree?";
+			sleep2 5000;
+			setpcblock PCBLOCK_NPC, false;
+			switch( select( "I'm a temporary administrator? Why should I?", "Refuse!", "Sure" ) ) {
+			case 1:
+				setpcblock PCBLOCK_NPC, true;
+				sleep2 1000;
+				npctalk "The automatic dolls maintain the flower garden and perform their given duties individually.";
+				sleep2 5000;
+				npctalk "While Master Varmundt was still present, the progress of duties was checked in the form of individual reports and weekly on-site evaluations.";
+				sleep2 5000;
+				npctalk "Currently, Master Varmundt has been away for over 1 million hours.";
+				sleep2 5000;
+				npctalk "Although you are not Master Varmundt, as someone who has more than 70% similarity to his mana pattern, I would like to ask you to evaluate our duties.";
+				sleep2 5000;
+				npctalk "Please understand that it's a necessary management to prevent our duties from falling into the wrong path.";
+				continue;
+			case 2:
+				sleep2 1000;
+				npctalk "I will wait until you give me your permission.";
+				specialeffect EF_MARKING_USE_CHANGEMONSTER;
+				setpcblock PCBLOCK_NPC, false;
+				end;
+			case 3:
+				break;
+			}
+			break;
+		}
+		setpcblock PCBLOCK_NPC, true;
+		sleep2 1000;
+		npctalk "Thank you for your permission. From now on, I'll treat [" + 'admin$ + "] as a temporary administrator.";
+		sleep2 5000;
+		npctalk "First select a code name that will be used to control this automatic doll. Some of the names that were preferred in the past are randomly selected.";
+
+		setarray .@names$[0],"Lisa","Barbara","Jennifer","Dorothy","Jun","Yeongchun","Susan","Martha","Hannah","Helen","Chunja","Karen","How do I stop this?";
+		.@size = getarraysize(.@names$);
+		.@menu$[0] = "Quit";	// note: script continues regardless of the selection
+		for ( .@i = 1; .@i < 4; ++.@i ) {
+			.@r = rand(.@size);
+			.@menu$[.@i] = .@names$[.@r];
+			deletearray .@names$[.@r],1;
+			.@size--;
+		}
+		setpcblock PCBLOCK_NPC, false;
+		.@s = select( .@menu$[0], .@menu$[1], .@menu$[2], .@menu$[3] ) - 1;
+		setpcblock PCBLOCK_NPC, true;
+		.@guide_name$ = .@menu$[.@s];
+		.@guide_id = getnpcid(0, instance_npcname("#BMD000001"));
+
+		npctalk "Order has been received.";
+		sleep2 3000;
+		npctalk "The code name of the automatic doll BMD000001 is [" + .@guide_name$ + "].";
+		sleep2 5000;
+		npctalk "We will start the on-site inspection of the garden based on the temporary administrator response protocol.";
+		sleep2 5000;
+		if ('hidden_garden == 1) {
+			'guide_id = .@guide_id;
+			'guide_name$ = .@guide_name$;
+			'hidden_garden = 2;
+			disablenpc instance_npcname("#mc_device");
+			setpcblock PCBLOCK_NPC, false;
+			npctalk "Please watch your step and follow me.";
+			npcspeed 200;
+			unitwalk 'guide_id,63,290, instance_npcname("#BMD000001") + "::OnEvent01";
+		}
+		end;
+	}
+	if ('hidden_garden == 3) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		mes "[" + 'guide_name$ + "]";
+		mes "Please evaluate the landscape, water quality, and other overall layout of the garden.";
+		next;
+		while(true) {
+			switch( select( "Hold on.", "It's a beautiful place.", "I wish there were more trees.", "Why is it surrounded by water?" ) ) {
+			case 1:
+				npctalk "I'll stop the guide. Automatic dolls and objects that has not been inspected and evaluated by the Automatic Doll [" + 'guide_name$ + "] are not allowed to go outside.";
+				end;
+			case 2:
+				npctalk "Then, it has been determined that this place management has met its conditions.";
+				break;
+			case 3:
+				'trees = 1;
+				npctalk "Understood, we will add more trees in the future.";
+				break;
+			case 4:
+				npctalk "Because this is a water garden, the area is surrounded by water.";
+				sleep2 5000;
+				npctalk "Changing to a non-water garden can not be accepted, as it is an area beyond Varmundt's taste.";
+				break;
+			}
+			break;
+		}
+		'hidden_garden = 4;
+		unitwalk 'guide_id,63,288, instance_npcname("#BMD000001") + "::OnEvent02";
+		end;
+	}
+	end;
+
+OnTalk01:
+	'npc_is_talking = true;
+	npctalk "This product is an automatic doll that serves as a guide for the flower garden with a serial number BMD000001.";
+	sleep 5000;
+	npctalk "The similarity check to Varmundt's mana pattern is at 73.6%. Switching to flower garden guide mode.";
+	sleep 5000;
+	npctalk "Operation will begin in 3 seconds.";
+	progressbar_npc "3131FF",3;
+	setnpcdisplay instance_npcname("#BMD000001"),20622;	// MD_ASSISTANT
+	specialeffect EF_FLOWERCAST;
+	npctalk "Sleep mode release protocol has been completed. I will check if the master, Varmundt is nearby in addition to the recognized target.";
+	sleep 5000;
+	npctalk "Searching......";
+	progressbar_npc "3131FF",3;
+	sleep 1000;
+	npctalk "Master Varmundt is not detected within the network.";
+	specialeffect EF_MARKING_USE_CHANGEMONSTER;
+	if ('hidden_garden == 0)
+		'hidden_garden = 1;
+	'npc_is_talking = false;
+	end;
+
+OnEvent01:
+	npctalk "You can start the evaluation from the entrance of this garden.";
+	sleep 3000;
+	npctalk "Objective evaluation reduces the working errors of the automatic dolls that manage this place and helps them perform their duties close to perfection.";
+	sleep 6000;
+	npctalk "[" + 'admin$ + "]. Please use the authority of the temporary administrator to determine whether the garden duties is being faithfully carried out.";
+	sleep 6000;
+	'hidden_garden = 3;
+	specialeffect EF_MARKING_USE_CHANGEMONSTER;
+	end;
+
+OnEvent02:
+	if (!'trees) {
+		sleep 5000;
+		npctalk "We have satisfied the criteria of the temporary administrator [" + 'admin$ + "] and will maintain the current management routine as it is.";
+	}
+	sleep 5000;
+	npctalk "[" + 'admin$ + "], I'd like to request for you to continue the on-site inspection for the remaining sections.";
+	unitwalk 'guide_id,82,300, instance_npcname("#BMD000001") + "::OnEvent03";
+	end;
+
+OnEvent03:
+	npctalk "There is no bridge that connects the sections here.";
+	sleep 6000;
+	npctalk "Since Varmundt was a person who can move regardless of the terrain, we did not install a separate structure for normal people during the creation of the flower garden.";
+	sleep 6000;
+	npctalk "However, considering the temporary administrator's insufficient ability, I will support the space leap services.";
+	sleep 6000;
+	enablenpc instance_npcname("#BMD000002");
+	enablenpc instance_npcname("#carota");
+	instance_warpall 'map_herbs$,111,275,instance_id();
+	sleep 1000;
+	removespecialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000002");
+	specialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000002");
+	disablenpc instance_npcname("#BMD000001");
+	end;
+}
+
+1@herbs,56,278,4	duplicate(dummy_npc)	#mc_device	1_SHADOW_NPC
+
+
+1@herbs,110,275,4	script(DISABLED)	#BMD000002	MD_ASSISTANT,3,3,{
+	if ('hidden_garden == 4) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		'hidden_garden = 5;
+		npctalk "Master Varmundt gave each of the automatic dolls a research project.";
+		sleep 5000;
+		npctalk "However, the purpose of the research is not available to us dolls, we have to decide on our own what to do with it in the future.";
+		sleep 5000;
+		npctalk "The flower garden is divided into several research sectors and each sector has a different subject as a project.";
+		npcspeed 200;
+		'guide_id = getnpcid(0, instance_npcname("#BMD000002"));
+		unitwalk 'guide_id,124,275, instance_npcname("#BMD000002") + "::OnEvent00";
+		end;
+	}
+	end;
+
+OnEvent00:
+	unitwalk 'guide_id,124,281, instance_npcname("#BMD000002") + "::OnEvent01";
+	end;
+
+OnEvent01:
+	unitwalk 'guide_id,125,280, instance_npcname("#BMD000002") + "::OnEvent02";
+	npctalk "Among the research sectors, this sector is a place to grow a plant called Turnip under the orders of Varmundt.";
+	end;
+
+OnEvent02:
+	unitwalk 'guide_id,137,280, instance_npcname("#BMD000002") + "::OnEvent03";
+	end;
+
+OnEvent03:
+	unitwalk 'guide_id,137,276, instance_npcname("#BMD000002") + "::OnEvent04";
+	end;
+
+OnEvent04:
+	sleep 3000;
+	npctalk "Let me introduce the automatic doll model CAROTA-88.";
+	sleep 4000;
+	npctalk "......";
+	sleep 2000;
+	npctalk "[Error: CAROTA-88 is out of control range. Need to track corresponding object coordinates.]";
+	sleep 5000;
+	npctalk "[Tracking coordinates...]";
+	progressbar_npc "3131FF",4;
+	npctalk "CAROTA-88. Please return to your original location as soon as possible. Don't forget that I can use force when needed.";
+	'carota = getnpcid(0, instance_npcname("#carota"));
+	donpcevent instance_npcname("#carota") + "::OnAction";
+	end;
+
+OnEvent05:
+	npctalk "Let's move on to the next section.", instance_npcname("#BMD000002");
+	'hidden_garden = 7;
+	sleep 2000;
+	enablenpc instance_npcname("#BMD000003");
+	enablenpc instance_npcname("#pimp25");
+	donpcevent instance_npcname("#pimp25") + "::OnWalk";
+	instance_warpall 'map_herbs$,254,282,instance_id();
+	sleep 1000;
+	removespecialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000003");
+	specialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000003");
+	disablenpc();
+	end;
+
+OnTouch:
+	if ('hidden_garden == 4) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		specialeffect EF_MARKING_USE_CHANGEMONSTER;
+	}
+	end;
+}
+
+1@herbs,137,269,4	script(DISABLED)	#carota	CLEAR_NPC,3,3,{
+	if ('npc_is_talking)
+		end;
+	if ('hidden_garden == 6) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		select("Report your work details.");
+		setpcblock PCBLOCK_NPC, true;
+		sleep2 1000;
+		npctalk "Master Varmundt. No further instructions after entering Turnip's biological data . This automatic doll unattended.";
+		sleep2 5000;
+		npctalk "No further indications for 5076 hours. This automatic doll's AI collects network information about turnips.";
+		sleep2 5000;
+		npctalk "Obtaining information of edible plants. Finding ancient record of turnip cultivation.";
+		sleep2 5000;
+		npctalk "Optimized germination, growth and sowing of turnips for about 18816 hours compared and recorded.";
+		sleep2 5000;
+		npctalk "Over million hours passed. Collect data on cultivation and harvest of Turnips. a collection of information on breeding method.";
+		sleep2 5000;
+		npctalk "2 ton yield per year. 99.9% success pest control prevention. 0.2% loss due to physical work errors.";
+		sleep2 5000;
+		npctalk "Turnips from flower garden. Sold at an excellent price in a nearby big city. Contributing to maintenance costs for flower gardens and mansions.";
+		sleep2 5000;
+		setpcblock PCBLOCK_NPC, false;
+		npctalk "Whether the research mission direction of this automatic doll should be improved, continued, or discarded. Waiting for the administrator's decision.";
+		mes "^0000AAEvaluate CAROTA-88's work to date.^000000";
+		next;
+		if (select( "The product is full and good shape.", "Improve breeding.", "It's just farming, so everything is good." ) == 3)
+			'talk_bool = true;
+		else
+			'talk_bool = false;
+		close2;
+		donpcevent instance_npcname("#carota") + "::OnTalk01";
+		end;
+	}
+	end;
+
+OnTalk01:
+	'npc_is_talking = true;
+	sleep 1000;
+	npctalk "Evaluation received...";

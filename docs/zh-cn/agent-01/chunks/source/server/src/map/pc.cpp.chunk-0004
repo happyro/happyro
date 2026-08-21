@@ -1,0 +1,500 @@
+	for( size_t i = 0; i < MAX_INVENTORY; i++ ){
+		t_itemid id = sd.inventory.u.items_inventory[i].nameid;
+
+		if( id != 0 ){
+			sd.inventory_data[i] = itemdb_search( id );
+		}else{
+			sd.inventory_data[i] = nullptr;
+		}
+	}
+}
+
+/**
+* 'Calculates' weapon type
+* @param sd : Player
+*/
+void pc_calcweapontype(map_session_data *sd)
+{
+	nullpo_retv(sd);
+
+	// single-hand
+	if(sd->weapontype2 == W_FIST) {
+		sd->status.weapon = sd->weapontype1;
+		return;
+	}
+	if(sd->weapontype1 == W_FIST) {
+		sd->status.weapon = sd->weapontype2;
+		return;
+	}
+	// dual-wield
+	sd->status.weapon = W_FIST;
+	switch (sd->weapontype1){
+	case W_DAGGER:
+		switch (sd->weapontype2) {
+		case W_DAGGER:  sd->status.weapon = W_DOUBLE_DD; break;
+		case W_1HSWORD: sd->status.weapon = W_DOUBLE_DS; break;
+		case W_1HAXE:   sd->status.weapon = W_DOUBLE_DA; break;
+		}
+		break;
+	case W_1HSWORD:
+		switch (sd->weapontype2) {
+		case W_DAGGER:  sd->status.weapon = W_DOUBLE_DS; break;
+		case W_1HSWORD: sd->status.weapon = W_DOUBLE_SS; break;
+		case W_1HAXE:   sd->status.weapon = W_DOUBLE_SA; break;
+		}
+		break;
+	case W_1HAXE:
+		switch (sd->weapontype2) {
+		case W_DAGGER:  sd->status.weapon = W_DOUBLE_DA; break;
+		case W_1HSWORD: sd->status.weapon = W_DOUBLE_SA; break;
+		case W_1HAXE:   sd->status.weapon = W_DOUBLE_AA; break;
+		}
+	}
+	// unknown, default to right hand type
+	if (!sd->status.weapon)
+		sd->status.weapon = sd->weapontype1;
+}
+
+/**
+* Set equip index
+* @param sd : Player
+*/
+void pc_setequipindex( map_session_data *sd )
+{
+	uint16 i;
+
+	nullpo_retv(sd);
+
+	for (i = 0; i < EQI_MAX; i++){
+		sd->equip_index[i] = -1;
+		sd->equip_switch_index[i] = -1;
+	}
+
+	for (i = 0; i < MAX_INVENTORY; i++) {
+		if (sd->inventory.u.items_inventory[i].nameid == 0)
+			continue;
+		if (sd->inventory.u.items_inventory[i].equip) {
+			uint8 j;
+			for (j = 0; j < EQI_MAX; j++)
+				if (sd->inventory.u.items_inventory[i].equip & equip_bitmask[j])
+					sd->equip_index[j] = i;
+
+			if (sd->inventory.u.items_inventory[i].equip & EQP_HAND_R) {
+				if (sd->inventory_data[i])
+					sd->weapontype1 = sd->inventory_data[i]->subtype;
+				else
+					sd->weapontype1 = W_FIST;
+			}
+
+			if( sd->inventory.u.items_inventory[i].equip & EQP_HAND_L ) {
+				if( sd->inventory_data[i] && sd->inventory_data[i]->type == IT_WEAPON )
+					sd->weapontype2 = sd->inventory_data[i]->subtype;
+				else
+					sd->weapontype2 = W_FIST;
+			}
+		}
+		if (sd->inventory.u.items_inventory[i].equipSwitch) {
+			for (uint8 j = 0; j < EQI_MAX; j++) {
+				if (sd->inventory.u.items_inventory[i].equipSwitch & equip_bitmask[j]) {
+					sd->equip_switch_index[j] = i;
+				}
+			}
+		}
+	}
+	pc_calcweapontype(sd);
+}
+
+//static int32 pc_isAllowedCardOn(map_session_data *sd,int32 s,int32 eqindex,int32 flag)
+//{
+//	int32 i;
+//	struct item *item = &sd->inventory.u.items_inventory[eqindex];
+//	std::shared_ptr<item_data> data;
+//
+//	//Crafted/made/hatched items.
+//	if (itemdb_isspecial(item->card[0]))
+//		return 1;
+//
+//	/* scan for enchant armor gems */
+//	if( item->card[MAX_SLOTS - 1] && s < MAX_SLOTS - 1 )
+//		s = MAX_SLOTS - 1;
+//
+//	ARR_FIND( 0, s, i, item->card[i] && (data = item_db.find(item->card[i])) != nullptr && data->flag.no_equip&flag );
+//	return( i < s ) ? 0 : 1;
+//}
+
+
+/**
+ * Check if an item is equiped by player
+ * (Check if the itemid is equiped then search if that match the index in inventory (should be))
+ * @param sd : player session
+ * @param nameid : itemid
+ * @return 1:yes, 0:no
+ */
+bool pc_isequipped( const map_session_data* sd, t_itemid nameid )
+{
+	uint8 i;
+
+	for( i = 0; i < EQI_MAX; i++ )
+	{
+		int16 index = sd->equip_index[i], j;
+		if( index < 0 )
+			continue;
+		if( pc_is_same_equip_index((enum equip_index)i, sd->equip_index, index) )
+			continue;
+		if( !sd->inventory_data[index] ) 
+			continue;
+		if( sd->inventory_data[index]->nameid == nameid )
+			return true;
+		for( j = 0; j < MAX_SLOTS; j++ ){
+			if( sd->inventory.u.items_inventory[index].card[j] == nameid )
+				return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Check adoption rules
+ * @param p1_sd: Player 1
+ * @param p2_sd: Player 2
+ * @param b_sd: Player that will be adopted
+ * @return ADOPT_ALLOWED - Sent message to Baby to accept or deny
+ *         ADOPT_ALREADY_ADOPTED - Already adopted
+ *         ADOPT_MARRIED_AND_PARTY - Need to be married and in the same party
+ *         ADOPT_EQUIP_RINGS - Need wedding rings equipped
+ *         ADOPT_NOT_NOVICE - Adoptee is not a Novice
+ *         ADOPT_CHARACTER_NOT_FOUND - Parent or Baby not found
+ *         ADOPT_MORE_CHILDREN - Cannot adopt more than 1 Baby (client message)
+ *         ADOPT_LEVEL_70 - Parents need to be level 70+ (client message)
+ *         ADOPT_MARRIED - Cannot adopt a married person (client message)
+ */
+enum adopt_responses pc_try_adopt( const map_session_data* p1_sd, const map_session_data* p2_sd, const map_session_data* b_sd)
+{
+	if( !p1_sd || !p2_sd || !b_sd )
+		return ADOPT_CHARACTER_NOT_FOUND;
+
+	if( b_sd->status.father || b_sd->status.mother || b_sd->adopt_invite )
+		return ADOPT_ALREADY_ADOPTED; // already adopted baby / in adopt request
+
+	if( !p1_sd->status.partner_id || !p1_sd->status.party_id || p1_sd->status.party_id != b_sd->status.party_id )
+		return ADOPT_MARRIED_AND_PARTY; // You need to be married and in party with baby to adopt
+
+	if( p1_sd->status.partner_id != p2_sd->status.char_id || p2_sd->status.partner_id != p1_sd->status.char_id )
+		return ADOPT_MARRIED_AND_PARTY; // Not married, wrong married
+
+	if( p2_sd->status.party_id != p1_sd->status.party_id )
+		return ADOPT_MARRIED_AND_PARTY; // Both parents need to be in the same party
+
+	// Parents need to have their ring equipped
+	if( !pc_isequipped(p1_sd, WEDDING_RING_M) && !pc_isequipped(p1_sd, WEDDING_RING_F) )
+		return ADOPT_EQUIP_RINGS;
+
+	if( !pc_isequipped(p2_sd, WEDDING_RING_M) && !pc_isequipped(p2_sd, WEDDING_RING_F) )
+		return ADOPT_EQUIP_RINGS;
+
+	// Already adopted a baby
+	if( p1_sd->status.child || p2_sd->status.child ) {
+		clif_Adopt_reply(p1_sd, ADOPT_REPLY_MORE_CHILDREN);
+		return ADOPT_MORE_CHILDREN;
+	}
+
+	// Parents need at least lvl 70 to adopt
+	if( p1_sd->status.base_level < 70 || p2_sd->status.base_level < 70 ) {
+		clif_Adopt_reply(p1_sd, ADOPT_REPLY_LEVEL_70);
+		return ADOPT_LEVEL_70;
+	}
+
+	if( b_sd->status.partner_id ) {
+		clif_Adopt_reply(p1_sd, ADOPT_REPLY_MARRIED);
+		return ADOPT_MARRIED;
+	}
+
+	if( !( ( b_sd->status.class_ >= JOB_NOVICE && b_sd->status.class_ <= JOB_THIEF ) || b_sd->status.class_ == JOB_SUPER_NOVICE || b_sd->status.class_ == JOB_SUPER_NOVICE_E ) )
+		return ADOPT_NOT_NOVICE;
+
+	return ADOPT_ALLOWED;
+}
+
+/*==========================================
+ * Adoption Process
+ *------------------------------------------*/
+bool pc_adoption(map_session_data *p1_sd, map_session_data *p2_sd, map_session_data *b_sd)
+{
+	int32 job, joblevel;
+	t_exp jobexp;
+
+	if( pc_try_adopt(p1_sd, p2_sd, b_sd) != ADOPT_ALLOWED )
+		return false;
+
+	// Preserve current job levels and progress
+	joblevel = b_sd->status.job_level;
+	jobexp = b_sd->status.job_exp;
+
+	job = pc_mapid2jobid(b_sd->class_|JOBL_BABY, b_sd->status.sex);
+	if( job != -1 && pc_jobchange(b_sd, job, 0) )
+	{ // Success, proceed to configure parents and baby skills
+		p1_sd->status.child = b_sd->status.char_id;
+		p2_sd->status.child = b_sd->status.char_id;
+		b_sd->status.father = p1_sd->status.char_id;
+		b_sd->status.mother = p2_sd->status.char_id;
+
+		// Restore progress
+		b_sd->status.job_level = joblevel;
+		clif_updatestatus(*b_sd, SP_JOBLEVEL);
+		b_sd->status.job_exp = jobexp;
+		clif_updatestatus(*b_sd, SP_JOBEXP);
+
+		// Baby Skills
+		pc_skill(b_sd, WE_BABY, 1, ADDSKILL_PERMANENT);
+		pc_skill(b_sd, WE_CALLPARENT, 1, ADDSKILL_PERMANENT);
+		pc_skill(b_sd, WE_CHEERUP, 1, ADDSKILL_PERMANENT);
+
+		// Parents Skills
+		pc_skill(p1_sd, WE_CALLBABY, 1, ADDSKILL_PERMANENT);
+		pc_skill(p2_sd, WE_CALLBABY, 1, ADDSKILL_PERMANENT);
+
+		chrif_save(p1_sd, CSAVE_NORMAL);
+		chrif_save(p2_sd, CSAVE_NORMAL);
+		chrif_save(b_sd, CSAVE_NORMAL);
+
+		achievement_update_objective(b_sd, AG_BABY, 1, 1);
+		achievement_update_objective(p1_sd, AG_BABY, 1, 2);
+		achievement_update_objective(p2_sd, AG_BABY, 1, 2);
+
+		return true;
+	}
+
+	return false; // Job Change Fail
+}
+
+static bool pc_job_can_use_item( const map_session_data* sd, const item_data* item ){
+	nullpo_retr( false, sd );
+	nullpo_retr( false, item );
+
+	// Calculate the required bit to check
+	uint64 job = 1ULL << ( sd->class_ & MAPID_FIRSTMASK );
+
+	size_t index;
+
+	// 2-1
+	if( ( sd->class_ & JOBL_2_1 ) != 0 ){
+		index = 1;
+	// 2-2
+	}else if( ( sd->class_ & JOBL_2_2 ) != 0 ){
+		index = 2;
+	// Basejob
+	}else{
+		index = 0;
+	}
+
+	return ( item->class_base[index] & job ) != 0;
+}
+
+/*==========================================
+ * Check if player can use/equip selected item. Used by pc_isUseitem and pc_isequip
+   Returns:
+		false : Cannot use/equip
+		true  : Can use/equip
+ * Credits:
+		[Inkfish] for first idea
+		[Haru] for third-classes extension
+		[Cydh] finishing :D
+ *------------------------------------------*/
+static bool pc_isItemClass ( const map_session_data* sd, const item_data* item ) {
+	while (1) {
+		if (item->class_upper&ITEMJ_NORMAL && !(sd->class_&(JOBL_UPPER|JOBL_BABY|JOBL_THIRD|JOBL_FOURTH)))	//normal classes (no upper, no baby, no third, no fourth)
+			break;
+#ifndef RENEWAL
+		//allow third classes to use trans. class items
+		if (item->class_upper&ITEMJ_UPPER && sd->class_&(JOBL_UPPER|JOBL_THIRD))	//trans. classes
+			break;
+		//third-baby classes can use same item too
+		if (item->class_upper&ITEMJ_BABY && sd->class_&JOBL_BABY)	//baby classes
+			break;
+		//don't need to decide specific rules for third-classes?
+		//items for third classes can be used for all third classes
+		if (item->class_upper&(ITEMJ_THIRD|ITEMJ_THIRD_UPPER|ITEMJ_THIRD_BABY) && sd->class_&JOBL_THIRD)
+			break;
+#else
+		//trans. classes (exl. third-trans.)
+		if (item->class_upper&ITEMJ_UPPER && sd->class_&JOBL_UPPER && !(sd->class_&JOBL_THIRD))
+			break;
+		//baby classes (exl. third-baby)
+		if (item->class_upper&ITEMJ_BABY && sd->class_&JOBL_BABY && !(sd->class_&JOBL_THIRD))
+			break;
+		//third classes (exl. third-trans. and baby-third and fourth)
+		if (item->class_upper&ITEMJ_THIRD && sd->class_&JOBL_THIRD && !(sd->class_&(JOBL_UPPER|JOBL_BABY)) && !(sd->class_&JOBL_FOURTH))
+			break;
+		//trans-third classes (exl. fourth)
+		if (item->class_upper&ITEMJ_THIRD_UPPER && sd->class_&JOBL_THIRD && sd->class_&JOBL_UPPER && !(sd->class_&JOBL_FOURTH))
+			break;
+		//third-baby classes (exl. fourth)
+		if (item->class_upper&ITEMJ_THIRD_BABY && sd->class_&JOBL_THIRD && sd->class_&JOBL_BABY && !(sd->class_&JOBL_FOURTH))
+			break;
+		//fourth classes
+		if (item->class_upper&ITEMJ_FOURTH && sd->class_&JOBL_FOURTH)
+			break;
+#endif
+		return false;
+	}
+	return true;
+}
+
+/*=================================================
+ * Checks if the player can equip the item at index n in inventory.
+ * @param sd
+ * @param n Item index in inventory
+ * @return ITEM_EQUIP_ACK_OK(0) if can be equipped, or ITEM_EQUIP_ACK_FAIL(1)/ITEM_EQUIP_ACK_FAILLEVEL(2) if can't
+ *------------------------------------------------*/
+uint8 pc_isequip( const map_session_data* sd, int32 n )
+{
+	const item_data* item;
+
+	nullpo_retr(ITEM_EQUIP_ACK_FAIL, sd);
+
+	item = sd->inventory_data[n];
+
+	if(pc_has_permission(sd, PC_PERM_USE_ALL_EQUIPMENT))
+		return ITEM_EQUIP_ACK_OK;
+
+	if(item == nullptr)
+		return ITEM_EQUIP_ACK_FAIL;
+
+	if (sd->sc.getSCE(SC_SPIRIT) && sd->sc.getSCE(SC_SPIRIT)->val2 == SL_SUPERNOVICE) {
+		//Spirit of Super Novice equip bonuses. [Skotlex]
+		if (sd->status.base_level >= 90 && item->equip & EQP_HELM)
+			return ITEM_EQUIP_ACK_OK; //Can equip all helms
+
+		if (sd->status.base_level >= 96 && item->equip & EQP_ARMS && item->type == IT_WEAPON && item->weapon_level == 4)
+			switch (item->subtype) { //In weapons, the look determines type of weapon.
+				case W_DAGGER: //All level 4 - Daggers
+				case W_1HSWORD: //All level 4 - 1H Swords
+				case W_1HAXE: //All level 4 - 1H Axes
+				case W_2HAXE: // All level 4 - 2H Axes (works, but low ASPD)
+				case W_MACE: //All level 4 - 1H Maces
+				case W_STAFF: //All level 4 - 1H Staves
+				case W_2HSTAFF: //All level 4 - 2H Staves
+					return ITEM_EQUIP_ACK_OK;
+			}
+	}
+
+	if(item->elv && sd->status.base_level < static_cast<uint32>(item->elv))
+		return ITEM_EQUIP_ACK_FAILLEVEL;
+	if(item->elvmax && sd->status.base_level > static_cast<uint32>(item->elvmax))
+		return ITEM_EQUIP_ACK_FAILLEVEL;
+	if(item->sex != SEX_BOTH && sd->status.sex != item->sex)
+		return ITEM_EQUIP_ACK_FAIL;
+
+	// Broken equip
+	if (sd->inventory.u.items_inventory[n].attribute == 1)
+		return ITEM_EQUIP_ACK_FAIL;
+
+	//fail to equip if item is restricted
+	if (!battle_config.allow_equip_restricted_item && itemdb_isNoEquip(item, sd->m))
+		return ITEM_EQUIP_ACK_FAIL;
+
+	if (item->equip&EQP_AMMO) {
+		switch (item->subtype) {
+			case AMMO_ARROW:
+				if (battle_config.ammo_check_weapon && sd->status.weapon != W_BOW && sd->status.weapon != W_MUSICAL && sd->status.weapon != W_WHIP) {
+					clif_msg( *sd, MSI_FAIL_NEED_EQUIPPED_BOW );
+					return ITEM_EQUIP_ACK_FAIL;
+				}
+				break;
+			case AMMO_DAGGER:
+				if (!pc_checkskill(sd, AS_VENOMKNIFE))
+					return ITEM_EQUIP_ACK_FAIL;
+				break;
+			case AMMO_BULLET:
+			case AMMO_SHELL:
+				if (battle_config.ammo_check_weapon && sd->status.weapon != W_REVOLVER && sd->status.weapon != W_RIFLE && sd->status.weapon != W_GATLING && sd->status.weapon != W_SHOTGUN
+#ifdef RENEWAL
+					&& sd->status.weapon != W_GRENADE
+#endif
+					) {
+					clif_msg( *sd, MSI_WRONG_BULLET );
+					return ITEM_EQUIP_ACK_FAIL;
+				}
+				break;
+#ifndef RENEWAL
+			case AMMO_GRENADE:
+				if (battle_config.ammo_check_weapon && sd->status.weapon != W_GRENADE) {
+					clif_msg( *sd, MSI_WRONG_BULLET );
+					return ITEM_EQUIP_ACK_FAIL;
+				}
+				break;
+#endif
+			case AMMO_CANNONBALL:
+				if (!pc_ismadogear(sd) && (sd->status.class_ == JOB_MECHANIC_T || sd->status.class_ == JOB_MECHANIC)) {
+					clif_msg( *sd, MSI_USESKILL_FAIL_MADOGEAR ); // Item can only be used when Mado Gear is mounted.
+					return ITEM_EQUIP_ACK_FAIL;
+				}
+				if (sd->state.active && !pc_iscarton(sd) && //Check if sc data is already loaded
+					(sd->status.class_ == JOB_GENETIC_T || sd->status.class_ == JOB_GENETIC)) {
+					clif_msg( *sd, MSI_USESKILL_FAIL_CART ); // Only available when cart is mounted.
+					return ITEM_EQUIP_ACK_FAIL;
+				}
+				break;
+		}
+	}
+
+	if (!sd->sc.empty()) {
+		if(item->equip & EQP_ARMS && item->type == IT_WEAPON && sd->sc.getSCE(SC_STRIPWEAPON)) // Also works with left-hand weapons [DracoRPG]
+			return ITEM_EQUIP_ACK_FAIL;
+		if(item->equip & EQP_SHIELD && item->type == IT_ARMOR && sd->sc.getSCE(SC_STRIPSHIELD))
+			return ITEM_EQUIP_ACK_FAIL;
+		if(item->equip & EQP_ARMOR && sd->sc.getSCE(SC_STRIPARMOR))
+			return ITEM_EQUIP_ACK_FAIL;
+		if(item->equip & EQP_HEAD_TOP && sd->sc.getSCE(SC_STRIPHELM))
+			return ITEM_EQUIP_ACK_FAIL;
+		if(item->equip & EQP_ACC && sd->sc.getSCE(SC__STRIPACCESSORY))
+			return ITEM_EQUIP_ACK_FAIL;
+		if (item->equip & EQP_ARMS && sd->sc.getSCE(SC__WEAKNESS))
+			return ITEM_EQUIP_ACK_FAIL;
+		if (item->equip & EQP_SHADOW_GEAR && sd->sc.getSCE(SC_SHADOW_STRIP))
+			return ITEM_EQUIP_ACK_FAIL;
+		if(item->equip && (sd->sc.getSCE(SC_KYOUGAKU) || sd->sc.getSCE(SC_SUHIDE)))
+			return ITEM_EQUIP_ACK_FAIL;
+	}
+
+	//Not equipable by class. [Skotlex]
+	if (!pc_job_can_use_item(sd,item))
+		return ITEM_EQUIP_ACK_FAIL;
+
+	if (!pc_isItemClass(sd, item))
+		return ITEM_EQUIP_ACK_FAIL;
+
+	return ITEM_EQUIP_ACK_OK;
+}
+
+/**
+ * Performs some special modifications to a player's last point location,
+ * if the map has a nosave mapflag or if the map was an instance.
+ * @param sd: Player data
+ * @return True if the player should be returned to his savepoint or false if not
+ */
+bool pc_lastpoint_special( map_session_data& sd ){
+	int16 mapid = map_mapname2mapid( sd.status.last_point.map );
+
+	// Should not happen because otherwise the char-server would have sent the player to another map-server
+	if( mapid < 0 ){
+		// Return the player to his savepoint
+		return true;
+	}
+
+	struct map_data* mapdata = map_getmapdata( mapid );
+
+	if( mapdata == nullptr ){
+		// Return the player to his savepoint
+		return true;
+	}
+
+	if (strcmpi(sd.status.last_point.map, MAP_JAIL) == 0) {
+		// Don't return jailed player to save point.
+		return false;
+	}
+
+	// Maybe since the player's logout the nosave mapflag was added to the map
+	if( mapdata->getMapFlag(MF_NOSAVE) ){
+		// The map has a specific return point

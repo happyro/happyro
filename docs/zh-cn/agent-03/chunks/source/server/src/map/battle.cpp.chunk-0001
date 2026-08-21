@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "battle.hpp"
+
+#include <cmath>
+#include <cstdlib>
+
+#include <common/cbasetypes.hpp>
+#include <common/ers.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utils.hpp>
+
+#include "atcommand.hpp"
+#include "battleground.hpp"
+#include "chrif.hpp"
+#include "clif.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "log.hpp"
+#include "map.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "party.hpp"
+#include "path.hpp"
+#include "pc.hpp"
+#include "pc_groups.hpp"
+#include "pet.hpp"
+#include "./skills/skill_impl.hpp"
+
+using namespace rathena;
+
+struct Battle_Config battle_config;
+static struct eri *delay_damage_ers; //For battle delay damage structures.
+
+#ifndef MAX_ENEMY_SEARCH_COUNT
+	#define MAX_ENEMY_SEARCH_COUNT 30
+#endif
+
+// Early declaration
+int32 battle_get_weapon_element(const Damage& dmg, const block_list& src, const block_list& target, uint16 skill_id, uint16 skill_lv, equip_index weapon_position, bool calc_for_damage_only);
+int32 battle_get_magic_element(const Damage& dmg, const block_list& src, const block_list& target, uint16 skill_id, uint16 skill_lv);
+int32 battle_get_misc_element(const Damage& dmg, const block_list& src, const block_list& target, uint16 skill_id, uint16 skill_lv);
+static void battle_calc_defense_reduction( Damage* wd, block_list* src, block_list* target, uint16 skill_id, uint16 skill_lv );
+
+/**
+ * Returns the current/list skill used by the bl
+ * @param bl
+ * @return skill_id
+ */
+uint16 battle_getcurrentskill(const block_list* bl)
+{
+	const unit_data* ud;
+
+	if( bl->type == BL_SKILL ) {
+		skill_unit *su = (skill_unit*)bl;
+		return (su && su->group?su->group->skill_id:0);
+	}
+
+	ud = unit_bl2ud(bl);
+
+	return (ud?ud->skill_id:0);
+}
+
+/**
+ * Get random targeting enemy
+ * @param bl
+ * @param ap
+ * @return Found target (1) or not found (0)
+ */
+static int32 battle_gettargeted_sub(block_list *bl, va_list ap)
+{
+	block_list **bl_list;
+	struct unit_data *ud;
+	int32 target_id;
+	int32 *c;
+
+	bl_list = va_arg(ap, block_list **);
+	c = va_arg(ap, int32 *);
+	target_id = va_arg(ap, int32);
+
+	if (bl->id == target_id)
+		return 0;
+
+	if (*c >= MAX_ENEMY_SEARCH_COUNT)
+		return 0;
+
+	if ( !(ud = unit_bl2ud(bl)) )
+		return 0;
+
+	if (ud->target == target_id || ud->skilltarget == target_id) {
+		bl_list[(*c)++] = bl;
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
+ * Returns list of targets
+ * @param target
+ * @return Target list
+ */
+block_list* battle_gettargeted( const block_list* target )
+{
+	block_list* bl_list[MAX_ENEMY_SEARCH_COUNT];
+	int32 c = 0;
+	nullpo_retr(nullptr, target);
+
+	memset(bl_list, 0, sizeof(bl_list));
+	map_foreachinallrange(battle_gettargeted_sub, target, AREA_SIZE, BL_CHAR, bl_list, &c, target->id);
+
+	if ( c == 0 )
+		return nullptr;
+
+	if (c > MAX_ENEMY_SEARCH_COUNT)
+		c = MAX_ENEMY_SEARCH_COUNT;
+
+	return bl_list[rnd()%c];
+}
+
+/**
+ * Returns the ID of the current targeted character of the passed bl
+ * @param bl
+ * @return Target Unit ID
+ * @author [Skotlex]
+ */
+int32 battle_gettarget( const block_list* bl )
+{
+
+	switch (bl->type) {
+		case BL_PC:  return static_cast<const map_session_data*>(bl)->ud.target;
+		case BL_MOB: return static_cast<const mob_data*>(bl)->target_id;
+		case BL_PET: return static_cast<const pet_data*>(bl)->target_id;
+		case BL_HOM: return static_cast<const homun_data*>(bl)->ud.target;
+		case BL_MER: return static_cast<const s_mercenary_data*>(bl)->ud.target;
+		case BL_ELEM: return static_cast<const s_elemental_data*>(bl)->ud.target;
+	}
+
+	return 0;
+}
+
+/**
+ * Get random enemy
+ * @param bl
+ * @param ap
+ * @return Found target (1) or not found (0)
+ */
+static int32 battle_getenemy_sub(block_list *bl, va_list ap)
+{
+	block_list **bl_list;
+	const block_list* target;
+	int32 *c;
+
+	bl_list = va_arg(ap, block_list **);
+	c = va_arg(ap, int32 *);
+	target = va_arg(ap, const block_list* );
+
+	if (bl->id == target->id)
+		return 0;
+
+	if (*c >= MAX_ENEMY_SEARCH_COUNT)
+		return 0;
+
+	if (status_isdead(*bl))
+		return 0;
+
+	if (!status_check_visibility(target, bl, false))
+		return 0;
+
+	if (battle_check_target(target, bl, BCT_ENEMY) > 0) {
+		bl_list[(*c)++] = bl;
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
+ * Returns list of visible enemies within given range
+ * @param target
+ * @param type
+ * @param range
+ * @return Target list
+ * @author [Skotlex]
+ */
+block_list* battle_getenemy( const block_list* target, int32 type, int32 range )
+{
+	block_list* bl_list[MAX_ENEMY_SEARCH_COUNT];
+	int32 c = 0;
+
+	memset(bl_list, 0, sizeof(bl_list));
+	map_foreachinallrange(battle_getenemy_sub, target, range, type, bl_list, &c, target);
+
+	if ( c == 0 )
+		return nullptr;
+
+	if (c > MAX_ENEMY_SEARCH_COUNT)
+		c = MAX_ENEMY_SEARCH_COUNT;
+
+	return bl_list[rnd()%c];
+}
+
+/**
+ * Get random enemy within area
+ * @param bl
+ * @param ap
+ * @return Found target (1) or not found (0)
+ */
+static int32 battle_getenemyarea_sub(block_list *bl, va_list ap)
+{
+	block_list **bl_list, *src;
+	int32 *c, ignore_id;
+
+	bl_list = va_arg(ap, block_list **);
+	c = va_arg(ap, int32 *);
+	src = va_arg(ap, block_list *);
+	ignore_id = va_arg(ap, int32);
+
+	if( bl->id == src->id || bl->id == ignore_id )
+		return 0; // Ignores Caster and a possible pre-target
+
+	if (*c >= MAX_ENEMY_SEARCH_COUNT)
+		return 0;
+
+	if( status_isdead(*bl) )
+		return 0;
+
+	if( battle_check_target(src, bl, BCT_ENEMY) > 0 ) {// Is Enemy!...
+		bl_list[(*c)++] = bl;
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
+ * Returns list of enemies within an area
+ * @param src
+ * @param x
+ * @param y
+ * @param range
+ * @param type
+ * @param ignore_id
+ * @return Target list
+ */
+block_list* battle_getenemyarea(block_list *src, int32 x, int32 y, int32 range, int32 type, int32 ignore_id)
+{
+	block_list* bl_list[MAX_ENEMY_SEARCH_COUNT];
+	int32 c = 0;
+
+	memset(bl_list, 0, sizeof(bl_list));
+	map_foreachinallarea(battle_getenemyarea_sub, src->m, x - range, y - range, x + range, y + range, type, bl_list, &c, src, ignore_id);
+
+	if( c == 0 )
+		return nullptr;
+
+	if (c > MAX_ENEMY_SEARCH_COUNT)
+		c = MAX_ENEMY_SEARCH_COUNT;
+
+	return bl_list[rnd()%c];
+}
+
+/*==========================================
+ * Returns the walkdelay a unit receives
+ *------------------------------------------*/
+static t_tick battle_calc_walkdelay(block_list& bl, int64 damage, int16 div_, t_tick tick) {
+	if (damage < 1)
+		return 0;
+
+	// If hits are 0 that means that no walkdelay shall be set
+	if (div_ == 0)
+		return 0;
+
+	t_tick delay = status_get_status_data(bl)->dmotion;	
+
+	// Multi-hit skills mean higher delays
+	if (div_ > 1) {
+		// If there are more than 10 hits, it calculates as 2 hits
+		if (div_ > 10)
+			div_ = 2;
+		delay += battle_config.multihit_delay * (div_ - 1);
+	}
+
+	if (bl.type == BL_PC)
+		delay = apply_rate(delay, battle_config.pc_walk_delay_rate);
+	else
+		delay = apply_rate(delay, battle_config.walk_delay_rate);
+
+	return (delay > 0) ? delay : 1; //Return 1 to specify there should be no noticeable delay, but you should stop walking.
+}
+
+/**
+* Deals damage without delay, applies additional effects and triggers monster events
+* This function is called from battle_delay_damage or battle_delay_damage_sub
+* All other instances of battle damage should also go through this function (i.e. anything that displays a damage number)
+* Consider calling this function or battle_fix_damage instead status_fix_damage directly
+* @param src: Source of damage
+* @param target: Target of damage
+* @param damage: Damage to be dealt
+* @param div: Number of hits (0 means that no walkdelay shall be applied)
+* @param skill_lv: Level of skill used
+* @param skill_id: ID of skill used
+* @param dmg_lv: State of the attack (miss, etc.)
+* @param attack_type: Type of the attack (BF_NORMAL|BF_SKILL|BF_SHORT|BF_LONG|BF_WEAPON|BF_MAGIC|BF_MISC)
+* @param additional_effects: Whether additional effects should be applied (otherwise it's just damage+coma)
+* @param tick: Current tick
+* @param isspdamage: If the damage is done to SP
+* @param is_norm_attacked: If it should trigger the special normal attacked event on monsters
+* @return HP+SP+AP (0 if HP/SP/AP remained unchanged)
+*/
+int32 battle_damage(block_list *src, block_list *target, int64 damage, int16 div_, uint16 skill_lv, uint16 skill_id, enum damage_lv dmg_lv, uint16 attack_type, bool additional_effects, t_tick tick, bool isspdamage, bool is_norm_attacked) {
+	if (target == nullptr)
+		return 0;
+
+	// SP damage does not trigger anything, just substracts SP
+	if (isspdamage)
+		return status_zap(target, 0, damage, 0);
+
+	int32 dmg_change = 0;
+	map_session_data* sd = nullptr;
+
+	t_tick delay = battle_calc_walkdelay(*target, damage, div_, tick);
+
+	if (src)
+		sd = BL_CAST(BL_PC, src);
+	FreeBlockLock freeLock;
+	if (sd && battle_check_coma(*sd, *target, (e_battle_flag)attack_type))
+		dmg_change = status_damage(src, target, damage, 0, delay, 16, skill_id); // Coma attack
+	else if (dmg_lv > ATK_BLOCK)
+		dmg_change = status_fix_damage(src, target, damage, delay, skill_id);
+	if (attack_type && !status_isdead(*target) && additional_effects)
+		skill_additional_effect(src, target, skill_id, skill_lv, attack_type, dmg_lv, tick);
+	if (dmg_lv > ATK_BLOCK && attack_type && additional_effects)
+		skill_counter_additional_effect(src, target, skill_id, skill_lv, attack_type, tick);
+	// This is the last place where we have access to the actual damage type, so any monster events depending on type must be placed here
+	// These events trigger when the attack connects
+	if (src != nullptr && target->type == BL_MOB && dmg_lv > ATK_BLOCK) {
+		mob_data& md = *reinterpret_cast<mob_data*>(target);
+
+		// Trigger monster skill conditions
+		if (src != target && !status_isdead(*target)) {
+			if (damage > 0)
+				mobskill_event(&md, src, tick, attack_type, damage);
+			if (skill_id > 0)
+				mobskill_event(&md, src, tick, MSC_SKILLUSED | (skill_id << 16), damage);
+		}
+
+		// Prepare corresponding attacked event that occurs at the end of the calculated walk delay
+		if (is_norm_attacked) {
+			add_timer(tick + delay, mob_norm_attacked, target->id, src->id);
+		}
+		else {
+			add_timer(tick + delay, mob_attacked, target->id, src->id);
+		}
+	}
+	return dmg_change;
+}
+
+/// Damage Delayed Structure
+struct delay_damage {
+	int32 src_id;
+	int32 target_id;
+	int64 damage;
+	int16 div_;
+	uint16 distance;
+	uint16 skill_lv;
+	uint16 skill_id;
+	enum damage_lv dmg_lv;
+	uint16 attack_type;
+	bool additional_effects;
+	enum bl_type src_type;
+	bool isspdamage;
+	bool is_norm_attacked;
+};
+
+TIMER_FUNC(battle_delay_damage_sub){
+	struct delay_damage *dat = (struct delay_damage *)data;
+
+	if ( dat ) {
+		block_list* src = map_id2bl(dat->src_id);
+		block_list* target = map_id2bl(dat->target_id);
+
+		if (target && !status_isdead(*target)) {
+			if( src && target->m == src->m &&
+				(target->type != BL_PC || ((TBL_PC*)target)->invincible_timer == INVALID_TIMER) &&
+				check_distance_bl(src, target, dat->distance) ) //Check to see if you haven't teleported. [Skotlex]
+			{
+				//Deal damage
+				battle_damage(src, target, dat->damage, dat->div_, dat->skill_lv, dat->skill_id, dat->dmg_lv, dat->attack_type, dat->additional_effects, tick, dat->isspdamage, dat->is_norm_attacked);
+			} else if( !src && dat->skill_id == CR_REFLECTSHIELD ) { // it was monster reflected damage, and the monster died, we pass the damage to the character as expected
+				battle_fix_damage(target, target, dat->damage, dat->div_, dat->skill_id);
+			}
+		}
+
+		map_session_data *sd = BL_CAST(BL_PC, src);
+
+		if (sd && --sd->delayed_damage == 0 && sd->state.hold_recalc) {
+			sd->state.hold_recalc = false;
+			status_calc_pc(sd, SCO_FORCE);
+		}
+	}
+	ers_free(delay_damage_ers, dat);
+	return 0;
+}
+
+int32 battle_delay_damage(t_tick tick, int32 amotion, block_list *src, block_list *target, int32 attack_type, uint16 skill_id, uint16 skill_lv, int64 damage, enum damage_lv dmg_lv, int16 div_, bool additional_effects, bool isspdamage, bool is_norm_attacked)
+{
+	struct delay_damage *dat;
+	status_change *sc;
+	block_list *d_tbl = nullptr;
+	block_list *e_tbl = nullptr;
+
+	nullpo_ret(src);
+	nullpo_ret(target);
+
+	sc = status_get_sc(target);
+
+	if (sc) {
+		if (sc->getSCE(SC_DEVOTION) && sc->getSCE(SC_DEVOTION)->val1)
+			d_tbl = map_id2bl(sc->getSCE(SC_DEVOTION)->val1);
+		if (sc->getSCE(SC_WATER_SCREEN_OPTION) && sc->getSCE(SC_WATER_SCREEN_OPTION)->val1)
+			e_tbl = map_id2bl(sc->getSCE(SC_WATER_SCREEN_OPTION)->val1);
+	}
+
+	if( ((d_tbl && check_distance_bl(target, d_tbl, sc->getSCE(SC_DEVOTION)->val3)) || e_tbl) &&
+		damage > 0 && skill_id != CR_REFLECTSHIELD
+#ifndef RENEWAL
+		&& skill_id != PA_PRESSURE
+#endif
+		) {
+		map_session_data* tsd = BL_CAST( BL_PC, target );
+
+		if( tsd && pc_issit( tsd ) && battle_config.devotion_standup_fix ){
+			pc_setstand( tsd, true );
+			skill_sit( tsd, 0 );
+		}
+
+		damage = 0;
+		// This is a quick fix to make devotion protect from cast cancel and autocasts
+		// TODO: This currently also prevents "status change when hit", but shouldn't
+		if (dmg_lv == ATK_DEF)
+			dmg_lv = ATK_BLOCK;
+	}
+
+	// The client refuses to display animations slower than 1x speed
+	// So we need to shorten AttackMotion to be in-sync with the client in this case
+	if (battle_config.synchronize_damage && skill_id == 0 && src->type == BL_MOB && amotion > status_get_clientamotion(src))
+		amotion = status_get_clientamotion(src);
+	// Check for delay battle damage config
+	else if (!battle_config.delay_battle_damage)
+		amotion = 1;
+	// Aegis places a damage-delay cap of 1 sec to non player attacks
+	// We only want to apply this cap if damage was not synchronized
+	else if (src->type != BL_PC && amotion > 1000)
+		amotion = 1000;
+
+	// Skip creation of timer
+	if (amotion <= 1) {
+		//Deal damage
+		battle_damage(src, target, damage, div_, skill_lv, skill_id, dmg_lv, attack_type, additional_effects, gettick(), isspdamage);
+		return 0;
+	}
+	dat = ers_alloc(delay_damage_ers, struct delay_damage);
+	dat->src_id = src->id;
+	dat->target_id = target->id;
+	dat->skill_id = skill_id;
+	dat->skill_lv = skill_lv;
+	dat->attack_type = attack_type;
+	dat->damage = damage;
+	dat->dmg_lv = dmg_lv;
+	dat->div_ = div_;
+	dat->distance = distance_bl(src, target) + (battle_config.snap_dodge ? 10 : AREA_SIZE);
+	dat->additional_effects = additional_effects;
+	dat->src_type = src->type;
+	dat->isspdamage = isspdamage;
+	dat->is_norm_attacked = is_norm_attacked;
+
+	if( src->type == BL_PC )
+		((TBL_PC*)src)->delayed_damage++;
+
+	add_timer(tick+amotion, battle_delay_damage_sub, 0, (intptr_t)dat);
+
+	return 0;
+}
+
+int32 battle_fix_damage(block_list* src, block_list* target, int64 damage, int16 div_, uint16 skill_id) {
+	return battle_damage(src, target, damage, div_, 0, skill_id, ATK_DEF, BF_MISC, false, gettick(), false);
+}
+
+/**
+ * Does attribute fix modifiers.
+ * Added passing of the chars so that the status changes can affect it. [Skotlex]

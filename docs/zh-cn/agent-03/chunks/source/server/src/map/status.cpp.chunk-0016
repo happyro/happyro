@@ -1,0 +1,500 @@
+ * @param critical: Initial critical
+ * @return modified critical with cap_value(critical,10,USHRT_MAX)
+ */
+static int16 status_calc_critical(block_list *bl, status_change *sc, int32 critical)
+{
+	if(sc == nullptr || sc->empty())
+		return cap_value(critical,10,SHRT_MAX);
+
+	if (sc->getSCE(SC_EXPLOSIONSPIRITS))
+		critical += sc->getSCE(SC_EXPLOSIONSPIRITS)->val2;
+	if (sc->getSCE(SC_FORTUNE))
+		critical += sc->getSCE(SC_FORTUNE)->val2;
+	if (sc->getSCE(SC_TRUESIGHT))
+		critical += sc->getSCE(SC_TRUESIGHT)->val2;
+	if (sc->getSCE(SC_CLOAKING))
+		critical += critical;
+#ifdef RENEWAL
+	if (sc->getSCE(SC_SPEARQUICKEN))
+		critical += 3*sc->getSCE(SC_SPEARQUICKEN)->val1*10;
+	if (sc->getSCE(SC_TWOHANDQUICKEN))
+		critical += (2 + sc->getSCE(SC_TWOHANDQUICKEN)->val1) * 10;
+#endif
+	if (sc->getSCE(SC__INVISIBILITY))
+		critical += sc->getSCE(SC__INVISIBILITY)->val3 * 10;
+	if (sc->getSCE(SC__UNLUCKY))
+		critical -= sc->getSCE(SC__UNLUCKY)->val2;
+	if (sc->getSCE(SC_SOULSHADOW))
+		critical += 10 * sc->getSCE(SC_SOULSHADOW)->val3;
+	if(sc->getSCE(SC_BEYONDOFWARCRY))
+		critical += sc->getSCE(SC_BEYONDOFWARCRY)->val3;
+	if (sc->getSCE(SC_INTENSIVE_AIM))
+		critical += 300;
+
+	return (int16)cap_value(critical,10,SHRT_MAX);
+}
+
+/**
+ * Adds hit modifications based on status changes
+ * @param bl: Object to change hit [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param hit: Initial hit
+ * @return modified hit with cap_value(hit,1,USHRT_MAX)
+ */
+static int16 status_calc_hit(block_list *bl, status_change *sc, int32 hit)
+{
+	if(sc == nullptr || sc->empty())
+		return cap_value(hit,1,SHRT_MAX);
+
+	if(sc->getSCE(SC_INCHIT))
+		hit += sc->getSCE(SC_INCHIT)->val1;
+	if(sc->getSCE(SC_TRUESIGHT))
+		hit += sc->getSCE(SC_TRUESIGHT)->val3;
+	if(sc->getSCE(SC_HUMMING))
+		hit += sc->getSCE(SC_HUMMING)->val2;
+	if(sc->getSCE(SC_CONCENTRATION))
+		hit += sc->getSCE(SC_CONCENTRATION)->val3;
+	if(sc->getSCE(SC_INSPIRATION))
+		hit += 12 * sc->getSCE(SC_INSPIRATION)->val1;
+	if(sc->getSCE(SC_ADJUSTMENT))
+		hit -= 30;
+	if(sc->getSCE(SC_INCREASING))
+		hit += 20; // RockmanEXE; changed based on updated [Reddozen]
+	if(sc->getSCE(SC_MERC_HITUP))
+		hit += sc->getSCE(SC_MERC_HITUP)->val2;
+	if(sc->getSCE(SC_INCHITRATE))
+		hit += hit * sc->getSCE(SC_INCHITRATE)->val1/100;
+	if (sc->getSCE(SC_POWERUP))
+		hit += hit * sc->getSCE(SC_POWERUP)->val2 / 100;
+	if(sc->getSCE(SC_BLIND))
+		hit -= hit * 25/100;
+	if(sc->getSCE(SC_HEAT_BARREL))
+		hit -= sc->getSCE(SC_HEAT_BARREL)->val4;
+	if(sc->getSCE(SC__GROOMY))
+		hit -= hit * sc->getSCE(SC__GROOMY)->val3 / 100;
+	if(sc->getSCE(SC_FEAR))
+		hit -= hit * 20 / 100;
+	if (sc->getSCE(SC_ASH))
+		hit -= hit * sc->getSCE(SC_ASH)->val2 / 100;
+	if (sc->getSCE(SC_TEARGAS))
+		hit -= hit * 50 / 100;
+	if(sc->getSCE(SC_ILLUSIONDOPING))
+		hit -= sc->getSCE(SC_ILLUSIONDOPING)->val2;
+#ifdef RENEWAL
+	if (sc->getSCE(SC_BLESSING))
+		hit += sc->getSCE(SC_BLESSING)->val1 * 2;
+	if (sc->getSCE(SC_TWOHANDQUICKEN))
+		hit += sc->getSCE(SC_TWOHANDQUICKEN)->val1 * 2;
+	if (sc->getSCE(SC_ADRENALINE))
+		hit += sc->getSCE(SC_ADRENALINE)->val1 * 3 + 5;
+	if (sc->getSCE(SC_NIBELUNGEN) && sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_HIT)
+		hit += 50;
+#endif
+	if (sc->getSCE(SC_SOULFALCON))
+		hit += sc->getSCE(SC_SOULFALCON)->val3;
+	if (sc->getSCE(SC_SATURDAYNIGHTFEVER))
+		hit -= 50 + 50 * sc->getSCE(SC_SATURDAYNIGHTFEVER)->val1;
+	if (sc->getSCE(SC_ABYSS_SLAYER))
+		hit += sc->getSCE(SC_ABYSS_SLAYER)->val3;
+	if (sc->getSCE(SC_INTENSIVE_AIM))
+		hit += 250;
+
+	return (int16)cap_value(hit,1,SHRT_MAX);
+}
+
+/**
+ * Adds flee modifications based on status changes
+ * @param bl: Object to change flee [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param flee: Initial flee
+ * @return modified flee with cap_value(flee,1,USHRT_MAX)
+ */
+static int16 status_calc_flee(block_list *bl, status_change *sc, int32 flee)
+{
+	if( bl->type == BL_PC ) {
+		struct map_data *mapdata = map_getmapdata(bl->m);
+
+		if( mapdata_flag_gvg(mapdata) )
+			flee -= flee * battle_config.gvg_flee_penalty/100;
+		else if( mapdata->getMapFlag(MF_BATTLEGROUND) )
+			flee -= flee * battle_config.bg_flee_penalty/100;
+	}
+
+	if(sc == nullptr || sc->empty())
+		return cap_value(flee,1,SHRT_MAX);
+	if (sc->getSCE(SC_POISON_MIST))
+		return 0;
+	if(sc->getSCE(SC_OVERED_BOOST)) //Should be final and unmodifiable by any means
+		return sc->getSCE(SC_OVERED_BOOST)->val2;
+
+	// Fixed value
+	if(sc->getSCE(SC_INCFLEE))
+		flee += sc->getSCE(SC_INCFLEE)->val1;
+	if(sc->getSCE(SC_WHISTLE))
+		flee += sc->getSCE(SC_WHISTLE)->val2;
+	if(sc->getSCE(SC_WINDWALK))
+		flee += sc->getSCE(SC_WINDWALK)->val2;
+	if(sc->getSCE(SC_VIOLENTGALE))
+		flee += sc->getSCE(SC_VIOLENTGALE)->val2;
+	if(sc->getSCE(SC_MOON_COMFORT)) // SG skill [Komurka]
+		flee += sc->getSCE(SC_MOON_COMFORT)->val2;
+	if(sc->getSCE(SC_CLOSECONFINE))
+		flee += sc->getSCE(SC_CLOSECONFINE)->val3;
+	if (sc->getSCE(SC_ANGRIFFS_MODUS))
+		flee -= sc->getSCE(SC_ANGRIFFS_MODUS)->val3;
+	if(sc->getSCE(SC_ADJUSTMENT))
+		flee += 30;
+	if(sc->getSCE(SC_SPEED))
+		flee += 10 + sc->getSCE(SC_SPEED)->val1 * 10;
+	if(sc->getSCE(SC_GATLINGFEVER))
+		flee -= sc->getSCE(SC_GATLINGFEVER)->val4;
+	if(sc->getSCE(SC_PARTYFLEE))
+		flee += sc->getSCE(SC_PARTYFLEE)->val1 * 10;
+	if(sc->getSCE(SC_MERC_FLEEUP))
+		flee += sc->getSCE(SC_MERC_FLEEUP)->val2;
+	if( sc->getSCE(SC_HALLUCINATIONWALK) )
+		flee += sc->getSCE(SC_HALLUCINATIONWALK)->val2;
+	if( sc->getSCE(SC_NPC_HALLUCINATIONWALK) )
+		flee += sc->getSCE(SC_NPC_HALLUCINATIONWALK)->val2;
+	if( sc->getSCE(SC_WATER_BARRIER) )
+		flee -= sc->getSCE(SC_WATER_BARRIER)->val2;
+	if( sc->getSCE(SC_C_MARKER) )
+		flee -= sc->getSCE(SC_C_MARKER)->val3;
+	if( sc->getSCE(SC_WILD_WALK) != nullptr )
+		flee += sc->getSCE(SC_WILD_WALK)->val3;
+#ifdef RENEWAL
+	if( sc->getSCE(SC_SPEARQUICKEN) )
+		flee += 2 * sc->getSCE(SC_SPEARQUICKEN)->val1;
+	if (sc->getSCE(SC_NIBELUNGEN) && sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_FLEE)
+		flee += 50;
+#endif
+
+	// Rate value
+	if(sc->getSCE(SC_INCFLEERATE))
+		flee += flee * sc->getSCE(SC_INCFLEERATE)->val1/100;
+	if (sc->getSCE(SC_AGIUP))
+		flee += flee * sc->getSCE(SC_AGIUP)->val2 / 100;
+	if(sc->getSCE(SC_SPIDERWEB) || sc->getSCE(SC_WIDEWEB))
+		flee -= flee * 50/100;
+	if(sc->getSCE(SC_BERSERK))
+		flee -= flee * 50/100;
+	if(sc->getSCE(SC_BLIND))
+		flee -= flee * 25/100;
+	if(sc->getSCE(SC_FEAR))
+		flee -= flee * 20 / 100;
+	if(sc->getSCE(SC_PARALYSE) && sc->getSCE(SC_PARALYSE)->val3 == 1)
+		flee -= flee * 10 / 100;
+	if(sc->getSCE(SC_INFRAREDSCAN))
+		flee -= flee * 30 / 100;
+	if( sc->getSCE(SC__LAZINESS) )
+		flee -= flee * sc->getSCE(SC__LAZINESS)->val3 / 100;
+	if( sc->getSCE(SC_GLOOMYDAY) )
+		flee -= flee * sc->getSCE(SC_GLOOMYDAY)->val2 / 100;
+	if( sc->getSCE(SC_SATURDAYNIGHTFEVER) )
+		flee -= 20 + 30 * sc->getSCE(SC_SATURDAYNIGHTFEVER)->val1;
+	if( sc->getSCE(SC_WIND_STEP_OPTION) )
+		flee += flee * sc->getSCE(SC_WIND_STEP_OPTION)->val2 / 100;
+	if( sc->getSCE(SC_TINDER_BREAKER) || sc->getSCE(SC_TINDER_BREAKER2) )
+		flee -= flee * 50 / 100;
+	if( sc->getSCE(SC_ZEPHYR) )
+		flee += sc->getSCE(SC_ZEPHYR)->val2;
+	if(sc->getSCE(SC_ASH))
+		flee -= flee * sc->getSCE(SC_ASH)->val4 / 100;
+	if (sc->getSCE(SC_GOLDENE_FERSE))
+		flee += flee * sc->getSCE(SC_GOLDENE_FERSE)->val2 / 100;
+	if (sc->getSCE(SC_SMOKEPOWDER))
+		flee += flee * 20 / 100;
+	if (sc->getSCE(SC_TEARGAS))
+		flee -= flee * 50 / 100;
+	//if( sc->getSCE(SC_C_MARKER) )
+	//	flee -= (flee * sc->getSCE(SC_C_MARKER)->val3) / 100;
+	if (sc->getSCE(SC_GROOMING))
+		flee += sc->getSCE(SC_GROOMING)->val2;
+
+	return (int16)cap_value(flee,1,SHRT_MAX);
+}
+
+/**
+ * Adds perfect flee modifications based on status changes
+ * @param bl: Object to change flee2 [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param flee2: Initial flee2
+ * @return modified flee2 with cap_value(flee2,10,USHRT_MAX)
+ */
+static int16 status_calc_flee2(block_list *bl, status_change *sc, int32 flee2)
+{
+	if(sc == nullptr || sc->empty())
+		return cap_value(flee2,10,SHRT_MAX);
+
+	if(sc->getSCE(SC_WHISTLE))
+		flee2 += sc->getSCE(SC_WHISTLE)->val3;
+	if(sc->getSCE(SC__UNLUCKY))
+		flee2 -= flee2 * sc->getSCE(SC__UNLUCKY)->val2 / 100;
+	if (sc->getSCE(SC_HISS))
+		flee2 += sc->getSCE(SC_HISS)->val2*10;
+	if (sc->getSCE(SC_DORAM_FLEE2))
+		flee2 += sc->getSCE(SC_DORAM_FLEE2)->val1;
+
+	return (int16)cap_value(flee2,10,SHRT_MAX);
+}
+
+/**
+ * Adds defense (left-side) modifications based on status changes
+ * @param bl: Object to change def [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param def: Initial def
+ * @return modified def with cap_value(def,DEFTYPE_MIN,DEFTYPE_MAX)
+ */
+static defType status_calc_def(block_list *bl, status_change *sc, int32 def)
+{
+	if(sc == nullptr || sc->empty())
+		return (defType)cap_value(def,DEFTYPE_MIN,DEFTYPE_MAX);
+
+	if(sc->getSCE(SC_BERSERK))
+		return 0;
+#ifdef RENEWAL
+	if(sc->getSCE(SC_ETERNALCHAOS))
+		return 0;
+#endif
+	if(sc->getSCE(SC_KEEPING))
+		return 90;
+#ifndef RENEWAL /// Steel Body does not provide 90 DEF in [RENEWAL]
+	if(sc->getSCE(SC_STEELBODY))
+		return 90;
+#endif
+	if (sc->getSCE(SC_NYANGGRASS)) {
+		if (bl->type == BL_PC)
+			return 0;
+		else
+			return def /= 2;
+	}
+	if(sc->getSCE(SC_DEFSET))
+		return sc->getSCE(SC_DEFSET)->val1;
+
+	if(sc->getSCE(SC_DRUMBATTLE))
+		def += sc->getSCE(SC_DRUMBATTLE)->val3;
+#ifdef RENEWAL
+	if (sc->getSCE(SC_ASSUMPTIO))
+		def += sc->getSCE(SC_ASSUMPTIO)->val1 * 50;
+#endif
+	if (bl->type == BL_HOM && sc->getSCE(SC_DEFENCE))
+		def += sc->getSCE(SC_DEFENCE)->val2;
+	if(sc->getSCE(SC_INCDEFRATE))
+		def += def * sc->getSCE(SC_INCDEFRATE)->val1/100;
+	if(sc->getSCE(SC_EARTH_INSIGNIA) && sc->getSCE(SC_EARTH_INSIGNIA)->val1 == 2)
+		def += 50;
+	if(sc->getSCE(SC_ODINS_POWER))
+		def -= 20 * sc->getSCE(SC_ODINS_POWER)->val1;
+	if( sc->getSCE(SC_ANGRIFFS_MODUS) )
+		def -= 20 + 10 * sc->getSCE(SC_ANGRIFFS_MODUS)->val1;
+	if(sc->getSCE(SC_STONEHARDSKIN))
+		def += sc->getSCE(SC_STONEHARDSKIN)->val1;
+	if(sc->getSCE(SC_STONE))
+		def /= 2;
+	if(sc->getSCE(SC_FREEZE))
+		def /= 2;
+	if((sc->hasSCE(SC_POISON) || sc->hasSCE(SC_DPOISON)) && bl->type != BL_PC)
+		def = def * 75 / 100; //Should round down
+	if(sc->getSCE(SC_SIGNUMCRUCIS))
+		def -= def * sc->getSCE(SC_SIGNUMCRUCIS)->val2/100;
+	if(sc->getSCE(SC_CONCENTRATION))
+		def -= def * sc->getSCE(SC_CONCENTRATION)->val4/100;
+	if(sc->getSCE(SC_SKE))
+		def /= 2;
+	if(sc->getSCE(SC_PROVOKE) && bl->type != BL_PC) // Provoke doesn't alter player defense->
+		def -= def * sc->getSCE(SC_PROVOKE)->val3/100;
+	if(sc->getSCE(SC_STRIPSHIELD) && bl->type != BL_PC) // Player doesn't have def reduction only equip removed
+		def -= def * sc->getSCE(SC_STRIPSHIELD)->val2/100;
+	if (sc->getSCE(SC_FLING))
+		def -= def * (sc->getSCE(SC_FLING)->val2)/100;
+	if( sc->getSCE(SC_FREEZING) )
+		def -= def * (bl->type == BL_PC ? 30 : 10) / 100;
+	if( sc->getSCE(SC_ANALYZE) )
+		def -= def * (14 * sc->getSCE(SC_ANALYZE)->val1) / 100;
+	if( sc->getSCE(SC_NEUTRALBARRIER) )
+		def += def * sc->getSCE(SC_NEUTRALBARRIER)->val2 / 100;
+	if( sc->getSCE(SC_PRESTIGE) )
+		def += sc->getSCE(SC_PRESTIGE)->val3;
+	if( sc->getSCE(SC_BANDING) && sc->getSCE(SC_BANDING)->val2 > 1 )
+		def += 6 * sc->getSCE(SC_BANDING)->val1;
+	if( sc->getSCE(SC_ECHOSONG) )
+		def += sc->getSCE(SC_ECHOSONG)->val3;
+	if( sc->getSCE(SC_CAMOUFLAGE) )
+		def -= def * 5 * sc->getSCE(SC_CAMOUFLAGE)->val3 / 100;
+	if( sc->getSCE(SC_SOLID_SKIN_OPTION) )
+		def += def * sc->getSCE(SC_SOLID_SKIN_OPTION)->val2 / 100;
+	if( sc->getSCE(SC_ROCK_CRUSHER) )
+		def -= def * sc->getSCE(SC_ROCK_CRUSHER)->val2 / 100;
+	if( sc->getSCE(SC_POWER_OF_GAIA) )
+		def += def * sc->getSCE(SC_POWER_OF_GAIA)->val2 / 100;
+	if(sc->getSCE(SC_ASH))
+		def -= def * sc->getSCE(SC_ASH)->val3/100;
+	if( sc->getSCE(SC_OVERED_BOOST) && bl->type == BL_HOM )
+		def -= def * sc->getSCE(SC_OVERED_BOOST)->val4 / 100;
+	if (sc->getSCE(SC_SOULGOLEM))
+		def += sc->getSCE(SC_SOULGOLEM)->val2;
+	if (sc->getSCE(SC_STONE_WALL))
+		def += sc->getSCE(SC_STONE_WALL)->val2;
+	if (sc->getSCE(SC_D_MACHINE))
+		def += sc->getSCE(SC_D_MACHINE)->val2;
+	if (sc->getSCE(SC_CLIMAX_CRYIMP))
+		def += 300;
+	if (sc->getSCE(SC_GUARD_STANCE))
+		def += sc->getSCE(SC_GUARD_STANCE)->val2;
+	if (sc->getSCE(SC_ATTACK_STANCE))
+		def -= sc->getSCE(SC_ATTACK_STANCE)->val2;
+
+	return (defType)cap_value(def,DEFTYPE_MIN,DEFTYPE_MAX);
+}
+
+/**
+ * Adds defense (right-side) modifications based on status changes
+ * @param bl: Object to change def2 [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param def2: Initial def2
+ * @return modified def2 with cap_value(def2,SHRT_MIN,SHRT_MAX)
+ */
+static int16 status_calc_def2(block_list *bl, status_change *sc, int32 def2)
+{
+	if(sc == nullptr || sc->empty())
+#ifdef RENEWAL
+		return (int16)cap_value(def2,SHRT_MIN,SHRT_MAX);
+#else
+		return (int16)cap_value(def2,1,SHRT_MAX);
+#endif
+
+	if(sc->getSCE(SC_BERSERK))
+		return 0;
+	if(sc->getSCE(SC_ETERNALCHAOS))
+		return 0;
+	if(sc->getSCE(SC_DEFSET))
+		return sc->getSCE(SC_DEFSET)->val1;
+
+	if(sc->getSCE(SC_SUN_COMFORT))
+		def2 += sc->getSCE(SC_SUN_COMFORT)->val2;
+#ifdef RENEWAL
+	if (sc->getSCE(SC_SKA))
+		def2 += 80;
+#endif
+	if(sc->getSCE(SC_ANGELUS))
+#ifdef RENEWAL /// The VIT stat bonus is boosted by angelus [RENEWAL]
+		def2 += status_get_vit(bl) / 2 * sc->getSCE(SC_ANGELUS)->val2/100;
+#else
+		def2 += def2 * sc->getSCE(SC_ANGELUS)->val2/100;
+	if(sc->getSCE(SC_CONCENTRATION))
+		def2 -= def2 * sc->getSCE(SC_CONCENTRATION)->val4/100;
+#endif
+	if(sc->getSCE(SC_POISON) || sc->getSCE(SC_DPOISON))
+		def2 = def2 * 75 / 100; //Should round down
+	if(sc->getSCE(SC_SKE))
+		def2 -= def2 * 50/100;
+	if(sc->getSCE(SC_PROVOKE))
+		def2 -= def2 * sc->getSCE(SC_PROVOKE)->val3/100;
+	if(sc->getSCE(SC_JOINTBEAT))
+		def2 -= def2 * ( sc->getSCE(SC_JOINTBEAT)->val2&BREAK_SHOULDER ? 50 : 0 ) / 100
+			  + def2 * ( sc->getSCE(SC_JOINTBEAT)->val2&BREAK_WAIST ? 25 : 0 ) / 100;
+	if(sc->getSCE(SC_FLING))
+		def2 -= def2 * (sc->getSCE(SC_FLING)->val3)/100;
+	if(sc->getSCE(SC_ANALYZE))
+		def2 -= def2 * (14 * sc->getSCE(SC_ANALYZE)->val1) / 100;
+	if(sc->getSCE(SC_ASH))
+		def2 -= def2 * sc->getSCE(SC_ASH)->val3/100;
+	if (sc->getSCE(SC_PARALYSIS))
+		def2 -= def2 * sc->getSCE(SC_PARALYSIS)->val2 / 100;
+	if(sc->getSCE(SC_EQC))
+		def2 -= def2 * sc->getSCE(SC_EQC)->val2 / 100;
+	if( sc->getSCE(SC_CAMOUFLAGE) )
+		def2 -= def2 * 5 * sc->getSCE(SC_CAMOUFLAGE)->val3 / 100;
+
+#ifdef RENEWAL
+	return (int16)cap_value(def2,SHRT_MIN,SHRT_MAX);
+#else
+	return (int16)cap_value(def2,1,SHRT_MAX);
+#endif
+}
+
+/**
+ * Adds magic defense (left-side) modifications based on status changes
+ * @param bl: Object to change mdef [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param mdef: Initial mdef
+ * @return modified mdef with cap_value(mdef,DEFTYPE_MIN,DEFTYPE_MAX)
+ */
+static defType status_calc_mdef(block_list *bl, status_change *sc, int32 mdef)
+{
+	if(sc == nullptr || sc->empty())
+		return (defType)cap_value(mdef,DEFTYPE_MIN,DEFTYPE_MAX);
+
+	if(sc->getSCE(SC_BERSERK))
+		return 0;
+
+#ifndef RENEWAL /// Steel Body does not provide 90 MDEF in [RENEWAL]
+	if(sc->getSCE(SC_STEELBODY))
+		return 90;
+#endif
+	if (sc->getSCE(SC_NYANGGRASS)) {
+		if (bl->type == BL_PC)
+			return 0;
+		else
+			return mdef / 2;
+	}
+	if(sc->getSCE(SC_MDEFSET))
+		return sc->getSCE(SC_MDEFSET)->val1;
+
+	if(sc->getSCE(SC_EARTH_INSIGNIA) && sc->getSCE(SC_EARTH_INSIGNIA)->val1 == 3)
+		mdef += 50;
+	if(sc->getSCE(SC_ENDURE) && !sc->getSCE(SC_ENDURE)->val3) // It has been confirmed that Eddga card grants 1 MDEF, not 0, not 10, but 1.
+		mdef += (sc->getSCE(SC_ENDURE)->val4 == 0) ? sc->getSCE(SC_ENDURE)->val1 : 1;
+	if(sc->getSCE(SC_STONEHARDSKIN))
+		mdef += sc->getSCE(SC_STONEHARDSKIN)->val1;
+	if(sc->getSCE(SC_STONE))
+		mdef += 25 * mdef / 100;
+	if(sc->getSCE(SC_FREEZE))
+		mdef += 25 * mdef / 100;
+	if(sc->getSCE(SC_BURNING))
+		mdef -= 25 * mdef / 100;
+	if( sc->getSCE(SC_NEUTRALBARRIER) )
+		mdef += mdef * sc->getSCE(SC_NEUTRALBARRIER)->val2 / 100;
+	if(sc->getSCE(SC_ANALYZE))
+		mdef -= mdef * ( 14 * sc->getSCE(SC_ANALYZE)->val1 ) / 100;
+	if(sc->getSCE(SC_SYMPHONYOFLOVER))
+		mdef += mdef * sc->getSCE(SC_SYMPHONYOFLOVER)->val3 / 100;
+	if (sc->getSCE(SC_ODINS_POWER))
+		mdef -= 20 * sc->getSCE(SC_ODINS_POWER)->val1;
+	if (sc->getSCE(SC_SOULGOLEM))
+		mdef += sc->getSCE(SC_SOULGOLEM)->val3;
+	if (sc->getSCE(SC_STONE_WALL))
+		mdef += sc->getSCE(SC_STONE_WALL)->val3;
+	if (sc->getSCE(SC_CLIMAX_CRYIMP))
+		mdef += 100;
+
+	return (defType)cap_value(mdef,DEFTYPE_MIN,DEFTYPE_MAX);
+}
+
+/**
+ * Adds magic defense (right-side) modifications based on status changes
+ * @param bl: Object to change mdef2 [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param mdef2: Initial mdef2
+ * @return modified mdef2 with cap_value(mdef2,SHRT_MIN,SHRT_MAX)
+ */
+static int16 status_calc_mdef2(block_list *bl, status_change *sc, int32 mdef2)
+{
+	if(sc == nullptr || sc->empty())
+#ifdef RENEWAL
+		return (int16)cap_value(mdef2,SHRT_MIN,SHRT_MAX);
+#else
+		return (int16)cap_value(mdef2,1,SHRT_MAX);
+#endif
+
+	if(sc->getSCE(SC_BERSERK))
+		return 0;
+	if(sc->getSCE(SC_SKA))
+		return 90;
+	if(sc->getSCE(SC_MDEFSET))
+		return sc->getSCE(SC_MDEFSET)->val1;
+
+	if(sc->getSCE(SC_MINDBREAKER))
+		mdef2 -= mdef2 * sc->getSCE(SC_MINDBREAKER)->val3/100;
+	if(sc->getSCE(SC_BURNING))
+		mdef2 -= mdef2 * 25 / 100;

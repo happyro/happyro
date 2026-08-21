@@ -1,0 +1,206 @@
+	if(stor->u.items_guild[index].nameid == 0)
+		return;
+
+	if(amount < 1 || amount > stor->u.items_guild[index].amount)
+		return;
+
+	if((flag = pc_cart_additem(sd,&stor->u.items_guild[index],amount,LOG_TYPE_GSTORAGE)) == 0)
+		storage_guild_delitem(sd,stor,index,amount);
+	else {
+		clif_storageitemremoved( *sd, index, 0 );
+		if (flag == ADDITEM_INVALID)
+			clif_cart_additem_ack( *sd, ADDITEM_TO_CART_FAIL_WEIGHT );
+		else
+			clif_cart_additem_ack( *sd, ADDITEM_TO_CART_FAIL_COUNT );
+	}
+}
+
+/**
+ * Request to save guild storage
+ * @param account_id : account requesting the save
+ * @param guild_id : guild to take the guild_storage
+ * @param flag : 1=char quitting, close the storage
+ * @return False : fail (no storage), True : success (requested)
+ */
+bool storage_guild_storagesave(uint32 account_id, int32 guild_id, int32 flag)
+{
+	struct s_storage *stor = guild2storage2(guild_id);
+
+	if (stor) {
+		if (flag&CSAVE_QUIT) //Char quitting, close it.
+			stor->status = false;
+
+		if (stor->dirty)
+			intif_send_guild_storage(account_id,stor);
+
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * ACK save of guild storage
+ * @param guild_id : guild to use the storage
+ */
+void storage_guild_storagesaved(int32 guild_id)
+{
+	struct s_storage *stor;
+
+	if ((stor = guild2storage2(guild_id)) != nullptr) {
+		if (stor->dirty && !stor->status) // Storage has been correctly saved.
+			stor->dirty = false;
+	}
+}
+
+/**
+ * Close storage for player then save it
+ * @param sd : player
+ */
+void storage_guild_storageclose(map_session_data* sd)
+{
+	struct s_storage *stor;
+
+	nullpo_retv(sd);
+	nullpo_retv(stor = guild2storage2(sd->status.guild_id));
+
+	clif_storageclose( *sd );
+	if (stor->status) {
+		if (save_settings&CHARSAVE_STORAGE)
+			chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART); //This one also saves the storage. [Skotlex]
+		else
+			storage_guild_storagesave(sd->status.account_id, sd->status.guild_id,0);
+
+		stor->status = false;
+	}
+
+	sd->state.storage_flag = 0;
+}
+
+/**
+ * Close storage for player then save it
+ * @param sd
+ * @param flag
+ */
+void storage_guild_storage_quit(map_session_data* sd, int32 flag)
+{
+	struct s_storage *stor;
+
+	nullpo_retv(sd);
+	nullpo_retv(stor = guild2storage2(sd->status.guild_id));
+
+	if (flag) {	//Only during a guild break flag is 1 (don't save storage)
+		clif_storageclose( *sd );
+
+		if (save_settings&CHARSAVE_STORAGE)
+			chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART);
+
+		sd->state.storage_flag = 0;
+		stor->status = false;
+		return;
+	}
+
+	if (stor->status) {
+		if (save_settings&CHARSAVE_STORAGE)
+			chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART);
+		else
+			storage_guild_storagesave(sd->status.account_id,sd->status.guild_id,1);
+	}
+
+	sd->state.storage_flag = 0;
+	stor->status = false;
+}
+
+/**
+ * Open premium storage
+ * @param sd Player
+ **/
+void storage_premiumStorage_open(map_session_data *sd) {
+	nullpo_retv(sd);
+
+	sd->state.storage_flag = 3;
+	storage_sortitem(sd->premiumStorage.u.items_storage, ARRAYLENGTH(sd->premiumStorage.u.items_storage));
+	clif_storagelist(sd, sd->premiumStorage.u.items_storage, ARRAYLENGTH(sd->premiumStorage.u.items_storage), storage_getName(sd->premiumStorage.stor_id));
+	clif_updatestorageamount(*sd, sd->premiumStorage.amount, sd->premiumStorage.max_amount);
+}
+
+/**
+ * Request to open premium storage
+ * @param sd Player who request
+ * @param num Storage number
+ * @param mode Storage mode @see enum e_storage_mode
+ * @return 1:Success to request, 0:Failed
+ * @author [Cydh]
+ **/
+bool storage_premiumStorage_load(map_session_data *sd, uint8 num, uint8 mode) {
+	nullpo_ret(sd);
+
+	if (sd->state.storage_flag)
+		return 0;
+
+	if (sd->state.vending || sd->state.buyingstore || sd->state.prevend || sd->state.autotrade)
+		return 0;
+
+	if (sd->state.banking || sd->state.callshop)
+		return 0;
+
+	if (!pc_can_give_items(sd)) { // check is this GM level is allowed to put items to storage
+		clif_displaymessage( sd->fd, msg_txt( sd, 246 ) ); // Your GM level doesn't authorize you to perform this action.
+		return 0;
+	}
+
+	if (sd->premiumStorage.stor_id != num)
+		return intif_storage_request(sd, TABLE_STORAGE, num, mode);
+	else {
+		sd->premiumStorage.state.put = (mode&STOR_MODE_PUT) ? 1 : 0;
+		sd->premiumStorage.state.get = (mode&STOR_MODE_GET) ? 1 : 0;
+		storage_premiumStorage_open(sd);
+	}
+	return 1;
+}
+
+/**
+ * Request to save premium storage
+ * @param sd Player who has the storage
+ * @author [Cydh]
+ **/
+void storage_premiumStorage_save(map_session_data *sd) {
+	nullpo_retv(sd);
+
+	intif_storage_save(sd, &sd->premiumStorage);
+}
+
+/**
+ * Request to close premium storage
+ * @param sd Player who has the storage
+ * @author [Cydh]
+ **/
+void storage_premiumStorage_close(map_session_data *sd) {
+	nullpo_retv(sd);
+
+	if (sd->premiumStorage.dirty) {
+		if (save_settings&CHARSAVE_STORAGE)
+			chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART);
+		else
+			storage_premiumStorage_save(sd);	
+	}
+
+	if( sd->state.storage_flag == 3 ){
+		sd->state.storage_flag = 0;
+		clif_storageclose( *sd );
+	}
+}
+
+/**
+ * Force save the premium storage
+ * @param sd Player who has the storage
+ * @author [Cydh]
+ **/
+void storage_premiumStorage_quit(map_session_data *sd) {
+	nullpo_retv(sd);
+
+	if (save_settings&CHARSAVE_STORAGE)
+		chrif_save(sd, CSAVE_INVENTORY|CSAVE_CART);
+	else
+		storage_premiumStorage_save(sd);
+}

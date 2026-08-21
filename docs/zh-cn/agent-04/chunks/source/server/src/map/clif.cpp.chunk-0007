@@ -1,0 +1,500 @@
+
+	p->count = i->amount;
+	p->WearState = id->equip;
+
+#if PACKETVER >= 5
+	clif_addcards( &p->slot, i );
+#endif
+
+#if PACKETVER >= 20080102
+	p->HireExpireDate = i->expire_time;
+#endif
+
+#if PACKETVER >= 20120925
+	p->Flag.IsIdentified = i->identify ? 1 : 0;
+	p->Flag.PlaceETCTab  = ( i->favorite != 0 ) ? 1 : 0;
+	p->Flag.SpareBits    = 0;
+#endif
+}
+
+static void clif_inventoryStart( const map_session_data* sd, e_inventory_type type, const char *name ){
+#if PACKETVER_RE_NUM >= 20180829 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	nullpo_retv(sd);
+	nullpo_retv(name);
+
+	char buf[sizeof(PACKET_ZC_INVENTORY_START) + 24];
+	memset(buf, 0, sizeof(buf));
+	PACKET_ZC_INVENTORY_START *p = (PACKET_ZC_INVENTORY_START *)buf;
+	p->packetType = HEADER_ZC_INVENTORY_START;
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	p->invType = type;
+#endif
+#if PACKETVER_RE_NUM >= 20180919 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	int32 strLen = (int32)safestrnlen(name, 24) + 1;
+	if (strLen > 24)
+		strLen = 24;
+	const int32 len = sizeof(PACKET_ZC_INVENTORY_START) + strLen;
+	p->packetLength = len;
+	safestrncpy(p->name, name, strLen);
+#else
+	const int32 len = sizeof(PACKET_ZC_INVENTORY_START);
+	safestrncpy(p->name, name, NAME_LENGTH);
+#endif
+	clif_send( p, len, sd, SELF );
+#endif
+}
+
+static void clif_inventoryEnd( map_session_data *sd, e_inventory_type type ){
+#if PACKETVER_RE_NUM >= 20180829 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	nullpo_retv(sd);
+
+	PACKET_ZC_INVENTORY_END p = {};
+	p.packetType = HEADER_ZC_INVENTORY_END;
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	p.invType = type;
+#endif
+	p.flag = 0;
+	clif_send( &p, sizeof(p), sd, SELF );
+#endif
+}
+
+//Unified inventory function which sends all of the inventory (requires two packets, one for equipable items and one for stackable ones. [Skotlex]
+void clif_inventorylist( map_session_data *sd ){
+	nullpo_retv( sd );
+
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	e_inventory_type type = INVTYPE_INVENTORY;
+
+	clif_inventoryStart( sd, type, "" );
+#endif
+	static struct packet_itemlist_normal itemlist_normal;
+	static struct packet_itemlist_equip itemlist_equip;
+	int32 equip = 0;
+	int32 normal = 0;
+
+	storage_sortitem( sd->storage.u.items_inventory, ARRAYLENGTH( sd->storage.u.items_inventory ) );
+
+	for( int32 i = 0; i < MAX_INVENTORY; i++ ){
+		if( sd->inventory.u.items_inventory[i].nameid == 0 || sd->inventory_data[i] == nullptr ){
+			continue;
+		}
+
+		// Non-stackable (Equippable)
+		if( !itemdb_isstackable2( sd->inventory_data[i] ) ){
+			clif_item_equip( client_index( i ), &itemlist_equip.list[equip++], &sd->inventory.u.items_inventory[i], sd->inventory_data[i], pc_equippoint( sd, i ) );
+
+			if( equip == MAX_INVENTORY_ITEM_PACKET_EQUIP ){
+				itemlist_equip.PacketType  = inventorylistequipType;
+				itemlist_equip.PacketLength = static_cast<decltype(itemlist_equip.PacketLength)>( ( sizeof( itemlist_equip ) - sizeof( itemlist_equip.list ) ) + ( sizeof( struct EQUIPITEM_INFO ) * equip ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+				itemlist_equip.invType = type;
+#endif
+
+				clif_send( &itemlist_equip, itemlist_equip.PacketLength, sd, SELF );
+
+				equip = 0;
+			}
+		// Stackable (Normal)
+		}else{
+			clif_item_normal( client_index( i ), &itemlist_normal.list[normal++], &sd->inventory.u.items_inventory[i], sd->inventory_data[i] );
+
+			if( normal == MAX_INVENTORY_ITEM_PACKET_NORMAL ){
+				itemlist_normal.PacketType = inventorylistnormalType;
+				itemlist_normal.PacketLength = static_cast<decltype(itemlist_normal.PacketLength)>( ( sizeof( itemlist_normal ) - sizeof( itemlist_normal.list ) ) + ( sizeof( struct NORMALITEM_INFO ) * normal ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+				itemlist_normal.invType = type;
+#endif
+
+				clif_send( &itemlist_normal, itemlist_normal.PacketLength, sd, SELF );
+
+				normal = 0;
+			}
+		}
+	}
+
+	if( normal ){
+		itemlist_normal.PacketType = inventorylistnormalType;
+		itemlist_normal.PacketLength = static_cast<decltype(itemlist_normal.PacketLength)>( ( sizeof( itemlist_normal ) - sizeof( itemlist_normal.list ) ) + ( sizeof( struct NORMALITEM_INFO ) * normal ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+		itemlist_normal.invType = type;
+#endif
+
+		clif_send( &itemlist_normal, itemlist_normal.PacketLength, sd, SELF );
+	}
+
+	if( sd->equip_index[EQI_AMMO] >= 0 )
+		clif_arrowequip( *sd );
+
+	if( equip ) {
+		itemlist_equip.PacketType  = inventorylistequipType;
+		itemlist_equip.PacketLength = static_cast<decltype(itemlist_equip.PacketLength)>( ( sizeof( itemlist_equip ) - sizeof( itemlist_equip.list ) ) + ( sizeof( struct EQUIPITEM_INFO ) * equip ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+		itemlist_equip.invType = type;
+#endif
+
+		clif_send( &itemlist_equip, itemlist_equip.PacketLength, sd, SELF );
+	}
+
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	clif_inventoryEnd( sd, type );
+#endif
+/* on 20120925 onwards this is a field on clif_item_equip/normal */
+#if PACKETVER >= 20111122 && PACKETVER < 20120925
+	for( int32 i = 0; i < MAX_INVENTORY; i++ ){
+		if( sd->inventory.u.items_inventory[i].nameid == 0 || sd->inventory_data[i] == nullptr )
+			continue;
+
+		if ( sd->inventory.u.items_inventory[i].favorite != 0 )
+			clif_favorite_item( *sd, i );
+	}
+#endif
+}
+
+//Required when items break/get-repaired. Only sends equippable item list.
+void clif_equiplist( map_session_data *sd ){
+	// TODO: implement again => only send equip part
+	clif_inventorylist( sd );
+}
+
+void clif_storagelist( map_session_data* sd, const struct item* items, int32 items_length, const char *storename ){
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	e_inventory_type type = INVTYPE_STORAGE;
+
+	clif_inventoryStart( sd, type, storename );
+#endif
+	static struct ZC_STORE_ITEMLIST_NORMAL storage_itemlist_normal;
+	static struct ZC_STORE_ITEMLIST_EQUIP storage_itemlist_equip;
+	int32 equip = 0;
+	int32 normal = 0;
+
+	for( int32 i = 0; i < items_length; i++ ){
+		if( items[i].nameid == 0 ){
+			continue;
+		}
+
+		struct item_data* id = itemdb_search( items[i].nameid );
+
+		// Non-stackable (Equippable)
+		if( !itemdb_isstackable2( id ) ){
+			clif_item_equip( client_storage_index( i ), &storage_itemlist_equip.list[equip++], &items[i], id, pc_equippoint_sub( sd, id ) );
+
+			if( equip == MAX_STORAGE_ITEM_PACKET_EQUIP ){
+				storage_itemlist_equip.PacketType  = storageListEquipType;
+				storage_itemlist_equip.PacketLength = static_cast<decltype(storage_itemlist_equip.PacketLength)>( ( sizeof( storage_itemlist_equip ) - sizeof( storage_itemlist_equip.list ) ) + ( sizeof( struct EQUIPITEM_INFO ) * equip ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+				storage_itemlist_equip.invType = type;
+#elif PACKETVER >= 20120925
+				safestrncpy( storage_itemlist_equip.name, storename, NAME_LENGTH );
+#endif
+
+				clif_send( &storage_itemlist_equip, storage_itemlist_equip.PacketLength, sd, SELF );
+
+				equip = 0;
+			}
+		// Stackable (Normal)
+		}else{
+			clif_item_normal( client_storage_index( i ), &storage_itemlist_normal.list[normal++], &items[i], id );
+
+			if( normal == MAX_STORAGE_ITEM_PACKET_NORMAL ){
+				storage_itemlist_normal.PacketType = storageListNormalType;
+				storage_itemlist_normal.PacketLength = static_cast<decltype(storage_itemlist_normal.PacketLength)>( ( sizeof( storage_itemlist_normal ) - sizeof( storage_itemlist_normal.list ) ) + ( sizeof( struct NORMALITEM_INFO ) * normal ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+				storage_itemlist_normal.invType = type;
+#elif PACKETVER >= 20120925
+				safestrncpy( storage_itemlist_normal.name, storename, NAME_LENGTH );
+#endif
+
+				clif_send( &storage_itemlist_normal, storage_itemlist_normal.PacketLength, sd, SELF );
+
+				normal = 0;
+			}
+		}
+	}
+
+	if( normal ){
+		storage_itemlist_normal.PacketType = storageListNormalType;
+		storage_itemlist_normal.PacketLength = static_cast<decltype(storage_itemlist_normal.PacketLength)>( ( sizeof( storage_itemlist_normal ) - sizeof( storage_itemlist_normal.list ) ) + ( sizeof( struct NORMALITEM_INFO ) * normal ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+		storage_itemlist_normal.invType = type;
+#elif PACKETVER >= 20120925
+		safestrncpy( storage_itemlist_normal.name, storename, NAME_LENGTH );
+#endif
+
+		clif_send( &storage_itemlist_normal, storage_itemlist_normal.PacketLength, sd, SELF );
+	}
+
+	if( equip ) {
+		storage_itemlist_equip.PacketType  = storageListEquipType;
+		storage_itemlist_equip.PacketLength = static_cast<decltype(storage_itemlist_equip.PacketLength)>( ( sizeof( storage_itemlist_equip ) - sizeof( storage_itemlist_equip.list ) ) + ( sizeof( struct EQUIPITEM_INFO ) * equip ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+		storage_itemlist_equip.invType = type;
+#elif PACKETVER >= 20120925
+		safestrncpy( storage_itemlist_equip.name, storename, NAME_LENGTH );
+#endif
+
+		clif_send( &storage_itemlist_equip, storage_itemlist_equip.PacketLength, sd, SELF );
+	}
+
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	clif_inventoryEnd( sd, type );
+#endif
+}
+
+void clif_cartlist( map_session_data *sd ){
+	nullpo_retv( sd );
+
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	e_inventory_type type = INVTYPE_CART;
+
+	clif_inventoryStart( sd, type, "" );
+#endif
+	static struct packet_itemlist_normal itemlist_normal;
+	static struct packet_itemlist_equip itemlist_equip;
+	int32 normal = 0;
+	int32 equip = 0;
+
+	storage_sortitem( sd->storage.u.items_cart, ARRAYLENGTH( sd->storage.u.items_cart ) );
+
+	for( int32 i = 0; i < MAX_CART; i++ ){
+		if( sd->cart.u.items_cart[i].nameid == 0 ){
+			continue;
+		}
+
+		struct item_data* id = itemdb_search( sd->cart.u.items_cart[i].nameid );
+
+		// Non-stackable (Equippable)
+		if( !itemdb_isstackable2(id) ){
+			clif_item_equip( client_index( i ), &itemlist_equip.list[equip++], &sd->cart.u.items_cart[i], id, id->equip );
+		 // Stackable (Normal)
+		}else{
+			clif_item_normal( client_index( i ), &itemlist_normal.list[normal++], &sd->cart.u.items_cart[i], id );
+		}
+	}
+
+	if( normal ){
+		itemlist_normal.PacketType = cartlistnormalType;
+		itemlist_normal.PacketLength = static_cast<decltype(itemlist_normal.PacketLength)>( ( sizeof( itemlist_normal ) - sizeof( itemlist_normal.list ) ) + ( sizeof( struct NORMALITEM_INFO ) * normal ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+		itemlist_normal.invType = type;
+#endif
+
+		clif_send( &itemlist_normal, itemlist_normal.PacketLength, sd, SELF );
+	}
+
+	if( equip ){
+		itemlist_equip.PacketType = cartlistequipType;
+		itemlist_equip.PacketLength = static_cast<decltype(itemlist_equip.PacketLength)>( ( sizeof( itemlist_equip ) - sizeof( itemlist_equip.list ) ) + ( sizeof( struct EQUIPITEM_INFO ) * equip ) );
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+		itemlist_equip.invType = type;
+#endif
+
+		clif_send( &itemlist_equip, itemlist_equip.PacketLength, sd, SELF );
+	}
+
+#if PACKETVER_RE_NUM >= 20180912 || PACKETVER_ZERO_NUM >= 20180919 || PACKETVER_MAIN_NUM >= 20181002
+	clif_inventoryEnd( sd, type );
+#endif
+}
+
+
+/// Removes cart.
+/// 012b (ZC_CARTOFF)
+/// Client behaviour:
+/// Closes the cart storage and removes all it's items from memory.
+/// The Num & Weight values of the cart are left untouched and the cart is NOT removed.
+void clif_clearcart(int32 fd)
+{
+	PACKET_ZC_CARTOFF packet{};
+
+	packet.packetType = HEADER_ZC_CARTOFF;
+
+	socket_send<PACKET_ZC_CARTOFF>(fd, packet);
+}
+
+
+/// Sends XY location to all other guild members
+/// 01eb <account id>.L <x>.W <y>.W (ZC_NOTIFY_POSITION_TO_GUILDM)
+void clif_guild_xy( const map_session_data& sd ){
+	PACKET_ZC_NOTIFY_POSITION_TO_GUILDM packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_POSITION_TO_GUILDM;
+	packet.aid = sd.status.account_id;
+	packet.xPos = sd.x;
+	packet.yPos = sd.y;
+
+	clif_send(&packet, sizeof(packet), &sd, GUILD_SAMEMAP_WOS);
+}
+
+/// Sends XY location to a specific guild member
+/// 01eb <account id>.L <x>.W <y>.W (ZC_NOTIFY_POSITION_TO_GUILDM)
+void clif_guild_xy_single( const map_session_data& sd, const map_session_data& tsd ){
+	if( sd.bg_id ){
+		return;
+	}
+
+	PACKET_ZC_NOTIFY_POSITION_TO_GUILDM packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_POSITION_TO_GUILDM;
+	packet.aid = sd.status.account_id;
+	packet.xPos = sd.x;
+	packet.yPos = sd.y;
+
+	clif_send( &packet, sizeof( packet ), &tsd, SELF );
+}
+
+/// Removes XY location from all other guild members
+/// 01eb <account id>.L <x>.W <y>.W (ZC_NOTIFY_POSITION_TO_GUILDM)
+void clif_guild_xy_remove( const map_session_data& sd ){
+	PACKET_ZC_NOTIFY_POSITION_TO_GUILDM packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_POSITION_TO_GUILDM;
+	packet.aid = sd.status.account_id;
+	packet.xPos = -1;
+	packet.yPos = -1;
+
+	clif_send( &packet, sizeof( packet ), &sd, GUILD_SAMEMAP_WOS );
+}
+
+/*==========================================
+ * Load castle list for guild UI. [Asheraf] / [Balfear]
+ *------------------------------------------*/
+void clif_guild_castle_list( const map_session_data& sd ){
+#if PACKETVER_MAIN_NUM >= 20190731 || PACKETVER_RE_NUM >= 20190717 || PACKETVER_ZERO_NUM >= 20190814
+	auto &g = sd.guild;
+
+	if (g == nullptr)
+		return;
+
+	int32 castle_count = guild_checkcastles(g->guild);
+
+	if( castle_count <= 0 ){
+		return;
+	}
+
+	PACKET_ZC_GUILD_AGIT_INFO* p = reinterpret_cast<PACKET_ZC_GUILD_AGIT_INFO*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_GUILD_AGIT_INFO;
+	p->packetLength = sizeof( *p );
+
+	int32 i = 0;
+	for (const auto& gc : castle_db) {
+		if (gc.second->guild_id == g->guild.guild_id && gc.second->client_id) {
+			p->castle_list[i] = static_cast<int8>( gc.second->client_id );
+
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->castle_list[0] ) );
+			++i;
+		}
+	}
+
+	clif_send(p, p->packetLength, &sd, SELF);
+#endif
+}
+
+/*==========================================
+ * Send castle info Economy/Defence. [Asheraf] / [Balfear]
+ *------------------------------------------*/
+void clif_guild_castleinfo(map_session_data& sd, std::shared_ptr<guild_castle> castle ){
+#if PACKETVER_MAIN_NUM >= 20190731 || PACKETVER_RE_NUM >= 20190717 || PACKETVER_ZERO_NUM >= 20190814
+	if( castle->client_id == 0 ){
+		return;
+	}
+
+	PACKET_ZC_REQ_ACK_AGIT_INVESTMENT p = {};
+
+	p.packetType = HEADER_ZC_REQ_ACK_AGIT_INVESTMENT;
+	p.castle_id = static_cast<int8>( castle->client_id );
+	p.economy = castle->economy;
+	p.defense = castle->defense;
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#endif
+}
+
+/*==========================================
+ * Show teleport request result. [Asheraf] / [Balfear]
+ *------------------------------------------*/
+void clif_guild_castle_teleport_res( const map_session_data& sd, enum e_siege_teleport_result result ){
+#if PACKETVER_MAIN_NUM >= 20190731 || PACKETVER_RE_NUM >= 20190717 || PACKETVER_ZERO_NUM >= 20190814
+	PACKET_ZC_REQ_ACK_MOVE_GUILD_AGIT p = {};
+
+	p.packetType = HEADER_ZC_REQ_ACK_MOVE_GUILD_AGIT;
+	p.result = static_cast<int16>( result );
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#endif
+}
+
+/*==========================================
+ * Request castle info. [Asheraf] / [Balfear]
+ *------------------------------------------*/
+void clif_parse_guild_castle_info_request(int32 fd, map_session_data* sd){
+#if PACKETVER_MAIN_NUM >= 20190522 || PACKETVER_RE_NUM >= 20190522 || PACKETVER_ZERO_NUM >= 20190515
+	if( sd == nullptr ){
+		return;
+	}
+
+	auto &g = sd->guild;
+
+	if (g == nullptr)
+		return;
+
+	const PACKET_CZ_REQ_AGIT_INVESTMENT* p = reinterpret_cast<PACKET_CZ_REQ_AGIT_INVESTMENT*>( RFIFOP( fd, 0 ) );
+
+	std::shared_ptr<guild_castle> gc = castle_db.find_by_clientid( p->castle_id );
+
+	if (gc == nullptr)
+		return;
+	if (gc->guild_id != g->guild.guild_id)
+		return;
+
+	clif_guild_castleinfo(*sd, gc);
+#endif
+}
+
+/*==========================================
+ * Teleport to castle. [Asheraf] / [Balfear]
+ *------------------------------------------*/
+void clif_parse_guild_castle_teleport_request(int32 fd, map_session_data* sd){
+#if PACKETVER_MAIN_NUM >= 20190522 || PACKETVER_RE_NUM >= 20190522 || PACKETVER_ZERO_NUM >= 20190515
+	const PACKET_CZ_REQ_MOVE_GUILD_AGIT* p = reinterpret_cast<PACKET_CZ_REQ_MOVE_GUILD_AGIT*>RFIFOP( fd, 0 );
+	auto &g = sd->guild;
+
+	if (g == nullptr)
+		return;
+
+	std::shared_ptr<guild_castle> gc = castle_db.find_by_clientid( p->castle_id );
+
+	if (gc == nullptr)
+		return;
+	if (!gc->warp_enabled)
+		return;
+	if (gc->guild_id != g->guild.guild_id)
+		return;
+
+	if (map_getmapflag(sd->m, MF_GVG_CASTLE) 
+		|| map_getmapflag(sd->m, MF_NOTELEPORT)
+		|| map_getmapflag(sd->m, MF_NOWARP))
+		return;
+
+	uint32 zeny = gc->zeny;
+
+	switch( gc->type ){
+		case WOE_FIRST_EDITION:
+			if( agit_flag ){
+				zeny = gc->zeny_siege;
+			}
+			break;
+		case WOE_SECOND_EDITION:
+			if( agit2_flag ){
+				zeny = gc->zeny_siege;
+			}
+			break;
+		case WOE_THIRD_EDITION:
+			if( agit3_flag ){
+				zeny = gc->zeny_siege;
+			}
+			break;
+	}
+
+	if (zeny && pc_payzeny(sd, zeny, LOG_TYPE_OTHER)) {
+		clif_guild_castle_teleport_res(*sd, SIEGE_TP_NOT_ENOUGH_ZENY);

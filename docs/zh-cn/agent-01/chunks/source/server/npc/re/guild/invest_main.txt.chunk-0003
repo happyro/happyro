@@ -1,0 +1,500 @@
+		else if (compare(strnpcinfo(2),"gef"))
+			warp "gld_dun04"+((.@i == 2)?"_2":""),39,258;
+		else if (compare(strnpcinfo(2),"pay"))
+			warp "gld_dun01"+((.@i == 2)?"_2":""),186,165;
+		else if (compare(strnpcinfo(2),"prt"))
+			warp "gld_dun03"+((.@i == 2)?"_2":""),164,268;
+		end;
+	} else if (.@status == 2) {
+		mes .@n$;
+		mes "The "+.@realm$+" Agit Dungeon 2F is now available but since it is not connected with the Abyss Gate,";
+		mes "the Agit dungeon is only accessible to the Agit guild.";
+		close;
+	} else {
+		mes .@n$;
+		mes .@realm$+" was not chosen to be connected with a gate this time.";
+		mes "Please wait for the next investment duration.";
+		close;
+	}
+	end;
+}
+
+-	script	Investment Status Board	-1,{
+	set .@invest_status, callfunc("F_Invest_Status");
+	if (.@invest_status == 1) {
+		if (compare(strnpcinfo(4),"alde")) {
+			set .@npc$,"alde";
+			set .@realm$,"Luina";
+		} else if (compare(strnpcinfo(4),"gef")) {
+			set .@npc$,"gef";
+			set .@realm$,"Britoniah";
+		} else if (compare(strnpcinfo(4),"pay")) {
+			set .@npc$,"pay";
+			set .@realm$,"Greenwood Lake";
+		} else if (compare(strnpcinfo(4),"prt")) {
+			set .@npc$,"prt";
+			set .@realm$,"Valkyrie Realm";
+		}
+		set .@notice, $agit_result_notice;
+		if (.@notice < 1 || .@notice > 12) {
+			mes "There are currently no investment sums available.";
+			close;
+		}
+		mes callfunc("F_GetNumSuffix",.@notice)+" total (unit in 10,000z)";
+		for(set .@i,1; .@i<=5; set .@i,.@i+1) {
+			set .@map$, .@npc$+"g_cas0"+.@i;
+			set .@fund[.@i], getd("$@vfund_"+.@npc$+"0"+.@i);
+			mes getcastlename(.@map$)+" "+getguildname(getcastledata(.@map$,CD_GUILD_ID))+" Guild: "+.@fund[.@i];
+		}
+		set .@fund[0], getd("$@vfund_"+.@npc$+"_extra");
+		mes .@realm$+" normal: "+.@fund[0];
+		mes .@realm$+" Investment Grand Total: "+(.@fund[0]+.@fund[1]+.@fund[2]+.@fund[3]+.@fund[4]+.@fund[5]);
+		close;
+	} else if (.@invest_status == 2) {
+		mes "!- Notice -!";
+		mes "No sums are available because the total investment amount is currently being calculated.";
+		mes "Please wait for the announcement of the results.";
+		close;
+	} else if (.@invest_status == 3) {
+		setarray .@invest_result[0], $prt_invest_result,$pay_invest_result,$gef_invest_result,$alde_invest_result;
+		setarray .@invest_region$[0],  "Valkyrie Realm",  "Greenwood Lake",       "Britoniah",            "Luina";
+		mes "!- Investment Results of All Agit Regions -!";
+		for(set .@i,0; .@i<4; set .@i,.@i+1) {
+			if (.@invest_result[.@i] == 1)
+				mes "^aaaaaa["+.@invest_region$[.@i]+"] below minimum^000000";
+			else if (.@invest_result[.@i] == 2) {
+				mes "["+.@invest_region$[.@i]+"] minimum achieved";
+				mes "-> Guild Dungeon Deepest Layer (2F) available";
+			} else if (.@invest_result[.@i] == 3) {
+				mes "^4d4dff["+.@invest_region$[.@i]+"] maximum achieved^000000";
+				mes "-> Abyss Gate available";
+			} else
+				mes "No data for ["+.@invest_region$[.@i]+"].";
+		}
+		close;
+	} else {
+		mes "!- Notice -!";
+		mes "No investment information will be announced now.";
+		close;
+	}
+}
+
+// Inside Castles - Gate Managers
+//============================================================
+-	script	Gate Manager#castle	-1,{
+
+	set .@id, atoi(charat(strnpcinfo(2),getstrlen(strnpcinfo(2))-1));
+	if (compare(strnpcinfo(2),"alde")) {
+		set .@npc$,"alde";
+		set .@realm$,"Luina";
+	} else if (compare(strnpcinfo(2),"gef")) {
+		set .@npc$,"gef";
+		set .@realm$,"Britoniah";
+	} else if (compare(strnpcinfo(2),"pay")) {
+		set .@npc$,"pay";
+		set .@realm$,"Greenwood Lake";
+	} else if (compare(strnpcinfo(2),"prt")) {
+		set .@npc$,"prt";
+		set .@realm$,"Valkyrie Realm";
+	}
+
+	set .@GID, getcastledata(strnpcinfo(4),CD_GUILD_ID);
+	if (getcharid(2) != .@GID) {
+		mes "[Gate Manager]";
+		mes "You don't seem to be the member of guild owning this castle.";
+		mes "If you need any help, please visit any of our guild members at "+.@realm$+" Square.";
+		close;
+	}
+	mes "[Gate Manager]";
+	mes "Hello, I am the Gate Manager from Cat Paw Merchant Guild warp department.";
+	mes "How may I help you today?";
+	next;
+	switch(select("Invest for gate connection:Deepest Layer Dungeon Access:Abyss Gate Access:Cancel")) {
+	case 1:
+		if (checkweight(1201,1) == 0 || MaxWeight - Weight < 1000) {
+			mes "[Gate Manager]";
+			mes "You have too many items to receive the Thank You Ticket as a small gift for your investment.";
+			mes "Please come back after making room in your inventory.";
+			close;
+		}
+		if (countitem(6488) >= 4800) {
+			mes "[Gate Manager]";
+			mes "You have too many Thank You Tickets to receive any more.";
+			mes "Cannot give you any more tickets. Please use your ticket and come back.";
+			mes "The ticket can be exchanged with various items in Malangdo.";
+			close;
+		}
+		if (callfunc("F_Invest_Status") != 1) {
+			mes "[Gate Manager]";
+			mes "We do not receive investments now.";
+			mes "Please come back during the investment duration.";
+			close;
+		}
+		if (getcharid(2) != .@GID) {
+			mes "[Gate Manager]";
+			mes "You don't seem to be the member of the guild owning this castle.";
+			mes "Please use the normal investment from "+.@realm$+" Square.";
+			close;
+		}
+		mes "[Gate Manager]";
+		mes "Proceed investing under your guild name.";
+		callfunc "F_Invest_Abyss","$fund_"+.@npc$+"0"+.@id,"[Gate Manager]";
+		end;
+	case 2:
+		callsub L_Enter,1,.@realm$,.@npc$;
+		mes "[Gate Manager]";
+		mes "You are interested in exploring the "+.@realm$+" Guild Dungeon Deepest Layer (2F).";
+		mes "Let me guide you. Good luck.";
+		close2;
+		if (compare(strnpcinfo(2),"alde")) {
+			switch(.@id) {
+				case 1: warp "gld_dun02_2",32,122; end;
+				case 2: warp "gld_dun02_2",79,30; end;
+				case 3: warp "gld_dun02_2",165,38; end;
+				case 4: warp "gld_dun02_2",160,148; end;
+				case 5: warp "gld_dun02_2",103,169; end;
+			}
+		} else if (compare(strnpcinfo(2),"gef")) {
+			switch(.@id) {
+				case 1: warp "gld_dun04_2",39,258; end;
+				case 2: warp "gld_dun04_2",125,270; end;
+				case 3: warp "gld_dun04_2",268,251; end;
+				case 4: warp "gld_dun04_2",268,108; end;
+				case 5: warp "gld_dun04_2",230,35; end;
+			}
+		} else if (compare(strnpcinfo(2),"pay")) {
+			switch(.@id) {
+				case 1: warp "gld_dun01_2",186,165; end;
+				case 2: warp "gld_dun01_2",54,165; end;
+				case 3: warp "gld_dun01_2",54,39; end;
+				case 4: warp "gld_dun01_2",186,39; end;
+				case 5: warp "gld_dun01_2",223,202; end;
+			}
+		} else if (compare(strnpcinfo(2),"prt")) {
+			switch(.@id) {
+				case 1: warp "gld_dun03_2",28,251; end;
+				case 2: warp "gld_dun03_2",164,268; end;
+				case 3: warp "gld_dun03_2",164,179; end;
+				case 4: warp "gld_dun03_2",268,203; end;
+				case 5: warp "gld_dun03_2",199,28; end;
+			}
+		}
+		end;
+	case 3:
+		callsub L_Enter,2,.@realm$,.@npc$;
+		mes "[Gate Manager]";
+		mes "Let me guide you to the Abyss Gap connected with "+.@realm$+", the Abyss Gate 'Way of the Warrior'.";
+		close2;
+		if (compare(strnpcinfo(2),"alde")) {
+			switch(.@id) {
+				case 1: warp "gld2_ald",175,41; end;
+				case 2: warp "gld2_ald",77,64; end;
+				case 3: warp "gld2_ald",46,127; end;
+				case 4: warp "gld2_ald",104,246; end;
+				case 5: warp "gld2_ald",241,156; end;
+			}
+		} else if (compare(strnpcinfo(2),"gef")) {
+			switch(.@id) {
+				case 1: warp "gld2_gef",28,199; end;
+				case 2: warp "gld2_gef",217,46; end;
+				case 3: warp "gld2_gef",171,195; end;
+				case 4: warp "gld2_gef",30,67; end;
+				case 5: warp "gld2_gef",115,40; end;
+			}
+		} else if (compare(strnpcinfo(2),"pay")) {
+			switch(.@id) {
+				case 1: warp "gld2_pay",33,112; end;
+				case 2: warp "gld2_pay",119,27; end;
+				case 3: warp "gld2_pay",205,111; end;
+				case 4: warp "gld2_pay",175,221; end;
+				case 5: warp "gld2_pay",61,221; end;
+			}
+		} else if (compare(strnpcinfo(2),"prt")) {
+			switch(.@id) {
+				case 1: warp "gld2_prt",10,27; end;
+				case 2: warp "gld2_prt",14,247; end;
+				case 3: warp "gld2_prt",259,236; end;
+				case 4: warp "gld2_prt",226,25; end;
+				case 5: warp "gld2_prt",97,11; end;
+			}
+		}
+		end;
+	case 4:
+		mes "[Gate Manager]";
+		mes "Canceled.";
+		close;
+	}
+	end;
+
+L_Enter:
+	set .@invest_status, callfunc("F_Invest_Status");
+	if (.@invest_status == 3) {
+		set .@status, getd("$"+getarg(2)+"_invest_result");
+		if ((getarg(0) == 1 && .@status == 2) || .@status == 3)
+			return;
+		else {
+			mes "[Gate Manager]";
+			mes getarg(1)+" was not chosen to be connected with a gate this time.";
+			mes "Please wait for the next investment duration.";
+			close;
+		}
+	} else if (.@invest_status < 3) {
+		mes "[Gate Manager]";
+		mes "There are currently no connected dungeon gates.";
+		mes "A gate will be connected as soon as the investment results are available.";
+		mes "Please wait.";
+		close;
+	} else {
+		mes "[Gate Manager]";
+		mes "The gate will disappear soon.";
+		mes "The dungeon is no longer accessible.";
+		mes "Please try again next time.";
+		close;
+	}
+}
+
+// Item Investments :: tooja_namis
+//============================================================
+malangdo,218,126,4	script	Cat Paw Merchants Notice	857,{
+	mes "<< Cat Paw Merchants Notice >>";
+	mes "'^C379CEInvest Unused Items for Prizes!^000000'";
+	next;
+	switch(select("Read Notice:Check Event 1:Check Event 2")) {
+	case 1:
+		mes "- Notice -";
+		mes "Hello all Cat Paw Merchants customers! With your love, we Cat Paw Merchants are growing every day. All executives and staff members promise to do our best to further our frontier and development.";
+		next;
+		mes "- Event Notice! -";
+		mes " An Event called '^C379CEInvest Unused Items for Prizes!^000000' is under way, where you could exchange unused items in your storage for Investment Certificate of the Cat Paw Merchants.";
+		next;
+		mes "Exchangeable items will be announced on a separate sheet. Thank you for your time.";
+		mes "- From all the employees of Cat Paw Merchants -";
+		next;
+		mes "There is a small warning at the bottom.";
+		mes " ";
+		mes "^FF0000This event could be changed or repealed due to the Merchants' situation.^000000";
+		close;
+	case 2:
+		mes "'^C379CEInvest Unused Items for Prizes!^000000'";
+		mes "There are details of Event 1.";
+		next;
+		setarray .@event1$[0],
+			"Wings of the Insect Queen","Crown of the Fly King","I hear Dragon Scales are tough 01","The Meaning of the Mother's Nightmare",
+			"To refine ore","Hekekek Orcs, Orcs!!","Study of Yin-Yang","Secrets of the Pyramid King","Tick-tock the time goes",
+			"Planting trees on Mellow Island","Ancient language research","Weapons made of sharp teeth","Toy boss doll 01",
+			"A tiger is just a cat after all","The shattered spear and shield?","Toy boss doll 02","Best in summer! Cold scales",
+			"Piece of Thanatos' armor","I hear Dragon Scales are tough 02","The identity of the creepy eye","If only I could see!";
+		set .@menu$, "Quit:"+implode(.@event1$[0],":");
+		while(1) {
+			set .@i, select(.@menu$)-1;
+			switch(.@i) {
+				case 0: close;
+				case 1: set .@str$,"2 Pieces of Queen's Wing"; break;
+				case 2: set .@str$,"2 Broken Crowns"; break;
+				case 3: set .@str$,"2 Fire Dragon Scales"; break;
+				case 4: set .@str$,"3 Mother's Nightmares"; break;
+				case 5: set .@str$,"5 Gemstones"; break;
+				case 6: set .@str$,"5 Heroic Emblems"; break;
+				case 7: set .@str$,"3 Taeguk Plates"; break;
+				case 8: set .@str$,"3 Broken Pharaoh Symbols and 3 Tutankhamen's Masks"; break;
+				case 9: set .@str$,"2 Pocket Watches"; break;
+				case 10: set .@str$,"3 Young Twigs"; break;
+				case 11: set .@str$,"5 Rossata Pieces"; break;
+				case 12: set .@str$,"5 Fangs of Garm"; break;
+				case 13: set .@str$,"3 Baphomet Dolls"; break;
+				case 14: set .@str$,"1 Tiger's Footskin and 5 Tiger Skins"; break;
+				case 15: set .@str$,"3 Broken Shield Pieces and 3 Shining Spear Blades"; break;
+				case 16: set .@str$,"3 Osiris Dolls"; break;
+				case 17: set .@str$,"1 Ice Scale"; break;
+				case 18: set .@str$,"1 Skeletal Armor Piece"; break;
+				case 19: set .@str$,"1 Darkred Scale Piece"; break;
+				case 20: set .@str$,"2 Wills of Red Darkness"; break;
+				case 21: set .@str$,"2 Foolishness of the Blind"; break;
+			}
+			mes "["+.@event1$[.@i-1]+"]";
+			mes .@str$+" for one Cat Paw Merchants Investment Certificate.";
+			next;
+		}
+	case 3:
+		mes "Look out for the next '^C379CEInvest Unused Items for Prizes!^000000' Event 2!! Coming up real soon!";
+		close;
+	}
+}
+
+malangdo,218,123,1	script	Namis#invest	545,4,4,{
+	if (checkweight(1201,1) == 0 || MaxWeight - Weight < 1000) {
+		mes "- Currently you're carrying -";
+		mes "- too many items with you. -";
+		mes "- Please try again after you -";
+		mes "- lose some weight. -";
+		close;
+	}
+	emotion ET_HUK;
+	emotion ET_FRET;
+	emotion ET_ANGER;
+	mes "[Namis]";
+	mes "Purr-Purr-Purrr-Purrrr-Pur~ Meow!!";
+	mes "Wh-- What? How rude. You scared me.";
+	next;
+	switch(select("What do you need? I'll invest!:What's the purpose of this event?:Were you asleep?")) {
+	case 1:
+		break;
+	case 2:
+		mes "[Namis]";
+		mes "So, another pushover in contract with the Cat Paw Merchants?";
+		next;
+		select("Huh? What! You calling me a pushover?");
+		mes "[Namis]";
+		mes "I'll say this just once, so you listen good!";
+		mes "We, the Cat Paw Merchants have planned an event for loyal workers like yourself.";
+		next;
+		mes "[Namis]";
+		mes "Run along to your storage and bring back rotting antiques to us and we'll exchange them for the oh-so valuable 'Cat Paw Merchants Investment Certificate'.";
+		next;
+		mes "[Namis]";
+		mes "It will be wise for you to do so because the Cat Paw Merchants are doing this at a loss!";
+		next;
+		mes "[Namis]";
+		mes "Details are on the notice.";
+		close;
+	case 3:
+		mes "[Namis]";
+		mes "Hick- Slurp-";
+		mes "Remember, human! There's no other cat who works as hard as I do.";
+		close;
+	}
+	mes "[Namis]";
+	mes "You must be here to participate in the '^C379CEInvest Unused Items for Prizes!^000000' event of the Cat Paw Merchants.";
+	next;
+	mes "[Namis]";
+	mes "So, which event do you wish to participate in?";
+	next;
+	switch(select("Not interested:Event 1 Items:Event 2 Items")) {
+	case 1:
+		mes "[Namis]";
+		mes "Don't you mess with a busy cat!";
+		close;
+	case 2:
+		mes "[Namis]";
+		mes "So you're in for Event 1.";
+		mes "Choose from the shown list.";
+		next;
+		setarray .@event1$[0],
+			"Wings of the Insect Queen","Crown of the Fly King","I hear Dragon Scales are tough 01","The Meaning of the Mother's Nightmare",
+			"To refine ore","Hekekek Orcs, Orcs!!","Study of Yin-Yang","Secrets of the Pyramid King","Tick-tock the time goes",
+			"Planting trees on Mellow Island","Ancient language research","Weapons made of sharp teeth","Toy boss doll 01",
+			"A tiger is just a cat after all","The shattered spear and shield?","Toy boss doll 02","Best in summer! Cold scales",
+			"Piece of Thanatos' armor","I hear Dragon Scales are tough 02","The identity of the creepy eye","If only I could see!";
+		set .@i, select(implode(.@event1$[0],":"))-1;
+		switch(.@i+1) {
+			case 1: callsub L_Check,"2 Pieces of Queen's Wing",6326,2,"Wings of the Insect Queen? What a pitiful name. I would've given some cool names!",.@event1$[.@i];
+			case 2: callsub L_Check,"2 Broken Crowns",7754,2,"For crying out loud! Those cats working on these events must be playing around. Can't they think of a better name?",.@event1$[.@i];
+			case 3: callsub L_Check,"2 Fire Dragon Scales",7451,2,"Dragon scales? Well... I guess they are tough. But what are they going to use them for?",.@event1$[.@i];
+			case 4: callsub L_Check,"3 Mother's Nightmares",7020,3,"Even though I don't have the authority to find out, I wonder what they're doing with the collected items?",.@event1$[.@i];
+			case 5: callsub L_Check,"5 Gemstones",7300,5,"Something useful for a change. The ore will end up as nice pieces of jewelry.",.@event1$[.@i];
+			case 6: callsub L_Check,"5 Heroic Emblems",968,5,"Good, good. This is the kind of name I wanted!",.@event1$[.@i];
+			case 7: callsub L_Check,"3 Taeguk Plates",7169,3,"Taking in something like this, maybe they're up to something dangerous.",.@event1$[.@i];
+			case 8: callsub L_Check,"3 Broken Pharaoh Symbols and 3 Tutankhamen's Masks",7113,3,"I hear the pyramids are in Morocc, but I've never been there. Some humans call it Morco.",.@event1$[.@i],7114,3;
+			case 9: callsub L_Check,"2 Pocket Watches",7513,2,"Those lazy merchants, why do they need pocket watches they don't even use?",.@event1$[.@i];
+			case 10: callsub L_Check,"3 Young Twigs",7018,3,"Mellow Island has a climate like with where we cats used to live. But the trees die out sometimes due to it being an island.",.@event1$[.@i];
+			case 11: callsub L_Check,"5 Rossata Pieces",7211,5,"I guess they collect these because humans have them, but what's the use of researching ancient languages?",.@event1$[.@i];
+			case 12: callsub L_Check,"5 Fangs of Garm",7036,5,"Weak humans need sharp weapons, but cats already have nice and sharp claws, so why are we collecting these!!",.@event1$[.@i];
+			case 13: callsub L_Check,"3 Baphomet Dolls",750,3,"Baphomet dolls are great for playing around with.",.@event1$[.@i];
+			case 14: callsub L_Check,"1 Tiger's Footskin and 5 Tiger Skins",1030,1,"Did you know that tigers are cats too? Therefore, cats are better than tigers.",.@event1$[.@i],1029,5;
+			case 15: callsub L_Check,"3 Broken Shield Pieces and 3 Shining Spear Blades",7108,3,"I don't know what they want with these.",.@event1$[.@i],7109,3;
+			case 16: callsub L_Check,"3 Osiris Dolls",751,3,"Shame~ I never got to play with an Osiris doll.",.@event1$[.@i];
+			case 17: callsub L_Check,"1 Ice Scale",7562,1,"Mellow Island is a fabulous place to live. But the ships are too hot.",.@event1$[.@i];
+			case 18: callsub L_Check,"1 Skeletal Armor Piece",7450,1,"Ewww... Why would they collect something so creepy?",.@event1$[.@i];
+			case 19: callsub L_Check,"1 Darkred Scale Piece",6091,1,"Dragon scales? Well... I guess they are tough. But what are they going to use them for?",.@event1$[.@i];
+			case 20: callsub L_Check,"2 Wills of Red Darkness",7566,2,"Interesting! Does it scream or something when I poke it in the eye?",.@event1$[.@i];
+			case 21: callsub L_Check,"2 Foolishness of the Blind",7021,2,"This blind man is foolish in not knowing that gathering 300 cats cures blindness...",.@event1$[.@i];
+		}
+	case 3:
+		mes "[Namis]";
+		mes "Participate in Event 2?";
+		mes "It is not yet in motion. Wait for it!";
+		close;
+	}
+	end;
+L_Check:
+	set .@args, getargcount();
+	if (.@args > 5) {
+		if (countitem(getarg(5)) < getarg(6))
+			set .@items,1; //incomplete
+		else
+			set .@items,2; //complete
+	}
+	if (countitem(getarg(1)) < getarg(2) || .@items == 1) {
+		mes "[Namis]";
+		mes "You don't have the items?";
+		mes getarg(0)+" exchange for one Cat Paw Merchants Investment Certificate.";
+		next;
+		mes "[Namis]";
+		mes "Don't bother me and look up the details on the board over there!";
+		close;
+	}
+	mes "[Namis]";
+	mes "'^8E5601"+getarg(4)+" Event^000000'";
+	mes "Seems to be the right items.";
+	mes getarg(3);
+	mes "Oh! Almost forgot. Will you invest?";
+	next;
+	if(select("Invest:Don't Invest") == 2) {
+		mes "[Namis]";
+		mes "Don't you mess with a busy cat!";
+		close;
+	}
+	delitem getarg(1),getarg(2);
+	if (.@items == 2)
+		delitem getarg(5),getarg(6);
+	getitem 6489,1; //Cats_Invest_Certif
+	mes "[Namis]";
+	mes "Here's your Certificate. Always be grateful to the Merchants for these events!";
+	close;
+OnTouch:
+	if (rand(2))
+		emotion ET_SLEEPY;
+	else
+		specialeffect EF_SLEEPATTACK;
+	end;
+}
+
+// Investment Rewards :: tooja_japanki
+//============================================================
+malangdo,215,119,4	script	Thanks Ticket Machine	564,{
+	if (MaxWeight - Weight < 4500 || checkweight(1201,1) == 0) {
+		mes "- Currently you're carrying -";
+		mes "- too many items with you. -";
+		mes "- Please try again after you -";
+		mes "- lose some weight. -";
+		close;
+	}
+	mes "[Vending Machine Notice]";
+	mes "^6815EA1. Don't kick the machine please. @_@";
+	mes "2. You can only insert Invest Thanks Ticket.";
+	mes "3. About the Jelly Box, if you open it, it gives you a random item.";
+	mes "4. Hope you enjoy~^000000";
+	mes "- Mr. Cat, the Machine Owner -";
+	next;
+	switch(select("Finish:Purchase:Red Paw Jelly Bag (5 Tickets):Black Paw Jelly Bag (50 Tickets)")) {
+	case 1:
+		close;
+	case 2:
+		mes "The Vending Machine is selling items in the following list.";
+		next;
+		switch(select("Finish:1 Siege Arrow Quiver A (2 Tickets):1 Siege Arrow Quiver S (2 Tickets):30 White Potion (12 Tickets):30 White Slim Potion (14 Tickets):10 Dark Water (20 Tickets):20 Siege_Violet_Potion (30 Tickets):10 Coldproof Potion (30 Tickets):10 Thunderproof Potion (30 Tickets):10 Earthproof Potion (30 Tickets):10 Fireproof Potion (30 Tickets):10 Elemental Converter[Fire] (30 Tickets):10 Elemental Converter[Water] (30 Tickets):10 Elemental Converter[Wind] (30 Tickets):10 Elemental Converter[Earth] (30 Tickets)")) {
+			case 1: close;
+			case 2: callsub L_Purchase,2,12678,1; //Siege_Arrow_Quiver_A
+			case 3: callsub L_Purchase,2,12677,1; //Siege_Arrow_Quiver_S
+			case 4: callsub L_Purchase,12,504,30; //White_Potion
+			case 5: callsub L_Purchase,14,547,30; //White_Slim_Potion
+			case 6: callsub L_Purchase,20,12020,10; //Water_Of_Darkness
+			case 7: callsub L_Purchase,30,11547,20; //Woe_Violet_Potion
+			case 8: callsub L_Purchase,30,12119,10; //Resist_Water
+			case 9: callsub L_Purchase,30,12121,10; //Resist_Wind
+			case 10: callsub L_Purchase,30,12120,10; //Resist_Earth
+			case 11: callsub L_Purchase,30,12118,10; //Resist_Fire
+			case 12: callsub L_Purchase,30,12114,10,"Elemental Converter[Fire]"; //Elemental_Fire
+			case 13: callsub L_Purchase,30,12115,10,"Elemental Converter[Water]"; //Elemental_Water
+			case 14: callsub L_Purchase,30,12117,10,"Elemental Converter[Wind]"; //Elemental_Wind
+			case 15: callsub L_Purchase,30,12116,10,"Elemental Converter[Earth]"; //Elemental_Earth

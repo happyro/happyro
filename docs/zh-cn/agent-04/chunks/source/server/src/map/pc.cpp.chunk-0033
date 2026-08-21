@@ -1,0 +1,169 @@
+	}
+
+	// Compress the data into the destination
+	unsigned long com_size = sizeof(cd->image_data);
+
+	encode_zip(cd->image_data, &com_size, bmp_data, CAPTCHA_BMP_SIZE);
+	cd->image_size = static_cast<int16>(com_size);
+
+	return true;
+}
+
+const std::string CaptchaDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/captcha_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the captcha_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 CaptchaDatabase::parseBodyNode(const ryml::NodeRef &node) {
+	uint16 index;
+
+	if (!this->asUInt16(node, "Id", index))
+		return 0;
+
+	std::shared_ptr<s_captcha_data> cd = captcha_db.find(index);
+	bool exists = cd != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Filename", "Answer" }))
+			return 0;
+
+		cd = std::make_shared<s_captcha_data>();
+		cd->index = index;
+	}
+
+	if (this->nodeExists(node, "Filename")) {
+		std::string filename;
+
+		if (!this->asString(node, "Filename", filename))
+			return 0;
+
+		if (!pc_macro_read_captcha_db_loadbmp(filename, cd)) {
+			this->invalidWarning(node["Filename"], "Failed to parse BMP image, skipping...\n");
+			return 0;
+		}
+	}
+
+	if (this->nodeExists(node, "Answer")) {
+		std::string answer;
+
+		if (!this->asString(node, "Answer", answer))
+			return 0;
+
+		if (answer.length() < CAPTCHA_ANSWER_SIZE_MIN || answer.length() > CAPTCHA_ANSWER_SIZE_MAX) {
+			this->invalidWarning(node["Answer"], "The captcha answer must be between 4~%d characters, skipping...\n", CAPTCHA_ANSWER_SIZE_MAX);
+			return 0;
+		}
+
+		safestrncpy(cd->captcha_answer, answer.c_str(), sizeof(cd->captcha_answer));
+	}
+
+	if (this->nodeExists(node, "Bonus")) {
+		if( node["Bonus"].val_is_null() ){
+			if( cd->bonus_script ){
+				script_free_code( cd->bonus_script );
+			}
+
+			cd->bonus_script = nullptr;
+		}else{
+			std::string script;
+
+			if (!this->asString(node, "Bonus", script)) {
+				return 0;
+			}
+
+			if (cd->bonus_script) {
+				script_free_code(cd->bonus_script);
+				cd->bonus_script = nullptr;
+			}
+
+			cd->bonus_script = parse_script(script.c_str(), this->getCurrentFile().c_str(), this->getLineNumber(node["Bonus"]), SCRIPT_IGNORE_EXTERNAL_BRACKETS);
+		}
+	} else {
+		if (!exists)
+			cd->bonus_script = parse_script("specialeffect2 EF_BLESSING; sc_start SC_BLESSING,600000,10; specialeffect2 EF_INCAGILITY; sc_start SC_INCREASEAGI,600000,10;", "macro_script", 0, SCRIPT_IGNORE_EXTERNAL_BRACKETS);
+	}
+
+	if (!exists)
+		captcha_db.put(index, cd);
+
+	return 1;
+}
+
+/*==========================================
+ * pc Init/Terminate
+ *------------------------------------------*/
+void do_final_pc(void) {
+	db_destroy(itemcd_db);
+	do_final_pc_groups();
+
+	ers_destroy(pc_sc_display_ers);
+	ers_destroy(num_reg_ers);
+	ers_destroy(str_reg_ers);
+
+	attendance_db.clear();
+	reputation_db.clear();
+#ifdef MAP_GENERATOR
+	reputationgroup_db.clear();
+#endif
+	penalty_db.clear();
+	captcha_db.clear();
+}
+
+void do_init_pc(void) {
+
+	itemcd_db = idb_alloc(DB_OPT_RELEASE_DATA);
+
+	pc_readdb();
+	pc_read_motd(); // Read MOTD [Valaris]
+	attendance_db.load();
+	reputation_db.load();
+#ifdef MAP_GENERATOR
+	reputationgroup_db.load();
+#endif
+	captcha_db.load();
+
+	add_timer_func_list(pc_invincible_timer, "pc_invincible_timer");
+	add_timer_func_list(pc_eventtimer, "pc_eventtimer");
+	add_timer_func_list(pc_inventory_rental_end, "pc_inventory_rental_end");
+	add_timer_func_list(pc_calc_pvprank_timer, "pc_calc_pvprank_timer");
+	add_timer_func_list(pc_autosave, "pc_autosave");
+	add_timer_func_list(pc_spiritball_timer, "pc_spiritball_timer");
+	add_timer_func_list(pc_follow_timer, "pc_follow_timer");
+	add_timer_func_list(pc_endautobonus, "pc_endautobonus");
+	add_timer_func_list(pc_spiritcharm_timer, "pc_spiritcharm_timer");
+	add_timer_func_list(pc_global_expiration_timer, "pc_global_expiration_timer");
+	add_timer_func_list(pc_expiration_timer, "pc_expiration_timer");
+	add_timer_func_list(pc_autotrade_timer, "pc_autotrade_timer");
+	add_timer_func_list(pc_on_expire_active, "pc_on_expire_active");
+	add_timer_func_list(pc_macro_detector_timeout, "pc_macro_detector_timeout");
+
+	add_timer(gettick() + autosave_interval, pc_autosave, 0, 0);
+
+	// 0=day, 1=night [Yor]
+	night_flag = battle_config.night_at_start ? 1 : 0;
+
+	if (battle_config.day_duration > 0 && battle_config.night_duration > 0) {
+		int32 day_duration = battle_config.day_duration;
+		int32 night_duration = battle_config.night_duration;
+		// add night/day timer [Yor]
+		add_timer_func_list(map_day_timer, "map_day_timer");
+		add_timer_func_list(map_night_timer, "map_night_timer");
+
+		day_timer_tid   = add_timer_interval(gettick() + (night_flag ? 0 : day_duration) + night_duration, map_day_timer,   0, 0, day_duration + night_duration);
+		night_timer_tid = add_timer_interval(gettick() + day_duration + (night_flag ? night_duration : 0), map_night_timer, 0, 0, day_duration + night_duration);
+	}
+
+	do_init_pc_groups();
+
+	pc_sc_display_ers = ers_new(sizeof(struct sc_display_entry), "pc.cpp:pc_sc_display_ers", ERS_OPT_FLEX_CHUNK);
+	num_reg_ers = ers_new(sizeof(struct script_reg_num), "pc.cpp:num_reg_ers", (ERSOptions)(ERS_OPT_CLEAN|ERS_OPT_FLEX_CHUNK));
+	str_reg_ers = ers_new(sizeof(struct script_reg_str), "pc.cpp:str_reg_ers", (ERSOptions)(ERS_OPT_CLEAN|ERS_OPT_FLEX_CHUNK));
+
+	ers_chunk_size(pc_sc_display_ers, 150);
+	ers_chunk_size(num_reg_ers, 300);
+	ers_chunk_size(str_reg_ers, 50);
+}

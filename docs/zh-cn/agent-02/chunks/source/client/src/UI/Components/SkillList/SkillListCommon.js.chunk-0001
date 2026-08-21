@@ -1,0 +1,500 @@
+/**
+ * UI/Components/SkillList/SkillListCommon.js
+ *
+ * Shared factory for all SkillList versions (SkillList, SkillListV2) and the
+ * Homunculus/Mercenary SkillListMH windows.
+ *
+ * Chararacter Skill Window
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import DB from 'DB/DBManager.js';
+import SkillInfo from 'DB/Skills/SkillInfo.js';
+import SkillTreeView from 'DB/Skills/SkillTreeView.js';
+import Session from 'Engine/SessionStorage.js';
+import Client from 'Core/Client.js';
+import Preferences from 'Core/Preferences.js';
+import Renderer from 'Renderer/Renderer.js';
+import Mouse from 'Controls/MouseEventHandler.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import SkillTargetSelection from 'UI/Components/SkillTargetSelection/SkillTargetSelection.js';
+import SkillDescription from 'UI/Components/SkillDescription/SkillDescription.js';
+
+function _escapeHTML(text) {
+	const div = document.createElement('div');
+	div.textContent = text;
+	return div.innerHTML;
+}
+
+function _isNumeric(val) {
+	return !isNaN(parseFloat(val)) && isFinite(val);
+}
+
+export function createSkillList({
+	name,
+	htmlText,
+	cssText,
+	hasTabs = false,
+	needSkillListKey = '_NeedSkillList',
+	showDescOnMiniHover = false,
+	touchDrag = false,
+	incrementalRemember = false,
+	guardMissingJob = false,
+	readdSkillOnUpdate = false,
+	listOnly = false,
+	dragFrom = null,
+	titlebarText = null,
+	containerSelector = null,
+	preferenceDefaults = {
+		x: 100,
+		y: 200,
+		width: 8,
+		height: 8,
+		show: false,
+		mini: true,
+		skillInfo: false
+	}
+}) {
+	const Component = new GUIComponent(name, cssText);
+	Component.render = () => htmlText;
+
+	const _dragFrom = dragFrom ?? name;
+	const _containerSelector = containerSelector ?? `#${name}`;
+
+	const _preferences = Preferences.get(name, preferenceDefaults, 1.0);
+
+	const _list = [];
+	let _btnIncSkill;
+	let _points = 0;
+	let totalCounter = 0;
+	let _btnLevelUp;
+	let _lArrow, _rArrow;
+	let skillPosition = [];
+	const skillDependencyTree = [];
+	let rememberChoice = [];
+	const hasSkills = [];
+	let _justDragged = false;
+
+	const _touchDrag = {
+		timer: null,
+		dragging: false,
+		ghost: null,
+		startX: 0,
+		startY: 0
+	};
+
+	Component.init = function init() {
+		const root = this.getRoot();
+
+		if (titlebarText) {
+			const titleEl = root.querySelector('.titlebar .text');
+			if (titleEl) {
+				titleEl.textContent = titlebarText;
+			}
+		}
+
+		root.querySelector('.titlebar .base')?.addEventListener('mousedown', e => {
+			e.stopImmediatePropagation();
+		});
+		root.querySelector('.footer .extend')?.addEventListener('mousedown', e => {
+			onResize(e, this);
+		});
+		root.querySelector('.titlebar .close')?.addEventListener('click', () => {
+			this.ui.hide();
+		});
+		root.querySelector('.titlebar .mini')?.addEventListener('click', () => {
+			onMini(this);
+		});
+		root.querySelector('.view_skill_info')?.addEventListener('change', function () {
+			_preferences.skillInfo = !!this.checked;
+			_preferences.save();
+		});
+		if (!listOnly) {
+			root.querySelector('.reset')?.addEventListener('click', () => {
+				onResetChoice(this);
+			});
+			root.querySelector('.apply')?.addEventListener('click', () => {
+				onApplyChoice(this);
+			});
+		}
+
+		const levelupBtn = root.querySelector('.btn.levelup');
+		if (levelupBtn) {
+			_btnIncSkill = levelupBtn.cloneNode(true);
+			levelupBtn.remove();
+			_btnIncSkill.addEventListener('click', function () {
+				const index = this.parentNode.parentNode.getAttribute('data-index');
+				Component.onIncreaseSkill(parseInt(index, 10));
+			});
+		}
+
+		const lvlupBtn = root.querySelector('#lvlup_job');
+		if (lvlupBtn) {
+			_btnLevelUp = lvlupBtn;
+			if (!listOnly) {
+				_btnLevelUp.style.zIndex = '51';
+				_btnLevelUp.style.position = 'absolute';
+				_btnLevelUp.style.right = '0px';
+				_btnLevelUp.style.bottom = '0px';
+				_btnLevelUp.style.width = '43px';
+				_btnLevelUp.style.height = '43px';
+				_btnLevelUp.style.border = 'none';
+				_btnLevelUp.style.backgroundColor = 'transparent';
+				_btnLevelUp.style.backgroundRepeat = 'no-repeat';
+			}
+			_btnLevelUp.remove();
+			_btnLevelUp.addEventListener('click', () => {
+				if (_btnLevelUp.parentNode) {
+					_btnLevelUp.remove();
+				}
+				Component.ui.show();
+			});
+			_btnLevelUp.addEventListener('mousedown', e => {
+				e.stopImmediatePropagation();
+			});
+		}
+
+		const container = root.querySelector(_containerSelector) || root;
+
+		container.addEventListener('dblclick', e => {
+			const target = e.target.closest('.skill .icon, .skill .name');
+			if (target) {
+				let main = target.parentElement;
+				if (!main.classList.contains('skill')) {
+					main = main.parentElement;
+				}
+				Component.useSkillID(parseInt(main.getAttribute('data-index'), 10));
+			}
+		});
+
+		container.addEventListener('contextmenu', e => {
+			const target = e.target.closest('.skill .icon, .skill .name');
+			if (target) {
+				const skillID = _resolveSkillID(target);
+				if (SkillDescription.uid === skillID) {
+					SkillDescription.remove();
+					return;
+				}
+				SkillDescription.append();
+				SkillDescription.setSkill(skillID);
+			}
+		});
+
+		container.addEventListener('mousedown', e => {
+			const target = e.target.closest('.selectable');
+			if (target) {
+				let main = target.parentElement;
+				if (!main.classList.contains('skill')) {
+					main = main.parentElement;
+				}
+				for (const el of root.querySelectorAll('.skill')) {
+					el.classList.remove('selected');
+				}
+				main.classList.add('selected');
+			}
+		});
+
+		if (!listOnly) {
+			container.addEventListener('mouseover', e => {
+				const target = e.target.closest('.skillCol .skill .icon, .skill .name');
+				if (target) {
+					if (_preferences.skillInfo || (showDescOnMiniHover && _preferences.mini)) {
+						const skillID = _resolveSkillID(target);
+						if (SkillDescription.uid !== skillID) {
+							SkillDescription.append();
+							SkillDescription.setSkill(skillID);
+						}
+					}
+					onNecessarySkills(target, root);
+				}
+			});
+
+			container.addEventListener('mouseout', e => {
+				const target = e.target.closest('.skillCol .skill .icon, .skill .name');
+				if (target) {
+					if (_preferences.skillInfo || (showDescOnMiniHover && _preferences.mini)) {
+						SkillDescription.remove();
+					}
+					root.querySelectorAll('.needleSkill').forEach(el => el.classList.remove('needleSkill'));
+					root.querySelectorAll('.counterSkill').forEach(el => el.remove());
+				}
+			});
+
+			container.addEventListener('click', e => {
+				const target = e.target.closest('.skillCol .skill .icon, .skill .name');
+				if (target) {
+					onRememberChoice(target, root);
+				}
+			});
+		}
+
+		container.addEventListener('dragstart', e => {
+			const skillEl = e.target.closest('.skill');
+			if (!skillEl) {
+				return;
+			}
+			const index = parseInt(skillEl.getAttribute('data-index'), 10);
+			const skill = getSkillById(index);
+
+			if (!skill || !skill.level || !skill.type) {
+				e.stopImmediatePropagation();
+				e.preventDefault();
+				return;
+			}
+
+			const img = new Image();
+			img.decoding = 'async';
+			img.src = skillEl.querySelector('.icon img')?.src || '';
+
+			e.dataTransfer.setDragImage(img, 12, 12);
+			e.dataTransfer.setData(
+				'Text',
+				JSON.stringify(
+					(window._OBJ_DRAG_ = {
+						type: 'skill',
+						from: _dragFrom,
+						data: skill
+					})
+				)
+			);
+		});
+
+		container.addEventListener('dragend', () => {
+			delete window._OBJ_DRAG_;
+			_justDragged = true;
+			setTimeout(() => {
+				_justDragged = false;
+			}, 0);
+		});
+
+		if (touchDrag) {
+			container.addEventListener('touchstart', e => {
+				const iconTarget = e.target.closest('.skill .icon');
+				if (iconTarget) {
+					onSkillTouchStart(e, iconTarget);
+				}
+			});
+
+			container.addEventListener('touchmove', e => {
+				const iconTarget = e.target.closest('.skill .icon');
+				if (iconTarget) {
+					onSkillTouchMove(e);
+				}
+			});
+
+			container.addEventListener('touchend', e => {
+				const iconTarget = e.target.closest('.skill .icon');
+				if (iconTarget) {
+					onSkillTouchEnd(e);
+				}
+			});
+		}
+
+		this.draggable('.titlebar');
+
+		Client.loadFile(`${DB.INTERFACE_PATH}basic_interface/arw_right.bmp`, data => {
+			_rArrow = `url(${data})`;
+		});
+		Client.loadFile(`${DB.INTERFACE_PATH}basic_interface/arw_left.bmp`, data => {
+			_lArrow = `url(${data})`;
+		});
+	};
+
+	Component.onAppend = function onAppend() {
+		if (!_preferences.show) {
+			this.ui.hide();
+		}
+
+		resize(this, _preferences.width, _preferences.height);
+		this._host.style.top = `${Math.min(Math.max(0, _preferences.y), Renderer.height - 100)}px`;
+		this._host.style.left = `${Math.min(Math.max(0, _preferences.x), Renderer.width - 100)}px`;
+
+		const root = this.getRoot();
+		const cb = root.querySelector('.view_skill_info');
+		if (cb) {
+			cb.checked = _preferences.skillInfo;
+		}
+	};
+
+	Component.onRemove = function onRemove() {
+		if (_btnLevelUp && _btnLevelUp.parentNode) {
+			_btnLevelUp.remove();
+		}
+
+		_preferences.show = this.ui.is(':visible');
+		_preferences.y = parseInt(this._host.style.top, 10) || 0;
+		_preferences.x = parseInt(this._host.style.left, 10) || 0;
+
+		const root = this.getRoot();
+		const content = root.querySelector('.content');
+		if (content) {
+			_preferences.width = Math.floor(parseInt(content.style.width, 10) / 32) || preferenceDefaults.width;
+			_preferences.height = Math.floor(parseInt(content.style.height, 10) / 32) || preferenceDefaults.height;
+		}
+		_preferences.save();
+	};
+
+	Component.toggle = function toggle() {
+		if (this.ui.is(':visible')) {
+			this.ui.hide();
+			if (_btnLevelUp && _btnLevelUp.parentNode) {
+				_btnLevelUp.remove();
+			}
+		} else {
+			this.ui.show();
+			this.focus();
+		}
+	};
+
+	Component.onShortCut = function onShortCut(key) {
+		switch (key.cmd) {
+			case 'TOGGLE':
+				this.toggle();
+				break;
+		}
+		onResetChoice(this);
+	};
+
+	Component.setSkills = function setSkills(skills) {
+		const root = this.getRoot();
+
+		if (listOnly) {
+			for (let i = 0, count = _list.length; i < count; ++i) {
+				this.onUpdateSkill(_list[i].SKID, 0);
+			}
+
+			_list.length = 0;
+			const table = root.querySelector('.content table');
+			if (table) {
+				table.innerHTML = '';
+			}
+
+			for (let i = 0, count = skills.length; i < count; ++i) {
+				this.addSkill(skills[i]);
+			}
+			return;
+		}
+
+		root.querySelectorAll('.upgradable').forEach(el => el.classList.remove('upgradable'));
+
+		// The skill tree follows the real job, never a transformation/disguise
+		const skillJobId = Session.Entity._job || Session.Entity.job;
+
+		skillPosition = getSkillPosition(skillJobId);
+		createSkillDependencyTree();
+
+		for (let i = 0, count = _list.length; i < count; ++i) {
+			this.onUpdateSkill(_list[i].SKID, 0);
+		}
+
+		_list.length = 0;
+		if (hasTabs) {
+			root.querySelectorAll('.content table').forEach(t => {
+				t.innerHTML = '';
+			});
+		} else {
+			const table = root.querySelector('.content table');
+			if (table) {
+				table.innerHTML = '';
+			}
+		}
+		root.querySelectorAll('.skillCol').forEach(el => {
+			el.innerHTML = '';
+		});
+		if (hasTabs) {
+			root.querySelectorAll('.extraRow').forEach(el => el.remove());
+		}
+
+		for (let i = 0, count = skills.length; i < count; ++i) {
+			this.addSkill(skills[i]);
+			hasSkills[skills[i].SKID] = skills[i];
+		}
+
+		skillPosition.forEach((items, list) => {
+			Component.prepareSkillTree(items, list);
+		});
+
+		if (hasTabs) {
+			for (let i = 2; i <= 4; i++) {
+				const miniRows = root.querySelectorAll(`#minitab${i} tr`);
+				const bigSkills = root.querySelectorAll(`#positionSkills${i} .skill`);
+
+				const tabminil = root.querySelector(`#tabminil${i}`);
+				if (tabminil) {
+					tabminil.style.display = miniRows.length > 0 ? '' : 'none';
+				}
+
+				const tabl = root.querySelector(`#tabl${i}`);
+				if (tabl) {
+					tabl.style.display = bigSkills.length > 0 ? '' : 'none';
+				}
+			}
+		}
+
+		onResetChoice(this);
+	};
+
+	function createSkillDependencyTree() {
+		skillPosition.forEach((items, list) => {
+			Object.entries(items).forEach(([skid, pos]) => {
+				if (!_isNumeric(skid)) {
+					return;
+				}
+
+				const sk = SkillInfo[skid];
+
+				if (hasTabs) {
+					if (sk?.MaxLv) {
+						skillDependencyTree[skid] = {
+							dependency: [],
+							position: pos,
+							list: list,
+							MaxLv: sk.MaxLv
+						};
+
+						if (sk?.[needSkillListKey] !== undefined) {
+							sk[needSkillListKey].forEach(item => {
+								skillDependencyTree[skid]['dependency'][item[0]] = item[1];
+							});
+						}
+					} else {
+						console.error('Something wrong with this skill: %d', skid);
+					}
+				} else {
+					skillDependencyTree[skid] = {
+						dependency: [],
+						position: pos,
+						list: undefined,
+						MaxLv: sk.MaxLv
+					};
+
+					if (sk?.[needSkillListKey] !== undefined) {
+						sk[needSkillListKey].forEach(item => {
+							skillDependencyTree[skid]['dependency'][item[0]] = item[1];
+						});
+					}
+				}
+			});
+		});
+	}
+
+	function specifyRequirements(skillId, count, root) {
+		const showAll = true;
+		const skdt = skillDependencyTree[skillId];
+
+		if (skdt?.dependency || count != null) {
+			skillPosition.forEach((items, list) => {
+				if (items[skillId] !== undefined) {
+					const skillbox = root.querySelector(`#positionSkills${list} .s${items[skillId]}`);
+					if (skillbox) {
+						const child = skillbox.querySelector('.disabled');
+						if (child || showAll) {
+							skillbox.classList.add('needleSkill');
+							if (count !== null && count !== undefined) {
+								const counterEl = document.createElement('div');
+								counterEl.className = 'counterSkill';

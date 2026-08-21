@@ -1,0 +1,500 @@
+	switch (skill_get_casttype(skill_id)) {
+		case CAST_GROUND:
+			clif_skill_poseffect( bl, skill_id, skill_lv, x, y, gettick() );
+			break;
+		case CAST_NODAMAGE:
+			clif_skill_nodamage(&bl, bl, skill_id, skill_lv);
+			break;
+		case CAST_DAMAGE:
+			clif_skill_damage( bl, bl, gettick(), status_get_amotion(&bl), status_get_dmotion(&bl), 0, 1, skill_id, skill_lv, skill_get_hit(skill_id) );
+			break;
+	}
+}
+
+/*==========================================
+ * Scripted skill effects [Celest]
+ *------------------------------------------*/
+/// skilleffect <skill id>,<level>{,<game id>}
+/// skilleffect "<skill name>",<level>{,<game id>}
+BUILDIN_FUNC(skilleffect)
+{
+	block_list* bl;
+	map_session_data* sd;
+
+	if (script_hasdata(st, 4)) {
+		if (!script_rid2bl(4, bl))
+			return SCRIPT_CMD_SUCCESS;
+	}
+	else {
+		// target is the character attached (default)
+		if (!script_rid2sd(sd))
+			return SCRIPT_CMD_SUCCESS;
+
+		bl = sd;
+	}
+
+	uint16 skill_id = ( script_isstring(st, 2) ? skill_name2id(script_getstr(st, 2)) : script_getnum(st, 2) );
+
+	if (skill_db.find(skill_id) == nullptr) {
+		ShowError("buildin_skilleffect: Invalid skill defined (%s)!\n", script_getstr(st, 2));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	uint16 skill_lv = script_getnum(st, 3);
+
+	if (bl->type == BL_PC) {
+		/* Ensure we're standing because the following packet causes the client to virtually set the char to stand,
+		 * which leaves the server thinking it still is sitting. */
+		sd = reinterpret_cast<map_session_data*>( bl );
+
+		if (pc_issit(sd) && pc_setstand(sd, false)) {
+			skill_sit(sd, 0);
+			clif_standing(*sd);
+		}
+	}
+
+	script_skill_effect( *bl, skill_id, skill_lv, bl->x, bl->y );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * NPC skill effects [Valaris]
+ *------------------------------------------*/
+/// npcskilleffect <skill id>,<level>,<x>,<y>
+/// npcskilleffect "<skill name>",<level>,<x>,<y>
+BUILDIN_FUNC(npcskilleffect)
+{
+	block_list *bl= map_id2bl(st->oid);
+
+	if (bl == nullptr) {
+		ShowError("buildin_npcskilleffect: Invalid object attached to NPC.");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	uint16 skill_id, skill_lv;
+	int16 x, y;
+
+	skill_id=( script_isstring(st, 2) ? skill_name2id(script_getstr(st,2)) : script_getnum(st,2) );
+	skill_lv=script_getnum(st,3);
+	x=script_getnum(st,4);
+	y=script_getnum(st,5);
+
+	if (skill_db.find(skill_id) == nullptr) {
+		ShowError("buildin_npcskilleffect: Invalid skill defined (%s)!\n", script_getstr(st, 2));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_skill_effect( *bl, skill_id, skill_lv, bl->x, bl->y );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Special effects [Valaris]
+ *------------------------------------------*/
+BUILDIN_FUNC(specialeffect)
+{
+	block_list *bl=map_id2bl(st->oid);
+	int32 type = script_getnum(st,2);
+	enum send_target target = script_hasdata(st,3) ? (send_target)script_getnum(st,3) : AREA;
+
+	if(bl==nullptr)
+		return SCRIPT_CMD_SUCCESS;
+
+	if( type <= EF_NONE || type >= EF_MAX ){
+		ShowError( "buildin_specialeffect: unsupported effect id %d\n", type );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( script_hasdata(st,4) )
+	{
+		const char* name = script_getstr( st, 4 );
+		npc_data* nd = npc_name2id( name );
+		if(nd)
+			bl = nd;
+		else{
+			ShowError( "buildin_specialeffect: Unknown NPC \"%s\"\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (target == SELF) {
+		map_session_data* sd;
+		if (!script_rid2sd(sd)){
+			return SCRIPT_CMD_FAILURE;
+		}
+		clif_specialeffect_single(bl,type,sd->fd);
+	} else {
+		clif_specialeffect(bl, type, target);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(specialeffect2)
+{
+	TBL_PC *sd;
+
+	if( script_nick2sd(4,sd) ){
+		int32 type = script_getnum(st,2);
+		enum send_target target = script_hasdata(st,3) ? (send_target)script_getnum(st,3) : AREA;
+
+		if( type <= EF_NONE || type >= EF_MAX ){
+			ShowError( "buildin_specialeffect2: unsupported effect id %d\n", type );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		clif_specialeffect(sd, type, target);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(removespecialeffect)
+{
+	const char* command = script_getfuncname(st);
+
+#if PACKETVER < 20181002
+	ShowError("buildin_%s: This command is not supported for PACKETVER older than 2018-10-02.\n", command);
+
+	return SCRIPT_CMD_FAILURE;
+#endif
+
+	int32 effect = script_getnum(st, 2);
+
+	if (effect <= EF_NONE || effect >= EF_MAX) {
+		ShowError("buildin_%s: unsupported effect id %d.\n", command, effect);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	send_target e_target = script_hasdata(st, 3) ? static_cast<send_target>(script_getnum(st, 3)) : AREA;
+
+	block_list *bl_src;
+	block_list *bl_target;
+	map_session_data *sd;
+
+	if( strcmp(command, "removespecialeffect") == 0 ) {
+		if (!script_hasdata(st, 4)) {
+			bl_src = map_id2bl(st->oid);
+
+			if (bl_src == nullptr) {
+				ShowError("buildin_%s: npc not attached.\n", command);
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+		else {
+			npc_data *nd = npc_name2id(script_getstr(st, 4));
+			if (nd == nullptr) {
+				ShowError("buildin_%s: unknown npc %s.\n", command, script_getstr(st, 4));
+				return SCRIPT_CMD_FAILURE;
+			}
+			bl_src = nd;
+		}
+
+		if (e_target != SELF)
+			bl_target = bl_src;
+		else {
+			if (!script_rid2sd(sd))
+				return SCRIPT_CMD_FAILURE;
+			bl_target = sd;
+		}
+	}else{
+		if (!script_nick2sd(4, sd))
+			return SCRIPT_CMD_FAILURE;
+
+		bl_src = bl_target = sd;
+	}
+
+	clif_specialeffect_remove(bl_src, effect, e_target, bl_target);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * nude({<char_id>});
+ * @author [Valaris]
+ **/
+BUILDIN_FUNC(nude)
+{
+	TBL_PC *sd;
+	int32 i, calcflag = 0;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	for( i = 0 ; i < EQI_MAX; i++ ) {
+		if( sd->equip_index[ i ] >= 0 ) {
+			if( !calcflag )
+				calcflag = 1;
+			pc_unequipitem( sd , sd->equip_index[ i ] , 2);
+		}
+	}
+
+	if( calcflag )
+		status_calc_pc(sd,SCO_NONE);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+int32 atcommand_sub(struct script_state* st,int32 type) {
+	map_session_data* sd;
+
+	if( st->rid != 0 ){
+		if( !script_rid2sd( sd ) ){
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		// Use the attached character
+	}else{
+		if( st->oid != 0 ){
+			block_list* bl = map_id2bl( st->oid );
+
+			safestrncpy( dummy_sd->status.name, status_get_name( *bl ), sizeof( dummy_sd->status.name ) );
+			dummy_sd->m = bl->m;
+			dummy_sd->x = bl->x;
+			dummy_sd->y = bl->y;
+			if( dummy_sd->m > 0 ){
+				dummy_sd->mapindex = map_id2index( dummy_sd->m );
+			}else{
+				dummy_sd->mapindex = 0;
+			}
+		}else{
+			snprintf( dummy_sd->status.name, sizeof( dummy_sd->status.name ), "script.cpp:%d", __LINE__ );
+			dummy_sd->m = 0;
+			dummy_sd->x = 0;
+			dummy_sd->y = 0;
+			dummy_sd->mapindex = 0;
+		}
+
+		if( dummy_sd->group == nullptr ){
+			pc_group_pc_load( dummy_sd );
+		}
+
+		// Use the dummy character.
+		sd = dummy_sd;
+	}
+
+	const char* cmd = script_getstr( st, 2 );
+
+	if( !is_atcommand( sd->fd, sd, cmd, type ) ){
+		ShowWarning("buildin_atcommand: failed to execute command '%s'\n", cmd);
+		script_reportsrc(st);
+		return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * gmcommand [MouseJstr]
+ *------------------------------------------*/
+BUILDIN_FUNC(atcommand) {
+	return atcommand_sub(st,0);
+}
+
+/** Displays a message for the player only (like system messages like "you got an apple" )
+* dispbottom("<message>"{,<color>{,<char_id>}})
+* @param message 
+* @param color Hex color default (Green)
+*/
+BUILDIN_FUNC(dispbottom)
+{
+	TBL_PC *sd;
+	int32 color = 0;
+	const char *message;
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	message = script_getstr(st,2);
+
+	if (script_hasdata(st,3))
+		color = script_getnum(st,3); // <color>
+
+	if(sd) {
+		if (script_hasdata(st,3))
+			clif_messagecolor(sd, color, message, true, SELF);		// [Napster]
+		else
+			clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], message, false, SELF);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*===================================
+ * Heal portion of recovery command
+ *-----------------------------------*/
+int32 recovery_sub(map_session_data* sd, int32 revive)
+{
+	if(revive&(1|4) && pc_isdead(sd)) {
+		status_revive(sd, 100, 100);
+		clif_displaymessage(sd->fd,msg_txt(sd,16)); // You've been revived!
+		clif_specialeffect(sd, EF_RESURRECTION, AREA);
+	} else if(revive&(1|2) && !pc_isdead(sd)) {
+		status_percent_heal(sd, 100, 100);
+		clif_displaymessage(sd->fd,msg_txt(sd,680)); // You have been recovered!
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*=========================================================================
+ * Fully Recover a Character's HP/SP - [Capuche] & [Akinari]
+ * recovery <type>{,<option>,<revive_flag>{,<map name>}};
+ * <type> determines <option>:
+ *	0 : char_id
+ *	1 : party_id
+ *	2 : guild_id
+ *	3 : map_name
+ *	4 : all characters
+ * <revive_flag>:
+ *	1 : Revive and heal all players (default)
+ *	2 : Heal living players only
+ *	4 : Revive dead players only
+ * <map name>:
+ *	for types 1-2 : map_name (null = all maps)
+ *-------------------------------------------------------------------------*/
+BUILDIN_FUNC(recovery)
+{
+	TBL_PC *sd;
+	int32 map_idx = 0, type = 0, revive = 1;
+
+	type = script_getnum(st,2);
+
+	if(script_hasdata(st,4))
+		revive = script_getnum(st,4);
+
+	switch(type) {
+		case 0:
+			if(!script_charid2sd(3,sd))
+				return SCRIPT_CMD_SUCCESS; //If we don't have sd by now, bail out
+			recovery_sub(sd, revive);
+			break;
+		case 1:
+		{
+			struct party_data* p;
+			//When no party given, we use invoker party
+			int32 p_id = 0, i;
+			if(script_hasdata(st,5)) {//Bad maps shouldn't cause issues
+				map_idx = map_mapname2mapid(script_getstr(st,5));
+				if(map_idx < 1) { //But we'll check anyways
+					ShowDebug("recovery: bad map name given (%s)\n", script_getstr(st,5));
+					return SCRIPT_CMD_FAILURE;
+				}
+			}
+			if(script_hasdata(st,3))
+				p_id = script_getnum(st,3);
+			else if(script_rid2sd(sd))
+				p_id = sd->status.party_id;
+			p = party_search(p_id);
+			if(p == nullptr)
+				return SCRIPT_CMD_SUCCESS;
+			for (i = 0; i < MAX_PARTY; i++) {
+				map_session_data* pl_sd;
+				if((!(pl_sd = p->data[i].sd) || pl_sd->status.party_id != p_id)
+					|| (map_idx && pl_sd->m != map_idx))
+					continue;
+				recovery_sub(pl_sd, revive);
+			}
+			break;
+		}
+		case 2:
+		{
+			//When no guild given, we use invoker guild
+			int32 g_id = 0, i;
+			if(script_hasdata(st,5)) {//Bad maps shouldn't cause issues
+				map_idx = map_mapname2mapid(script_getstr(st,5));
+				if(map_idx < 1) { //But we'll check anyways
+					ShowDebug("recovery: bad map name given (%s)\n", script_getstr(st,5));
+					return SCRIPT_CMD_FAILURE;
+				}
+			}
+			if(script_hasdata(st,3))
+				g_id = script_getnum(st,3);
+			else if(script_rid2sd(sd))
+				g_id = sd->status.guild_id;
+			auto g = guild_search(g_id);
+			if(g == nullptr)
+				return SCRIPT_CMD_SUCCESS;
+			for (i = 0; i < MAX_GUILD; i++) {
+				map_session_data* pl_sd;
+				if((!(pl_sd = g->guild.member[i].sd) || pl_sd->status.guild_id != g_id)
+					|| (map_idx && pl_sd->m != map_idx))
+					continue;
+				recovery_sub(pl_sd, revive);
+			}
+			break;
+		}
+		case 3:
+			if(script_hasdata(st,3))
+				map_idx = map_mapname2mapid(script_getstr(st,3));
+			else if(script_rid2sd(sd))
+				map_idx = sd->m;
+			if(map_idx < 1)
+				return SCRIPT_CMD_FAILURE; //No sd and no map given - return
+			[[fallthrough]];
+		case 4:
+		{
+			struct s_mapiterator *iter;
+
+			if(script_hasdata(st,3) && script_isint(st, 3))
+				revive = script_getnum(st,3); // recovery 4,<revive_flag>;
+			iter = mapit_getallusers();
+			for (sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter)) {
+				if(type == 3 && sd->m != map_idx)
+					continue;
+				recovery_sub(sd, revive);
+			}
+			mapit_free(iter);
+			break;
+		}
+		default:
+			ShowWarning("script: buildin_recovery: Invalid type %d\n", type);
+			script_pushint(st,-1);
+			return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st,1); //Successfully executed without errors
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Get your pet info: getpetinfo <type>{,<char_id>}
+ * n -> 0:pet_id 1:pet_class 2:pet_name
+ * 3:friendly 4:hungry, 5: rename flag.6:level,
+ * 7:game id
+ *------------------------------------------*/
+BUILDIN_FUNC(getpetinfo)
+{
+	TBL_PC *sd;
+	TBL_PET *pd;
+	int32 type = script_getnum(st,2);
+
+	if (!script_charid2sd(3, sd) || !(pd = sd->pd)) {
+		if (type == 2)
+			script_pushconststr(st,"null");
+		else
+			script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch(type){
+		case PETINFO_ID:		script_pushint(st,pd->pet.pet_id); break;
+		case PETINFO_CLASS:		script_pushint(st,pd->pet.class_); break;
+		case PETINFO_NAME:		script_pushstrcopy(st,pd->pet.name); break;
+		case PETINFO_INTIMATE:	script_pushint(st,pd->pet.intimate); break;
+		case PETINFO_HUNGRY:	script_pushint(st,pd->pet.hungry); break;
+		case PETINFO_RENAMED:	script_pushint(st,pd->pet.rename_flag); break;
+		case PETINFO_LEVEL:		script_pushint(st,(int32)pd->pet.level); break;
+		case PETINFO_BLOCKID:	script_pushint(st,pd->id); break;
+		case PETINFO_EGGID:		script_pushint(st,pd->pet.egg_id); break;
+		case PETINFO_FOODID:	script_pushint(st,pd->get_pet_db()->FoodID); break;
+		default:
+			script_pushint(st,0);
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Get your homunculus info: gethominfo <type>{,<char_id>};
+ * type -> 0:hom_id 1:class 2:name
+ * 3:friendly 4:hungry, 5: rename flag.
+ * 6: level, 7: game id
+ *------------------------------------------*/
+BUILDIN_FUNC(gethominfo)
+{
+	TBL_PC *sd;

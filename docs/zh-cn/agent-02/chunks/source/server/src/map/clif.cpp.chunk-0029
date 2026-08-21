@@ -1,0 +1,500 @@
+
+	for(i=0; i<MAX_PARTY_BOOKING_JOBS; i++)
+		job[i] = RFIFOB(fd,idxpbj+i*2);
+
+	party_booking_register(sd, level, mapid, job);
+}
+
+
+/// Result of request to register a party booking advertisment (ZC_PARTY_BOOKING_ACK_REGISTER).
+/// 0803 <result>.W
+/// result:
+///     0 = success
+///     1 = failure
+///     2 = already registered
+void clif_PartyBookingRegisterAck( const map_session_data* sd, int32 flag)
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0x803));
+	WFIFOW(fd,0) = 0x803;
+	WFIFOW(fd,2) = flag;
+	WFIFOSET(fd,packet_len(0x803));
+}
+
+
+/// Request to search for party booking advertisments (CZ_PARTY_BOOKING_REQ_SEARCH).
+/// 0804 <level>.W <map id>.W <job>.W <last index>.L <result count>.W
+void clif_parse_PartyBookingSearchReq(int32 fd, map_session_data* sd){
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	int16 level = RFIFOW(fd,info->pos[0]);
+	int16 mapid = RFIFOW(fd,info->pos[1]);
+	int16 job = RFIFOW(fd,info->pos[2]);
+	unsigned long lastindex = RFIFOL(fd,info->pos[3]);
+	int16 resultcount = RFIFOW(fd,info->pos[4]);
+
+	party_booking_search(sd, level, mapid, job, lastindex, resultcount);
+}
+
+
+/// Party booking search results (ZC_PARTY_BOOKING_ACK_SEARCH).
+/// 0805 <packet len>.W <more results>.B { <index>.L <char name>.24B <expire time>.L <level>.W <map id>.W { <job>.W }*6 }*
+/// more results:
+///     0 = no
+///     1 = yes
+void clif_PartyBookingSearchAck(int32 fd, const party_booking_ad_info** results, int32 count, bool more_result)
+{
+	int32 i, j;
+	int32 size = sizeof(struct party_booking_ad_info); // structure size (48)
+	const party_booking_ad_info *pb_ad;
+	WFIFOHEAD(fd,size*count + 5);
+	WFIFOW(fd,0) = 0x805;
+	WFIFOW(fd,2) = size*count + 5;
+	WFIFOB(fd,4) = more_result;
+	for(i=0; i<count; i++)
+	{
+		pb_ad = results[i];
+		WFIFOL(fd,i*size+5) = pb_ad->index;
+		safestrncpy(WFIFOCP(fd,i*size+9),pb_ad->charname,NAME_LENGTH);
+		WFIFOL(fd,i*size+33) = pb_ad->starttime;  // FIXME: This is expire time
+		WFIFOW(fd,i*size+37) = pb_ad->p_detail.level;
+		WFIFOW(fd,i*size+39) = pb_ad->p_detail.mapid;
+		for(j=0; j<MAX_PARTY_BOOKING_JOBS; j++)
+			WFIFOW(fd,i*size+41+j*2) = pb_ad->p_detail.job[j];
+	}
+	WFIFOSET(fd,WFIFOW(fd,2));
+}
+
+
+/// Request to delete own party booking advertisment (CZ_PARTY_BOOKING_REQ_DELETE).
+/// 0806
+void clif_parse_PartyBookingDeleteReq(int32 fd, map_session_data* sd)
+{
+	if(party_booking_delete(sd))
+		clif_PartyBookingDeleteAck(sd, 0);
+}
+
+
+/// Result of request to delete own party booking advertisment (ZC_PARTY_BOOKING_ACK_DELETE).
+/// 0807 <result>.W
+/// result:
+///     0 = success
+///     1 = success (auto-removed expired ad)
+///     2 = failure
+///     3 = nothing registered
+void clif_PartyBookingDeleteAck( const map_session_data* sd, int32 flag )
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0x807));
+	WFIFOW(fd,0) = 0x807;
+	WFIFOW(fd,2) = flag;
+	WFIFOSET(fd,packet_len(0x807));
+}
+
+
+/// Request to update party booking advertisment (CZ_PARTY_BOOKING_REQ_UPDATE).
+/// 0808 { <job>.W }*6
+void clif_parse_PartyBookingUpdateReq(int32 fd, map_session_data* sd )
+{
+	int16 job[MAX_PARTY_BOOKING_JOBS];
+	int32 i;
+	int32 idxpbu = packet_db[RFIFOW(fd,0)].pos[0];
+
+	for(i=0; i<MAX_PARTY_BOOKING_JOBS; i++)
+		job[i] = RFIFOW(fd,idxpbu+i*2);
+
+	party_booking_update(sd, job);
+}
+
+
+/// Notification about new party booking advertisment (ZC_PARTY_BOOKING_NOTIFY_INSERT).
+/// 0809 <index>.L <char name>.24B <expire time>.L <level>.W <map id>.W { <job>.W }*6
+void clif_PartyBookingInsertNotify( const map_session_data* sd, const party_booking_ad_info* pb_ad )
+{
+	int32 i;
+	uint8 buf[38+MAX_PARTY_BOOKING_JOBS*2];
+
+	if(pb_ad == nullptr) return;
+
+	WBUFW(buf,0) = 0x809;
+	WBUFL(buf,2) = pb_ad->index;
+	safestrncpy(WBUFCP(buf,6),pb_ad->charname,NAME_LENGTH);
+	WBUFL(buf,30) = pb_ad->starttime;  // FIXME: This is expire time
+	WBUFW(buf,34) = pb_ad->p_detail.level;
+	WBUFW(buf,36) = pb_ad->p_detail.mapid;
+	for(i=0; i<MAX_PARTY_BOOKING_JOBS; i++)
+		WBUFW(buf,38+i*2) = pb_ad->p_detail.job[i];
+
+	clif_send(buf, packet_len(0x809), sd, ALL_CLIENT);
+}
+
+
+/// Notification about updated party booking advertisment (ZC_PARTY_BOOKING_NOTIFY_UPDATE).
+/// 080a <index>.L { <job>.W }*6
+void clif_PartyBookingUpdateNotify( const map_session_data* sd, const party_booking_ad_info* pb_ad )
+{
+	int32 i;
+	uint8 buf[6+MAX_PARTY_BOOKING_JOBS*2];
+
+	if(pb_ad == nullptr) return;
+
+	WBUFW(buf,0) = 0x80a;
+	WBUFL(buf,2) = pb_ad->index;
+	for(i=0; i<MAX_PARTY_BOOKING_JOBS; i++)
+		WBUFW(buf,6+i*2) = pb_ad->p_detail.job[i];
+	clif_send(buf,packet_len(0x80a),sd,ALL_CLIENT); // Now UPDATE all client.
+}
+
+
+/// Notification about deleted party booking advertisment (ZC_PARTY_BOOKING_NOTIFY_DELETE).
+/// 080b <index>.L
+void clif_PartyBookingDeleteNotify( const map_session_data* sd, int32 index )
+{
+	uint8 buf[6];
+
+	WBUFW(buf,0) = 0x80b;
+	WBUFL(buf,2) = index;
+
+	clif_send(buf, packet_len(0x80b), sd, ALL_CLIENT); // Now UPDATE all client.
+}
+
+
+/// Request to close own vending (CZ_REQ_CLOSESTORE).
+/// 012e
+void clif_parse_CloseVending(int32 fd, map_session_data* sd)
+{
+	vending_closevending(sd);
+}
+
+
+/// Request to open a vending shop (CZ_REQ_BUY_FROMMC).
+/// 0130 <account id>.L
+void clif_parse_VendingListReq(int32 fd, map_session_data* sd)
+{
+	if( sd->npc_id ) {// using an NPC
+		return;
+	}
+	vending_vendinglistreq(sd,RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+}
+
+
+/// Shop item(s) purchase request.
+/// 0134 <packet len>.W <account id>.L { <amount>.W <index>.W }* (CZ_PC_PURCHASE_ITEMLIST_FROMMC)
+void clif_parse_PurchaseReq(int32 fd, map_session_data* sd){
+	const PACKET_CZ_PC_PURCHASE_ITEMLIST_FROMMC* p = reinterpret_cast<PACKET_CZ_PC_PURCHASE_ITEMLIST_FROMMC*>( RFIFOP( fd, 0 ) );
+
+	vending_purchasereq( sd, p->AID, sd->vended_id, (uint8*)p->list, ( p->packetLength - sizeof( *p ) ) / sizeof( p->list[0] ) );
+
+	// whether it fails or not, the buy window is closed
+	sd->vended_id = 0;
+}
+
+
+/// Shop item(s) purchase request.
+/// 0801 <packet len>.W <account id>.L <unique id>.L { <amount>.W <index>.W }* (CZ_PC_PURCHASE_ITEMLIST_FROMMC2)
+void clif_parse_PurchaseReq2(int32 fd, map_session_data* sd){
+#if PACKETVER >= 20100105
+	const PACKET_CZ_PC_PURCHASE_ITEMLIST_FROMMC2* p = reinterpret_cast<PACKET_CZ_PC_PURCHASE_ITEMLIST_FROMMC2*>( RFIFOP( fd, 0 ) );
+
+	vending_purchasereq( sd, p->AID, p->UniqueID, (uint8*)p->list, ( p->packetLength - sizeof( *p ) ) / sizeof( p->list[0] ) );
+
+	// whether it fails or not, the buy window is closed
+	sd->vended_id = 0;
+#endif
+}
+
+
+/// Confirm or cancel the shop preparation window.
+/// 012f <packet len>.W <shop name>.80B { <index>.W <amount>.W <price>.L }* (CZ_REQ_OPENSTORE)
+/// 01b2 <packet len>.W <shop name>.80B <result>.B { <index>.W <amount>.W <price>.L }* (CZ_REQ_OPENSTORE2)
+/// result:
+///     0 = canceled
+///     1 = open
+void clif_parse_OpenVending(int32 fd, map_session_data* sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	int32 cmd = RFIFOW(fd,0);
+	struct s_packet_db* info = &packet_db[cmd];
+	int16 len = (int16)RFIFOW(fd,info->pos[0]);
+	const char* message = RFIFOCP(fd,info->pos[1]);
+	const uint8* data = (uint8*)RFIFOP(fd,info->pos[3]);
+
+	if(cmd == 0x12f){ // (CZ_REQ_OPENSTORE)
+		len -= 84;
+	}
+	else { //(CZ_REQ_OPENSTORE2)
+		bool flag;
+
+		len -= 85;
+		flag = RFIFOB(fd,info->pos[2]) != 0;
+		if (!flag) {
+			sd->state.prevend = 0;
+			sd->state.workinprogress = WIP_DISABLE_NONE;
+		}
+	}
+
+	if( sd->sc.getSCE(SC_NOCHAT) && sd->sc.getSCE(SC_NOCHAT)->val1&MANNER_NOROOM )
+		return;
+	if( map_getmapflag(sd->m, MF_NOVENDING) ) {
+		clif_displaymessage (sd->fd, msg_txt(sd,276)); // "You can't open a shop on this map"
+		return;
+	}
+	if( map_getcell(sd->m,sd->x,sd->y,CELL_CHKNOVENDING) ) {
+		clif_displaymessage (sd->fd, msg_txt(sd,204)); // "You can't open a shop on this cell."
+		return;
+	}
+
+	if( message[0] == '\0' ) // invalid input
+		return;
+
+	vending_openvending(*sd, message, data, len/8, nullptr);
+}
+
+
+/// Guild creation request (CZ_REQ_MAKE_GUILD).
+/// 0165 <char id>.L <guild name>.24B
+void clif_parse_CreateGuild(int32 fd,map_session_data *sd){
+	//int32 charid = RFIFOL(fd,packet_db[cmd].pos[0]);
+	char* name = RFIFOCP(fd,packet_db[RFIFOW(fd,0)].pos[1]);
+	name[NAME_LENGTH-1] = '\0';
+
+	if(map_getmapflag(sd->m, MF_GUILDLOCK)) { //Guild locked.
+		clif_displaymessage(fd, msg_txt(sd,228));
+		return;
+	}
+
+	if(sd->clan){
+		// Should display a clientside message "You are currently joined in Clan !!" so we ignore it
+		return;
+	}
+
+	guild_create( *sd, name );
+}
+
+
+/// Request for guild window interface permissions 
+/// 014d (CZ_REQ_GUILD_MENUINTERFACE)
+static void clif_parse_GuildCheckMaster(int32 fd, map_session_data *sd){
+	if(sd == nullptr)
+		return;
+
+	clif_guild_masterormember(*sd);
+}
+
+
+/// Request for guild window information (CZ_REQ_GUILD_MENU).
+/// 014f <type>.L
+/// type:
+///     0 = basic info
+///     1 = member manager
+///     2 = positions
+///     3 = skills
+///     4 = expulsion list
+///     5 = unknown (GM_ALLGUILDLIST)
+///     6 = notice
+void clif_parse_GuildRequestInfo(int32 fd, map_session_data *sd)
+{
+	int32 type = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	if( !sd->status.guild_id && !sd->bg_id )
+		return;
+
+	switch( type )
+	{
+	case 0:	// Basic Information Guild, hostile alliance information
+		clif_guild_basicinfo( *sd );
+		clif_guild_allianceinfo(*sd);
+		clif_guild_castle_list(*sd);
+		break;
+	case 1:	// Members list, list job title
+		clif_guild_positionnamelist(sd);
+		clif_guild_memberlist( *sd );
+		break;
+	case 2:	// List job title, title information list
+		clif_guild_positionnamelist(sd);
+		clif_guild_positioninfolist(*sd);
+		break;
+	case 3:	// Skill list
+		clif_guild_skillinfo( *sd );
+		break;
+	case 4:	// Expulsion list
+		clif_guild_expulsionlist(*sd);
+		break;
+	default:
+		ShowError("clif: guild request info: unknown type %d\n", type);
+		break;
+	}
+}
+
+
+/// Request to update guild positions (CZ_REG_CHANGE_GUILD_POSITIONINFO).
+/// 0161 <packet len>.W { <position id>.L <mode>.L <ranking>.L <pay rate>.L <name>.24B }*
+void clif_parse_GuildChangePositionInfo(int32 fd, map_session_data *sd)
+{
+	int32 i;
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	int32 len = RFIFOW(fd,info->pos[0]);
+	int32 idxgpos = info->pos[1];
+
+	if(!sd->state.gmaster_flag)
+		return;
+
+	for(i = idxgpos; i < len; i += 40 ){
+		guild_change_position(sd->status.guild_id, RFIFOL(fd,i), RFIFOL(fd,i+4), RFIFOL(fd,i+12), RFIFOCP(fd,i+16));
+	}
+}
+
+
+/// Request to update the position of guild members.
+/// 0155 <packet len>.W { <account id>.L <char id>.L <position id>.L }* (CZ_REQ_CHANGE_MEMBERPOS)
+void clif_parse_GuildChangeMemberPosition( int32 fd, map_session_data *sd ){
+	if(!sd->state.gmaster_flag)
+		return;
+
+	const PACKET_CZ_REQ_CHANGE_MEMBERPOS* p = reinterpret_cast<PACKET_CZ_REQ_CHANGE_MEMBERPOS*>( RFIFOP( fd, 0 ) );
+
+	int16 entries = ( p->packetLength - sizeof( *p ) ) / sizeof( p->list[0] );
+
+	for( int16 i = 0; i < entries; i++ ){
+		const PACKET_CZ_REQ_CHANGE_MEMBERPOS_sub& entry = p->list[i];
+
+		// Guild leadership change
+		if( entry.position == 0 ){
+			if( !battle_config.guild_leaderchange_woe && is_agit_start() ){
+				clif_msg( *sd, MSI_IMPOSSIBLE_CHANGE_GUILD_MASTER_IN_SIEGE_TIME );
+				return;
+			}
+
+			if( battle_config.guild_leaderchange_delay && DIFF_TICK( time( nullptr ),sd->guild->guild.last_leader_change ) < battle_config.guild_leaderchange_delay ){
+				clif_msg( *sd, MSI_IMPOSSIBLE_CHANGE_GUILD_MASTER_NOT_TIME );
+				return;
+			}
+
+			guild_gm_change( sd->status.guild_id, entry.CID );
+
+			// No further entries will be processed - the requesting player lost his guild master status
+			return;
+		}else if( entry.position > 0 ){
+			guild_change_memberposition( sd->status.guild_id, entry.AID, entry.CID, entry.position );
+		}
+	}
+}
+
+
+/// Request for guild emblem data (CZ_REQ_GUILD_EMBLEM_IMG).
+/// 0151 <guild id>.L
+static void clif_parse_GuildRequestEmblem( int32 fd, map_session_data* sd ){
+	int32 guild_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+
+	auto g = guild_search(guild_id);
+
+	if (g)
+		clif_guild_emblem(*sd, g->guild);
+}
+
+
+/// Validates data of a guild emblem (compressed bitmap)
+enum e_result_validate_emblem {	// Used as Result for clif_validate_emblem
+	EMBVALIDATE_SUCCESS = 0,
+	EMBVALIDATE_ERR_RAW_FILEFORMAT,	// Invalid File Format (Error in zlib/decompression or malformed BMP header)
+	EMBVALIDATE_ERR_TRANSPARENCY	// uploaded emblem does not met the requirements of inter_config.emblem_transparency_limit
+};
+
+static enum e_result_validate_emblem clif_validate_emblem(const uint8* emblem, unsigned long emblem_len)
+{
+	uint8 buf[1800];  // no well-formed emblem bitmap is larger than 1782 (24 bit) / 1654 (8 bit) bytes
+	unsigned long buf_len = sizeof(buf);
+	int32 offset = 0;
+
+	if(!(( decode_zip(buf, &buf_len, emblem, emblem_len) == 0 && buf_len >= 18 )  // sizeof(BITMAPFILEHEADER) + sizeof(biSize) of the following info header struct
+		&& RBUFW(buf,0) == 0x4d42   // BITMAPFILEHEADER.bfType (signature)
+		&& RBUFL(buf,2) == buf_len  // BITMAPFILEHEADER.bfSize (file size)
+		&& (offset = RBUFL(buf,10)) < buf_len  // BITMAPFILEHEADER.bfOffBits (offset to bitmap bits)
+		))
+		return EMBVALIDATE_ERR_RAW_FILEFORMAT;
+
+	if(inter_config.emblem_transparency_limit != 100) {
+		int32 i, transcount = 1, tmp[3];
+		for(i = offset; i < buf_len-1; i++) {
+			int32 j = i%3;
+			tmp[j] = RBUFL(buf,i);
+			if(j == 2 && (tmp[0] == 0xFFFF00FF) && (tmp[1] == 0xFFFF00) && (tmp[2] == 0xFF00FFFF)) //if pixel is transparent
+				transcount++;
+		}
+		if(((transcount*300)/(buf_len-offset)) > inter_config.emblem_transparency_limit) //convert in % to chk
+			return EMBVALIDATE_ERR_TRANSPARENCY;
+	}
+
+	return EMBVALIDATE_SUCCESS;
+}
+
+
+/// Request to update the guild emblem (CZ_REGISTER_GUILD_EMBLEM_IMG).
+/// 0153 <packet len>.W <emblem data>.?B
+void clif_parse_GuildChangeEmblem(int32 fd,map_session_data *sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	unsigned long emblem_len = RFIFOW(fd,info->pos[0])-4;
+	const uint8* emblem = RFIFOP(fd,info->pos[1]);
+	int32 emb_val=0;
+
+	if( !emblem_len || !sd->state.gmaster_flag )
+		return;
+
+	if(!(inter_config.emblem_woe_change) && is_agit_start() ){
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,385),false,SELF); //"You not allowed to change emblem during woe"
+		return;
+	}
+	emb_val = clif_validate_emblem(emblem, emblem_len);
+	if(emb_val == EMBVALIDATE_ERR_RAW_FILEFORMAT){
+		ShowWarning("clif_parse_GuildChangeEmblem: Rejected malformed guild emblem (size=%lu, accound_id=%d, char_id=%d, guild_id=%d).\n", emblem_len, sd->status.account_id, sd->status.char_id, sd->status.guild_id);
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,386),false,SELF); //"The chosen emblem was detected invalid\n"
+		return;
+	} else if(emb_val == EMBVALIDATE_ERR_TRANSPARENCY){
+		char output[128];
+		safesnprintf(output,sizeof(output),msg_txt(sd,387),inter_config.emblem_transparency_limit);
+		clif_messagecolor(sd,color_table[COLOR_RED],output,false,SELF); //"The chosen emblem was detected invalid as it contain too much transparency (limit=%d)\n"
+		return;
+	}
+
+	guild_change_emblem( *sd, emblem_len, (const char*)emblem );
+}
+
+/// Request to update the guild emblem id
+/// 0b46 <guild id>.L <version>.L
+void clif_parse_GuildChangeEmblem2(int32 fd, map_session_data* sd) {
+	if( sd == nullptr ){
+		return;
+	}
+
+#if PACKETVER >= 20190724
+	const PACKET_CZ_REQ_ADD_NEW_EMBLEM* p = reinterpret_cast<PACKET_CZ_REQ_ADD_NEW_EMBLEM*>( RFIFOP( fd, 0 ) );
+	auto &g = sd->guild;
+
+	if (!g || g->guild.guild_id != p->guild_id)
+		return;
+
+	if (!sd->state.gmaster_flag)
+		return;
+
+	if (!inter_config.emblem_woe_change && is_agit_start()) {
+		clif_messagecolor(sd, color_table[COLOR_RED], msg_txt(sd, 385), false, SELF); //"You not allowed to change emblem during woe"
+		return;
+	}
+
+	guild_change_emblem_version( *sd, p->version );
+#endif
+}
+
+/// Guild notice update request (CZ_GUILD_NOTICE).
+/// 016e <guild id>.L <msg1>.60B <msg2>.120B
+void clif_parse_GuildChangeNotice(int32 fd, map_session_data* sd){
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	int32 guild_id = RFIFOL(fd,info->pos[0]);
+	char* msg1 = RFIFOCP(fd,info->pos[1]);
+	char* msg2 = RFIFOCP(fd,info->pos[2]);

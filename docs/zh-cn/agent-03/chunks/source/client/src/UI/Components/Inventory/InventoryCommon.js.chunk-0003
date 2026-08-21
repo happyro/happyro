@@ -1,0 +1,500 @@
+	/**
+	 * Modify tab, filter display entries
+	 */
+	function onSwitchTab() {
+		const root = Component.getRoot();
+		const buttons = root.querySelectorAll('.tabs button');
+		const idx = Array.from(buttons).indexOf(this);
+		_preferences.tab = parseInt(idx, 10);
+
+		if (tabSprite) {
+			Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/tab_itm_0' + (idx + 1) + '.bmp', data => {
+				const tabSpriteEl = root.querySelector('.tab-sprite');
+				if (tabSpriteEl) {
+					tabSpriteEl.style.backgroundImage = `url(${data})`;
+				}
+				requestFilter();
+			});
+			return;
+		}
+
+		requestFilter();
+
+		buttons.forEach(b => b.classList.remove('selected'));
+		this.classList.add('selected');
+
+		if (favoriteTab) {
+			const dealOn = root.querySelector('.deallock_on');
+			const dealOff = root.querySelector('.deallock_off');
+			const lockOverlay = root.querySelector('.lockoverlay');
+			const lockMsg = root.querySelector('.lockoverlaymsg');
+			const sort = root.querySelector('.sort');
+			const onFavTab = _preferences.tab === Component.TAB.FAV;
+
+			setElHidden(dealOn, !(onFavTab && _preferences.npcsalelock));
+			setElHidden(dealOff, !(onFavTab && !_preferences.npcsalelock));
+			setElHidden(lockOverlay, !(onFavTab && _preferences.npcsalelock));
+			setElHidden(lockMsg, true);
+			setElHidden(sort, !onFavTab);
+		}
+	}
+
+	/**
+	 * Hide/show inventory's content
+	 */
+	function onToggleReduction() {
+		const root = Component.getRoot();
+		const panel = root.querySelector('.panel');
+
+		if (_realSize) {
+			if (panel) {
+				panel.style.display = 'flex';
+			}
+			Component._host.style.height = `${_realSize}px`;
+			_realSize = 0;
+		} else {
+			_realSize = Component._host.getBoundingClientRect().height;
+			Component._host.style.height = '17px';
+			if (panel) {
+				panel.style.display = 'none';
+			}
+		}
+	}
+
+	/**
+	 * Update tab, reset inventory content
+	 */
+	function requestFilter() {
+		const root = Component.getRoot();
+		const host = root.querySelector('.scroll-host');
+		if (host) {
+			host.scrollTop = 0;
+		}
+
+		const content = root.querySelector('.container .content');
+		if (content) {
+			content.innerHTML = '';
+		}
+
+		const list = Component.list;
+		for (let i = 0, count = list.length; i < count; ++i) {
+			Component.addItemSub(list[i]);
+		}
+
+		Component.updateScroll();
+	}
+
+	/**
+	 * Drop an item from storage to inventory
+	 *
+	 * @param {event} event
+	 */
+	function onDrop(event) {
+		let item, data;
+		event.stopImmediatePropagation();
+
+		try {
+			data = JSON.parse(event.dataTransfer.getData('Text'));
+			item = data.data;
+		} catch (_e) {
+			return false;
+		}
+
+		if (
+			data.type !== 'item' ||
+			(data.from !== 'Storage' && data.from !== 'CartItems' && data.from !== 'Mail' && data.from !== 'WriteRodex')
+		) {
+			return false;
+		}
+
+		if (item.count > 1) {
+			InputBox.append();
+			InputBox.setType('number', false, item.count);
+
+			InputBox.onSubmitRequest = function OnSubmitRequest(count) {
+				InputBox.remove();
+
+				switch (data.from) {
+					case 'Storage':
+						Storage.reqRemoveItem(item.index, parseInt(count, 10));
+						break;
+					case 'CartItems':
+						CartItems.reqRemoveItem(item.index, parseInt(count, 10));
+						break;
+					case 'Mail':
+						Mail.reqRemoveItem(item.index, parseInt(count, 10));
+						break;
+					case 'WriteRodex':
+						WriteRodex.requestRemoveItemRodex(item.index, parseInt(count, 10));
+						break;
+				}
+			};
+			return false;
+		}
+
+		switch (data.from) {
+			case 'Storage':
+				Storage.reqRemoveItem(item.index, 1);
+				break;
+			case 'CartItems':
+				CartItems.reqRemoveItem(item.index, 1);
+				break;
+			case 'Mail':
+				Mail.reqRemoveItem(item.index, 1);
+				break;
+			case 'WriteRodex':
+				WriteRodex.requestRemoveItemRodex(item.index, 1);
+				break;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Show item name when mouse is over
+	 */
+	function onItemOver(_e) {
+		const idx = parseInt(this.getAttribute('data-index'), 10);
+		const item = Component.getItemByIndex(idx);
+
+		if (!item) {
+			return;
+		}
+
+		let quantity = ' ea';
+		if (
+			item.Options &&
+			(item.type === ItemType.WEAPON || item.type === ItemType.ARMOR || item.type === ItemType.SHADOWGEAR) &&
+			item.Options.filter(Option => Option.index !== 0).length > 0
+		) {
+			quantity = ' Quantity';
+		}
+
+		const root = Component.getRoot();
+		const overlay = root.querySelector('.overlay');
+		const rootEl = root.querySelector(`#${name}`) || root;
+		const itemRect = this.getBoundingClientRect();
+		const rootRect = rootEl.getBoundingClientRect();
+
+		if (overlay) {
+			overlay.style.display = 'block';
+			overlay.style.top = `${itemRect.top - rootRect.top}px`;
+			overlay.style.left = `${itemRect.left - rootRect.left + 35}px`;
+			overlay.innerHTML = _sanitizeHtml(`${DB.getItemName(item)}: ${item.count || 1}${quantity}`);
+
+			if (item.IsIdentified) {
+				overlay.classList.remove('grey');
+			} else {
+				overlay.classList.add('grey');
+			}
+		}
+	}
+
+	/**
+	 * Hide the item name
+	 */
+	function onItemOut() {
+		const root = Component.getRoot();
+		const overlay = root.querySelector('.overlay');
+		if (overlay) {
+			overlay.style.display = 'none';
+		}
+	}
+
+	/**
+	 * Start dragging an item
+	 */
+	function onItemDragStart(event) {
+		const index = parseInt(this.getAttribute('data-index'), 10);
+		const item = Component.getItemByIndex(index);
+
+		if (!item) {
+			return;
+		}
+
+		const img = new Image();
+		const iconEl = this.querySelector('.icon');
+		const url = iconEl ? iconEl.style.backgroundImage.match(/\((.*?)\)/)?.[1]?.replace(/('|")/g, '') : '';
+		img.decoding = 'async';
+		img.src = url || '';
+
+		event.dataTransfer.setDragImage(img, 12, 12);
+		event.dataTransfer.setData(
+			'Text',
+			JSON.stringify(
+				(window._OBJ_DRAG_ = {
+					type: 'item',
+					from: 'Inventory',
+					data: item
+				})
+			)
+		);
+
+		onItemOut();
+	}
+
+	/**
+	 * Stop dragging an item
+	 */
+	function onItemDragEnd() {
+		delete window._OBJ_DRAG_;
+	}
+
+	/**
+	 * Get item info (open description window)
+	 */
+	function onItemInfo(event) {
+		event.stopImmediatePropagation();
+
+		const index = parseInt(this.getAttribute('data-index'), 10);
+		const item = Component.getItemByIndex(index);
+
+		if (!item) {
+			return false;
+		}
+
+		if (event.altKey && event.which === 3) {
+			event.stopImmediatePropagation();
+			transferItemToOtherUI(item);
+			return false;
+		}
+
+		if (ItemInfo.uid === item.ITID) {
+			ItemInfo.remove();
+			if (favoriteTab && ItemCompare.ui) {
+				ItemCompare.remove();
+			}
+			return false;
+		}
+
+		if (favoriteTab && ItemCompare.ui) {
+			ItemCompare.remove();
+		}
+
+		ItemInfo.append();
+		ItemInfo.uid = item.ITID;
+		ItemInfo.setItem(item);
+
+		if (favoriteTab) {
+			const compareItem = Equipment.getUI().isInEquipList(item.location);
+
+			if (compareItem && Component.itemcomp) {
+				ItemCompare.prepare();
+				ItemCompare.append();
+				ItemCompare.uid = compareItem.ITID;
+				ItemCompare.setItem(compareItem);
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Alt Right Click Request Transfer
+	 */
+	function transferItemToOtherUI(item) {
+		const storageUI = Storage.getUI();
+		const isStorageOpen = storageUI._host ? storageUI._host.style.display !== 'none' : false;
+		const isCartOpen = CartItems._host ? CartItems._host.style.display !== 'none' : false;
+
+		if (!item) {
+			return false;
+		}
+
+		const count = item.count || 1;
+
+		if (isStorageOpen) {
+			Storage.reqAddItem(item.index, count);
+		} else if (isCartOpen) {
+			Component.reqMoveItemToCart(item.index, count);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Ask to use an item
+	 */
+	function onItemUsed(event) {
+		const index = parseInt(this.getAttribute('data-index'), 10);
+		const item = Component.getItemByIndex(index);
+
+		if (item) {
+			Component.useItem(item);
+			onItemOut();
+		}
+
+		event.stopImmediatePropagation();
+		event.preventDefault();
+	}
+
+	/**
+	 * Handle click event on an item
+	 */
+	function onItemClick(event) {
+		if (event.shiftKey && event.which === 1) {
+			const idx = parseInt(this.getAttribute('data-index'), 10);
+			const item = Component.getItemByIndex(idx);
+			if (!item) {
+				return false;
+			}
+
+			item.name = DB.getItemName(item);
+			const link =
+				'<span data-item="' +
+				DB.createItemLink(item) +
+				'" class="item-link" style="color:#A9B95F;">&lt;' +
+				item.name +
+				'&gt;</span>';
+
+			const chatRoot = ChatBox._shadow || ChatBox._host || document;
+			const msgBox = chatRoot.querySelector('.input-chatbox');
+			if (msgBox) {
+				msgBox.innerHTML += link + ' ';
+				msgBox.focus();
+			}
+
+			event.stopImmediatePropagation();
+		}
+
+		return false;
+	}
+
+	/**
+	 * Handle drop event on tabs
+	 */
+	function onTabDrop(event) {
+		let item, data;
+		event.stopImmediatePropagation();
+
+		try {
+			data = JSON.parse(event.dataTransfer.getData('Text'));
+			item = data.data;
+		} catch (_e) {
+			return false;
+		}
+
+		if (data.type !== 'item') {
+			return false;
+		}
+		if (!item) {
+			return false;
+		}
+
+		const targetTab = event.target.getAttribute('data-tab');
+		const itemfav = targetTab === 'fav' ? 0 : 1;
+
+		const pkt = new PACKET.CZ.INVENTORY_TAB();
+		pkt.item_index = item.index;
+		pkt.favorite = itemfav;
+		Network.sendPacket(pkt);
+	}
+
+	if (favoriteTab) {
+		/**
+		 * Update PlaceETCTab of an item in the inventory
+		 */
+		Component.updatePlaceETCTab = function (itemIndex, newValue) {
+			const item = Component.getItemByIndex(itemIndex);
+
+			if (!item) {
+				return;
+			}
+
+			if (newValue) {
+				let favoriteval;
+				switch (item.type) {
+					case ItemType.HEALING:
+					case ItemType.USABLE:
+					case ItemType.DELAYCONSUME:
+					case ItemType.CASH:
+					case ItemType.ETC:
+					case ItemType.CARD:
+					case ItemType.AMMO:
+						favoriteval = 2;
+						break;
+					case ItemType.WEAPON:
+					case ItemType.ARMOR:
+					case ItemType.SHADOWGEAR:
+					case ItemType.PETEGG:
+					case ItemType.PETARMOR:
+						favoriteval = 4;
+						break;
+					default:
+						break;
+				}
+				item.PlaceETCTab = favoriteval;
+			} else {
+				item.PlaceETCTab = newValue;
+			}
+
+			requestFilter();
+		};
+	}
+
+	/**
+	 * Toggle the item drop lock preference
+	 */
+	function onItemLock() {
+		_preferences.itemlock = !_preferences.itemlock;
+		Component.itemlock = _preferences.itemlock;
+
+		const lockImg = _preferences.itemlock ? 'inventory/item_drop_lock_on.bmp' : 'inventory/item_drop_lock_off.bmp';
+		Client.loadFile(DB.INTERFACE_PATH + lockImg, data => {
+			const root = Component.getRoot();
+			const btn = root.querySelector('.item_drop_lock');
+			if (btn) {
+				btn.style.backgroundImage = `url(${data})`;
+			}
+		});
+	}
+
+	/**
+	 * Toggles the value of Item Compare
+	 */
+	function onItemCompare() {
+		_preferences.itemcomp = !_preferences.itemcomp;
+		Component.itemcomp = _preferences.itemcomp;
+
+		const compImg = _preferences.itemcomp ? 'inventory/item_compare_on.bmp' : 'inventory/item_compare_off.bmp';
+		Client.loadFile(DB.INTERFACE_PATH + compImg, data => {
+			const root = Component.getRoot();
+			const btn = root.querySelector('.item_compare');
+			if (btn) {
+				btn.style.backgroundImage = `url(${data})`;
+			}
+		});
+	}
+
+	/**
+	 * Toggles the value of Item Lock NPCSale
+	 */
+	function onNPCLock() {
+		_preferences.npcsalelock = !_preferences.npcsalelock;
+		Component.npcsalelock = _preferences.npcsalelock;
+
+		const root = Component.getRoot();
+		const dealOn = root.querySelector('.deallock_on');
+		const dealOff = root.querySelector('.deallock_off');
+		const lockOverlay = root.querySelector('.lockoverlay');
+		const lockMsg = root.querySelector('.lockoverlaymsg');
+
+		setElHidden(dealOn, !_preferences.npcsalelock);
+		setElHidden(dealOff, _preferences.npcsalelock);
+
+		if (_preferences.npcsalelock) {
+			setElHidden(lockOverlay, false);
+			setElHidden(lockMsg, false);
+
+			lockOverlayTimeout = setTimeout(() => {
+				setElHidden(root.querySelector('.lockoverlaymsg'), true);
+			}, 3000);
+		} else {
+			setElHidden(lockOverlay, true);
+			setElHidden(lockMsg, true);
+		}
+	}
+
+	if (equipSwitch) {
+		Component.addItemtoSwitch = function (index) {
+			const item = this.getItemByIndex(index);

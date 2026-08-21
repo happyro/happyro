@@ -1,0 +1,188 @@
+		for (i = 0, k = 0; i < node_count; ++i) {
+			for (j = 0; j < instance_count; ++j, k++) {
+				meshes[k] = nodes[i].compileAtFrame(instances[j], frame, animLen);
+			}
+		}
+
+		return {
+			meshes: meshes,
+			textures: this.textures
+		};
+	}
+}
+/**
+ * Interpolate rotation keyframes using SLERP
+ *
+ * @param {Array} keyframes
+ * @param {number} frame
+ * @param {number} animLen
+ * @returns {Array|null} quaternion or null
+ */
+function getRotationAtFrame(keyframes, frame, animLen) {
+	if (!keyframes || keyframes.length === 0) {
+		return null;
+	}
+
+	if (keyframes.length === 1) {
+		return keyframes[0].q;
+	}
+
+	// Find surrounding keyframes
+	let prev = keyframes[0];
+	let next = null;
+
+	for (let i = 0; i < keyframes.length; i++) {
+		if (keyframes[i].frame > frame) {
+			next = keyframes[i];
+			break;
+		}
+		prev = keyframes[i];
+	}
+
+	if (!next) {
+		return prev.q;
+	}
+
+	// Calculate interpolation factor
+	const frameDiff = next.frame - prev.frame;
+	if (frameDiff === 0) {
+		return prev.q;
+	}
+
+	const t = (frame - prev.frame) / frameDiff;
+
+	// SLERP between quaternions
+	return slerpQuat(prev.q, next.q, t);
+}
+
+/**
+ * SLERP quaternion interpolation
+ */
+function slerpQuat(q1, q2, t) {
+	const result = new Float32Array(4);
+
+	let dot = q1[0] * q2[0] + q1[1] * q2[1] + q1[2] * q2[2] + q1[3] * q2[3];
+
+	let q2Sign = 1;
+	if (dot < 0) {
+		dot = -dot;
+		q2Sign = -1;
+	}
+
+	let scale0, scale1;
+	if (dot > 0.9995) {
+		scale0 = 1.0 - t;
+		scale1 = t * q2Sign;
+	} else {
+		const theta = Math.acos(dot);
+		const sinTheta = Math.sin(theta);
+		scale0 = Math.sin((1.0 - t) * theta) / sinTheta;
+		scale1 = (Math.sin(t * theta) / sinTheta) * q2Sign;
+	}
+
+	result[0] = scale0 * q1[0] + scale1 * q2[0];
+	result[1] = scale0 * q1[1] + scale1 * q2[1];
+	result[2] = scale0 * q1[2] + scale1 * q2[2];
+	result[3] = scale0 * q1[3] + scale1 * q2[3];
+
+	return result;
+}
+
+/**
+ * Interpolate position keyframes
+ *
+ * @param {Array} keyframes
+ * @param {number} frame
+ * @param {number} animLen
+ * @returns {Array|null} position or null
+ */
+function getPositionAtFrame(keyframes, frame, animLen) {
+	if (!keyframes || keyframes.length === 0) {
+		return null;
+	}
+
+	if (keyframes.length === 1) {
+		return [keyframes[0].px, keyframes[0].py, keyframes[0].pz];
+	}
+
+	// Find surrounding keyframes
+	let prev = keyframes[0];
+	let next = null;
+
+	for (let i = 0; i < keyframes.length; i++) {
+		if (keyframes[i].frame > frame) {
+			next = keyframes[i];
+			break;
+		}
+		prev = keyframes[i];
+	}
+
+	if (!next) {
+		return [prev.px, prev.py, prev.pz];
+	}
+
+	// Calculate interpolation factor
+	const frameDiff = next.frame - prev.frame;
+	if (frameDiff === 0) {
+		return [prev.px, prev.py, prev.pz];
+	}
+
+	const t = (frame - prev.frame) / frameDiff;
+
+	// Linear interpolation
+	return [prev.px + (next.px - prev.px) * t, prev.py + (next.py - prev.py) * t, prev.pz + (next.pz - prev.pz) * t];
+}
+
+/**
+ * Interpolate scale keyframes
+ *
+ * @param {Array} keyframes
+ * @param {number} frame
+ * @param {number} animLen
+ * @returns {Array|null} scale or null
+ */
+function getScaleAtFrame(keyframes, frame, animLen) {
+	if (!keyframes || keyframes.length === 0) {
+		return null;
+	}
+
+	if (keyframes.length === 1) {
+		return keyframes[0].Scale;
+	}
+
+	// Find surrounding keyframes
+	let prev = keyframes[0];
+	let next = null;
+
+	for (let i = 0; i < keyframes.length; i++) {
+		if (keyframes[i].Frame > frame) {
+			next = keyframes[i];
+			break;
+		}
+		prev = keyframes[i];
+	}
+
+	if (!next) {
+		return prev.Scale;
+	}
+
+	// Calculate interpolation factor
+	const frameDiff = next.Frame - prev.Frame;
+	if (frameDiff === 0) {
+		return prev.Scale;
+	}
+
+	const t = (frame - prev.Frame) / frameDiff;
+
+	// Linear interpolation
+	return [
+		prev.Scale[0] + (next.Scale[0] - prev.Scale[0]) * t,
+		prev.Scale[1] + (next.Scale[1] - prev.Scale[1]) * t,
+		prev.Scale[2] + (next.Scale[2] - prev.Scale[2]) * t
+	];
+}
+
+/**
+ * Export
+ */
+export default RSM;

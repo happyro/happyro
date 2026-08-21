@@ -1,0 +1,500 @@
+ *------------------------------------------*/
+ACMD_FUNC(font)
+{
+	int32 font_id;
+	nullpo_retr(-1,sd);
+
+	font_id = atoi(message);
+	if( font_id == 0 ) {
+		if( sd->status.font ) {
+			sd->status.font = 0;
+			clif_displaymessage(fd, msg_txt(sd,1356)); // Returning to normal font.
+			clif_font(sd);
+		} else {
+			clif_displaymessage(fd, msg_txt(sd,1357)); // Use @font <1-9> to change your message font.
+			clif_displaymessage(fd, msg_txt(sd,1358)); // Use 0 or no parameter to return to normal font.
+		}
+	} else if( font_id < 0 || font_id > 9 )
+		clif_displaymessage(fd, msg_txt(sd,1359)); // Invalid font. Use a value from 0 to 9.
+	else if( font_id != sd->status.font ) {
+		sd->status.font = font_id;
+		clif_font(sd);
+		clif_displaymessage(fd, msg_txt(sd,1360)); // Font changed.
+	} else
+		clif_displaymessage(fd, msg_txt(sd,1361)); // Already using this font.
+
+	return 0;
+}
+
+/*==========================================
+ * type: 1 = commands (@), 2 = charcommands (#)
+ *------------------------------------------*/
+static void atcommand_commands_sub(map_session_data* sd, const int32 fd, AtCommandType type)
+{
+	char line_buff[CHATBOX_SIZE];
+	char* cur = line_buff;
+	AtCommandInfo* cmd;
+	DBIterator *iter = db_iterator(atcommand_db);
+	int32 count = 0;
+
+	memset(line_buff,' ',CHATBOX_SIZE);
+	line_buff[CHATBOX_SIZE-1] = 0;
+
+	clif_displaymessage(fd, msg_txt(sd,273)); // "Commands available:"
+
+	for (cmd = (AtCommandInfo*)dbi_first(iter); dbi_exists(iter); cmd = (AtCommandInfo*)dbi_next(iter)) {
+		switch( type ) {
+			case COMMAND_CHARCOMMAND:
+				if( cmd->char_groups[sd->group->index] == 0 )
+					continue;
+				break;
+			case COMMAND_ATCOMMAND:
+				if( cmd->at_groups[sd->group->index] == 0 )
+					continue;
+				break;
+			default:
+				continue;
+		}
+
+
+		size_t slen = strlen( cmd->command );
+
+		// flush the text buffer if this command won't fit into it
+		if (slen + cur - line_buff >= CHATBOX_SIZE) {
+			clif_displaymessage(fd,line_buff);
+			cur = line_buff;
+			memset(line_buff,' ',CHATBOX_SIZE);
+			line_buff[CHATBOX_SIZE-1] = 0;
+		}
+
+		memcpy(cur,cmd->command,slen);
+		cur += slen+(10-slen%10);
+
+		count++;
+	}
+	dbi_destroy(iter);
+	clif_displaymessage(fd,line_buff);
+
+	if ( atcmd_binding_count ) {
+		int32 i, count_bind, gm_lvl = pc_get_group_level(sd);
+		for( i = count_bind = 0; i < atcmd_binding_count; i++ ) {
+			if ( gm_lvl >= ( (type - 1) ? atcmd_binding[i]->level2 : atcmd_binding[i]->level ) ) {
+				size_t slen = strlen( atcmd_binding[i]->command );
+
+				if ( count_bind == 0 ) {
+					cur = line_buff;
+					memset(line_buff,' ',CHATBOX_SIZE);
+					line_buff[CHATBOX_SIZE-1] = 0;
+					clif_displaymessage(fd, "-----------------");
+					clif_displaymessage(fd, msg_txt(sd,509)); // Script-bound commands:
+				}
+				if (slen + cur - line_buff >= CHATBOX_SIZE) {
+					clif_displaymessage(fd,line_buff);
+					cur = line_buff;
+					memset(line_buff,' ',CHATBOX_SIZE);
+					line_buff[CHATBOX_SIZE-1] = 0;
+				}
+				memcpy(cur,atcmd_binding[i]->command,slen);
+				cur += slen+(10-slen%10);
+				count_bind++;
+			}
+		}
+		if ( count_bind )
+			clif_displaymessage(fd,line_buff);// last one
+		count += count_bind;
+		
+	}
+
+	sprintf(atcmd_output, msg_txt(sd,274), count); // "%d commands found."
+	clif_displaymessage(fd, atcmd_output);
+
+	return;
+}
+
+/*==========================================
+ * @commands Lists available @ commands to you
+ *------------------------------------------*/
+ACMD_FUNC(commands)
+{
+	atcommand_commands_sub(sd, fd, COMMAND_ATCOMMAND);
+	return 0;
+}
+
+/*==========================================
+ * @charcommands Lists available # commands to you
+ *------------------------------------------*/
+ACMD_FUNC(charcommands) {
+	atcommand_commands_sub(sd, fd, COMMAND_CHARCOMMAND);
+	return 0;
+}
+/* for new mounts */
+ACMD_FUNC(mount2) {
+	clif_displaymessage(sd->fd,msg_txt(sd,1362)); // NOTICE: If you crash with mount your LUA is outdated.
+	if (!sd->sc.getSCE(SC_ALL_RIDING)) {
+		clif_displaymessage(sd->fd,msg_txt(sd,1363)); // You have mounted.
+		sc_start(nullptr, sd, SC_ALL_RIDING, 10000, 1, INFINITE_TICK);
+	} else {
+		clif_displaymessage(sd->fd,msg_txt(sd,1364)); // You have released your mount.
+		status_change_end(sd, SC_ALL_RIDING);
+	}
+	return 0;
+}
+
+ACMD_FUNC(accinfo) {
+	char query[NAME_LENGTH];
+
+	if (!message || !*message || strlen(message) > NAME_LENGTH
+		|| ( sscanf(message, "%23s", query) < 1))
+	{
+		clif_displaymessage(fd, msg_txt(sd,1365)); // Usage: @accinfo/@accountinfo <account_id/char name>
+		clif_displaymessage(fd, msg_txt(sd,1366)); // You may search partial name by making use of '%' in the search, ex. "@accinfo %Mario%" lists all characters whose name contains "Mario".
+		return -1;
+	}
+
+	intif_request_accinfo( sd->fd, sd->id, pc_get_group_level(sd), query);
+	return 0;
+}
+
+/**
+ * @set <variable name{[index]}>{ <value>}
+ * 
+ * Gets or sets a value of a non server variable.
+ * If a value is specified it is used to set the variable's value,
+ * if not the variable's value is read.
+ * In any case it reads and displays the variable's value.
+ *
+ * Original implementation by Ind
+*/
+ACMD_FUNC(set) {
+	char reg[46], val[128], name[32];
+	int32 toset = 0;
+	size_t len;
+	uint32 index;
+	bool is_str = false;
+	int64 uid;
+
+	if( !message || !*message || (toset = sscanf(message, "%45s %127[^\n]s", reg, val)) < 1  ) {
+		clif_displaymessage(fd, msg_txt(sd,1367)); // Usage: @set <variable name> <value>
+		clif_displaymessage(fd, msg_txt(sd,1368)); // Usage: ex. "@set PoringCharVar 50"
+		clif_displaymessage(fd, msg_txt(sd,1369)); // Usage: ex. "@set PoringCharVarSTR$ Super Duper String"
+		clif_displaymessage(fd, msg_txt(sd,1370)); // Usage: ex. "@set PoringCharVarSTR$" outputs its value, Super Duper String.
+		return -1;
+	}
+
+	/* disabled variable types (they require a proper script state to function, so allowing them would crash the server) */
+	if( reg[0] == '.' ) {
+		clif_displaymessage(fd, msg_txt(sd,1371)); // NPC variables may not be used with @set.
+		return -1;
+	} else if( reg[0] == '\'' ) {
+		clif_displaymessage(fd, msg_txt(sd,1372)); // Instance variables may not be used with @set.
+		return -1;
+	}
+
+	// Check if the user wanted to set an array
+	if( sscanf( reg, "%31[^[][%" PRIu32 "]", name, &index ) < 2 ){
+		// The user did not specify array brackets, so we set the index to zero
+		index = 0;
+	}
+
+	is_str = is_string_variable(name);
+
+	if( ( len = strlen(val) ) > 1 ) {
+		if( val[0] == '"' && val[len-1] == '"') {
+			val[len-1] = '\0'; //Strip quotes.
+			memmove(val, val+1, len-1);
+		}
+	}
+
+	// Only set the variable if there is a value for it
+	if( toset >= 2 ){
+		if( is_str ){
+			setd_sub_str( nullptr, sd, name, index, val, nullptr );
+		}else{
+			setd_sub_num( nullptr, sd, name, index, strtoll( val, nullptr, 10 ), nullptr );
+		}
+	}
+
+	uid = reference_uid( add_str( name ), index );
+
+	if( is_str ) {// string variable
+		char* value;
+
+		switch( reg[0] ) {
+			case '@':
+				value = pc_readregstr(sd, uid);
+				break;
+			case '$':
+				value = mapreg_readregstr(uid);
+				break;
+			case '#':
+				if( reg[1] == '#' )
+					value = pc_readaccountreg2str(sd, uid);// global
+				else
+					value = pc_readaccountregstr(sd, uid);// local
+				break;
+			default:
+				value = pc_readglobalreg_str(sd, uid);
+				break;
+		}
+
+		if( value == nullptr || *value == '\0' ){// empty string
+			sprintf(atcmd_output,msg_txt(sd,1375),reg); // %s is empty
+		}else{
+			sprintf(atcmd_output,msg_txt(sd,1374),reg,value); // %s value is now: %s
+		}
+	} else {// integer variable
+		int64 value;
+
+		switch( reg[0] ) {
+			case '@':
+				value = pc_readreg(sd, uid);
+				break;
+			case '$':
+				value = mapreg_readreg(uid);
+				break;
+			case '#':
+				if( reg[1] == '#' )
+					value = pc_readaccountreg2(sd, uid);// global
+				else
+					value = pc_readaccountreg(sd, uid);// local
+				break;
+			default:
+				value = pc_readglobalreg(sd, uid);
+				break;
+		}
+
+		sprintf(atcmd_output,msg_txt(sd,1373),reg,value); // %s value is now: %lld
+	}
+
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+ACMD_FUNC(addperm) {
+	int32 perm_size = ARRAYLENGTH(pc_g_permission_name);
+	int32 i;
+
+	if( !message || !*message ) {
+		sprintf(atcmd_output,  msg_txt(sd,1378),command); // Usage: %s <permission_name>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1379)); // -- Permission List
+		for( i = 0; i < perm_size; i++ ) {
+			sprintf(atcmd_output,"- %s",pc_g_permission_name[i].name);
+			clif_displaymessage(fd, atcmd_output);
+		}
+		return -1;
+	}
+
+	ARR_FIND(0, perm_size, i, strcmpi(pc_g_permission_name[i].name, message) == 0);
+
+	if( i == perm_size ) {
+		sprintf(atcmd_output,msg_txt(sd,1380),message); // '%s' is not a known permission.
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1379)); // -- Permission List
+		for( i = 0; i < perm_size; i++ ) {
+			sprintf(atcmd_output,"- %s",pc_g_permission_name[i].name);
+			clif_displaymessage(fd, atcmd_output);
+		}
+		return -1;
+	}
+
+	if( pc_has_permission( sd, pc_g_permission_name[i].permission) ){
+		sprintf(atcmd_output,  msg_txt(sd,1381),sd->status.name,pc_g_permission_name[i].name); // User '%s' already possesses the '%s' permission.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	sd->permissions.set( pc_g_permission_name[i].permission );
+
+	sprintf(atcmd_output, msg_txt(sd,1384),sd->status.name); // User '%s' permissions updated successfully. The changes are temporary.
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+ACMD_FUNC(rmvperm) {
+	int32 perm_size = ARRAYLENGTH(pc_g_permission_name);
+	int32 i;
+
+	if( !message || !*message ) {
+		sprintf(atcmd_output,  msg_txt(sd,1378),command); // Usage: %s <permission_name>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1379)); // -- Permission List
+		for( i = 0; i < perm_size; i++ ) {
+			sprintf(atcmd_output,"- %s",pc_g_permission_name[i].name);
+			clif_displaymessage(fd, atcmd_output);
+		}
+		return -1;
+	}
+
+	ARR_FIND(0, perm_size, i, strcmpi(pc_g_permission_name[i].name, message) == 0);
+
+	if( i == perm_size ) {
+		sprintf(atcmd_output,msg_txt(sd,1380),message); // '%s' is not a known permission.
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1379)); // -- Permission List
+		for( i = 0; i < perm_size; i++ ) {
+			sprintf(atcmd_output,"- %s",pc_g_permission_name[i].name);
+			clif_displaymessage(fd, atcmd_output);
+		}
+		return -1;
+	}
+
+	if( !pc_has_permission( sd, pc_g_permission_name[i].permission ) ){
+		sprintf(atcmd_output,  msg_txt(sd,1382),sd->status.name,pc_g_permission_name[i].name); // User '%s' doesn't possess the '%s' permission.
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output,msg_txt(sd,1383),sd->status.name); // -- User '%s' Permissions
+		clif_displaymessage(fd, atcmd_output);
+		for( i = 0; i < perm_size; i++ ) {
+			if( pc_has_permission( sd, pc_g_permission_name[i].permission ) ){
+				sprintf(atcmd_output,"- %s",pc_g_permission_name[i].name);
+				clif_displaymessage(fd, atcmd_output);
+			}
+		}
+
+		return -1;
+	}
+
+	sd->permissions.reset( pc_g_permission_name[i].permission );
+
+	sprintf(atcmd_output, msg_txt(sd,1384),sd->status.name); // User '%s' permissions updated successfully. The changes are temporary.
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+ACMD_FUNC(unloadnpcfile) {
+
+	if( !message || !*message ) {
+		clif_displaymessage(fd, msg_txt(sd,1385)); // Usage: @unloadnpcfile <file name>
+		return -1;
+	}
+
+	char path[1024];
+	atcommand_normalize_npc_path(path, message, sizeof(path));
+
+	if( npc_unloadfile(path) ) {
+		clif_displaymessage(fd, msg_txt(sd,1386)); // File unloaded. Be aware that mapflags and monsters spawned directly are not removed.
+		ShowStatus( "NPC file '" CL_WHITE "%s" CL_RESET "' was unloaded.\n", path );
+	}
+	else {
+		clif_displaymessage(fd, msg_txt(sd,1387)); // File not found.
+		return -1;
+	}
+
+	return 0;
+}
+ACMD_FUNC(cart) {
+#define MC_CART_MDFY(idx, x) \
+	sd->status.skill[(idx)].id = (x)?MC_PUSHCART:0; \
+	sd->status.skill[(idx)].lv = (x)?1:0; \
+	sd->status.skill[(idx)].flag = (x)?SKILL_FLAG_TEMPORARY:SKILL_FLAG_PERMANENT;
+
+	int32 val = atoi(message);
+	bool need_skill = (pc_checkskill(sd, MC_PUSHCART) == 0);
+	uint16 sk_idx = 0;
+
+	if( !message || !*message || val < 0 || val > MAX_CARTS ) {
+		sprintf(atcmd_output, msg_txt(sd,1390),command,MAX_CARTS); // Unknown Cart (usage: %s <0-%d>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if( val == 0 && !pc_iscarton(sd) ) {
+		clif_displaymessage(fd, msg_txt(sd,1391)); // You do not possess a cart to be removed
+		return -1;
+	}
+
+	if (!(sk_idx = skill_get_index(MC_PUSHCART)))
+		return -1;
+
+	if( need_skill ) {
+		MC_CART_MDFY(sk_idx,1);
+	}
+
+	if( !pc_setcart(sd, val) ) {
+		if( need_skill ) {
+			MC_CART_MDFY(sk_idx,0);
+		}
+		return -1;/* @cart failed */
+	}
+
+	if( need_skill ) {
+		MC_CART_MDFY(sk_idx,0);
+	}
+
+	clif_displaymessage(fd, msg_txt(sd,1392)); // Cart Added
+
+	return 0;
+#undef MC_CART_MDFY
+}
+
+/* Channel System [Ind] */
+ACMD_FUNC(join){
+	char chname[CHAN_NAME_LENGTH], pass[CHAN_NAME_LENGTH];
+
+	if( !message || !*message || sscanf(message, "%19s %19s", chname, pass) < 1 ) {
+		sprintf(atcmd_output, msg_txt(sd,1399),command); // Unknown channel (usage: %s <#channel_name>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	return channel_pcjoin(sd, chname, pass);
+}
+/*
+ * Display available option for @channel command
+ * @command : the name of used command (for alias case)
+ */
+static inline void atcmd_channel_help(map_session_data *sd, const char *command)
+{
+	int32 fd = sd->fd;
+	bool can_delete = pc_has_permission(sd, PC_PERM_CHANNEL_ADMIN);
+	bool can_create = (can_delete || channel_config.private_channel.allow);
+	clif_displaymessage(fd, msg_txt(sd,1414));// ---- Available options:
+
+	//option create
+	if( can_create ) {
+		sprintf(atcmd_output, msg_txt(sd,1415),command);// * %s create <#channel_name> <channel_password>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1416));// -- Creates a new channel.
+	}
+
+	//option delete
+	if(can_delete){
+		sprintf(atcmd_output, msg_txt(sd,1469),command);// * %s delete <#channel_name>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1470)); // -- Destroys the specified channel.
+	}
+
+	//option list
+	sprintf(atcmd_output, msg_txt(sd,1417),command);// * %s list
+	clif_displaymessage(fd, atcmd_output);
+	clif_displaymessage(fd, msg_txt(sd,1418));// -- Lists all public channels.
+	sprintf(atcmd_output, msg_txt(sd,1471),command);// * %s list mine
+	clif_displaymessage(fd, atcmd_output);
+	clif_displaymessage(fd, msg_txt(sd,1472));// -- Lists all channels you have joined.
+	if( can_create ) {
+		sprintf(atcmd_output, msg_txt(sd,1419),command);// * %s list colors
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1420));// -- Lists all available colors for custom channels.
+	}
+
+	//option setcolor
+	if(can_create){
+		sprintf(atcmd_output, msg_txt(sd,1421),command);// * %s setcolor <#channel_name> <color_name>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1422));// -- Changes channel text to the specified color (channel owners only).
+	}
+
+	//option join
+	sprintf(atcmd_output, msg_txt(sd,1473),command);// * %s join <#channel_name> <channel_password>
+	clif_displaymessage(fd, atcmd_output);
+	clif_displaymessage(fd, msg_txt(sd,1474));// -- Joins the specified channel.
+
+	//option leave
+	sprintf(atcmd_output, msg_txt(sd,1423),command);// * %s leave <#channel_name>
+	clif_displaymessage(fd, atcmd_output);
+	clif_displaymessage(fd, msg_txt(sd,1424));// -- Leaves the specified channel.
+
+	//option bindto
+	sprintf(atcmd_output, msg_txt(sd,1427),command);// * %s bindto <#channel_name>

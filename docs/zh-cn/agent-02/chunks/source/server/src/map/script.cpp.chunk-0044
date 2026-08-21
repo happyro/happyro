@@ -1,0 +1,500 @@
+
+	x0 = script_getnum(st,4);
+	y0 = script_getnum(st,5);
+	x1 = script_getnum(st,6);
+	y1 = script_getnum(st,7);
+
+	for (const auto &member : bg->members) {
+		if( member.sd->m != m || member.sd->x < x0 || member.sd->y < y0 || member.sd->x > x1 || member.sd->y > y1 )
+			continue;
+		c++;
+	}
+
+	script_pushint(st,c);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_updatescore)
+{
+	const char *str;
+	int16 m;
+
+	str = script_getstr(st,2);
+	if( (m = map_mapname2mapid(str)) < 0 )
+		return SCRIPT_CMD_SUCCESS;
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	mapdata->bgscore_lion = script_getnum(st,3);
+	mapdata->bgscore_eagle = script_getnum(st,4);
+
+	clif_bg_updatescore(m);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_get_data)
+{
+	int32 bg_id = script_getnum(st,2), type = script_getnum(st,3), i = 0;
+	std::shared_ptr<s_battleground_data> bg = util::umap_find(bg_team_db, bg_id);
+
+	if (bg) {
+		switch (type) {
+		case 0:
+			script_pushint(st, bg->members.size());
+			break;
+		case 1:
+			for (const auto &member : bg->members)
+				mapreg_setreg(reference_uid(add_str("$@arenamembers"), i++), member.sd->id);
+			mapreg_setreg(add_str("$@arenamemberscount"), i);
+			script_pushint(st, i);
+			break;
+		default:
+			ShowError("script:bg_get_data: unknown data identifier %d\n", type);
+			break;
+		}
+	} else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Reserves a slot for the given Battleground.
+ * bg_reserve("<battleground_map_name>"{,<ended>});
+ */
+BUILDIN_FUNC(bg_reserve)
+{
+	const char *str = script_getstr(st, 2);
+	bool ended = script_hasdata(st, 3) ? script_getnum(st, 3) != 0 : false;
+
+	if (!bg_queue_reserve(str, ended))
+		ShowWarning("buildin_bg_reserve: Could not reserve battleground with name %s\n", str);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Removes a spot for the given Battleground.
+ * bg_unbook("<battleground_map_name>");
+ */
+BUILDIN_FUNC(bg_unbook)
+{
+	const char *str = script_getstr(st, 2);
+
+	if (!bg_queue_unbook(str))
+		ShowWarning("buildin_bg_unbook: Could not unreserve battleground with name %s\n", str);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Gets battleground database information.
+ * bg_info("<battleground name>", <type>);
+ */
+BUILDIN_FUNC(bg_info)
+{
+	std::shared_ptr<s_battleground_type> bg = bg_search_name(script_getstr(st, 2));
+
+	if (!bg) {
+		ShowError("bg_info: Invalid Battleground name %s.\n", script_getstr(st, 2));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 type = script_getnum(st, 3);
+
+	switch (type) {
+		case BG_INFO_ID:
+			script_pushint(st, bg->id);
+			break;
+		case BG_INFO_REQUIRED_PLAYERS:
+			script_pushint(st, bg->required_players);
+			break;
+		case BG_INFO_MAX_PLAYERS:
+			script_pushint(st, bg->max_players);
+			break;
+		case BG_INFO_MIN_LEVEL:
+			script_pushint(st, bg->min_lvl);
+			break;
+		case BG_INFO_MAX_LEVEL:
+			script_pushint(st, bg->max_lvl);
+			break;
+		case BG_INFO_MAPS: {
+			size_t i;
+
+			for( i = 0; i < bg->maps.size(); i++ ){
+				setd_sub_str( st, nullptr, ".@bgmaps$", static_cast<int32>( i ), mapindex_id2name( bg->maps[i].mapindex ), nullptr );
+			}
+
+			setd_sub_num(st, nullptr, ".@bgmapscount", 0, i, nullptr);
+			script_pushint(st, i);
+			break;
+		}
+		case BG_INFO_DESERTER_TIME:
+			script_pushint(st, bg->deserter_time);
+			break;
+		default:
+			ShowError("bg_info: Unknown battleground info type %d given.\n", type);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Instancing System
+ *------------------------------------------*/
+/**
+ * Returns an Instance ID.
+ * @param st: Script state
+ * @param mode: Instance mode
+ * @return instance ID on success or 0 otherwise
+ */
+int32 script_instancegetid(struct script_state* st, e_instance_mode mode)
+{
+	int32 instance_id = 0;
+
+	if (mode == IM_NONE) {
+		npc_data *nd = map_id2nd(st->oid);
+
+		if (nd && nd->instance_id > 0)
+			instance_id = nd->instance_id;
+	} else {
+		map_session_data *sd = map_id2sd(st->rid);
+
+		if (sd) {
+			switch (mode) {
+				case IM_CHAR:
+					if (sd->instance_id > 0)
+						instance_id = sd->instance_id;
+					break;
+				case IM_PARTY: {
+					struct party_data *pd = party_search(sd->status.party_id);
+
+					if (pd && pd->instance_id > 0)
+						instance_id = pd->instance_id;
+				}
+					break;
+				case IM_GUILD: {
+					auto gd = guild_search(sd->status.guild_id);
+
+					if (gd && gd->instance_id > 0)
+						instance_id = gd->instance_id;
+				}
+					break;
+				case IM_CLAN: {
+					struct clan *cd = clan_search(sd->status.clan_id);
+
+					if (cd && cd->instance_id > 0)
+						instance_id = cd->instance_id;
+				}
+					break;
+				default: // Unsupported type
+					break;
+			}
+		}
+	}
+
+	return instance_id;
+}
+
+/*==========================================
+ * Creates the instance
+ * Returns Instance ID if created successfully
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_create)
+{
+	e_instance_mode mode = IM_PARTY;
+	int32 owner_id = 0;
+
+	if (script_hasdata(st, 3)) {
+		mode = static_cast<e_instance_mode>(script_getnum(st, 3));
+
+		if (mode < IM_NONE || mode >= IM_MAX) {
+			ShowError("buildin_instance_create: Unknown instance mode %d for '%s'\n", mode, script_getstr(st, 2));
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	if (script_hasdata(st, 4))
+		owner_id = script_getnum(st, 4);
+	else {
+		// If sd is nullptr, instance_create will return -2.
+		map_session_data *sd = nullptr;
+
+		switch(mode) {
+			case IM_NONE:
+				owner_id = st->oid;
+				break;
+			case IM_CHAR:
+				if (script_rid2sd(sd))
+					owner_id = sd->status.char_id;
+				break;
+			case IM_PARTY:
+				if (script_rid2sd(sd))
+					owner_id = sd->status.party_id;
+				break;
+			case IM_GUILD:
+				if (script_rid2sd(sd))
+					owner_id = sd->status.guild_id;
+				break;
+			case IM_CLAN:
+				if (script_rid2sd(sd))
+					owner_id = sd->status.clan_id;
+				break;
+			default:
+				ShowError("buildin_instance_create: Invalid instance mode (instance name: %s)\n", script_getstr(st, 2));
+				return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	script_pushint(st, instance_create(owner_id, script_getstr(st, 2), mode));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Destroys an instance (unofficial)
+ * Officially instances are only destroyed by timeout
+ *
+ * instance_destroy {<instance_id>};
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_destroy)
+{
+	int32 instance_id;
+
+	if( script_hasdata(st,2) )
+		instance_id = script_getnum(st,2);
+	else
+		instance_id = script_instancegetid(st);
+
+	if( instance_id == 0 ) {
+		ShowError("buildin_instance_destroy: Trying to destroy invalid instance %d.\n", instance_id);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	instance_destroy(instance_id);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Warps player to instance
+ * Results:
+ *	IE_OK: Success
+ *	IE_NOMEMBER: Character not in party/guild (for party/guild type instances)
+ *	IE_NOINSTANCE: Character/Party/Guild doesn't have instance
+ *	IE_OTHER: Other errors (instance not in DB, instance doesn't match with character/party/guild, etc.)
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_enter)
+{
+	map_session_data *sd = nullptr;
+	int32 x = script_hasdata(st,3) ? script_getnum(st, 3) : -1;
+	int32 y = script_hasdata(st,4) ? script_getnum(st, 4) : -1;
+	int32 instance_id;
+
+	if (script_hasdata(st, 6))
+		instance_id = script_getnum(st, 6);
+	else
+		instance_id = script_instancegetid(st, IM_PARTY);
+
+	if (!script_charid2sd(5,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	script_pushint(st, instance_enter(sd, instance_id, script_getstr(st, 2), x, y));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Returns the name of a duplicated NPC
+ *
+ * instance_npcname <npc_name>{,<instance_id>};
+ * <npc_name> is the full name of an NPC.
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_npcname)
+{
+	const char *str;
+	int32 instance_id;
+	npc_data *nd;
+
+	str = script_getstr(st,2);
+	if( script_hasdata(st,3) )
+		instance_id = script_getnum(st,3);
+	else
+		instance_id = script_instancegetid(st);
+
+	if( instance_id > 0 && (nd = npc_name2id(str)) != nullptr ) {
+		static char npcname[NAME_LENGTH];
+		snprintf(npcname, sizeof(npcname), "dup_%d_%d", instance_id, nd->id);
+		script_pushconststr(st,npcname);
+	} else {
+		ShowError("buildin_instance_npcname: Invalid instance NPC (instance_id: %d, NPC name: \"%s\".)\n", instance_id, str);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Returns the name of a duplicated map
+ *
+ * instance_mapname <map_name>{,<instance_id>};
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_mapname)
+{
+ 	const char *str;
+	int16 m;
+	int32 instance_id;
+
+	str = script_getstr(st,2);
+
+	if( script_hasdata(st,3) )
+		instance_id = script_getnum(st,3);
+	else
+		instance_id = script_instancegetid(st);
+
+	// Check that instance mapname is a valid map
+	if(instance_id <= 0 || (m = instance_mapid(map_mapname2mapid(str), instance_id)) < 0)
+		script_pushconststr(st, "");
+	else
+		script_pushconststr(st, map_getmapdata(m)->name);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Returns an Instance ID
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_id)
+{
+	int32 mode = IM_NONE; // Default to the attached NPC
+
+	if (script_hasdata(st, 2)) {
+		mode = script_getnum(st, 2);
+
+		if (mode <= IM_NONE || mode >= IM_MAX) {
+			ShowError("buildin_instance_id: Unknown instance mode %d.\n", mode);
+			script_pushint(st, 0);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+
+	script_pushint(st, script_instancegetid(st, static_cast<e_instance_mode>(mode)));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Warps all players inside an instance
+ *
+ * instance_warpall <map_name>,<x>,<y>{,<instance_id>};
+ *------------------------------------------*/
+static int32 buildin_instance_warpall_sub(block_list *bl, va_list ap)
+{
+	uint32 m = va_arg(ap,uint32);
+	int32 x = va_arg(ap,int32);
+	int32 y = va_arg(ap,int32);
+	int32 instance_id = va_arg(ap, int32);
+	int32 flag = va_arg(ap, int32);
+	map_session_data *sd;
+
+	nullpo_retr(0, bl);
+
+	if (bl->type != BL_PC)
+		return 0;
+
+	sd = (TBL_PC *)bl;
+
+	if ((flag & IWA_NOTDEAD) != 0 && pc_isdead(sd))
+		return 0;
+
+	std::shared_ptr<s_instance_data> idata = util::umap_find(instances, instance_id);
+
+	if (!idata)
+		return 0;
+
+	int32 owner_id = idata->owner_id;
+
+	switch(idata->mode) {
+		case IM_NONE:
+			break;
+		case IM_CHAR:
+			if (sd->status.char_id != owner_id)
+				return 0;
+			break;
+		case IM_PARTY:
+			if (sd->status.party_id != owner_id)
+				return 0;
+			break;
+		case IM_GUILD:
+			if (sd->status.guild_id != owner_id)
+				return 0;
+			break;
+		case IM_CLAN:
+			if (sd->status.clan_id != owner_id)
+				return 0;
+			break;
+	}
+
+	pc_setpos(sd, m, x, y, CLR_TELEPORT);
+
+	return 1;
+}
+
+BUILDIN_FUNC(instance_warpall)
+{
+	int16 m;
+	int32 instance_id;
+
+	const char *mapn = script_getstr(st,2);
+
+	if( script_hasdata(st,5) )
+		instance_id = script_getnum(st,5);
+	else
+		instance_id = script_instancegetid(st, IM_PARTY);
+
+	if( instance_id <= 0 || (m = map_mapname2mapid(mapn)) < 0 || (m = instance_mapid(m, instance_id)) < 0) {
+		ShowError("buildin_instance_warpall: Instance map for instance ID %d is not found.\n", instance_id);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	std::shared_ptr<s_instance_data> idata = util::umap_find(instances, instance_id);
+
+	if (!idata) {
+		ShowError("buildin_instance_warpall: Instance is not found.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 flag = IWA_NONE;
+	int32 x = script_getnum(st,3);
+	int32 y = script_getnum(st,4);
+
+	if( script_hasdata(st, 6) )
+		flag = script_getnum(st, 6);
+
+	for(const auto &it : idata->map)
+		map_foreachinmap(buildin_instance_warpall_sub, it.m, BL_PC, map_id2index(m), x, y, instance_id, flag);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Broadcasts to all maps inside an instance
+ *
+ * instance_announce <instance id>,"<text>",<flag>{,<fontColor>{,<fontType>{,<fontSize>{,<fontAlign>{,<fontY>}}}}};
+ * Using 0 for <instance id> will auto-detect the id.
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_announce) {
+	int32 instance_id            = script_getnum(st,2);
+	const char     *mes        = script_getstr(st,3);
+	int32            flag        = script_getnum(st,4);
+	const char     *fontColor  = script_hasdata(st,5) ? script_getstr(st,5) : nullptr;
+	int32            fontType    = script_hasdata(st,6) ? script_getnum(st,6) : FW_NORMAL; // default fontType
+	int32            fontSize    = script_hasdata(st,7) ? script_getnum(st,7) : 12;    // default fontSize
+	int32            fontAlign   = script_hasdata(st,8) ? script_getnum(st,8) : 0;     // default fontAlign
+	int32            fontY       = script_hasdata(st,9) ? script_getnum(st,9) : 0;     // default fontY
+
+	if (instance_id <= 0)
+		instance_id = script_instancegetid(st);
+
+	std::shared_ptr<s_instance_data> idata = util::umap_find(instances, instance_id);
+
+	if (instance_id <= 0 || !idata) {
+		ShowError("buildin_instance_announce: Instance not found.\n");
+		return SCRIPT_CMD_FAILURE;
+	}

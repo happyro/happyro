@@ -1,0 +1,253 @@
+			InputBox.onSubmitRequest = function OnSubmitRequest(count) {
+				InputBox.remove();
+
+				if (data.from === 'CartItems') {
+					Component.reqAddItemFromCart(item.index, parseInt(count, 10));
+				} else {
+					Component.reqAddItem(item.index, parseInt(count, 10));
+				}
+			};
+
+			return false;
+		}
+
+		if (data.from === 'CartItems') {
+			Component.reqAddItemFromCart(item.index, 1);
+		} else {
+			Component.reqAddItem(item.index, 1);
+		}
+
+		return false;
+	}
+
+	function requestFilter() {
+		const root = Component.getRoot();
+		const content = root.querySelector('.container .content');
+		if (content) {
+			content.innerHTML = '';
+		}
+
+		let list = _list;
+
+		if (hasOrderBy) {
+			const orderBySelect = root.querySelector('.storage-order-by');
+			const orderBy = orderBySelect ? orderBySelect.value : 'BASE';
+
+			if (orderBy === 'UPGRADE' || orderBy === 'DOWNGRADE') {
+				list = _list.slice(0);
+				list.sort((a, b) => {
+					const nameA = DB.getItemName(a);
+					const nameB = DB.getItemName(b);
+					return orderBy === 'UPGRADE' ? nameA.localeCompare(nameB) : nameB.localeCompare(nameA);
+				});
+			}
+		}
+
+		for (let i = 0, count = list.length; i < count; ++i) {
+			Component.addItemSub(list[i]);
+		}
+	}
+
+	function getItemIndexById(index) {
+		for (let i = 0, count = _list.length; i < count; ++i) {
+			if (_list[i].index === index) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	function onScroll(event, contentEl) {
+		let delta;
+
+		if (event.wheelDelta) {
+			delta = event.wheelDelta / 120;
+		} else if (event.detail) {
+			delta = -event.detail;
+		} else if (event.deltaY) {
+			delta = -event.deltaY / 100;
+		}
+
+		contentEl.scrollTop = Math.floor(contentEl.scrollTop / 32) * 32 - delta * 32;
+		event.preventDefault();
+	}
+
+	function onFilterWindowOpen(button) {
+		const tabId = parseInt(button.getAttribute('data-tab-id'), 10);
+		const title = button.getAttribute('data-title') || 'Items';
+
+		button.classList.toggle('active');
+
+		if (_openFilters[tabId]) {
+			_openFilters[tabId].remove();
+			delete _openFilters[tabId];
+			return;
+		}
+
+		const filtered_list = [];
+		for (let i = 0, count = _list.length; i < count; ++i) {
+			const item = _list[i];
+			if (getItemTab(item) === tabId) {
+				filtered_list.push(item);
+			}
+		}
+
+		const newFilter = new StorageFilter(tabId);
+		_openFilters[tabId] = newFilter;
+
+		newFilter.onCloseCallback = function () {
+			button.classList.remove('active');
+
+			if (_openFilters[tabId]) {
+				delete _openFilters[tabId];
+			}
+		};
+
+		newFilter.onTransferItemToOtherUI = function (item) {
+			Component.transferItemToOtherUI(item);
+		};
+
+		newFilter.append();
+		newFilter.setItems(title, filtered_list, tabId);
+	}
+
+	function onFilterWindowHover(button, root) {
+		const title = button.getAttribute('data-title');
+		const overlay = root.querySelector('.overlay');
+		if (overlay) {
+			overlay.textContent = title;
+			const height = Component._host.getBoundingClientRect().height;
+			overlay.style.top = `${height - 50}px`;
+			overlay.style.left = `${button.offsetLeft}px`;
+			overlay.style.display = '';
+		}
+	}
+
+	function onFilterWindowHoverOut(root) {
+		const overlay = root.querySelector('.overlay');
+		if (overlay) {
+			overlay.style.display = 'none';
+		}
+	}
+
+	function onItemOver(itemEl, root) {
+		const idx = parseInt(itemEl.getAttribute('data-index'), 10);
+		const i = getItemIndexById(idx);
+
+		if (i < 0) {
+			return;
+		}
+
+		const item = _list[i];
+		const overlay = root.querySelector('.overlay');
+
+		if (overlay) {
+			overlay.style.display = '';
+			overlay.style.top = `${itemEl.offsetTop - 10}px`;
+			overlay.style.left = `${itemEl.offsetLeft + 35}px`;
+			overlay.innerHTML = `${DB.getItemName(item)} ${item.count || 1} ea`;
+
+			if (item.IsIdentified) {
+				overlay.classList.remove('grey');
+			} else {
+				overlay.classList.add('grey');
+			}
+		}
+	}
+
+	function onItemOut(root) {
+		const overlay = root.querySelector('.overlay');
+		if (overlay) {
+			overlay.style.display = 'none';
+		}
+	}
+
+	function onItemDragStart(event, itemEl) {
+		const index = parseInt(itemEl.getAttribute('data-index'), 10);
+		const i = getItemIndexById(index);
+
+		if (i === -1) {
+			return;
+		}
+
+		const img = new Image();
+		let url = itemEl.firstChild.style.backgroundImage.match(/\(([^)]+)/)[1];
+		url = url.replace(/^"/, '').replace(/"$/, '');
+		if (asyncDragImage) {
+			img.decoding = 'async';
+		}
+		img.src = url;
+
+		event.dataTransfer.setDragImage(img, 12, 12);
+		event.dataTransfer.setData(
+			'Text',
+			JSON.stringify(
+				(window._OBJ_DRAG_ = {
+					type: 'item',
+					from: 'Storage',
+					data: _list[i]
+				})
+			)
+		);
+	}
+
+	function onItemDragEnd() {
+		delete window._OBJ_DRAG_;
+	}
+
+	function onItemInfo(event, itemEl) {
+		event.stopImmediatePropagation();
+
+		const index = parseInt(itemEl.getAttribute('data-index'), 10);
+		const i = getItemIndexById(index);
+
+		if (i === -1) {
+			return false;
+		}
+
+		if (event.altKey && event.which === 3) {
+			event.stopImmediatePropagation();
+			Component.transferItemToOtherUI(_list[i]);
+			return false;
+		}
+
+		if (ItemInfo.uid === _list[i].ITID) {
+			ItemInfo.remove();
+		}
+
+		ItemInfo.append();
+		ItemInfo.uid = _list[i].ITID;
+		ItemInfo.setItem(_list[i]);
+
+		return false;
+	}
+
+	Component.transferItemToOtherUI = function transferItemToOtherUI(item) {
+		const isInventoryOpen = Inventory.getUI().ui ? Inventory.getUI().ui.is(':visible') : false;
+		const isCartOpen = CartItems.ui ? CartItems.ui.is(':visible') : false;
+
+		if (!item) {
+			return false;
+		}
+
+		const count = item.count || 1;
+
+		if (isInventoryOpen) {
+			Component.reqRemoveItem(item.index, count);
+		} else if (isCartOpen) {
+			Component.reqMoveItemToCart(item.index, count);
+		}
+
+		return true;
+	};
+
+	Component.onClosePressed = function onClosedPressed() {};
+	Component.reqAddItem = function reqAddItem() {};
+	Component.reqAddItemFromCart = function reqAddItemFromCart() {};
+	Component.reqRemoveItem = function reqRemoveItem() {};
+	Component.reqMoveItemToCart = function reqMoveItemToCart() {};
+
+	Component.mouseMode = GUIComponent.MouseMode.STOP;
+
+	return UIManager.addComponent(Component);
+}

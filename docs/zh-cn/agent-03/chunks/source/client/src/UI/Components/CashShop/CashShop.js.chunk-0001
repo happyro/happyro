@@ -1,0 +1,500 @@
+/**
+ * UI/Components/CashShop/CashShop.js
+ *
+ * CashShop windows
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Stephen-A
+ */
+
+import DB from 'DB/DBManager.js';
+import Client from 'Core/Client.js';
+import Network from 'Network/NetworkManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import InputBox from 'UI/Components/InputBox/InputBox.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Renderer from 'Renderer/Renderer.js';
+import Preferences from 'Core/Preferences.js';
+import Session from 'Engine/SessionStorage.js';
+import ItemInfo from 'UI/Components/ItemInfo/ItemInfo.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import htmlText from './CashShop.html?raw';
+import cssText from './CashShop.css?raw';
+
+const CashShop = new GUIComponent('CashShop', cssText);
+
+/**
+ * Store cash shop items
+ */
+CashShop.list = [];
+
+const _preferences = Preferences.get(
+	'CashShop',
+	{
+		x: 80,
+		y: 100,
+		magnet_top: false,
+		magnet_bottom: false,
+		magnet_left: false,
+		magnet_right: false
+	},
+	1.0
+);
+
+/**
+ * Store cash shop items
+ */
+
+CashShop.cashShopListItem = [];
+CashShop.csListItemSearchResult = [];
+
+/**
+ * Place the default banner image here
+ */
+CashShop.cashShopBannerTable = [];
+
+/**
+ * Active cash shop menu
+ */
+CashShop.activeCashMenu = 0;
+
+/**
+ * Current Cash shop points user
+ */
+CashShop.cashPoint = 0;
+
+/**
+ * Current Kafra points user
+ */
+CashShop.kafraPoints = 0;
+
+/**
+ * Current Item in cart item
+ */
+CashShop.cartItem = [];
+
+/**
+ * Current cart item total price
+ */
+CashShop.cartItemTotalPrice = 0;
+
+/**
+ *  Check your item_cash_db.txt if how many tab is active
+ */
+CashShop.totalActiveCategory = 3;
+
+/**
+ * Pagination
+ */
+CashShop.pageOffset = 1;
+CashShop.pageLimit = 9;
+CashShop.currentPage = 1;
+CashShop.totalPage = 0;
+CashShop.isFirstPage = true;
+CashShop.isLastPage = false;
+CashShop.cartItemLen = 0;
+CashShop.checkCartItemLen = 0;
+CashShop.pageEnd = 9;
+CashShop.isSearch = false;
+
+/**
+ * Banner Carousel
+ */
+CashShop.bannerInterval = null;
+CashShop.currentBannerIndex = 0;
+CashShop.bannerRotationTime = 5000; // 5 seconds
+
+/**
+ * Has input fields, protect key events
+ */
+CashShop.captureKeyEvents = true;
+
+/**
+ * Helper: query inside shadow root
+ */
+function _root() {
+	return CashShop._shadow || CashShop._host;
+}
+
+/**
+ * Helper: process data-* attributes on newly inserted content
+ */
+function _processContent(container) {
+	const selector = '[data-background],[data-hover],[data-down],[data-active],[data-text],[data-preload]';
+	if (container.matches && container.matches(selector)) {
+		GUIComponent.processDataAttrs(container);
+	}
+	container.querySelectorAll(selector).forEach(node => GUIComponent.processDataAttrs(node));
+}
+
+/**
+ * Render HTML
+ */
+CashShop.render = () => htmlText;
+
+CashShop.init = function init() {
+	const root = _root();
+
+	const baseBtns = root.querySelectorAll('.titlebar .base');
+	baseBtns.forEach(btn => {
+		btn.addEventListener('mousedown', stopPropagation);
+	});
+
+	const closeBtn = root.querySelector('.titlebar .close');
+	if (closeBtn) {
+		closeBtn.addEventListener('click', () => {
+			const pkt = new PACKET.CZ.CASH_SHOP_CLOSE();
+			Network.sendPacket(pkt);
+			CashShop.remove();
+		});
+	}
+
+	this.draggable('.titlebar');
+
+	const container = root.querySelector('.ui-component-root') || root;
+
+	container.addEventListener('click', e => {
+		const addCartBtn = e.target.closest('.purchase-btn-container button');
+		if (addCartBtn) {
+			onClickActionAddCartItem(e);
+			return;
+		}
+
+		const purchaseBtn = e.target.closest('#purchase-btn');
+		if (purchaseBtn) {
+			onClickActionBuyItem();
+			return;
+		}
+
+		const tab = e.target.closest('#panel-menu .tab');
+		if (tab) {
+			onClickMenu(tab);
+			return;
+		}
+
+		const pagiHandler = e.target.closest('.panel-pagination .pagi-handler');
+		if (pagiHandler) {
+			onClickPagination(pagiHandler);
+			return;
+		}
+
+		const searchBtn = e.target.closest('.cashshop-search-btn');
+		if (searchBtn) {
+			onClickSearch();
+			return;
+		}
+
+		const counterBtn = e.target.closest('#cart-list .items .item .counter-btn');
+		if (counterBtn) {
+			onClickActionCounterButtonCart(counterBtn);
+			return;
+		}
+
+		const deleteBtn = e.target.closest('#cart-list .items .item .delete-item');
+		if (deleteBtn) {
+			onClickDeleteItemInCart(deleteBtn);
+			return;
+		}
+
+		const bannerDot = e.target.closest('.banner-dot');
+		if (bannerDot) {
+			const index = parseInt(bannerDot.getAttribute('data-index'), 10);
+			CashShop.goToBanner(index);
+			return;
+		}
+
+		const bannerSlide = e.target.closest('.banner-slide');
+		if (bannerSlide) {
+			const url = bannerSlide.getAttribute('data-url');
+			if (url && url !== 'undefined' && url !== 'null') {
+				window.open(url, '_blank');
+			}
+			return;
+		}
+
+		const chargeBtn = e.target.closest('.panel-cart-charge-btn');
+		if (chargeBtn) {
+			window.open(DB.getMessage(3301), '_blank');
+			return;
+		}
+	});
+
+	container.addEventListener('mouseover', e => {
+		const tab = e.target.closest('#panel-menu .tab');
+		if (tab) {
+			onMouseOverTab(tab);
+		}
+	});
+
+	container.addEventListener('mousemove', e => {
+		const tab = e.target.closest('#panel-menu .tab');
+		if (tab) {
+			onMouseMoveTab(e);
+		}
+	});
+
+	container.addEventListener('mouseout', e => {
+		const tab = e.target.closest('#panel-menu .tab');
+		if (tab) {
+			onMouseOutTab();
+		}
+	});
+
+	// Drop to cart
+	const cartBody = root.querySelector('.panel-cart-body');
+	if (cartBody) {
+		cartBody.addEventListener('dragover', stopPropagation);
+		cartBody.addEventListener('drop', onDropToCart);
+	}
+
+	// Items events (delegated)
+	const panelItems = root.querySelector('.panel-content .panel-items');
+	if (panelItems) {
+		panelItems.addEventListener('dragstart', function (e) {
+			const item = e.target.closest('.item');
+			if (item) onItemDragStart.call(item, e);
+		});
+		panelItems.addEventListener('dragend', function (e) {
+			const item = e.target.closest('.item');
+			if (item) onItemDragEnd.call(item, e);
+		});
+		panelItems.addEventListener('contextmenu', function (e) {
+			const item = e.target.closest('.item');
+			if (item) onItemInfo.call(item, e);
+		});
+	}
+
+	// Prevent dragover on whole component
+	container.addEventListener('dragover', stopPropagation);
+
+	const cartListItems = root.querySelector('#cart-list .items');
+	if (cartListItems && cartListItems.children.length > 0) {
+		onResetCartListCashShop();
+	}
+
+	CashShop.loadCashShopBanner();
+};
+
+CashShop.onAppend = function OnAppend() {
+	const hostHeight = this._host.offsetHeight || 540;
+	const hostWidth = this._host.offsetWidth || 723;
+	this._host.style.top = `${Math.min(Math.max(0, _preferences.y), Renderer.height - hostHeight)}px`;
+	this._host.style.left = `${Math.min(Math.max(0, _preferences.x), Renderer.width - hostWidth)}px`;
+
+	this.magnet.TOP = _preferences.magnet_top;
+	this.magnet.BOTTOM = _preferences.magnet_bottom;
+	this.magnet.LEFT = _preferences.magnet_left;
+	this.magnet.RIGHT = _preferences.magnet_right;
+
+	CashShop.loadComponentCashShop();
+};
+
+/**
+ * Remove Cash shop
+ */
+CashShop.onRemove = function onRemove() {
+	_preferences.x = parseInt(this._host.style.left, 10) || 0;
+	_preferences.y = parseInt(this._host.style.top, 10) || 0;
+	_preferences.magnet_top = this.magnet.TOP;
+	_preferences.magnet_bottom = this.magnet.BOTTOM;
+	_preferences.magnet_left = this.magnet.LEFT;
+	_preferences.magnet_right = this.magnet.RIGHT;
+	_preferences.save();
+
+	CashShop.stopBannerRotation();
+
+	CashShop.csListItemSearchResult = [];
+	CashShop.cashShopBannerTable = [];
+
+	// empty .panel-items
+	const panelItems = _root().querySelector('.panel-items');
+	if (panelItems) panelItems.innerHTML = '';
+
+	// empty .cart-list .items
+	CashShop.cartItem = [];
+	CashShop.cartItemTotalPrice = 0;
+	CashShop.cartItemLen = 0;
+	CashShop.checkCartItemLen = 0;
+	const cartListItems = _root().querySelector('.cart-list .items');
+	if (cartListItems) cartListItems.innerHTML = '';
+
+	// set price to 0C
+	const totalPrice = _root().querySelector('.cart-footer-action .total-price span');
+	if (totalPrice) totalPrice.textContent = '0 C';
+	const freePoints = _root().querySelector('#use-free-points');
+	if (freePoints) freePoints.value = '0';
+};
+
+CashShop.clean = function clean() {
+	CashShop.cashShopListItem = [];
+	CashShop.csListItemSearchResult = [];
+	CashShop.cashShopBannerTable = [];
+	CashShop.cartItem = [];
+	CashShop.cartItemTotalPrice = 0;
+	CashShop.cartItemLen = 0;
+	CashShop.checkCartItemLen = 0;
+	Session.requestCashShop = true;
+};
+
+CashShop.loadCashShopBanner = function loadCashShopBanner() {
+	this.cashShopBannerTable = DB.getCashShopBannerTable();
+	const root = _root();
+
+	if (CashShop.cashShopBannerTable?.length > 0) {
+		const banners = CashShop.cashShopBannerTable;
+		const slidesContainer = root.querySelector('.banner-slides');
+		const dotsContainer = root.querySelector('.banner-dots');
+
+		if (slidesContainer) slidesContainer.innerHTML = '';
+		if (dotsContainer) dotsContainer.innerHTML = '';
+
+		banners.forEach((banner, index) => {
+			// Slide
+			const slide = document.createElement('div');
+			slide.className = 'banner-slide' + (index === 0 ? ' active' : '');
+			slide.setAttribute('data-index', index);
+			slide.setAttribute('data-url', banner.url || '');
+			slide.innerHTML = '<button class="btn-banner"></button>';
+
+			Client.loadFile(DB.INTERFACE_PATH + 'cashshop/' + banner.bmp, function (data) {
+				slide.style.backgroundImage = `url(${data})`;
+			});
+
+			if (slidesContainer) slidesContainer.appendChild(slide);
+
+			// Dot
+			const dot = document.createElement('li');
+			dot.className = 'banner-dot' + (index === 0 ? ' active' : '');
+			dot.setAttribute('data-background', 'cashshop/btn_ad_off.bmp');
+			dot.setAttribute('data-active', 'cashshop/btn_ad_on.bmp');
+			dot.setAttribute('data-index', index);
+			dot.innerHTML = '<button class="btn-banner"></button>';
+
+			if (dotsContainer) dotsContainer.appendChild(dot);
+		});
+
+		if (dotsContainer) _processContent(dotsContainer);
+
+		CashShop.currentBannerIndex = 0;
+	}
+};
+
+CashShop.onKeyDown = function onKeyDown(event) {
+	if (this.isEditableFocused()) return;
+	if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && this._host && this._host.parentNode) {
+		const pkt = new PACKET.CZ.CASH_SHOP_CLOSE();
+		Network.sendPacket(pkt);
+		CashShop.remove();
+	}
+};
+
+CashShop.readPoints = function readPoints(cashPoint, kafraPoints, tab) {
+	const root = _root();
+	this.cashPoint = cashPoint;
+	this.kafraPoints = kafraPoints;
+	this.activeCashMenu = tab || 0; // 0x0845 no tab
+
+	const cashpointSpan = root.querySelector('#cashpoint > span');
+	if (cashpointSpan) cashpointSpan.textContent = this.cashPoint;
+
+	const cashpointFooter = root.querySelector('.cashpoint_footer');
+	if (cashpointFooter) cashpointFooter.textContent = this.cashPoint + ' C';
+
+	const freePoint = root.querySelector('.free-point');
+	if (freePoint) freePoint.textContent = this.kafraPoints + ' C';
+};
+
+/**
+ * Search in a list for an item by its index
+ *
+ * @param {number} index
+ * @returns {Item}
+ */
+CashShop.getItemByIndex = function getItemByIndex(index) {
+	let i, count;
+	let list;
+
+	if (CashShop.isSearch) {
+		list = CashShop.csListItemSearchResult;
+		for (i = 0, count = list.length; i < count; ++i) {
+			if (list[i].itemId === index) {
+				return list[i];
+			}
+		}
+	} else {
+		if (CashShop.cashShopListItem[CashShop.activeCashMenu]) {
+			list = CashShop.cashShopListItem[CashShop.activeCashMenu].items;
+			for (i = 0, count = list.length; i < count; ++i) {
+				if (list[i].itemId === index) {
+					return list[i];
+				}
+			}
+		}
+	}
+
+	return null;
+};
+
+/**
+ * Success reponse buying cash shop item
+ */
+CashShop.setSuccessCashShopUpdate = function setSuccessCashShopUpdate(res) {
+	if (res) {
+		CashShop.checkCartItemLen += 1;
+		switch (res.result) {
+			case 0:
+				if (CashShop.checkCartItemLen >= CashShop.cartItemLen) {
+					CashShop.cartItemLen = 0;
+					CashShop.checkCartItemLen = 0;
+					UIManager.showMessageBox('Successfully done buying items from cash shop!', 'ok');
+					ChatBox.addText(
+						'Successfully done buying items from cash shop!',
+						ChatBox.TYPE.INFO,
+						ChatBox.FILTER.PUBLIC_LOG
+					);
+					const root = _root();
+					const cashpointSpan = root.querySelector('#cashpoint span');
+					if (cashpointSpan) cashpointSpan.textContent = res.cashPoints;
+					const cashpointFooter = root.querySelector('.cashpoint_footer');
+					if (cashpointFooter) cashpointFooter.textContent = res.cashPoints;
+					onResetCartListCashShop();
+				}
+				break;
+			case 2:
+				//insuficient cashpoint or kafra points
+				UIManager.showMessageBox('Insuficient cash points or kafra points!', 'ok');
+				ChatBox.addText(
+					'Insuficient cash points or kafra points!',
+					ChatBox.TYPE.ERROR,
+					ChatBox.FILTER.PUBLIC_LOG
+				);
+				break;
+
+			case 4:
+				//overweight limit
+				UIManager.showMessageBox("You are over you're weight limit!", 'ok');
+				ChatBox.addText('You are over youre weight limit!', ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+				break;
+
+			default:
+				UIManager.showMessageBox('Something went wrong while using cashshop!', 'ok');
+				ChatBox.addText(
+					'Something went wrong while using cashshop!',
+					ChatBox.TYPE.ERROR,
+					ChatBox.FILTER.PUBLIC_LOG
+				);
+				break;
+		}
+	}
+};
+
+CashShop.readCashShopItems = function readCashShopItems(items) {
+	CashShop.cashShopListItem.push({
+		count: items.count,
+		items: items.items,
+		tabNum: items.tabNum
+	});

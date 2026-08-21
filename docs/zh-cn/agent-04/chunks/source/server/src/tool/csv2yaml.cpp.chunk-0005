@@ -1,0 +1,500 @@
+				}
+			}
+
+			body << YAML::EndSeq;
+		}
+		
+		if (!isMultiLevel(it_req->second.zeny)) {
+			if (it_req->second.zeny[0] > 0)
+				body << YAML::Key << "ZenyCost" << YAML::Value << it_req->second.zeny[0];
+		} else {
+			body << YAML::Key << "ZenyCost";
+			body << YAML::BeginSeq;
+
+			for (size_t i = 0; i < ARRAYLENGTH(it_req->second.zeny); i++) {
+				if (it_req->second.zeny[i] > 0) {
+					body << YAML::BeginMap;
+					body << YAML::Key << "Level" << YAML::Value << i + 1;
+					body << YAML::Key << "Amount" << YAML::Value << it_req->second.zeny[i];
+					body << YAML::EndMap;
+				}
+			}
+
+			body << YAML::EndSeq;
+		}
+
+		if (it_req->second.weapon != 0) {
+			body << YAML::Key << "Weapon";
+			body << YAML::BeginMap;
+
+			int32 temp = it_req->second.weapon;
+
+			if (temp != 99) { // Not "All"
+				for (int32 i = 0; i < MAX_WEAPON_TYPE_ALL; i++) {
+					if (i == MAX_WEAPON_TYPE)
+						continue;
+
+					if (temp & 1 << i) {
+						constant = constant_lookup(i, "W_");
+						constant.erase(0, 2);
+						body << YAML::Key << name2Upper(constant) << YAML::Value << "true";
+						temp ^= 1 << i;
+					}
+				}
+			}
+
+			body << YAML::EndMap;
+		}
+
+		if (it_req->second.ammo != 0) {
+			body << YAML::Key << "Ammo";
+			body << YAML::BeginMap;
+
+			int32 temp = it_req->second.ammo;
+
+			for (int32 i = 1; i < MAX_AMMO_TYPE; i++) {
+				if (temp & 1 << i) {
+					constant = constant_lookup(i, "AMMO_");
+					constant.erase(0, 5);
+					body << YAML::Key << name2Upper(constant) << YAML::Value << "true";
+					temp ^= 1 << i;
+				}
+			}
+
+			body << YAML::EndMap;
+		}
+		if (!isMultiLevel(it_req->second.ammo_qty)) {
+			if (it_req->second.ammo_qty[0] > 0)
+				body << YAML::Key << "AmmoAmount" << YAML::Value << it_req->second.ammo_qty[0];
+		} else {
+			body << YAML::Key << "AmmoAmount";
+			body << YAML::BeginSeq;
+
+			for (size_t i = 0; i < ARRAYLENGTH(it_req->second.ammo_qty); i++) {
+				if (it_req->second.ammo_qty[i] > 0) {
+					body << YAML::BeginMap;
+					body << YAML::Key << "Level" << YAML::Value << i + 1;
+					body << YAML::Key << "Amount" << YAML::Value << it_req->second.ammo_qty[i];
+					body << YAML::EndMap;
+				}
+			}
+
+			body << YAML::EndSeq;
+		}
+
+		if (it_req->second.state) {
+			constant = constant_lookup(it_req->second.state, "ST_");
+			constant.erase(0, 3);
+			body << YAML::Key << "State" << YAML::Value << name2Upper(constant);
+		}
+
+		if (it_req->second.status.size() > 0) {
+			body << YAML::Key << "Status";
+			body << YAML::BeginMap;
+
+			for (const auto &it : it_req->second.status) {
+				constant = constant_lookup(it, "SC_");
+				constant.erase(0, 3);
+				body << YAML::Key << name2Upper(constant) << YAML::Value << "true";
+			}
+
+			body << YAML::EndMap;
+		}
+		
+		if (!isMultiLevel(it_req->second.spiritball)) {
+			if (it_req->second.spiritball[0] != 0)
+				body << YAML::Key << "SpiritSphereCost" << YAML::Value << it_req->second.spiritball[0];
+		} else {
+			body << YAML::Key << "SpiritSphereCost";
+			body << YAML::BeginSeq;
+
+			for (size_t i = 0; i < ARRAYLENGTH(it_req->second.spiritball); i++) {
+				if (it_req->second.spiritball[i] != 0) {
+					body << YAML::BeginMap;
+					body << YAML::Key << "Level" << YAML::Value << i + 1;
+					body << YAML::Key << "Amount" << YAML::Value << it_req->second.spiritball[i];
+					body << YAML::EndMap;
+				}
+			}
+
+			body << YAML::EndSeq;
+		}
+
+		if (it_req->second.itemid[0] > 0) {
+			body << YAML::Key << "ItemCost";
+			body << YAML::BeginSeq;
+
+			for (uint8 i = 0; i < ARRAYLENGTH(it_req->second.itemid); i++) {
+				if (it_req->second.itemid[i] > 0) {
+					body << YAML::BeginMap;
+
+					std::string *item_name = util::umap_find(aegis_itemnames, it_req->second.itemid[i]);
+
+					if (item_name == nullptr) {
+						ShowError("Item name for item id %hu is not known (itemcost).\n", it_req->second.itemid[i]);
+						return false;
+					}
+
+					body << YAML::Key << "Item" << YAML::Value << *item_name;
+					body << YAML::Key << "Amount" << YAML::Value << it_req->second.amount[i];
+
+					switch (skill_id) { // List of level dependent item costs
+						case WZ_FIREPILLAR:
+							if (i < 6)
+								break; // Levels 1-5 have no cost
+						case NC_SHAPESHIFT:
+						case NC_REPAIR:
+							if (skill_id == NC_SHAPESHIFT || (skill_id == NC_REPAIR && i >= 5))
+								break; // Don't add level 5 label as it exceeds the max level of these skills
+						case GN_FIRE_EXPANSION:
+						case SO_SUMMON_AGNI:
+						case SO_SUMMON_AQUA:
+						case SO_SUMMON_VENTUS:
+						case SO_SUMMON_TERA:
+						case SO_WATER_INSIGNIA:
+						case SO_FIRE_INSIGNIA:
+						case SO_WIND_INSIGNIA:
+						case SO_EARTH_INSIGNIA:
+						case KO_MAKIBISHI:
+							body << YAML::Key << "Level" << YAML::Value << i;
+					}
+
+					body << YAML::EndMap;
+				}
+			}
+
+			body << YAML::EndSeq;
+		}
+
+		if (it_req->second.eqItem.size() > 0) {
+			body << YAML::Key << "Equipment";
+			body << YAML::BeginMap;
+
+			for (const auto &it : it_req->second.eqItem) {
+				std::string *item_name = util::umap_find(aegis_itemnames, it);
+
+				if (item_name == nullptr) {
+					ShowError("Item name for item id %u is not known (equipment).\n", it);
+					return false;
+				}
+
+				body << YAML::Key << *item_name << YAML::Value << "true";
+			}
+
+			body << YAML::EndMap;
+		}
+
+		body << YAML::EndMap;
+	}
+
+	auto it_unit = skill_unit.find(skill_id);
+
+	if (it_unit != skill_unit.end()) {
+		body << YAML::Key << "Unit";
+		body << YAML::BeginMap;
+
+		constant = constant_lookup(it_unit->second.unit_id, "UNT_");
+		constant.erase(0, 4);
+		body << YAML::Key << "Id" << YAML::Value << name2Upper(constant);
+		if (it_unit->second.unit_id2 > 0) {
+			constant = constant_lookup(it_unit->second.unit_id2, "UNT_");
+			constant.erase(0, 4);
+			body << YAML::Key << "AlternateId" << YAML::Value << name2Upper(constant);
+		}
+		
+		if (!isMultiLevel(it_unit->second.unit_layout_type)) {
+			if (it_unit->second.unit_layout_type[0] != 0)
+				body << YAML::Key << "Layout" << YAML::Value << it_unit->second.unit_layout_type[0];
+		} else {
+			body << YAML::Key << "Layout";
+			body << YAML::BeginSeq;
+
+			for (size_t i = 0; i < ARRAYLENGTH(it_unit->second.unit_layout_type); i++) {
+				if (it_unit->second.unit_layout_type[i] == 0 && i + 1 > 5)
+					continue;
+				body << YAML::BeginMap;
+				body << YAML::Key << "Level" << YAML::Value << i + 1;
+				body << YAML::Key << "Size" << YAML::Value << it_unit->second.unit_layout_type[i];
+				body << YAML::EndMap;
+			}
+
+			body << YAML::EndSeq;
+		}
+		
+		if (!isMultiLevel(it_unit->second.unit_range)) {
+			if (it_unit->second.unit_range[0] != 0)
+				body << YAML::Key << "Range" << YAML::Value << it_unit->second.unit_range[0];
+		} else {
+			body << YAML::Key << "Range";
+			body << YAML::BeginSeq;
+
+			for (size_t i = 0; i < ARRAYLENGTH(it_unit->second.unit_range); i++) {
+				if (it_unit->second.unit_range[i] == 0 && i + 1 > 5)
+					continue;
+				body << YAML::BeginMap;
+				body << YAML::Key << "Level" << YAML::Value << i + 1;
+				body << YAML::Key << "Size" << YAML::Value << it_unit->second.unit_range[i];
+				body << YAML::EndMap;
+			}
+
+			body << YAML::EndSeq;
+		}
+
+		if (it_unit->second.unit_interval != 0)
+			body << YAML::Key << "Interval" << YAML::Value << it_unit->second.unit_interval;
+
+		if (it_unit->second.target_str.size() > 0) {
+			if (it_unit->second.target_str.compare("noenemy") == 0 || it_unit->second.target_str.compare("friend") == 0)
+				body << YAML::Key << "Target" << YAML::Value << "Friend";
+			//else if (it_unit->second.target_str.compare("noenemy") == 0) // Same as Friend
+			//	body << YAML::Key << "Target" << YAML::Value << "NoEnemy";
+			else if (it_unit->second.target_str.compare("party") == 0)
+				body << YAML::Key << "Target" << YAML::Value << "Party";
+			else if (it_unit->second.target_str.compare("ally") == 0)
+				body << YAML::Key << "Target" << YAML::Value << "Ally";
+			else if (it_unit->second.target_str.compare("guild") == 0)
+				body << YAML::Key << "Target" << YAML::Value << "Guild";
+			//else if (it_unit->second.target_str.compare("all") == 0)
+			//	body << YAML::Key << "Target" << YAML::Value << "All";
+			else if (it_unit->second.target_str.compare("enemy") == 0)
+				body << YAML::Key << "Target" << YAML::Value << "Enemy";
+			else if (it_unit->second.target_str.compare("self") == 0)
+				body << YAML::Key << "Target" << YAML::Value << "Self";
+			else if (it_unit->second.target_str.compare("sameguild") == 0)
+				body << YAML::Key << "Target" << YAML::Value << "SameGuild";
+		}
+
+		if (it_unit->second.unit_flag_csv > 0) {
+			body << YAML::Key << "Flag";
+			body << YAML::BeginMap;
+
+			if (it_unit->second.unit_flag_csv & 0x1)
+				body << YAML::Value << "NoEnemy" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x2)
+				body << YAML::Value << "NoReiteration" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x4)
+				body << YAML::Value << "NoFootSet" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x8)
+				body << YAML::Value << "NoOverlap" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x10)
+				body << YAML::Value << "PathCheck" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x20)
+				body << YAML::Value << "NoPc" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x40)
+				body << YAML::Value << "NoMob" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x80)
+				body << YAML::Value << "Skill" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x100)
+				body << YAML::Value << "Dance" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x200)
+				body << YAML::Value << "Ensemble" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x400)
+				body << YAML::Value << "Song" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x800)
+				body << YAML::Value << "DualMode" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x1000)
+				body << YAML::Value << "NoKnockback" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x2000)
+				body << YAML::Value << "RangedSingleUnit" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x4000)
+				body << YAML::Value << "CrazyWeedImmune" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x8000)
+				body << YAML::Value << "RemovedByFireRain" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x10000)
+				body << YAML::Value << "KnockbackGroup" << YAML::Value << "true";
+			if (it_unit->second.unit_flag_csv & 0x20000)
+				body << YAML::Value << "HiddenTrap" << YAML::Value << "true";
+
+			body << YAML::EndMap;
+		}
+
+		body << YAML::EndMap;
+	}
+
+	body << YAML::EndMap;
+
+	return true;
+}
+
+// Copied and adjusted from quest.cpp
+static bool quest_read_db( char *split[], size_t columns, size_t current ){
+	int32 quest_id = atoi(split[0]);
+
+	if (quest_id < 0 || quest_id >= INT_MAX) {
+		ShowError("quest_read_db: Invalid quest ID '%d'.\n", quest_id);
+		return false;
+	}
+
+	body << YAML::BeginMap;
+	body << YAML::Key << "Id" << YAML::Value << quest_id;
+
+	std::string title = split[17];
+	
+	if (columns > 18) { // If the title has a comma in it, concatenate
+		size_t col = 18;
+
+		while (col < columns) {
+			title += ',' + std::string(split[col]);
+			col++;
+		}
+	}
+
+	title.erase(std::remove(title.begin(), title.end(), '"'), title.end()); // Strip double quotes out
+	body << YAML::Key << "Title" << YAML::Value << title;
+
+	if (strchr(split[1], ':') == nullptr) {
+		uint32 time = atoi(split[1]);
+
+		if (time > 0) {
+			int32 day = time / 86400;
+
+			time %= (24 * 3600);
+			int32 hour = time / 3600;
+
+			time %= 3600;
+			int32 minute = time / 60;
+
+			time %= 60;
+			int32 second = time;
+
+			std::string output = "+";
+
+			if (day > 0)
+				output += std::to_string(day) + "d";
+			if (hour > 0)
+				output += std::to_string(hour) + "h";
+			if (minute > 0)
+				output += std::to_string(minute) + "mn";
+			if (second > 0)
+				output += std::to_string(second) + "s";
+
+			body << YAML::Key << "TimeLimit" << YAML::Value << output;
+		}
+	} else {
+		if (*split[1]) {
+			std::string time_str(split[1]), hour = time_str.substr(0, time_str.find(':')), output = {};
+
+			time_str.erase(0, 3); // Remove "HH:"
+
+			if (std::stoi(hour) > 0)
+				output = std::to_string(std::stoi(hour)) + "h";
+			if (std::stoi(time_str) > 0)
+				output += std::to_string(std::stoi(time_str)) + "mn";
+
+			body << YAML::Key << "TimeLimit" << YAML::Value << output; // No quests in TXT format had days, default to 0
+		}
+	}
+
+	if (atoi(split[2]) > 0) {
+		body << YAML::Key << "Targets";
+		body << YAML::BeginSeq;
+
+		for (size_t i = 0; i < MAX_QUEST_OBJECTIVES; i++) {
+			int32 mob_id = (int32)atoi(split[i * 2 + 2]), count = atoi(split[i * 2 + 3]);
+
+			if (!mob_id || !count)
+				continue;
+
+			std::string *mob_name = util::umap_find(aegis_mobnames, static_cast<uint16>(mob_id));
+
+			if (!mob_name) {
+				ShowError("quest_read_db: Invalid mob-class %hu, target not read.\n", mob_id);
+				continue;
+			}
+
+			body << YAML::BeginMap;
+			body << YAML::Key << "Mob" << YAML::Value << *mob_name;
+			body << YAML::Key << "Count" << YAML::Value << count;
+			body << YAML::EndMap;
+		}
+
+		body << YAML::EndSeq;
+	}
+
+	if (atoi(split[2 * MAX_QUEST_OBJECTIVES + 2]) > 0) {
+		body << YAML::Key << "Drops";
+		body << YAML::BeginSeq;
+
+		for (size_t i = 0; i < MAX_QUEST_DROPS; i++) {
+			int32 mob_id = (int32)atoi(split[3 * i + (2 * MAX_QUEST_OBJECTIVES + 2)]);
+			t_itemid nameid = strtoul(split[3 * i + (2 * MAX_QUEST_OBJECTIVES + 3)], nullptr, 10);
+
+			if (!mob_id || !nameid)
+				continue;
+
+			std::string *mob_name = util::umap_find(aegis_mobnames, static_cast<uint16>(mob_id));
+
+			if (!mob_name) {
+				ShowError("quest_read_db: Invalid mob-class %hu, drop not read.\n", mob_id);
+				continue;
+			}
+
+			std::string *item_name = util::umap_find(aegis_itemnames, nameid);
+
+			if (!item_name) {
+				ShowError("quest_read_db: Invalid item name %u, drop not read.\n", nameid);
+				return false;
+			}
+
+			body << YAML::BeginMap;
+			body << YAML::Key << "Mob" << YAML::Value << *mob_name;
+			body << YAML::Key << "Item" << YAML::Value << *item_name;
+			//body << YAML::Key << "Count" << YAML::Value << 1; // Default is 1
+			body << YAML::Key << "Rate" << YAML::Value << atoi(split[3 * i + (2 * MAX_QUEST_OBJECTIVES + 4)]);
+			body << YAML::EndMap;
+		}
+
+		body << YAML::EndSeq;
+	}
+
+	body << YAML::EndMap;
+
+	return true;
+}
+
+// Copied and adjusted from instance.cpp
+static bool instance_readdb_sub( char* str[], size_t columns, size_t current ){
+	body << YAML::BeginMap;
+	body << YAML::Key << "Id" << YAML::Value << atoi(str[0]);
+	body << YAML::Key << "Name" << YAML::Value << str[1];
+	if (atoi(str[2]) != 3600)
+		body << YAML::Key << "TimeLimit" << YAML::Value << atoi(str[2]);
+	if (atoi(str[3]) != 300)
+		body << YAML::Key << "IdleTimeOut" << YAML::Value << atoi(str[3]);
+	body << YAML::Key << "Enter";
+	body << YAML::BeginMap;
+	body << YAML::Key << "Map" << YAML::Value << str[4];
+	body << YAML::Key << "X" << YAML::Value << atoi(str[5]);
+	body << YAML::Key << "Y" << YAML::Value << atoi(str[6]);
+	body << YAML::EndMap;
+
+	if (columns > 7) {
+		body << YAML::Key << "AdditionalMaps";
+		body << YAML::BeginMap;
+
+		for( size_t i = 7; i < columns; i++ ){
+			if (!strlen(str[i]))
+				continue;
+
+			if (strcmpi(str[4], str[i]) == 0)
+				continue;
+
+			body << YAML::Key << str[i] << YAML::Value << "true";
+		}
+
+		body << YAML::EndMap;
+	}
+
+	body << YAML::EndMap;
+
+	return true;
+}
+
+// item_db.yml function
+//---------------------
+static bool itemdb_read_itemavail( char *str[], size_t columns, size_t current ){
+	item_avail.insert({ strtoul(str[0], nullptr, 10), strtoul(str[1], nullptr, 10) });
+	return true;
+}
+
+// item_db.yml function

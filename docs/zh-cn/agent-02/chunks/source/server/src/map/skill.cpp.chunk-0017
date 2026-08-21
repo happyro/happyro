@@ -1,0 +1,500 @@
+}
+
+/**
+ * Checks and stores partners for ensemble skills [Skotlex]
+ * Max partners is 2.
+ * @param sd Caster
+ * @param skill_id
+ * @param skill_lv
+ * @param range Area range to check
+ * @param cast_flag Special handle
+ */
+int32 skill_check_pc_partner(map_session_data *sd, uint16 skill_id, uint16 *skill_lv, int32 range, int32 cast_flag)
+{
+	static int32 c=0;
+	static int32 p_sd[MAX_PARTY];
+	int32 i;
+	bool is_chorus = skill_get_inf2(skill_id, INF2_ISCHORUS);
+
+	if (!sd)
+		return 0;
+
+	if (!battle_config.player_skill_partner_check || pc_has_permission(sd, PC_PERM_SKILL_UNCONDITIONAL))
+		return is_chorus ? MAX_PARTY : 99; //As if there were infinite partners.
+
+	if (cast_flag) {	//Execute the skill on the partners.
+		map_session_data* tsd;
+		switch (skill_id) {
+			case PR_BENEDICTIO:
+			case WM_GREAT_ECHO:
+				for (i = 0; i < c; i++) {
+					if ((tsd = map_id2sd(p_sd[i])) != nullptr)
+						status_charge(tsd, 0, (skill_id == PR_BENEDICTIO) ? 10 : skill_get_sp(skill_id, *skill_lv) / 2);
+				}
+				return c;
+			case AB_ADORAMUS:
+				if( c > 0 && (tsd = map_id2sd(p_sd[0])) != nullptr ) {
+					i = 2 * (*skill_lv);
+					status_charge(tsd, 0, i);
+				}
+				break;
+			default:
+				if( is_chorus )
+					break;//Chorus skills are not to be parsed as ensembles
+				if (skill_get_inf2(skill_id, INF2_ISENSEMBLE)) {
+					if (c > 0 && (tsd = map_id2sd(p_sd[0])) != nullptr) {
+#ifdef RENEWAL
+						if (sd->sc.hasSCE(SC_DANCING) && skill_id == CG_MOONLIT) {
+#else
+						if (sd->sc.hasSCE(SC_DANCING)) {
+#endif
+							sd->sc.getSCE(SC_DANCING)->val4 = tsd->id;
+							sc_start4(sd, tsd, SC_DANCING, 100, skill_id, sd->sc.getSCE(SC_DANCING)->val2, *skill_lv, sd->id, skill_get_time(skill_id, *skill_lv) + 1000);
+							clif_skill_nodamage(tsd, *sd, skill_id, *skill_lv);
+							tsd->skill_id_dance = skill_id;
+							tsd->skill_lv_dance = *skill_lv;
+						}
+#ifdef RENEWAL
+						else {
+							sc_start(sd, sd, SC_ENSEMBLEFATIGUE, 100, 1, skill_get_time(CG_SPECIALSINGER, *skill_lv));
+							sc_start(sd, tsd, SC_ENSEMBLEFATIGUE, 100, 1, skill_get_time(CG_SPECIALSINGER, *skill_lv));
+						}
+#endif
+					}
+				}
+				return c;
+		}
+	}
+
+	//Else: new search for partners.
+	c = 0;
+	memset (p_sd, 0, sizeof(p_sd));
+	i = map_foreachinallrange(skill_check_condition_char_sub, sd, range, BL_PC, sd, &c, &p_sd, skill_id);
+
+	if ( skill_id != PR_BENEDICTIO && skill_id != AB_ADORAMUS && skill_id != WM_GREAT_ECHO && 
+		!(skill_id >= TR_GEF_NOCTURN && skill_id <= TR_PRON_MARCH)) //Apply the average lv to encore skills.
+		*skill_lv = (i+(*skill_lv))/(c+1); //I know c should be one, but this shows how it could be used for the average of n partners.
+	return c;
+}
+
+/**
+ * Sub function to count how many spawned mob is around.
+ * Some skills check with matched AI.
+ * @param rid Source ID
+ * @param mob_class Monster ID
+ * @param skill_id Used skill
+ * @param *c Counter for found monster
+ */
+static int32 skill_check_condition_mob_master_sub(block_list *bl, va_list ap)
+{
+	int32 *c,src_id,mob_class,skill;
+	uint16 ai;
+	mob_data *md;
+
+	md=(mob_data*)bl;
+	src_id=va_arg(ap,int32);
+	mob_class=va_arg(ap,int32);
+	skill=va_arg(ap,int32);
+	c=va_arg(ap,int32 *);
+
+	switch (skill) {
+		case AM_SPHEREMINE:
+			ai = AI_SPHERE;
+			break;
+		case AM_CANNIBALIZE:
+			ai = AI_FLORA;
+			break;
+		case KO_ZANZOU:
+			ai = AI_ZANZOU;
+			break;
+		case MH_SUMMON_LEGION:
+			ai = AI_LEGION;
+			break;
+		case NC_SILVERSNIPER:
+		case NC_MAGICDECOY:
+			ai = AI_FAW;
+			break;
+		case MT_SUMMON_ABR_BATTLE_WARIOR:
+		case MT_SUMMON_ABR_DUAL_CANNON:
+		case MT_SUMMON_ABR_MOTHER_NET:
+		case MT_SUMMON_ABR_INFINITY:
+			ai = AI_ABR;
+			break;
+		case BO_WOODENWARRIOR:
+		case BO_WOODEN_FAIRY:
+		case BO_CREEPER:
+		case BO_HELLTREE:
+			ai = AI_BIONIC;
+			break;
+		default:
+			ai = AI_FLORA;
+			break;
+	}
+
+	if( md->master_id != src_id || md->special_state.ai != ai)
+		return 0; //Non alchemist summoned mobs have nothing to do here.
+
+	if(md->mob_id==mob_class)
+		(*c)++;
+
+	return 1;
+}
+
+/**
+ * Determines if a given skill should be made to consume ammo
+ * when used by the player. [Skotlex]
+ * @param sd Player
+ * @param skill_id Skill ID
+ * @return True if skill is need ammo; False otherwise.
+ */
+int32 skill_isammotype(map_session_data *sd, uint16 skill_id)
+{
+	std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+
+	return (
+		battle_config.arrow_decrement == 2 &&
+		(sd->status.weapon == W_BOW || (sd->status.weapon >= W_REVOLVER && sd->status.weapon <= W_GRENADE)) &&
+		skill_id != HT_PHANTASMIC &&
+		skill->skill_type == BF_WEAPON &&
+		!skill->nk[NK_NODAMAGE] &&
+		!skill_get_spiritball(skill_id,1) //Assume spirit spheres are used as ammo instead.
+	);
+}
+
+/**
+* Check SC required to cast a skill
+* @param sc
+* @param skill_id
+* @return True if condition is met, False otherwise
+**/
+static bool skill_check_condition_sc_required( map_session_data& sd, uint16 skill_id, s_skill_condition& require ){
+	if (require.status.empty())
+		return true;
+
+	status_change *sc = &sd.sc;
+
+	if (sc == nullptr) {
+		clif_skill_fail( sd, skill_id );
+		return false;
+	}
+
+	// May have multiple requirements
+	for (const auto &reqStatus : require.status) {
+		if (reqStatus == SC_NONE)
+			continue;
+
+		useskill_fail_cause cause;
+
+		switch (reqStatus) {
+			// Official fail message
+			case SC_PUSH_CART:
+				cause = USESKILL_FAIL_CART;
+				break;
+			case SC_POISONINGWEAPON:
+				cause = USESKILL_FAIL_GC_POISONINGWEAPON;
+				break;
+			case SC_WEAPONBLOCK_ON:
+				cause = USESKILL_FAIL_GC_WEAPONBLOCKING;
+				break;
+			default:
+				cause = USESKILL_FAIL_LEVEL;
+				break;
+		}
+
+		if (!sc->getSCE(reqStatus)) {
+			clif_skill_fail( sd, skill_id, cause );
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+* Check SC of BL
+* @param sc
+* @param skill_id
+* @return 1 if condition is met, 0 otherwise
+**/
+
+int32 skill_check_bl_sc(block_list *target, va_list ap) {
+
+	nullpo_ret(target);
+
+	int32 sc_id = va_arg(ap,int32);
+
+	status_change *sc = status_get_sc(target);
+
+	if (sc && sc->getSCE(sc_id))
+		return 1;
+
+	return 0;
+
+}
+
+/** 
+ * Check skill condition when cast begin
+ * For ammo, only check if the skill need ammo
+ * For checking ammo requirement (type and amount) will be skill_check_condition_castend
+ * @param sd Player who uses skill
+ * @param skill_id ID of used skill
+ * @param skill_lv Level of used skill
+ * @return true: All condition passed, false: Failed
+ */
+bool skill_check_condition_castbegin( map_session_data& sd, uint16 skill_id, uint16 skill_lv ){
+	struct s_skill_condition require;
+	int32 i;
+
+	if (sd.chatID)
+		return false;
+
+	if( pc_has_permission(&sd, PC_PERM_SKILL_UNCONDITIONAL) && sd.skillitem != skill_id )
+	{	//GMs don't override the skillItem check, otherwise they can use items without them being consumed! [Skotlex]
+		sd.state.arrow_atk = skill_get_ammotype(skill_id)?1:0; //Need to do arrow state check.
+		sd.spiritball_old = sd.spiritball; //Need to do Spiritball check.
+		sd.soulball_old = sd.soulball; //Need to do Soulball check.
+		sd.servantball_old = sd.servantball; //Need to do Servantball check.
+		sd.abyssball_old = sd.abyssball; //Need to do Abyssball check.
+		return true;
+	}
+
+	switch( sd.menuskill_id ) {
+		case AM_PHARMACY:
+			switch( skill_id ) {
+				case AM_PHARMACY:
+				case AC_MAKINGARROW:
+				case BS_REPAIRWEAPON:
+				case AM_TWILIGHT1:
+				case AM_TWILIGHT2:
+				case AM_TWILIGHT3:
+					return false;
+			}
+			break;
+		case GN_MIX_COOKING:
+		case GN_MAKEBOMB:
+		case GN_S_PHARMACY:
+		case GN_CHANGEMATERIAL:
+		case MT_M_MACHINE:
+		case BO_BIONIC_PHARMACY:
+			if( sd.menuskill_id != skill_id )
+				return false;
+			break;
+	}
+
+	struct status_data* status = &sd.battle_status;
+	status_change* sc = &sd.sc;
+
+	if( sc->empty() )
+		sc = nullptr;
+
+	if( sd.skillitem == skill_id )
+	{
+		if( sd.state.abra_flag ) // Hocus-Pocus was used. [Inkfish]
+			sd.state.abra_flag = 0;
+		else
+		{ // When a target was selected, consume items that were skipped in pc_use_item [Skotlex]
+			if( (i = sd.itemindex) == -1 ||
+				sd.inventory.u.items_inventory[i].nameid != sd.itemid ||
+				sd.inventory_data[i] == nullptr ||
+				sd.inventory_data[i]->flag.delay_consume == DELAYCONSUME_NONE ||
+				sd.inventory.u.items_inventory[i].amount < 1
+				)
+			{	//Something went wrong, item exploit?
+				sd.itemid = 0;
+				sd.itemindex = -1;
+				return false;
+			}
+			//Consume
+			sd.itemid = 0;
+			sd.itemindex = -1;
+			if( (skill_id == WZ_EARTHSPIKE && sc && sc->getSCE(SC_EARTHSCROLL) && rnd()%100 > sc->getSCE(SC_EARTHSCROLL)->val2) || sd.inventory_data[i]->flag.delay_consume & DELAYCONSUME_NOCONSUME ) // [marquis007]
+				; //Do not consume item.
+			else if( sd.inventory.u.items_inventory[i].expire_time == 0 )
+				pc_delitem(&sd,i,1,0,0,LOG_TYPE_CONSUME); // Rental usable items are not consumed until expiration
+		}
+		if(!sd.skillitem_keep_requirement)
+			return true;
+	}
+
+	if( sc != nullptr && sc->getSCE(SC_WEIGHT90) != nullptr ) {
+		clif_skill_fail( sd, skill_id, USESKILL_FAIL_WEIGHTOVER );
+		return false;
+	}
+
+	if( sc && ( sc->getSCE(SC__SHADOWFORM) || sc->getSCE(SC__IGNORANCE) ) )
+		return false;
+
+	//Checks if disabling skill - in which case no SP requirements are necessary
+	if( sc && skill_disable_check(*sc,skill_id))
+		return true;
+
+	std::bitset<INF2_MAX> inf2 = skill_db.find(skill_id)->inf2;
+
+	// Check the skills that can be used while mounted on a warg
+	if( pc_isridingwug(&sd) ) {
+		if(!inf2[INF2_ALLOWONWARG])
+			return false; // in official there is no message.
+	}
+	if( pc_ismadogear(&sd) ) {
+		// Skills that are unusable when Mado is equipped. [Jobbie]
+		if(!inf2[INF2_ALLOWONMADO]){
+			clif_skill_fail( sd, skill_id, USESKILL_FAIL_MADOGEAR_RIDE );
+			return false;
+		}
+	}
+
+	//if (skill_lv < 1 || skill_lv > MAX_SKILL_LEVEL)
+	//	return false;
+
+	require = skill_get_requirement(&sd,skill_id,skill_lv);
+
+	//Can only update state when weapon/arrow info is checked.
+	sd.state.arrow_atk = require.ammo?1:0;
+
+	// perform skill-group checks
+	if(skill_id != WM_GREAT_ECHO && inf2[INF2_ISCHORUS]) {
+		if (skill_check_pc_partner(&sd, skill_id, &skill_lv, AREA_SIZE, 0) < 1 && !(sc != nullptr && sc->hasSCE(SC_KVASIR_SONATA))) {
+			clif_skill_fail( sd, skill_id );
+			return false;
+		}
+	}
+	else if(inf2[INF2_ISENSEMBLE]) {
+		if (skill_check_pc_partner(&sd, skill_id, &skill_lv, 1, 0) < 1 && !(sc && sc->getSCE(SC_KVASIR_SONATA))) {
+			clif_skill_fail( sd, skill_id );
+			return false;
+		}
+	}
+	// perform skill-specific checks (and actions)
+	switch( skill_id ) {
+		case RG_GRAFFITI:
+			if (map_foreachinmap(skill_graffitiremover,sd.m,BL_SKILL,0)) { // If a previous Graffiti exists skill fails to cast.
+				clif_skill_fail( sd, skill_id );
+				return false;
+			}
+			break;
+		case SO_SPELLFIST:
+			if(sd.skill_id_old != MG_FIREBOLT && sd.skill_id_old != MG_COLDBOLT && sd.skill_id_old != MG_LIGHTNINGBOLT) {
+				clif_skill_fail( sd, skill_id );
+				return false;
+			}
+			[[fallthrough]];
+		case SA_CASTCANCEL:
+			if(sd.ud.skilltimer == INVALID_TIMER) {
+				clif_skill_fail( sd, skill_id );
+				return false;
+			}
+			break;
+		case AS_CLOAKING:
+		{
+			if( skill_lv < 3 && ((sd.type == BL_PC && battle_config.pc_cloak_check_type&1)
+			||	(sd.type != BL_PC && battle_config.monster_cloak_check_type&1) )) { //Check for walls.
+				int32 dir;
+				ARR_FIND( 0, DIR_MAX, dir, map_getcell(sd.m, sd.x+dirx[dir], sd.y+diry[dir], CELL_CHKNOPASS) != 0 );
+				if( dir == DIR_MAX ) {
+					clif_skill_fail( sd, skill_id );
+					return false;
+				}
+			}
+			break;
+		}
+		case AL_WARP:
+			if(!battle_config.duel_allow_teleport && sd.duel_group) { // duel restriction [LuzZza]
+				char output[128];
+				sprintf(output, msg_txt(&sd,365), skill_get_name(AL_WARP));
+				clif_displaymessage(sd.fd, output); //"Duel: Can't use %s in duel."
+				return false;
+			}
+			break;
+		case AL_HOLYWATER:
+			if(pc_search_inventory(&sd,ITEMID_EMPTY_BOTTLE) < 0) {
+				clif_skill_fail( sd, skill_id );
+				return false;
+			}
+			break;
+		case MO_CALLSPIRITS:
+			if(sc && sc->getSCE(SC_RAISINGDRAGON))
+				skill_lv += sc->getSCE(SC_RAISINGDRAGON)->val1;
+			if(sd.spiritball >= skill_lv) {
+				clif_skill_fail( sd, skill_id );
+				return false;
+			}
+			break;
+		case MO_FINGEROFFENSIVE:
+		case GS_FLING:
+		case SR_RIDEINLIGHTNING:
+			if( sd.spiritball > 0 && sd.spiritball < require.spiritball )
+				sd.spiritball_old = require.spiritball = sd.spiritball;
+			else
+				sd.spiritball_old = require.spiritball;
+			break;
+		case MO_CHAINCOMBO:
+			if(!sc)
+				return false;
+			if(sc->getSCE(SC_BLADESTOP))
+				break;
+			if(sc->getSCE(SC_COMBO) && sc->getSCE(SC_COMBO)->val1 == MO_TRIPLEATTACK)
+				break;
+			return false;
+		case MO_COMBOFINISH:
+			if(!(sc && sc->getSCE(SC_COMBO) && sc->getSCE(SC_COMBO)->val1 == MO_CHAINCOMBO))
+				return false;
+			break;
+		case CH_TIGERFIST:
+			if (sc == nullptr || sc->getSCE(SC_COMBO) == nullptr)
+				return false;
+#ifdef RENEWAL
+			// In Renewal Tiger Fist can only be used after Combo Finish
+			if (sc->getSCE(SC_COMBO)->val1 != MO_COMBOFINISH)
+				return false;
+#else
+			// In Pre-Renewal Tiger Fist can be used after Combo Finish or after Chain Crush Combo
+			if (sc->getSCE(SC_COMBO)->val1 != MO_COMBOFINISH && sc->getSCE(SC_COMBO)->val1 != CH_CHAINCRUSH)
+				return false;
+#endif
+			break;
+		case CH_CHAINCRUSH:
+			if(!(sc && sc->getSCE(SC_COMBO)))
+				return false;
+			if(sc->getSCE(SC_COMBO)->val1 != MO_COMBOFINISH && sc->getSCE(SC_COMBO)->val1 != CH_TIGERFIST)
+				return false;
+			break;
+		case SJ_SOLARBURST:
+			if (!(sc && sc->getSCE(SC_COMBO) && sc->getSCE(SC_COMBO)->val1 == SJ_PROMINENCEKICK))
+				return 0;
+			break;
+		case MO_EXTREMITYFIST:
+	//		if(sc && sc->getSCE(SC_EXTREMITYFIST)) //To disable Asura during the 5 min skill block uncomment this...
+	//			return false;
+			if( sc && (sc->getSCE(SC_BLADESTOP) || sc->getSCE(SC_CURSEDCIRCLE_ATKER)) )
+				break;
+			if( sc && sc->getSCE(SC_COMBO) ) {
+				switch(sc->getSCE(SC_COMBO)->val1) {
+					case MO_COMBOFINISH:
+					case CH_CHAINCRUSH:
+						break;
+					default:
+						return false;
+				}
+			}
+			else if( !unit_can_move(&sd) ) { //Placed here as ST_MOVE_ENABLE should not apply if rooted or on a combo. [Skotlex]
+				clif_skill_fail( sd, skill_id );
+				return false;
+			}
+			sd.spiritball_old = sd.spiritball;
+			break;
+		case TK_MISSION:
+			if( (sd.class_&MAPID_SECONDMASK) != MAPID_TAEKWON ) { // Cannot be used by Non-Taekwon classes
+				clif_skill_fail( sd, skill_id );
+				return false;
+			}
+			break;
+		case ASC_EDP:
+#ifdef RENEWAL
+			if (sd.weapontype1 == W_FIST && battle_config.switch_remove_edp&2) {
+#else
+			if (sd.weapontype1 == W_FIST && battle_config.switch_remove_edp&1) {
+#endif
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_THIS_WEAPON );
+				return false;
+			}
+			break;

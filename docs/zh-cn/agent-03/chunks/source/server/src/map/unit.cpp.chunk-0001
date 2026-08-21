@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "unit.hpp"
+
+#include <cstdlib>
+#include <cstring>
+
+#include <common/db.hpp>
+#include <common/ers.hpp>  // ers_destroy
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/timer.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "battle.hpp"
+#include "battleground.hpp"
+#include "channel.hpp"
+#include "chat.hpp"
+#include "clif.hpp"
+#include "duel.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "intif.hpp"
+#include "map.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "path.hpp"
+#include "pc.hpp"
+#include "pet.hpp"
+#include "storage.hpp"
+#include "trade.hpp"
+
+using namespace rathena;
+
+#ifndef MAX_SHADOW_SCAR 
+	#define MAX_SHADOW_SCAR 100 /// Max Shadow Scars
+#endif
+
+// How many milliseconds need to pass before we calculated the exact position of a unit
+// Calculation will only happen on demand and when at least the time defined here has passed
+#ifndef MIN_POS_INTERVAL
+	#define MIN_POS_INTERVAL 20
+#endif
+
+// Minimum delay after which new client-sided commands for slaves are accepted
+// Applies to mercenaries and homunculus
+#ifndef MIN_DELAY_SLAVE
+	#define MIN_DELAY_SLAVE MAX_ASPD_NOPC * 2
+#endif
+
+// Time frame during which we will send move packets each cell moved after being hit
+// This is needed because damage packets prevent the client from displaying movement for a while
+#ifndef MOVE_REFRESH_TIME
+	#define MOVE_REFRESH_TIME MAX_WALK_SPEED
+#endif
+
+// Directions values
+// 1 0 7
+// 2 . 6
+// 3 4 5
+// See also path.cpp walk_choices
+const int16 dirx[DIR_MAX]={0,-1,-1,-1,0,1,1,1}; ///lookup to know where will move to x according dir
+const int16 diry[DIR_MAX]={1,1,0,-1,-1,-1,0,1}; ///lookup to know where will move to y according dir
+
+//early declaration
+static TIMER_FUNC(unit_attack_timer);
+static TIMER_FUNC(unit_walktoxy_timer);
+int32 unit_unattackable(block_list *bl);
+
+/**
+ * Get the unit_data related to the bl
+ * @param bl : Object to get the unit_data from
+ *	valid type are : BL_PC|BL_MOB|BL_PET|BL_NPC|BL_HOM|BL_MER|BL_ELEM
+ * @return unit_data of bl or nullptr
+ */
+struct unit_data* unit_bl2ud(block_list *bl)
+{
+	if( bl == nullptr) return nullptr;
+	switch(bl->type){
+	case BL_PC: return &((map_session_data*)bl)->ud;
+	case BL_MOB: return &((mob_data*)bl)->ud;
+	case BL_PET: return &((pet_data*)bl)->ud;
+	case BL_NPC: return &((npc_data*)bl)->ud;
+	case BL_HOM: return &((homun_data*)bl)->ud;
+	case BL_MER: return &((s_mercenary_data*)bl)->ud;
+	case BL_ELEM: return &((s_elemental_data*)bl)->ud;
+	default : return nullptr;
+	}
+}
+
+const unit_data* unit_bl2ud( const block_list* bl ){
+	return unit_bl2ud(const_cast<block_list*>(bl));
+}
+
+/**
+ * Updates chase depending on situation:
+ * If target in attack range -> attack
+ * If target out of sight -> drop target
+ * Otherwise update chase path
+ * @param bl: Moving bl
+ * @param tick: Current tick
+ * @param fullcheck: If false, only check for attack, don't drop target or update chase path
+ * @return Whether the chase path was updated (true) or current movement can continue (false)
+ */
+bool unit_update_chase(block_list& bl, t_tick tick, bool fullcheck) {
+	unit_data* ud = unit_bl2ud(&bl);
+
+	if (ud == nullptr)
+		return true;
+
+	block_list* tbl = nullptr;
+	if (ud->target_to != 0)
+		tbl = map_id2bl(ud->target_to);
+
+	// Reached destination, start attacking
+	if (tbl != nullptr && tbl->type != BL_ITEM && tbl->m == bl.m && ud->walkpath.path_pos > 0 && check_distance_bl(&bl, tbl, ud->chaserange)) {
+		int32 stop_flag = USW_FIXPOS|USW_RELEASE_TARGET;
+
+		// Source may die due to reflect damage
+		FreeBlockLock freeLock;
+
+		if (ud->state.attack_continue)
+			stop_flag = unit_attack(&bl, tbl->id, ud->state.attack_continue);
+
+		// Stop, unless the attack was skipped
+		if (stop_flag != USW_NONE) {
+			// We need to make sure the walkpath is cleared here so a monster doesn't continue walking in case it unlocked its target
+			unit_stop_walking(&bl, stop_flag|USW_FORCE_STOP);
+			return true;
+		}
+	}
+	// Cancel chase
+	else if (tbl == nullptr || (fullcheck && !status_check_visibility(&bl, tbl, (bl.type == BL_MOB)))) {
+		// Looted items will have no tbl but target ID is still set, that's why we need to check for the ID here
+		if (ud->target_to != 0 && bl.type == BL_MOB) {
+			mob_data& md = reinterpret_cast<mob_data&>(bl);
+			if (tbl != nullptr) {
+				int32 warp = mob_warpchase(&md, tbl);
+				// Do warp chase
+				if (warp == 1)
+					return true;
+				// Continue moving to warp
+				else if (warp == 2)
+					return false;
+			}
+			// Make sure monsters properly unlock their target, but still continue movement
+			mob_unlocktarget(&md, tick);
+			return false;
+		}
+
+		unit_stop_walking(&bl, USW_FIXPOS|USW_FORCE_STOP|USW_RELEASE_TARGET);
+		return true;
+	}
+	// Update chase path
+	else if (fullcheck && ud->walkpath.path_pos > 0 && DIFF_TICK(ud->canmove_tick, tick) <= 0) {
+		// We call this only when we know there is no walk delay to prevent it pre-planning a chase
+		// If the call here fails, the unit should continue its current path
+		if(unit_walktobl(&bl, tbl, ud->chaserange, ud->state.walk_easy | (ud->state.attack_continue ? 2 : 0)))
+			return true;
+	}
+
+	return false;
+}
+
+/**
+ * Handles everything that happens when movement to the next cell is initiated
+ * @param bl: Moving bl
+ * @param sendMove: Whether move packet should be sent or not
+ * @param tick: Current tick
+ * @return Whether movement was initialized (true) or not (false)
+ */
+bool unit_walktoxy_nextcell(block_list& bl, bool sendMove, t_tick tick) {
+	unit_data* ud = unit_bl2ud(&bl);
+
+	if (ud == nullptr)
+		return true;
+
+	// Reached end of walkpath
+	if (ud->walkpath.path_pos >= ud->walkpath.path_len) {
+		// We need to send the reply to the client even if already at the target cell
+		// This allows the client to synchronize the position correctly
+		if (sendMove && bl.type == BL_PC)
+			clif_walkok(reinterpret_cast<map_session_data&>(bl));
+		return false;
+	}
+
+	// Monsters first check for a chase skill and if they didn't use one if their target is in range each cell after checking for a chase skill
+	if (bl.type == BL_MOB) {
+		mob_data& md = reinterpret_cast<mob_data&>(bl);
+		// Walk skills are triggered regardless of target due to the idle-walk mob state.
+		// But avoid triggering when already reached the end of the walkpath.
+		// Monsters use walk/chase skills every second, but we only get here every "speed" ms
+		// To make sure we check one skill per second on average, we substract half the speed as ms
+		if (!ud->state.force_walk &&
+			DIFF_TICK(tick, md.last_skillcheck) > MOB_SKILL_INTERVAL - md.status.speed / 2 &&
+			mobskill_use(&md, tick, -1)) {
+			if ((ud->skill_id != NPC_SPEEDUP || md.trickcasting == 0) //Stop only when trickcasting expired
+				&& ud->skill_id != NPC_EMOTION && ud->skill_id != NPC_EMOTION_ON //NPC_EMOTION doesn't make the monster stop
+				&& md.state.skillstate != MSS_WALK) //Walk skills are supposed to be used while walking
+			{
+				// Skill used, abort walking
+				// Fix position as walk has been cancelled.
+				clif_fixpos(bl);
+				// Movement was initialized, so we need to return true even though it was stopped
+				// Monsters only start moving or drop target when they stop using chase skills that stop them
+				return true;
+			}
+			// Resend walk packet for proper Self Destruction display
+			sendMove = true;
+		}
+		if (ud->target_to != 0) {
+			// Monsters update their chase path one cell before reaching their final destination
+			if (unit_update_chase(bl, tick, (ud->walkpath.path_pos == ud->walkpath.path_len - 1)))
+				return true;
+		}
+	}
+
+	// Get current speed
+	int32 speed;
+	if (direction_diagonal(ud->walkpath.path[ud->walkpath.path_pos]))
+		speed = status_get_speed(&bl) * MOVE_DIAGONAL_COST / MOVE_COST;
+	else
+		speed = status_get_speed(&bl);
+
+	// Make sure there is no active walktimer
+	if (ud->walktimer != INVALID_TIMER) {
+		delete_timer(ud->walktimer, unit_walktoxy_timer);
+		ud->walktimer = INVALID_TIMER;
+	}
+	ud->walktimer = add_timer(tick + speed, unit_walktoxy_timer, bl.id, speed);
+
+	// Resend move packet when unit was damaged recently
+	if (sendMove || DIFF_TICK(tick, ud->dmg_tick) < MOVE_REFRESH_TIME) {
+		clif_move(*ud);
+		if (bl.type == BL_PC)
+			clif_walkok(reinterpret_cast<map_session_data&>(bl));
+	}
+	return true;
+}
+
+/**
+ * Tells a unit to walk to a specific coordinate
+ * @param bl: Unit to walk [ALL]
+ * @return 1: Success 0: Fail
+ */
+int32 unit_walktoxy_sub(block_list *bl)
+{
+	nullpo_retr(1, bl);
+
+	unit_data *ud = unit_bl2ud(bl);
+
+	if (ud == nullptr)
+		return 0;
+
+	walkpath_data wpd = { 0 };
+
+	if( !path_search(&wpd,bl->m,bl->x,bl->y,ud->to_x,ud->to_y,ud->state.walk_easy,CELL_CHKNOPASS) )
+		return 0;
+
+#ifdef OFFICIAL_WALKPATH
+	if( bl->type != BL_NPC // If type is a NPC, please disregard.
+		&& wpd.path_len > 14 // Official number of walkable cells is 14 if and only if there is an obstacle between. [malufett]
+		&& !path_search_long(nullptr, bl->m, bl->x, bl->y, ud->to_x, ud->to_y, CELL_CHKNOPASS) ) // Check if there is an obstacle between
+			return 0;
+#endif
+
+	ud->walkpath = wpd;
+
+	int32 i;
+
+	// Monsters always target an adjacent tile even if ranged, no need to shorten the path
+	if (ud->target_to != 0 && ud->chaserange > 1 && bl->type != BL_MOB) {
+		// Generally speaking, the walk path is already to an adjacent tile
+		// so we only need to shorten the path if the range is greater than 1.
+		// Trim the last part of the path to account for range,
+		// but always move at least one cell when requested to move.
+		for (i = (ud->chaserange*10)-10; i > 0 && ud->walkpath.path_len>1;) {
+			ud->walkpath.path_len--;
+			enum directions dir = ud->walkpath.path[ud->walkpath.path_len];
+			if (direction_diagonal(dir))
+				i -= MOVE_COST * 2; //When chasing, units will target a diamond-shaped area in range [Playtester]
+			else
+				i -= MOVE_COST;
+			ud->to_x -= dirx[dir];
+			ud->to_y -= diry[dir];
+		}
+	}
+
+	ud->state.change_walk_target=0;
+
+	if (bl->type == BL_PC) {
+		map_session_data *sd = BL_CAST(BL_PC, bl);
+		sd->head_dir = DIR_NORTH;
+	}
+#if PACKETVER >= 20170726
+	// If this is a walking NPC and it will use a player sprite
+	else if( bl->type == BL_NPC && pcdb_checkid( status_get_viewdata( bl )->look[LOOK_BASE] ) ){
+		// Respawn the NPC as player unit
+		unit_refresh( bl, true );
+	}
+#endif
+	// Set mobstate here already as chase skills can be used on the first frame of movement
+	// If we don't set it now the monster will always move a full cell before checking
+	else if (bl->type == BL_MOB && ud->state.attack_continue) {
+		mob_data& md = reinterpret_cast<mob_data&>(*bl);
+		mob_setstate(md, MSS_RUSH);
+	}
+
+	unit_walktoxy_nextcell(*bl, true, gettick());
+
+	return 1;
+}
+
+/**
+ * Retrieve the direct master of a bl if one exists.
+ * @param bl: char to get his master [HOM|ELEM|PET|MER]
+ * @return map_session_data of master or nullptr
+ */
+TBL_PC* unit_get_master(block_list *bl)
+{
+	if(bl)
+		switch(bl->type) {
+			case BL_HOM: return (((TBL_HOM *)bl)->master);
+			case BL_ELEM: return (((TBL_ELEM *)bl)->master);
+			case BL_PET: return (((TBL_PET *)bl)->master);
+			case BL_MER: return (((TBL_MER *)bl)->master);
+		}
+	return nullptr;
+}
+
+/**
+ * Retrieve a unit's master's teleport timer
+ * @param bl: char to get his master's teleport timer [HOM|ELEM|PET|MER]
+ * @return timer or nullptr
+ */
+int32* unit_get_masterteleport_timer(block_list *bl)
+{
+	if(bl)
+		switch(bl->type) {
+			case BL_HOM: return &(((TBL_HOM *)bl)->masterteleport_timer);
+			case BL_ELEM: return &(((TBL_ELEM *)bl)->masterteleport_timer);
+			case BL_PET: return &(((TBL_PET *)bl)->masterteleport_timer);
+			case BL_MER: return &(((TBL_MER *)bl)->masterteleport_timer);
+		}
+	return nullptr;
+}
+
+/**
+ * Warps a unit to its master if the master has gone out of sight (3 second default)
+ * Can be any object with a master [MOB|PET|HOM|MER|ELEM]
+ * @param tid: Timer
+ * @param tick: tick (unused)
+ * @param id: Unit to warp
+ * @param data: Data transferred from timer call
+ * @return 0
+ */
+TIMER_FUNC(unit_teleport_timer){
+	block_list *bl = map_id2bl(id);
+	int32 *mast_tid = unit_get_masterteleport_timer(bl);
+
+	if(tid == INVALID_TIMER || mast_tid == nullptr)
+		return 0;
+	else if(*mast_tid != tid || bl == nullptr)
+		return 0;
+	else {
+		map_session_data* msd = unit_get_master( bl );
+
+		if( msd != nullptr && !check_distance_bl( msd, bl, static_cast<int32>( data ) ) ){
+			*mast_tid = INVALID_TIMER;
+			unit_warp(bl, msd->m, msd->x, msd->y, CLR_TELEPORT );
+		} else // No timer needed
+			*mast_tid = INVALID_TIMER;
+	}
+	return 0;
+}
+
+/**
+ * Checks if a slave unit is outside their max distance from master
+ * If so, starts a timer (default: 3 seconds) which will teleport the unit back to master
+ * @param sbl: Object with a master [MOB|PET|HOM|MER|ELEM]
+ * @return 0
+ */
+int32 unit_check_start_teleport_timer(block_list *sbl)
+{
+	TBL_PC *msd = nullptr;
+	int32 max_dist = 0;
+
+	switch(sbl->type) {
+		case BL_HOM:	
+		case BL_ELEM:	
+		case BL_PET:	
+		case BL_MER:	
+			msd = unit_get_master(sbl);
+			break;
+		default:
+			return 0;
+	}
+
+	switch(sbl->type) {
+		case BL_HOM:	max_dist = AREA_SIZE;			break;
+		case BL_ELEM:	max_dist = MAX_ELEDISTANCE;		break;
+		case BL_PET:	max_dist = AREA_SIZE;			break;
+		case BL_MER:	max_dist = MAX_MER_DISTANCE;	break;
+	}
+	// If there is a master and it's a valid type
+	if(msd && max_dist) {
+		int32 *msd_tid = unit_get_masterteleport_timer(sbl);
+
+		if(msd_tid == nullptr)
+			return 0;
+		if (!check_distance_bl(msd, sbl, max_dist)) {
+			if(*msd_tid == INVALID_TIMER || *msd_tid == 0)
+				*msd_tid = add_timer(gettick()+3000,unit_teleport_timer,sbl->id,max_dist);
+		} else {
+			if(*msd_tid && *msd_tid != INVALID_TIMER)
+				delete_timer(*msd_tid,unit_teleport_timer);
+			*msd_tid = INVALID_TIMER; // Cancel recall
+		}
+	}
+	return 0;
+}
+
+/**
+ * Triggered on full step if stepaction is true and executes remembered action.
+ * @param tid: Timer ID
+ * @param tick: Unused
+ * @param id: ID of bl to do the action
+ * @param data: Not used
+ * @return 1: Success 0: Fail (No valid bl)
+ */
+TIMER_FUNC(unit_step_timer){
+	block_list *bl;
+	struct unit_data *ud;
+	int32 target_id;
+
+	bl = map_id2bl(id);
+
+	if (!bl || bl->prev == nullptr)
+		return 0;
+
+	ud = unit_bl2ud(bl);
+
+	if(!ud)
+		return 0;
+
+	if(ud->steptimer != tid) {
+		ShowError("unit_step_timer mismatch %d != %d\n",ud->steptimer,tid);
+		return 0;
+	}
+
+	ud->steptimer = INVALID_TIMER;
+
+	if(!ud->stepaction)
+		return 0;
+
+	//Set to false here because if an error occurs, it should not be executed again
+	ud->stepaction = false;
+
+	if(!ud->target_to)
+		return 0;
+
+	//Flush target_to as it might contain map coordinates which should not be used by other functions
+	target_id = ud->target_to;
+	ud->target_to = 0;
+
+	//If stepaction is set then we remembered a client request that should be executed on the next step
+	//Execute request now if target is in attack range
+	if(ud->stepskill_id && skill_get_inf(ud->stepskill_id) & INF_GROUND_SKILL) {
+		//Execute ground skill
+		struct map_data *md = &map[bl->m];			
+		unit_skilluse_pos(bl, target_id%md->xs, target_id/md->xs, ud->stepskill_id, ud->stepskill_lv);
+	} else {
+		//If a player has target_id set and target is in range, attempt attack
+		block_list *tbl = map_id2bl(target_id);
+		if (tbl == nullptr || !status_check_visibility(bl, tbl, false)) {
+			return 0;
+		}
+		if(ud->stepskill_id == 0) {
+			//Execute normal attack
+			unit_attack(bl, tbl->id, (ud->state.attack_continue) + 2);
+		} else {
+			//Execute non-ground skill
+			unit_skilluse_id(bl, tbl->id, ud->stepskill_id, ud->stepskill_lv);
+		}
+	}
+
+	return 1;
+}
+
+int32 unit_walktoxy_ontouch(block_list *bl, va_list ap)
+{
+	npc_data *nd;

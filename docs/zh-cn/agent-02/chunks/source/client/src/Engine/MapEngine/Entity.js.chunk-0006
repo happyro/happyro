@@ -1,0 +1,367 @@
+			frame: 0,
+			repeat: false,
+			play: true,
+			next: false
+		});
+	}
+}
+
+/**
+ * "Blade Stop" / "Root" skill status
+ *
+ * @param {object} pkt - PACKET.ZC.BLADESTOP
+ */
+function onBladeStopPacket(pkt) {
+	const srcEntity = EntityManager.get(pkt.srcAID);
+	const dstEntity = EntityManager.get(pkt.destAID);
+	if (srcEntity && dstEntity) {
+		onBladeStopVisual(srcEntity, dstEntity, pkt.flag);
+		onBladeStopVisual(dstEntity, srcEntity, pkt.flag);
+	}
+}
+
+/**
+ * Notify experience gained
+ *
+ * @param {object} pkt - PACKET_ZC_NOTIFY_EXP
+ */
+
+function onNotifyExp(pkt) {
+	switch (pkt.expType) {
+		case 0:
+			if (pkt.varID === 1) {
+				ChatBox.addText(DB.getMessage(1613).replace('%d', pkt.amount), ChatBox.TYPE.INFO, ChatBox.FILTER.EXP);
+			} else if (pkt.varID === 2) {
+				ChatBox.addText(DB.getMessage(1614).replace('%d', pkt.amount), ChatBox.TYPE.INFO, ChatBox.FILTER.EXP);
+			}
+			break;
+		case 1:
+			if (pkt.varID === 1) {
+				ChatBox.addText(
+					'Experience gained from Quest, Base:' + pkt.amount,
+					null,
+					ChatBox.FILTER.EXP,
+					'#A442DC'
+				);
+			} else if (pkt.varID === 2) {
+				ChatBox.addText('Experience gained from Quest, Job:' + pkt.amount, null, ChatBox.FILTER.EXP, '#A442DC');
+			}
+			break;
+	}
+}
+
+/**
+ * Mark MVP position on map (Convex Mirror item)
+ * it's show small icon  at minimap when MVP is spawned (but I will use cross, it's more accurate)
+ * @param {object} pkt - PACKET_ZC_BOSS_INFO
+ *
+ *   probably it's not updated with Tombstone system, but Tombstones are fail...
+ */
+
+function onMarkMvp(pkt) {
+	MiniMap.getUI().removeNpcMark('mvp'); //hack for mark system (todo: debug this)
+	if (pkt.infoType == 1) {
+		MiniMap.getUI().addNpcMark('mvp', pkt.xPos, pkt.yPos, 0x0ff0000, Infinity);
+		/**if(!MiniMap.isNpcMarkExist('mvp')) {    // wtf marker is pushed with delay??
+				ChatBox.addText( pkt.name+' is already spawned at ('+pkt.xPos+','+pkt.yPos+')', null, ChatBox.FILTER.PUBLIC_LOG, '#FFFF63');
+			}*/
+	}
+	if (pkt.infoType == 0) {
+		ChatBox.addText('Boss monster not found.', ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+	}
+}
+
+/**
+ * Show MvP reward Effect
+ *
+ * @param {object} pkt - PACKET.ZC.MVP
+ */
+function onEntityMvpReward(pkt) {
+	const EF_Init_Par = {
+		effectId: EffectConst.EF_MVP,
+		ownerAID: pkt.AID
+	};
+	EffectManager.spam(EF_Init_Par);
+}
+
+/**
+ * Show MvP item message
+ *
+ * @param {object} pkt - PACKET.ZC.MVP_GETTING_ITEM
+ */
+function onEntityMvpRewardItemMessage(pkt) {
+	const item = DB.getItemInfo(pkt.ITID);
+	ChatBox.addText(DB.getMessage(143), ChatBox.TYPE.BLUE, ChatBox.FILTER.ITEM);
+	ChatBox.addText(item.identifiedDisplayName, ChatBox.TYPE.BLUE, ChatBox.FILTER.ITEM);
+}
+
+/**
+ * Entity will be hit, handle getting hit and after actions
+ *
+ * @param pkt - packet PACKET.ZC.NOTIFY_ACT or PACKET.ZC.NOTIFY_SKILL
+ * @param dstEntity - Reveiver entity
+ */
+function onEntityWillBeHitSub(pkt, dstEntity) {
+	// only if has damage > 0 and type is not endure and not lucky
+	if ((pkt.damage > 0 || pkt.leftDamage > 0) && pkt.action !== 4 && pkt.action !== 9 && pkt.action !== 11) {
+		const count = pkt.count || 1;
+
+		function impendingAttack() {
+			// Get hurt when attack happens
+			if (dstEntity.action !== dstEntity.ACTION.DIE) {
+				dstEntity.setAction({
+					action: dstEntity.ACTION.HURT,
+					frame: 0,
+					repeat: false,
+					play: true,
+					next: {
+						action: dstEntity.ACTION.READYFIGHT, // Wiggle-wiggle
+						delay: pkt.attackedMT + 0,
+						frame: 0,
+						repeat: true,
+						play: true
+					}
+				});
+			}
+		}
+
+		function resumeWalk() {
+			// Try resuming walk when targeting something.
+			if (
+				dstEntity.action !== dstEntity.ACTION.DIE &&
+				EntityManager.getFocusEntity() &&
+				dstEntity.walk.index < dstEntity.walk.total
+			) {
+				dstEntity.setAction({
+					action: dstEntity.ACTION.WALK,
+					frame: 0,
+					repeat: false,
+					play: true
+				});
+			}
+		}
+
+		for (let i = 0; i < count; i++) {
+			if (pkt.damage) {
+				Events.setTimeout(impendingAttack, pkt.attackMT + C_MULTIHIT_DELAY * i);
+			}
+			if (pkt.leftDamage) {
+				Events.setTimeout(impendingAttack, pkt.attackMT + C_MULTIHIT_DELAY * 1.75 * i);
+			}
+		}
+
+		Events.setTimeout(
+			resumeWalk,
+			pkt.attackMT + C_MULTIHIT_DELAY * (pkt.leftDamage ? 1.75 : 1) * (count - 1) + pkt.attackedMT
+		);
+	}
+}
+
+/**
+ * Does player have a Token of Siegfried?
+ */
+function haveSiegfriedItem() {
+	const itemInfo = Inventory.getUI().getItemById(7621);
+
+	if (Session.IsPKZone || Session.IsSiegeMode || Session.IsEventPVPMode) {
+		return false;
+	} else if (itemInfo && itemInfo.count > 0) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+/**
+ * Add/remove effect when state changes
+ */
+function addStateEffect(AID, OldState, NewState, Status, EffectId) {
+	// Kinda weird logic, but it is what it is... always remove if present in OldState, and add/re-add if present in NewState
+
+	// Remove
+	if (OldState & Status) {
+		EffectManager.remove(null, AID, EffectId);
+	}
+
+	// Apply
+	if (NewState & Status) {
+		const EF_Init_Par = {
+			effectId: EffectId,
+			ownerAID: AID
+		};
+		EffectManager.spam(EF_Init_Par);
+	}
+}
+
+/**
+ * Handle hat effect packet - add or remove hat effects on entity
+ */
+function onHatEffects(pkt) {
+	const entity = EntityManager.get(pkt.GID);
+	if (!entity) {
+		return;
+	}
+
+	let i, count, hatEffectID, hatEffect;
+
+	// Remove effects when disabled
+	if (pkt.enabled !== 1) {
+		if (pkt.hatEffectIDs && pkt.hatEffectIDs.length) {
+			for (i = 0, count = pkt.hatEffectIDs.length; i < count; ++i) {
+				EffectManager.removeHatEffect(pkt.GID, Number(pkt.hatEffectIDs[i]));
+				if (entity._hatEffects) {
+					delete entity._hatEffects[pkt.hatEffectIDs[i]];
+				}
+			}
+		}
+		return;
+	}
+
+	// Initialize tracking object
+	if (!entity._hatEffects) {
+		entity._hatEffects = {};
+	}
+
+	// Add new effects from packet
+	const effectIds = pkt.hatEffectIDs || [];
+	for (i = 0, count = effectIds.length; i < count; ++i) {
+		hatEffectID = effectIds[i];
+
+		// Skip if already present
+		if (entity._hatEffects[hatEffectID]) {
+			continue;
+		}
+
+		hatEffect = DB.getHatResource(hatEffectID);
+		if (!hatEffect) {
+			continue;
+		}
+
+		EffectManager.spamHatEffect({
+			Init: { ownerAID: pkt.GID, ownerEntity: entity, startTick: Renderer.tick },
+			effect: {
+				effectID: hatEffectID,
+				hatEffectID: hatEffect.hatEffectID,
+				file: hatEffect.resourceFileName,
+				xOffset: hatEffect.hatEffectPosX,
+				yOffset: hatEffect.hatEffectPos,
+				isAttachedHead: hatEffect.isAttachedHead,
+				isRenderBeforeCharacter: hatEffect.isRenderBeforeCharacter,
+				head: hatEffect.isAttachedHead,
+				isAdjustPositionWhenShrinkState: hatEffect.isAdjustPositionWhenShrinkState,
+				isAdjustSizeWhenShrinkState: hatEffect.isAdjustSizeWhenShrinkState
+			}
+		});
+	}
+}
+
+function processBlockStatus(entity, pkt) {
+	const guardStatuses = [StatusConst.KYRIE, StatusConst.AUTOGUARD, StatusConst.PARRYING];
+
+	if (guardStatuses.includes(pkt.index)) {
+		if (!entity._guardStatuses) entity._guardStatuses = new Set();
+		if (pkt.state && !entity._guardStatuses.has(pkt.index)) {
+			entity._guardStatuses.add(pkt.index);
+		} else if (!pkt.state) {
+			entity._guardStatuses.delete(pkt.index);
+		}
+		entity.isGuard = entity._guardStatuses.size > 0;
+	}
+}
+/**
+ * Initialize
+ */
+export default function EntityEngine() {
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_ACTENTRY, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY_NPC, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY2, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY2, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY2, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY3, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY3, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY3, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY4, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY4, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY4, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY5, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY5, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY5, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY6, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY6, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY6, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY7, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY8, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY9, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY10, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY10, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY10, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_NEWENTRY11, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVEENTRY11, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_STANDENTRY11, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.STORE_ASSISTANT_ENTRY, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.STORE_ASSISTANT_ENTRY_V2, onEntitySpam);
+	Network.hookPacket(PACKET.ZC.NOTIFY_VANISH, onEntityVanish);
+	Network.hookPacket(PACKET.ZC.STORE_ASSISTANT_DISAPPEAR, onEntityVanish);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MOVE, onEntityMove);
+	Network.hookPacket(PACKET.ZC.STOPMOVE, onEntityStopMove);
+	Network.hookPacket(PACKET.ZC.NOTIFY_ACT, onEntityAction);
+	Network.hookPacket(PACKET.ZC.NOTIFY_ACT2, onEntityAction);
+	Network.hookPacket(PACKET.ZC.NOTIFY_ACT3, onEntityAction);
+	Network.hookPacket(PACKET.ZC.NOTIFY_CHAT, onEntityTalk);
+	Network.hookPacket(PACKET.ZC.SHOWSCRIPT, onEntityTalk);
+	Network.hookPacket(PACKET.ZC.NPC_CHAT, onEntityTalkColor);
+	Network.hookPacket(PACKET.ZC.ACK_REQNAME, onEntityIdentity);
+	Network.hookPacket(PACKET.ZC.ACK_REQNAMEALL, onEntityIdentity);
+	Network.hookPacket(PACKET.ZC.ACK_REQNAMEALL2, onEntityIdentity);
+	Network.hookPacket(PACKET.ZC.ACK_REQNAMEALL3, onEntityIdentity);
+	Network.hookPacket(PACKET.ZC.CHANGE_DIRECTION, onEntityDirectionChange);
+	Network.hookPacket(PACKET.ZC.SPRITE_CHANGE, onEntityViewChange);
+	Network.hookPacket(PACKET.ZC.SPRITE_CHANGE2, onEntityViewChange);
+	Network.hookPacket(PACKET.ZC.NPCSPRITE_CHANGE, onNPCViewChange);
+	Network.hookPacket(PACKET.ZC.USE_SKILL, onEntityUseSkill);
+	Network.hookPacket(PACKET.ZC.USE_SKILL2, onEntityUseSkill);
+	Network.hookPacket(PACKET.ZC.NOTIFY_SKILL, onEntityUseSkillToAttack);
+	Network.hookPacket(PACKET.ZC.NOTIFY_SKILL2, onEntityUseSkillToAttack);
+	Network.hookPacket(PACKET.ZC.NOTIFY_SKILL_POSITION, onEntityUseSkillToAttack);
+	Network.hookPacket(PACKET.ZC.USESKILL_ACK, onEntityCastSkill);
+	Network.hookPacket(PACKET.ZC.USESKILL_ACK2, onEntityCastSkill);
+	Network.hookPacket(PACKET.ZC.USESKILL_ACK3, onEntityCastSkill); // New "Use Skill" packet. Fixes issues with Casting.
+	Network.hookPacket(PACKET.ZC.STATE_CHANGE, onEntityOptionChange);
+	Network.hookPacket(PACKET.ZC.STATE_CHANGE3, onEntityOptionChange);
+	Network.hookPacket(PACKET.ZC.MSG_STATE_CHANGE, onEntityStatusChange);
+	Network.hookPacket(PACKET.ZC.MSG_STATE_CHANGE2, onEntityStatusChange);
+	Network.hookPacket(PACKET.ZC.MSG_STATE_CHANGE3, onEntityStatusChange);
+	Network.hookPacket(PACKET.ZC.MSG_STATE_CHANGE4, onEntityStatusChange);
+	Network.hookPacket(PACKET.ZC.MSG_STATE_CHANGE5, onEntityStatusChange);
+	Network.hookPacket(PACKET.ZC.STORE_ENTRY, onEntityCreateRoom);
+	Network.hookPacket(PACKET.ZC.DISAPPEAR_ENTRY, onEntityDestroyRoom);
+	Network.hookPacket(PACKET.ZC.BUYING_STORE_ENTRY, onEntityCreateRoom);
+	Network.hookPacket(PACKET.ZC.DISAPPEAR_BUYING_STORE_ENTRY, onEntityDestroyRoom);
+	Network.hookPacket(PACKET.ZC.ROOM_NEWENTRY, onEntityCreateRoom);
+	Network.hookPacket(PACKET.ZC.DESTROY_ROOM, onEntityDestroyRoom);
+	Network.hookPacket(PACKET.ZC.SKILL_ENTRY, onSkillAppear);
+	Network.hookPacket(PACKET.ZC.SKILL_ENTRY2, onSkillAppear);
+	Network.hookPacket(PACKET.ZC.SKILL_ENTRY3, onSkillAppear);
+	Network.hookPacket(PACKET.ZC.SKILL_ENTRY4, onSkillAppear);
+	Network.hookPacket(PACKET.ZC.SKILL_ENTRY5, onSkillAppear);
+	Network.hookPacket(PACKET.ZC.SKILL_DISAPPEAR, onSkillDisapear);
+	Network.hookPacket(PACKET.ZC.DISPEL, onEntityCastCancel);
+	Network.hookPacket(PACKET.ZC.HIGHJUMP, onEntityJump);
+	Network.hookPacket(PACKET.ZC.FASTMOVE, onEntityFastMove);
+	Network.hookPacket(PACKET.ZC.RESURRECTION, onEntityResurect);
+	Network.hookPacket(PACKET.ZC.EMOTION, onEntityEmotion);
+	Network.hookPacket(PACKET.ZC.NOTIFY_MONSTER_HP, onEntityLifeUpdate);
+	Network.hookPacket(PACKET.ZC.HP_INFO_TINY, onEntityLifeUpdateTiny);
+	Network.hookPacket(PACKET.ZC.QUEST_NOTIFY_EFFECT, onEntityQuestNotifyEffect);
+	Network.hookPacket(PACKET.ZC.BLADESTOP, onBladeStopPacket);
+	Network.hookPacket(PACKET.ZC.NOTIFY_EXP, onNotifyExp);
+	Network.hookPacket(PACKET.ZC.NOTIFY_EXP2, onNotifyExp);
+	Network.hookPacket(PACKET.ZC.BOSS_INFO, onMarkMvp);
+	Network.hookPacket(PACKET.ZC.MVP, onEntityMvpReward);
+	Network.hookPacket(PACKET.ZC.MVP_GETTING_ITEM, onEntityMvpRewardItemMessage);
+	Network.hookPacket(PACKET.ZC.ACK_CHANGE_TITLE, onTitleChangeAck);
+	Network.hookPacket(PACKET.ZC.HAT_EFFECT, onHatEffects);
+}

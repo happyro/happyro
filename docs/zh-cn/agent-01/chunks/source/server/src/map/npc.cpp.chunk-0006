@@ -1,0 +1,500 @@
+				clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], output, false, SELF);
+			}
+			break;
+	}
+	return ERROR_TYPE_NONE;
+}
+
+/**
+ * Cash Shop Buy List for clients 2010-11-16 and newer
+ * @param sd: Player data
+ * @param points: Secondary point
+ * @param count: Amount of items to purchase
+ * @param item_list: List of items to purchase
+ * @return clif_cashshop_ack value to display
+ */
+int32 npc_cashshop_buylist( map_session_data *sd, int32 points, std::vector<s_npc_buy_list>& item_list ){
+	int32 i, j, amount, new_, w, vt;
+	t_itemid nameid;
+	npc_data *nd = (npc_data *)map_id2bl(sd->npc_shopid);
+	enum e_CASHSHOP_ACK res;
+
+	if( !nd || ( nd->subtype != NPCTYPE_CASHSHOP && nd->subtype != NPCTYPE_ITEMSHOP && nd->subtype != NPCTYPE_POINTSHOP ) )
+		return ERROR_TYPE_NPC;
+	if( sd->state.trading )
+		return ERROR_TYPE_EXCHANGE;
+
+	new_ = 0;
+	w = 0;
+	vt = 0; // Global Value
+
+	// Validating Process ----------------------------------------------------
+	for( i = 0; i < item_list.size(); i++ )
+	{
+		nameid = item_list[i].nameid;
+		amount = item_list[i].qty;
+
+		std::shared_ptr<item_data> id = item_db.find(nameid);
+
+		if( !id || amount <= 0 )
+			return ERROR_TYPE_ITEM_ID;
+
+		ARR_FIND(0,nd->u.shop.count,j,nd->u.shop.shop_item[j].nameid == nameid || itemdb_viewid(nd->u.shop.shop_item[j].nameid) == nameid);
+		if( j == nd->u.shop.count || nd->u.shop.shop_item[j].value <= 0 )
+			return ERROR_TYPE_ITEM_ID;
+
+		nameid = item_list[i].nameid = nd->u.shop.shop_item[j].nameid; //item_avail replacement
+
+		if( !itemdb_isstackable2(id.get()) && amount > 1 )
+		{
+			ShowWarning("Player %s (%d:%d) sent a hexed packet trying to buy %d of nonstackable item %u!\n", sd->status.name, sd->status.account_id, sd->status.char_id, amount, nameid);
+			amount = item_list[i].qty = 1;
+		}
+
+		if( nd->master_nd ) { // Script-controlled shops decide by themselves, what can be bought and for what price.
+			continue;
+		}
+
+		switch( pc_checkadditem(sd,nameid,amount) )
+		{
+			case CHKADDITEM_NEW:
+				new_ += id->inventorySlotNeeded(amount);
+				break;
+			case CHKADDITEM_OVERAMOUNT:
+				return ERROR_TYPE_INVENTORY_WEIGHT;
+		}
+
+		vt += nd->u.shop.shop_item[j].value * amount;
+		w += itemdb_weight(nameid) * amount;
+	}
+
+	if (nd->master_nd) //Script-based shops.
+		return npc_buylist_sub(sd,item_list,nd->master_nd);
+
+	if( w + sd->weight > sd->max_weight )
+		return ERROR_TYPE_INVENTORY_WEIGHT;
+	if( pc_inventoryblank(sd) < new_ )
+		return ERROR_TYPE_INVENTORY_WEIGHT;
+	if( points > vt ) points = vt;
+
+	if ((res = npc_cashshop_process_payment(nd, vt, points, sd)) != ERROR_TYPE_NONE)
+		return res;
+
+	// Delivery Process ----------------------------------------------------
+	for( i = 0; i < item_list.size(); i++ ) {
+		nameid = item_list[i].nameid;
+		amount = item_list[i].qty;
+
+		if( !pet_create_egg(sd,nameid) ) {
+			struct item item_tmp;
+			uint16 get_amt = amount;
+
+			memset(&item_tmp, 0, sizeof(item_tmp));
+			item_tmp.nameid = nameid;
+			item_tmp.identify = 1;
+
+			if ((itemdb_search(nameid))->flag.guid)
+				get_amt = 1;
+
+			for (j = 0; j < amount; j += get_amt)
+				pc_additem(sd,&item_tmp,get_amt,LOG_TYPE_NPC);
+		}
+	}
+
+	return ERROR_TYPE_NONE;
+}
+
+/**
+ * Returns the shop currency type
+ * @param sd: Player data
+ * @param nd: NPC data
+ * @param cost: Reference to cost variable
+ * @param display: Display cost type to player?
+ */
+void npc_shop_currency_type( const map_session_data* sd, const npc_data* nd, int32 cost[2], bool display)
+{
+	nullpo_retv(sd);
+
+	if (!nd) { // Assume it's Cash Shop through the button
+		cost[0] = sd->cashPoints;
+		cost[1] = sd->kafraPoints;
+		return;
+	}
+
+	switch(nd->subtype) {
+		case NPCTYPE_CASHSHOP:
+			cost[0] = sd->cashPoints;
+			cost[1] = sd->kafraPoints;
+			break;
+		case NPCTYPE_ITEMSHOP:
+		{
+			int32 total = 0, i;
+			std::shared_ptr<item_data> id = item_db.find(nd->u.shop.itemshop_nameid);
+
+			if (id) { // Item Data is checked at script parsing but in case of item_db reload, check again.
+				if (display) {
+					char output[CHAT_SIZE_MAX];
+
+					memset(output, '\0', sizeof(output));
+
+					sprintf(output, msg_txt(sd, 714), id->ename.c_str(), id->nameid); // Item Shop List: %s (%u)
+					clif_broadcast(sd, output, strlen(output) + 1, BC_BLUE,SELF);
+				}
+
+				for (i = 0; i < MAX_INVENTORY; i++) {
+					if (sd->inventory.u.items_inventory[i].amount > 0 && sd->inventory.u.items_inventory[i].nameid == id->nameid && pc_can_sell_item(sd, &sd->inventory.u.items_inventory[i], nd->subtype))
+						total += sd->inventory.u.items_inventory[i].amount;
+				}
+			}
+
+			cost[0] = total;
+		}
+			break;
+		case NPCTYPE_POINTSHOP:
+			if (display) {
+				char output[CHAT_SIZE_MAX];
+
+				memset(output, '\0', sizeof(output));
+
+				sprintf(output, msg_txt(sd, 715), nd->u.shop.pointshop_str); // Point Shop List: '%s'
+				clif_broadcast(sd, output, strlen(output) + 1, BC_BLUE,SELF);
+			}
+			
+			cost[0] = static_cast<int32>(pc_readreg2(sd, nd->u.shop.pointshop_str));
+			break;
+	}
+}
+
+/**
+ * Cash Shop Buy List for clients 2010-11-15 and older
+ * @param sd: Player data
+ * @param nameid: Item to purchase
+ * @param amount: Amount of items to purchase
+ * @param points: Cost of total items
+ * @return clif_cashshop_ack value to display
+ */
+int32 npc_cashshop_buy(map_session_data *sd, t_itemid nameid, int32 amount, int32 points)
+{
+	npc_data *nd = (npc_data *)map_id2bl(sd->npc_shopid);
+	int32 i, price, w;
+	enum e_CASHSHOP_ACK res;
+
+	if( amount <= 0 )
+		return ERROR_TYPE_ITEM_ID;
+
+	if( points < 0 )
+		return ERROR_TYPE_MONEY;
+
+	if( !nd || (nd->subtype != NPCTYPE_CASHSHOP && nd->subtype != NPCTYPE_ITEMSHOP && nd->subtype != NPCTYPE_POINTSHOP) )
+		return ERROR_TYPE_NPC;
+
+	if( sd->state.trading )
+		return ERROR_TYPE_EXCHANGE;
+
+	std::shared_ptr<item_data> id = item_db.find(nameid);
+
+	if( id == nullptr )
+		return ERROR_TYPE_ITEM_ID; // Invalid Item
+
+	ARR_FIND(0, nd->u.shop.count, i, nd->u.shop.shop_item[i].nameid == nameid || itemdb_viewid(nd->u.shop.shop_item[i].nameid) == nameid);
+	if( i == nd->u.shop.count )
+		return ERROR_TYPE_ITEM_ID;
+	if( nd->u.shop.shop_item[i].value <= 0 )
+		return ERROR_TYPE_ITEM_ID;
+
+	nameid = nd->u.shop.shop_item[i].nameid; //item_avail replacement
+
+	if(!itemdb_isstackable2(id.get()) && amount > 1)
+	{
+		ShowWarning("Player %s (%d:%d) sent a hexed packet trying to buy %d of nonstackable item %u!\n",
+			sd->status.name, sd->status.account_id, sd->status.char_id, amount, nameid);
+		amount = 1;
+	}
+
+	switch( pc_checkadditem(sd, nameid, amount) )
+	{
+		case CHKADDITEM_NEW:
+			if( pc_inventoryblank(sd) < id->inventorySlotNeeded(amount) )
+				return ERROR_TYPE_INVENTORY_WEIGHT;
+			break;
+		case CHKADDITEM_OVERAMOUNT:
+			return ERROR_TYPE_INVENTORY_WEIGHT;
+	}
+
+	w = id->weight * amount;
+	if( w + sd->weight > sd->max_weight )
+		return ERROR_TYPE_INVENTORY_WEIGHT;
+
+	if( (double)nd->u.shop.shop_item[i].value * amount > INT_MAX )
+	{
+		ShowWarning("npc_cashshop_buy: Item '%s' (%u) price overflow attempt!\n", id->name.c_str(), nameid);
+		ShowDebug("(NPC:'%s' (%s,%d,%d), player:'%s' (%d/%d), value:%d, amount:%d)\n",
+					nd->exname, map_mapid2mapname(nd->m), nd->x, nd->y, sd->status.name, sd->status.account_id, sd->status.char_id, nd->u.shop.shop_item[i].value, amount);
+		return ERROR_TYPE_ITEM_ID;
+	}
+
+	price = nd->u.shop.shop_item[i].value * amount;
+	if( points > price )
+		points = price;
+
+	if ((res = npc_cashshop_process_payment(nd, price, points, sd)) != ERROR_TYPE_NONE)
+		return res;
+
+	if( !pet_create_egg(sd, nameid) ) {
+		uint16 get_amt = amount;
+
+		struct item item_tmp = {};
+
+		item_tmp.nameid = nameid;
+		item_tmp.identify = 1;
+
+		if (id->flag.guid)
+			get_amt = 1;
+
+		for (int32 j = 0; j < amount; j += get_amt)
+			pc_additem(sd,&item_tmp, get_amt, LOG_TYPE_NPC);
+	}
+
+	return ERROR_TYPE_NONE;
+}
+
+/**
+ * NPC buylist for script-controlled shops
+ * @param sd: Player who bought
+ * @param n: Number of items
+ * @param item_list: List of items
+ * @param nd: Attached NPC
+ */
+static int32 npc_buylist_sub(map_session_data* sd, std::vector<s_npc_buy_list>& item_list, npc_data* nd) {
+	char npc_ev[EVENT_NAME_LENGTH];
+	int32 key_nameid = 0, key_amount = 0;
+
+	// discard old contents
+	script_cleararray_pc( sd, "@bought_nameid" );
+	script_cleararray_pc( sd, "@bought_quantity" );
+
+	// save list of bought items
+	for( int32 i = 0; i < item_list.size(); i++ ){
+		script_setarray_pc( sd, "@bought_nameid", i, item_list[i].nameid, &key_nameid );
+		script_setarray_pc( sd, "@bought_quantity", i, item_list[i].qty, &key_amount );
+	}
+
+	// invoke event
+	snprintf(npc_ev, ARRAYLENGTH(npc_ev), "%s::%s", nd->exname, script_config.onbuy_event_name);
+	npc_event(sd, npc_ev, 0);
+
+	return 0;
+}
+
+/**
+ * Shop buylist that the player is attempting to purchase
+ * @param sd: Player who attempt to buy
+ * @param n: Number of items
+ * @param item_list: List of items
+ * @return result code for clif_parse_NpcBuyListSend/clif_npc_market_purchase_ack
+ */
+e_purchase_result npc_buylist( map_session_data* sd, std::vector<s_npc_buy_list>& item_list ){
+	npc_data* nd;
+	struct npc_item_list *shop = nullptr;
+	double z;
+	int32 j,k,w,skill,new_;
+	uint8 market_index[MAX_INVENTORY];
+
+	nullpo_retr(e_purchase_result::PURCHASE_FAIL_COUNT, sd);
+
+	nd = npc_checknear(sd,map_id2bl(sd->npc_shopid));
+	if( nd == nullptr )
+		return e_purchase_result::PURCHASE_FAIL_COUNT;
+	if( nd->subtype != NPCTYPE_SHOP && nd->subtype != NPCTYPE_MARKETSHOP )
+		return e_purchase_result::PURCHASE_FAIL_COUNT;
+	if( item_list.empty() ){
+		return e_purchase_result::PURCHASE_FAIL_COUNT;
+	}
+
+	z = 0;
+	w = 0;
+	new_ = 0;
+
+	shop = nd->u.shop.shop_item;
+
+	memset(market_index, 0, sizeof(market_index));
+	// process entries in buy list, one by one
+	for( int32 i = 0; i < item_list.size(); ++i ){
+		t_itemid nameid;
+		uint16 amount;
+		int32 value;
+
+		// find this entry in the shop's sell list
+		ARR_FIND( 0, nd->u.shop.count, j,
+			item_list[i].nameid == shop[j].nameid || //Normal items
+			item_list[i].nameid == itemdb_viewid(shop[j].nameid) //item_avail replacement
+		);
+
+		if( j == nd->u.shop.count )
+			return e_purchase_result::PURCHASE_FAIL_COUNT; // no such item in shop
+
+#if PACKETVER >= 20131223
+		if (nd->subtype == NPCTYPE_MARKETSHOP) {
+			if (shop[j].qty >= 0 && item_list[i].qty > shop[j].qty)
+				return e_purchase_result::PURCHASE_FAIL_COUNT;
+			market_index[i] = j;
+		}
+#endif
+
+		amount = item_list[i].qty;
+		nameid = item_list[i].nameid = shop[j].nameid; //item_avail replacement
+		value = shop[j].value;
+
+		std::shared_ptr<item_data> id = item_db.find(nameid);
+
+		if( !id )
+			return e_purchase_result::PURCHASE_FAIL_COUNT; // item no longer in itemdb
+
+		if( !itemdb_isstackable2(id.get()) && amount > 1 ) { //Exploit? You can't buy more than 1 of equipment types o.O
+			ShowWarning("Player %s (%d:%d) sent a hexed packet trying to buy %d of nonstackable item %u!\n",
+				sd->status.name, sd->status.account_id, sd->status.char_id, amount, nameid);
+			amount = item_list[i].qty = 1;
+		}
+
+		if( nd->master_nd ) { // Script-controlled shops decide by themselves, what can be bought and for what price.
+			continue;
+		}
+
+		switch( pc_checkadditem(sd,nameid,amount) ) {
+			case CHKADDITEM_EXIST:
+				break;
+
+			case CHKADDITEM_NEW:
+				new_ += id->inventorySlotNeeded(amount);
+				break;
+
+			case CHKADDITEM_OVERAMOUNT:
+				return e_purchase_result::PURCHASE_FAIL_WEIGHT;
+		}
+
+		if (npc_shop_discount(nd))
+			value = pc_modifybuyvalue(sd,value);
+
+		z += (double)value * amount;
+		w += itemdb_weight(nameid) * amount;
+	}
+
+	if (nd->master_nd){ //Script-based shops.
+		npc_buylist_sub(sd,item_list,nd->master_nd);
+		return e_purchase_result::PURCHASE_SUCCEED;
+	}
+
+	if (z > (double)sd->status.zeny)
+		return e_purchase_result::PURCHASE_FAIL_MONEY;	// Not enough Zeny
+
+	if( w + sd->weight > sd->max_weight )
+		return e_purchase_result::PURCHASE_FAIL_WEIGHT;	// Too heavy
+	if( pc_inventoryblank(sd) < new_ )
+		return e_purchase_result::PURCHASE_FAIL_COUNT;	// Not enough space to store items
+
+	pc_payzeny(sd, (int32)z, LOG_TYPE_NPC);
+
+	for( int32 i = 0; i < item_list.size(); ++i ) {
+		t_itemid nameid = item_list[i].nameid;
+		uint16 amount = item_list[i].qty;
+
+#if PACKETVER >= 20131223
+		if (nd->subtype == NPCTYPE_MARKETSHOP) {
+			j = market_index[i];
+
+			if( shop[j].qty >= 0 ){
+				if (amount > shop[j].qty)
+					return e_purchase_result::PURCHASE_FAIL_COUNT;
+				shop[j].qty -= amount;
+				npc_market_tosql(nd->exname, &shop[j]);
+			}
+		}
+#endif
+
+		if (itemdb_type(nameid) == IT_PETEGG)
+			pet_create_egg(sd, nameid);
+		else {
+			uint16 get_amt = amount;
+
+			if ((itemdb_search(nameid))->flag.guid)
+				get_amt = 1;
+
+			for (k = 0; k < amount; k += get_amt) {
+				struct item item_tmp;
+				memset(&item_tmp, 0, sizeof(item_tmp));
+				item_tmp.nameid = nameid;
+				item_tmp.identify = 1;
+
+				pc_additem(sd,&item_tmp,get_amt,LOG_TYPE_NPC);
+			}
+		}
+	}
+
+	// custom merchant shop exp bonus
+	if( battle_config.shop_exp > 0 && z > 0 && (skill = pc_checkskill(sd,MC_DISCOUNT)) > 0 ) {
+		uint16 sk_idx = skill_get_index(MC_DISCOUNT);
+		if( sd->status.skill[sk_idx].flag >= SKILL_FLAG_REPLACED_LV_0 )
+			skill = sd->status.skill[sk_idx].flag - SKILL_FLAG_REPLACED_LV_0;
+
+		if( skill > 0 ) {
+			z = z * (double)skill * (double)battle_config.shop_exp/10000.;
+			if( z < 1 )
+				z = 1;
+			pc_gainexp(sd,nullptr,0,(int32)z, 0);
+		}
+	}
+
+	return e_purchase_result::PURCHASE_SUCCEED;
+}
+
+/// npc_selllist for script-controlled shops
+static int32 npc_selllist_sub(map_session_data* sd, int32 list_length, const PACKET_CZ_PC_SELL_ITEMLIST_sub* item_list, npc_data* nd)
+{
+	char npc_ev[EVENT_NAME_LENGTH];
+	char card_slot[NAME_LENGTH];
+	char option_id[NAME_LENGTH], option_val[NAME_LENGTH], option_param[NAME_LENGTH];
+	int32 i, j;
+	int32 key_nameid = 0;
+	int32 key_amount = 0;
+	int32 key_refine = 0;
+	int32 key_attribute = 0;
+	int32 key_identify = 0;
+	int32 key_enchantgrade = 0;
+	int32 key_card[MAX_SLOTS];
+	int32 key_option_id[MAX_ITEM_RDM_OPT], key_option_val[MAX_ITEM_RDM_OPT], key_option_param[MAX_ITEM_RDM_OPT];
+
+	// discard old contents
+	script_cleararray_pc( sd, "@sold_nameid" );
+	script_cleararray_pc( sd, "@sold_quantity" );
+	script_cleararray_pc( sd, "@sold_refine" );
+	script_cleararray_pc( sd, "@sold_attribute" );
+	script_cleararray_pc( sd, "@sold_identify" );
+	script_cleararray_pc( sd, "@sold_enchantgrade" );
+
+	for( j = 0; j < MAX_SLOTS; j++ )
+	{// clear each of the card slot entries
+		key_card[j] = 0;
+		snprintf(card_slot, sizeof(card_slot), "@sold_card%d", j + 1);
+		script_cleararray_pc( sd, card_slot );
+	}
+
+	for (j = 0; j < MAX_ITEM_RDM_OPT; j++) { // Clear each of the item option entries
+		key_option_id[j] = key_option_val[j] = key_option_param[j] = 0;
+
+		snprintf(option_id, sizeof(option_id), "@sold_option_id%d", j + 1);
+		script_cleararray_pc( sd, option_id );
+		snprintf(option_val, sizeof(option_val), "@sold_option_val%d", j + 1);
+		script_cleararray_pc( sd, option_val );
+		snprintf(option_param, sizeof(option_param), "@sold_option_param%d", j + 1);
+		script_cleararray_pc( sd, option_param );
+	}
+
+	// save list of to be sold items
+	for( i = 0; i < list_length; i++ )
+	{
+		int32 idx = item_list[i].index - 2;
+
+		script_setarray_pc( sd, "@sold_nameid", i, sd->inventory.u.items_inventory[idx].nameid, &key_nameid );
+		script_setarray_pc( sd, "@sold_quantity", i, item_list[i].amount, &key_amount );
+		script_setarray_pc( sd, "@sold_refine", i, sd->inventory.u.items_inventory[idx].refine, &key_refine );
+		script_setarray_pc( sd, "@sold_attribute", i, sd->inventory.u.items_inventory[idx].attribute, &key_attribute );

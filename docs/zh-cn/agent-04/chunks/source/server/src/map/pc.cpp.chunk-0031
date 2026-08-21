@@ -1,0 +1,500 @@
+}
+
+/**
+ * Run bonus_script on player
+ * @param sd
+ * @author [Cydh]
+ **/
+void pc_bonus_script(map_session_data *sd) {
+	t_tick now = gettick();
+	struct linkdb_node *node = nullptr, *next = nullptr;
+
+	if (!sd || !(node = sd->bonus_script.head))
+		return;
+
+	while (node) {
+		struct s_bonus_script_entry *entry = nullptr;
+		next = node->next;
+
+		if ((entry = (struct s_bonus_script_entry *)node->data)) {
+			// Only start timer for new bonus_script
+			if (entry->tid == INVALID_TIMER) {
+				if (entry->icon != EFST_BLANK) // Gives status icon if exist
+					clif_status_change(sd, entry->icon, 1, entry->tick, 1, 0, 0);
+
+				entry->tick += now;
+				entry->tid = add_timer(entry->tick, pc_bonus_script_timer, sd->id, (intptr_t)entry);
+			}
+
+			if (entry->script)
+				run_script(entry->script, 0, sd->id, 0);
+			else
+				ShowError("pc_bonus_script: The script has been removed somewhere. \"%s\"\n", StringBuf_Value(entry->script_buf));
+		}
+
+		node = next;
+	}
+}
+
+/**
+ * Add bonus_script to player
+ * @param sd Player
+ * @param script_str Script string
+ * @param dur Duration in ms
+ * @param icon EFST
+ * @param flag Flags @see enum e_bonus_script_flags
+ * @param type 0 - None, 1 - Buff, 2 - Debuff
+ * @return New created entry pointer or nullptr if failed or nullptr if duplicate fail
+ * @author [Cydh]
+ **/
+struct s_bonus_script_entry *pc_bonus_script_add(map_session_data *sd, const char *script_str, t_tick dur, enum efst_type icon, uint16 flag, uint8 type) {
+	struct script_code *script = nullptr;
+	struct linkdb_node *node = nullptr;
+	struct s_bonus_script_entry *entry = nullptr;
+
+	if (!sd)
+		return nullptr;
+	
+	if (!(script = parse_script(script_str, "bonus_script", 0, SCRIPT_IGNORE_EXTERNAL_BRACKETS))) {
+		ShowError("pc_bonus_script_add: Failed to parse script '%s' (CID:%d).\n", script_str, sd->status.char_id);
+		return nullptr;
+	}
+
+	// Duplication checks
+	if ((node = sd->bonus_script.head)) {
+		while (node) {
+			entry = (struct s_bonus_script_entry *)node->data;
+			if (strcmpi(script_str, StringBuf_Value(entry->script_buf)) == 0) {
+				t_tick newdur = gettick() + dur;
+				if (flag&BSF_FORCE_REPLACE && entry->tick < newdur) { // Change duration
+					settick_timer(entry->tid, newdur);
+					script_free_code(script);
+					return nullptr;
+				}
+				else if (flag&BSF_FORCE_DUPLICATE) // Allow duplicate
+					break;
+				else { // No duplicate bonus
+					script_free_code(script);
+					return nullptr;
+				}
+			}
+			node = node->next;
+		}
+	}
+
+	CREATE(entry, struct s_bonus_script_entry, 1);
+
+	entry->script_buf = StringBuf_Malloc();
+	StringBuf_AppendStr(entry->script_buf, script_str);
+	entry->tid = INVALID_TIMER;
+	entry->flag = flag;
+	entry->icon = icon;
+	entry->tick = dur; // Use duration first, on run change to expire time
+	entry->type = type;
+	entry->script = script;
+	sd->bonus_script.count++;
+	return entry;
+}
+
+/**
+* Remove bonus_script data from player
+* @param sd: Target player
+* @param list: Bonus script entry from player
+* @author [Cydh]
+**/
+void pc_bonus_script_free_entry(map_session_data *sd, struct s_bonus_script_entry *entry) {
+	if (entry->tid != INVALID_TIMER)
+		delete_timer(entry->tid, pc_bonus_script_timer);
+
+	if (entry->script)
+		script_free_code(entry->script);
+
+	if (entry->script_buf)
+		StringBuf_Free(entry->script_buf);
+
+	if (sd) {
+		if (entry->icon != EFST_BLANK)
+			clif_status_load(sd, entry->icon, 0);
+		if (sd->bonus_script.count > 0)
+			sd->bonus_script.count--;
+	}
+	aFree(entry);
+}
+
+/**
+ * Do final process if no entry left
+ * @param sd
+ **/
+static void inline pc_bonus_script_check_final(map_session_data *sd) {
+	if (sd->bonus_script.count == 0) {
+		if (sd->bonus_script.head && sd->bonus_script.head->data)
+			pc_bonus_script_free_entry(sd, (struct s_bonus_script_entry *)sd->bonus_script.head->data);
+		linkdb_final(&sd->bonus_script.head);
+	}
+}
+
+/**
+* Timer for bonus_script
+* @param tid
+* @param tick
+* @param id
+* @param data
+* @author [Cydh]
+**/
+TIMER_FUNC(pc_bonus_script_timer){
+	map_session_data *sd;
+	struct s_bonus_script_entry *entry = (struct s_bonus_script_entry *)data;
+
+	sd = map_id2sd(id);
+	if (!sd) {
+		ShowError("pc_bonus_script_timer: Null pointer id: %d tid: %d\n", id, tid);
+		return 0;
+	}
+
+	if (tid == INVALID_TIMER)
+		return 0;
+
+	if (!sd->bonus_script.head || entry == nullptr) {
+		ShowError("pc_bonus_script_timer: Invalid entry pointer %p!\n", entry);
+		return 0;
+	}
+
+	linkdb_erase(&sd->bonus_script.head, (void *)((intptr_t)entry));
+	pc_bonus_script_free_entry(sd, entry);
+	pc_bonus_script_check_final(sd);
+	status_calc_pc(sd,SCO_NONE);
+	return 0;
+}
+
+/**
+* Check then clear all active timer(s) of bonus_script data from player based on reason
+* @param sd: Target player
+* @param flag: Reason to remove the bonus_script. e_bonus_script_flags or e_bonus_script_types
+* @author [Cydh]
+**/
+void pc_bonus_script_clear(map_session_data *sd, uint32 flag) {
+	struct linkdb_node *node = nullptr;
+	uint16 count = 0;
+
+	if (!sd || !(node = sd->bonus_script.head))
+		return;
+
+	while (node) {
+		struct linkdb_node *next = node->next;
+		struct s_bonus_script_entry *entry = (struct s_bonus_script_entry *)node->data;
+
+		if (entry && (
+				(flag == BSF_PERMANENT) ||					 // Remove all with permanent bonus
+				(!flag && !(entry->flag&BSF_PERMANENT)) ||	 // Remove all WITHOUT permanent bonus
+				(flag&entry->flag) ||						 // Matched flag
+				(flag&BSF_REM_BUFF   && entry->type == 1) || // Remove buff
+				(flag&BSF_REM_DEBUFF && entry->type == 2)	 // Remove debuff
+				)
+			)
+		{
+			linkdb_erase(&sd->bonus_script.head, (void *)((intptr_t)entry));
+			pc_bonus_script_free_entry(sd, entry);
+			count++;
+		}
+
+		node = next;
+	}
+
+	pc_bonus_script_check_final(sd);
+
+	if (count && !(flag&BSF_REM_ON_LOGOUT)) //Don't need to do this if log out
+		status_calc_pc(sd,SCO_NONE);
+}
+
+/** [Cydh]
+ * Gives/removes SC_BASILICA when player steps in/out the cell with 'cell_basilica'
+ * @param sd: Target player
+ */
+void pc_cell_basilica(map_session_data *sd) {
+#ifndef RENEWAL
+	nullpo_retv(sd);
+
+	enum sc_type type = SC_BASILICA;
+
+	if (!map_getcell(sd->m,sd->x,sd->y,CELL_CHKBASILICA)) {
+		if (sd->sc.getSCE(type))
+			status_change_end(sd, type);
+	}
+	else if (!sd->sc.getSCE(type))
+		sc_start(sd,sd, type,100,0,INFINITE_TICK);
+#endif
+}
+
+/** [Cydh]
+ * Get maximum specified parameter for specified class
+ * @param sd: Player data
+ * @param param: Max parameter to check
+ * @return max_param
+ */
+uint16 pc_maxparameter( const map_session_data* sd, e_params param ) {
+	nullpo_retr(0, sd);
+
+	std::shared_ptr<s_job_info> job = job_db.find(pc_mapid2jobid(sd->class_,sd->status.sex));
+
+	if( job == nullptr || param == PARAM_MAX ){
+		return 0;
+	}
+
+	return job->max_param[param];
+}
+
+/**
+* Get max ASPD for player based on Class
+* @param sd Player
+* @return ASPD
+*/
+int16 pc_maxaspd( const map_session_data* sd ) {
+	nullpo_ret(sd);
+
+	return (( sd->class_&JOBL_THIRD) ? battle_config.max_third_aspd : (
+			((sd->class_&MAPID_SECONDMASK) == MAPID_KAGEROUOBORO || (sd->class_&MAPID_SECONDMASK) == MAPID_REBELLION) ? battle_config.max_extended_aspd : (
+			(sd->class_&MAPID_FIRSTMASK) == MAPID_SUMMONER) ? battle_config.max_summoner_aspd : 
+			battle_config.max_aspd ));
+}
+
+/**
+* Calculates total item-group related bonuses for the given item
+* @param sd Player
+* @param nameid Item ID
+* @return Heal rate
+**/
+int16 pc_get_itemgroup_bonus(map_session_data* sd, t_itemid nameid, std::vector<s_item_bonus>& bonuses) {
+	if (bonuses.empty())
+		return 0;
+
+	int16 bonus = 0;
+
+	for (const auto &it : bonuses) {
+		uint16 group_id = it.id;
+		if (group_id == 0)
+			continue;
+
+		if (itemdb_group.item_exists(group_id, nameid))
+			bonus += it.val;
+	}
+	return bonus;
+}
+
+/**
+* Calculates total item-group related bonuses for the given item group
+* @param sd Player
+* @param group_id Item Group ID
+* @return Heal rate
+**/
+int16 pc_get_itemgroup_bonus_group(map_session_data* sd, uint16 group_id, std::vector<s_item_bonus>& bonuses) {
+	if (bonuses.empty())
+		return 0;
+
+	for (const auto &it : bonuses) {
+		if (it.id == group_id)
+			return it.val;
+	}
+
+	return 0;
+}
+
+/**
+* Check if player's equip index in same specified position, like for 2-Handed weapon & Heagdear (inc. costume)
+* @param eqi Item EQI of enum equip_index
+* @param *equip_index Player's equip_index[]
+* @param index Known index item in inventory from sd->equip_index[] to compare with specified EQI in *equip_index
+* @return True if item in same inventory index, False if doesn't
+*/
+bool pc_is_same_equip_index(enum equip_index eqi, const int16* equip_index, int16 index) {
+	if (index < 0 || index >= MAX_INVENTORY)
+		return true;
+	// Dual weapon checks
+	if (eqi == EQI_HAND_R && equip_index[EQI_HAND_L] == index)
+		return true;
+	// Headgear with Mid & Low location
+	if (eqi == EQI_HEAD_MID && equip_index[EQI_HEAD_LOW] == index)
+		return true;
+	// Headgear with Top & Mid or Low location
+	if (eqi == EQI_HEAD_TOP && (equip_index[EQI_HEAD_MID] == index || equip_index[EQI_HEAD_LOW] == index))
+		return true;
+	// Headgear with Mid & Low location
+	if (eqi == EQI_COSTUME_HEAD_MID && equip_index[EQI_COSTUME_HEAD_LOW] == index)
+		return true;
+	// Headgear with Top & Mid or Low location
+	if (eqi == EQI_COSTUME_HEAD_TOP && (equip_index[EQI_COSTUME_HEAD_MID] == index || equip_index[EQI_COSTUME_HEAD_LOW] == index))
+		return true;
+	return false;
+}
+
+/**
+ * Generate Unique item ID for player
+ * @param sd : Player
+ * @return A generated Unique item ID
+ */
+uint64 pc_generate_unique_id(map_session_data *sd) {
+	nullpo_ret(sd);
+	return ((uint64)sd->status.char_id << 32) | sd->status.uniqueitem_counter++;
+}
+
+/**
+ * Validating skill from player after logged on
+ * @param sd
+ **/
+void pc_validate_skill(map_session_data *sd) {
+	if (sd) {
+		uint16 i = 0, count = 0;
+		struct s_skill tmp_skills[MAX_SKILL] = {{ 0 }};
+
+		memcpy(tmp_skills, sd->status.skill, sizeof(sd->status.skill));
+		memset(sd->status.skill, 0, sizeof(sd->status.skill));
+
+		for (i = 0; i < MAX_SKILL; i++) {
+			uint16 idx = 0;
+			if (tmp_skills[i].id == 0 || tmp_skills[i].lv == 0)
+				continue;
+			if ((idx = skill_get_index(tmp_skills[i].id))) {
+				memcpy(&sd->status.skill[idx], &tmp_skills[i], sizeof(tmp_skills[i]));
+				count++;
+			}
+			else
+				ShowWarning("pc_validate_skill: Removing invalid skill '%d' from player (AID=%d CID=%d).\n", tmp_skills[i].id, sd->status.account_id, sd->status.char_id);
+		}
+	}
+}
+
+/**
+ * Show available NPC Quest / Event Icon Check [Kisuka]
+ * @param sd Player
+ **/
+void pc_show_questinfo(map_session_data *sd) {
+#if PACKETVER >= 20090218
+	nullpo_retv(sd);
+
+	if (sd->m < 0 || sd->m >= MAX_MAPINDEX)
+		return;
+
+	struct map_data *mapdata = map_getmapdata(sd->m);
+	nullpo_retv(mapdata);
+
+	if (mapdata->qi_npc.empty())
+		return;
+	if (mapdata->qi_npc.size() != sd->qi_display.size())
+		return; // init was not called yet
+
+	for (int32 i = 0; i < mapdata->qi_npc.size(); i++) {
+		npc_data *nd = map_id2nd(mapdata->qi_npc[i]);
+
+		if (!nd || nd->qi_data.empty())
+			continue;
+
+		bool show = false;
+
+		for (auto &qi : nd->qi_data) {
+			if (!qi->condition || achievement_check_condition(qi->condition, sd)) {
+				show = true;
+				// Check if need to be displayed
+				if (!sd->qi_display[i].is_active || qi->icon != sd->qi_display[i].icon || qi->color != sd->qi_display[i].color) {
+					sd->qi_display[i].is_active = true;
+					sd->qi_display[i].icon = qi->icon;
+					sd->qi_display[i].color = qi->color;
+					clif_quest_show_event(sd, nd, qi->icon, qi->color);
+				}
+				break;
+			}
+		}
+		if (show == false) {
+			// Check if need to be hide
+			if (sd->qi_display[i].is_active) {
+				sd->qi_display[i].is_active = false;
+				sd->qi_display[i].icon = QTYPE_NONE;
+				sd->qi_display[i].color = QMARK_NONE;
+#if PACKETVER >= 20120410
+				clif_quest_show_event(sd, nd, QTYPE_NONE, QMARK_NONE);
+#else
+				clif_quest_show_event(sd, nd, QTYPE_QUEST, QMARK_NONE);
+#endif
+			}
+		}
+	}
+#endif
+}
+
+/**
+ * Reinit the questinfo for player when changing map
+ * @param sd Player
+ **/
+void pc_show_questinfo_reinit(map_session_data *sd) {
+#if PACKETVER >= 20090218
+	nullpo_retv(sd);
+
+	sd->qi_display.clear();
+
+	if (sd->m < 0 || sd->m >= MAX_MAPINDEX)
+		return;
+
+	struct map_data *mapdata = map_getmapdata(sd->m);
+	nullpo_retv(mapdata);
+
+	if (mapdata->qi_npc.empty())
+		return;
+
+	sd->qi_display.reserve( mapdata->qi_npc.size() );
+
+	for( int32 i = 0; i < mapdata->qi_npc.size(); i++ ){
+		sd->qi_display.push_back( s_qi_display() );
+	}
+#endif
+}
+
+/**
+ * Check if a job is allowed to enter the map
+ * @param jobid Job ID see enum e_job or sd->status.class_
+ * @param m ID -an index- for direct indexing map[] array
+ * @return 1 if job is allowed, 0 otherwise
+ **/
+bool pc_job_can_entermap(enum e_job jobid, int32 m, int32 group_lv) {
+	// Map is other map server.
+	// !FIXME: Currently, a map-server doesn't recognized map's attributes on other server, so we assume it's fine to warp.
+	if (m < 0)
+		return true;
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if (!mapdata->cell)
+		return false;
+
+	if (!pcdb_checkid(jobid))
+		return false;
+
+	std::shared_ptr<s_job_info> job = job_db.find(jobid);
+
+	if (!job->noenter_map.zone || group_lv > job->noenter_map.group_lv)
+		return true;
+
+	if ((job->noenter_map.zone&1 && !mapdata_flag_vs2(mapdata)) || // Normal
+		(job->noenter_map.zone&2 && mapdata->getMapFlag(MF_PVP)) || // PVP
+		(job->noenter_map.zone&4 && mapdata_flag_gvg2_no_te(mapdata)) || // GVG
+		(job->noenter_map.zone&8 && mapdata->getMapFlag(MF_BATTLEGROUND)) || // Battleground
+		(job->noenter_map.zone&16 && mapdata_flag_gvg2_te(mapdata)) || // WOE:TE
+		(job->noenter_map.zone&(mapdata->zone) && mapdata->getMapFlag(MF_RESTRICTED)) // Zone restriction
+		)
+		return false;
+
+	return true;
+}
+
+/**
+ * Tells client about player's costume view on mapchange for checking 'nocostume' mapflag.
+ * @param sd
+ **/
+void pc_set_costume_view(map_session_data *sd) {
+	int32 i = -1, head_low = 0, head_mid = 0, head_top = 0, robe = 0;
+	struct item_data *id = nullptr;
+
+	nullpo_retv(sd);
+
+	head_low = sd->status.head_bottom;
+	head_mid = sd->status.head_mid;
+	head_top = sd->status.head_top;
+	robe = sd->status.robe;
+

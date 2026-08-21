@@ -1,0 +1,500 @@
+ *  6 : You didn't pay for this account
+ *  7 : Server is overpopulated
+ *  8 : Already online
+ *  9 : IP capacity of Internet Cafe is full
+ * 10 : Out of available playing time
+ * 11 : Your account is suspended
+ * 12 : Connection is terminated due to changes to the billing policy
+ * 13 : Connection is terminated because your IP doesn't match authorized Ip
+ * 14 : Connection is terminated to prevent charging from your account's play time
+ * 15 : Disconnected from server!
+ * 
+ */
+void chclif_send_auth_result(int32 fd,char result){
+	PACKET_SC_NOTIFY_BAN p = {};
+
+	p.packetType = HEADER_SC_NOTIFY_BAN;
+	p.result = result;
+
+	socket_send( fd, p );
+}
+
+/// @param result
+/// 0 (0x718): An unknown error has occurred.
+/// 1: none/success
+/// 3 (0x719): A database error occurred.
+/// 4 (0x71a): To delete a character you must withdraw from the guild.
+/// 5 (0x71b): To delete a character you must withdraw from the party.
+/// Any (0x718): An unknown error has occurred.
+/// HC: <0828>.W <char id>.L <Msg:0-5>.L <deleteDate>.L
+void chclif_char_delete2_ack(int32 fd, uint32 char_id, uint32 result, time_t delete_date) {
+	PACKET_HC_DELETE_CHAR3_RESERVED p = {};
+
+	p.packetType = HEADER_HC_DELETE_CHAR3_RESERVED;
+	p.CID = char_id;
+	p.result = result;
+#if PACKETVER_CHAR_DELETEDATE
+	p.date = TOL( delete_date - time( nullptr ) );
+#else
+	p.date = TOL( delete_date );
+#endif
+
+	socket_send( fd, p );
+}
+
+/// @param result
+/// 0 (0x718): An unknown error has occurred.
+/// 1: none/success
+/// 2 (0x71c): Due to system settings can not be deleted.
+/// 3 (0x719): A database error occurred.
+/// 4 (0x71d): Deleting not yet possible time.
+/// 5 (0x71e): Date of birth do not match.
+/// 6 Name does not match.
+/// 7 Character Deletion has failed because you have entered an incorrect e-mail address.
+/// Any (0x718): An unknown error has occurred.
+/// HC: <082a>.W <char id>.L <Msg>.L
+void chclif_char_delete2_accept_ack(int32 fd, uint32 char_id, uint32 result) {
+#if PACKETVER >= 20130000
+	if(result == 1 ){
+		chclif_mmo_char_send(fd, *((char_session_data*)session[fd]->session_data) );
+	}
+#endif
+
+	PACKET_HC_DELETE_CHAR3 p = {};
+
+	p.packetType = HEADER_HC_DELETE_CHAR3;
+	p.CID = char_id;
+	p.result = result;
+
+	socket_send( fd, p );
+}
+
+/// @param result
+/// 1 (0x718): none/success, (if char id not in deletion process): An unknown error has occurred.
+/// 2 (0x719): A database error occurred.
+/// Any (0x718): An unknown error has occurred.
+/// HC: <082c>.W <char id>.L <Msg:1-2>.L
+void chclif_char_delete2_cancel_ack(int32 fd, uint32 char_id, uint32 result) {
+	PACKET_HC_DELETE_CHAR3_CANCEL p = {};
+
+	p.packetType = HEADER_HC_DELETE_CHAR3_CANCEL;
+	p.CID = char_id;
+	p.result = result;
+
+	socket_send( fd, p );
+}
+
+// CH: <0827>.W <char id>.L
+bool chclif_parse_char_delete2_req( int32 fd, char_session_data& sd ){
+	const PACKET_CH_DELETE_CHAR3_RESERVED* p = reinterpret_cast<PACKET_CH_DELETE_CHAR3_RESERVED*>( RFIFOP( fd, 0 ) );
+
+	uint32 char_id = p->CID;
+	size_t i;
+
+	ARR_FIND( 0, MAX_CHARS, i, sd.found_char[i] == char_id );
+
+	// character not found
+	if( i == MAX_CHARS ){
+		chclif_char_delete2_ack( fd, char_id, 3, 0 );
+
+		return true;
+	}
+
+	if( SQL_SUCCESS != Sql_Query( sql_handle, "SELECT `delete_date`,`party_id`,`guild_id` FROM `%s` WHERE `char_id`='%d'", schema_config.char_db, char_id ) ){
+		Sql_ShowDebug( sql_handle );
+		chclif_char_delete2_ack( fd, char_id, 3, 0 );
+
+		return true;
+	}
+
+	// character not found
+	if( SQL_SUCCESS != Sql_NextRow( sql_handle ) ){
+		Sql_FreeResult( sql_handle );
+		chclif_char_delete2_ack( fd, char_id, 3, 0 );
+
+		return true;
+	}
+
+	char* data;
+
+	Sql_GetData( sql_handle, 0, &data, nullptr);
+	time_t delete_date = strtoul( data, nullptr, 10 );
+
+	Sql_GetData( sql_handle, 1, &data, nullptr );
+	uint32 party_id = strtoul( data, nullptr, 10 );
+
+	Sql_GetData( sql_handle, 2, &data, nullptr );
+	uint32 guild_id = strtoul( data, nullptr, 10 );
+
+	Sql_FreeResult( sql_handle );
+
+	// character already queued for deletion
+	if( delete_date ){
+		chclif_char_delete2_ack( fd, char_id, 0, 0 );
+
+		return true;
+	}
+
+	// character is in guild
+	if( charserv_config.char_config.char_del_restriction&CHAR_DEL_RESTRICT_GUILD && guild_id != 0 ){
+		chclif_char_delete2_ack( fd, char_id, 4, 0 );
+		return 1;
+	}
+
+	// character is in party
+	if( charserv_config.char_config.char_del_restriction&CHAR_DEL_RESTRICT_PARTY && party_id != 0 ){
+		chclif_char_delete2_ack( fd, char_id, 5, 0 );
+		return 1;
+	}
+
+	// success
+	delete_date = time( nullptr ) + charserv_config.char_config.char_del_delay;
+
+	if( SQL_SUCCESS != Sql_Query( sql_handle, "UPDATE `%s` SET `delete_date`='%lu' WHERE `char_id`='%d'", schema_config.char_db, (unsigned long)delete_date, char_id ) ){
+		Sql_ShowDebug( sql_handle );
+		chclif_char_delete2_ack( fd, char_id, 3, 0 );
+
+		return true;
+	}
+
+	chclif_char_delete2_ack( fd, char_id, 1, delete_date );
+
+	return true;
+}
+
+/**
+ * Check char deletion code
+ * @param sd
+ * @param delcode E-mail or birthdate
+ * @param flag Delete flag
+ * @return true:Success, false:Failure
+ **/
+bool chclif_delchar_check(struct char_session_data *sd, char *delcode, uint8 flag) {
+	// E-Mail check
+	if (flag&CHAR_DEL_EMAIL && (
+			!stricmp(delcode, sd->email) || //email does not match or
+			(
+				!stricmp("a@a.com", sd->email) && //it is default email and
+				!strcmp("", delcode) //user sent an empty email
+			))) {
+			ShowInfo("" CL_RED "Char Deleted" CL_RESET " " CL_GREEN "(E-Mail)" CL_RESET ".\n");
+			return true;
+	}
+	// Birthdate (YYMMDD)
+	if (flag&CHAR_DEL_BIRTHDATE && (
+		!strcmp(sd->birthdate+2, delcode) || // +2 to cut off the century
+		(
+			!strcmp("",sd->birthdate) && // it is default birthdate and
+			!strcmp("",delcode) // user sent an empty birthdate
+		))) {
+		ShowInfo("" CL_RED "Char Deleted" CL_RESET " " CL_GREEN "(Birthdate)" CL_RESET ".\n");
+		return true;
+	}
+	return false;
+}
+
+// CH: <0829>.W <char id>.L <birth date:YYMMDD>.6B
+bool chclif_parse_char_delete2_accept( int32 fd, char_session_data& sd ){
+	const PACKET_CH_DELETE_CHAR3* p = reinterpret_cast<PACKET_CH_DELETE_CHAR3*>( RFIFOP( fd, 0 ) );
+
+	uint32 char_id = p->CID;
+
+	ShowInfo( CL_RED "Request Char Deletion: " CL_GREEN "%d (%d)" CL_RESET "\n", sd.account_id, char_id );
+
+	// construct "YY-MM-DD"
+	char birthdate[8 + 1];
+
+	birthdate[0] = p->birthdate[0];
+	birthdate[1] = p->birthdate[1];
+	birthdate[2] = '-';
+	birthdate[3] = p->birthdate[2];
+	birthdate[4] = p->birthdate[3];
+	birthdate[5] = '-';
+	birthdate[6] = p->birthdate[4];
+	birthdate[7] = p->birthdate[5];
+	birthdate[8] = '\0';
+
+	// Only check for birthdate
+	if( !chclif_delchar_check( &sd, birthdate, CHAR_DEL_BIRTHDATE ) ){
+		chclif_char_delete2_accept_ack( fd, char_id, 5 );
+
+		return true;
+	}
+
+	switch( char_delete( &sd, char_id ) ){
+		// success
+		case CHAR_DELETE_OK:
+			chclif_char_delete2_accept_ack( fd, char_id, 1 );
+			break;
+		// data error
+		case CHAR_DELETE_DATABASE:
+		// character not found
+		case CHAR_DELETE_NOTFOUND:
+			chclif_char_delete2_accept_ack( fd, char_id, 3 );
+			break;
+		// in a party
+		case CHAR_DELETE_PARTY:
+		// in a guild
+		case CHAR_DELETE_GUILD:
+		// character level config restriction
+		case CHAR_DELETE_BASELEVEL:
+			chclif_char_delete2_accept_ack( fd, char_id, 2 );
+			break;
+		// not queued or delay not yet passed
+		case CHAR_DELETE_TIME:
+			chclif_char_delete2_accept_ack( fd, char_id, 4 );
+			break;
+	}
+
+	return true;
+}
+
+// CH: <082b>.W <char id>.L
+bool chclif_parse_char_delete2_cancel( int32 fd, char_session_data& sd ){
+	const PACKET_CH_DELETE_CHAR3_CANCEL* p = reinterpret_cast<PACKET_CH_DELETE_CHAR3_CANCEL*>( RFIFOP( fd, 0 ) );
+
+	size_t i;
+
+	ARR_FIND( 0, MAX_CHARS, i, sd.found_char[i] == p->CID );
+
+	// character not found
+	if( i == MAX_CHARS ){
+		chclif_char_delete2_cancel_ack( fd, p->CID, 2 );
+
+		return true;
+	}
+
+	// there is no need to check, whether or not the character was
+	// queued for deletion, as the client prints an error message by
+	// itself, if it was not the case (@see char_delete2_cancel_ack)
+	if( SQL_SUCCESS != Sql_Query( sql_handle, "UPDATE `%s` SET `delete_date`='0' WHERE `char_id`='%d'", schema_config.char_db, p->CID ) ){
+		Sql_ShowDebug(sql_handle);
+		chclif_char_delete2_cancel_ack( fd, p->CID, 2 );
+
+		return true;
+	}
+
+	chclif_char_delete2_cancel_ack( fd, p->CID, 1 );
+
+	return true;
+}
+
+/*
+ * Register a new mapserver into that char-serv
+ * charserv can handle a MAX_SERVERS mapservs
+ */
+int32 chclif_parse_maplogin(int32 fd){
+	if (RFIFOREST(fd) < 60)
+		return 0;
+	else {
+		int32 i;
+		char* l_user = RFIFOCP(fd,2);
+		char* l_pass = RFIFOCP(fd,26);
+		l_user[23] = '\0';
+		l_pass[23] = '\0';
+		ARR_FIND( 0, ARRAYLENGTH(map_server), i, map_server[i].fd <= 0 );
+		if( !global_core->is_running() ||
+			i == ARRAYLENGTH(map_server) ||
+			strcmp(l_user, charserv_config.userid) != 0 ||
+			strcmp(l_pass, charserv_config.passwd) != 0 )
+		{
+			chmapif_connectack(fd, 3); //fail
+		} else {
+			chmapif_connectack(fd, 0); //success
+
+			map_server[i].fd = fd;
+			map_server[i].ip = ntohl(RFIFOL(fd,54));
+			map_server[i].port = ntohs(RFIFOW(fd,58));
+			map_server[i].users = 0;
+			map_server[i].maps = {};
+			session[fd]->func_parse = chmapif_parse;
+			session[fd]->flag.server = 1;
+			realloc_fifo(fd, FIFOSIZE_SERVERLINK, FIFOSIZE_SERVERLINK);
+			chmapif_init(fd);
+		}
+		RFIFOSKIP(fd,60);
+	}
+	return 0;
+}
+
+// 0065 <account id>.L <login id1>.L <login id2>.L <???>.W <sex>.B
+int32 chclif_parse_reqtoconnect(int32 fd, struct char_session_data* sd,uint32 ipl){
+	if( RFIFOREST(fd) < 17 ) // request to connect
+		return 0;
+	else {
+		uint32 account_id = RFIFOL(fd,2);
+		uint32 login_id1 = RFIFOL(fd,6);
+		uint32 login_id2 = RFIFOL(fd,10);
+		int32 sex = RFIFOB(fd,16);
+		RFIFOSKIP(fd,17);
+
+		ShowInfo("request connect - account_id:%d/login_id1:%d/login_id2:%d\n", account_id, login_id1, login_id2);
+
+		if (sd) {
+			//Received again auth packet for already authentified account?? Discard it.
+			//TODO: Perhaps log this as a hack attempt?
+			//TODO: and perhaps send back a reply?
+			ShowInfo("Already registered break\n");
+			return 1;
+		}
+
+		CREATE(session[fd]->session_data, struct char_session_data, 1);
+		sd = (struct char_session_data*)session[fd]->session_data;
+		sd->account_id = account_id;
+		sd->login_id1 = login_id1;
+		sd->login_id2 = login_id2;
+		sd->sex = sex;
+		sd->auth = false; // not authed yet
+		sd->pincode_correct = false; // not entered pincode correctly yet
+
+		// send back account_id
+		WFIFOHEAD(fd,4);
+		WFIFOL(fd,0) = account_id;
+		WFIFOSET(fd,4);
+
+		if( !global_core->is_running() ){
+			chclif_reject(fd, 0); // rejected from server
+			return 1;
+		}
+
+		// search authentification
+		std::shared_ptr<struct auth_node> node = util::umap_find( char_get_authdb(), account_id);
+
+		if( node != nullptr &&
+			node->account_id == account_id &&
+			node->login_id1  == login_id1 &&
+			node->login_id2  == login_id2 /*&&
+			node->ip         == ipl*/ )
+		{// authentication found (coming from map server)
+			char_get_authdb().erase(account_id);
+			char_auth_ok(fd, sd);
+			sd->pincode_correct = true; // already entered pincode correctly yet
+		}
+		else
+		{// authentication not found (coming from login server)
+			if (session_isValid(login_fd)) { // don't send request if no login-server
+				WFIFOHEAD(login_fd,23);
+				WFIFOW(login_fd,0) = 0x2712; // ask login-server to authentify an account
+				WFIFOL(login_fd,2) = sd->account_id;
+				WFIFOL(login_fd,6) = sd->login_id1;
+				WFIFOL(login_fd,10) = sd->login_id2;
+				WFIFOB(login_fd,14) = sd->sex;
+				WFIFOL(login_fd,15) = htonl(ipl);
+				WFIFOL(login_fd,19) = fd;
+				WFIFOSET(login_fd,23);
+			} else { // if no login-server, we must refuse connection
+				chclif_reject(fd, 0); // rejected from server
+			}
+		}
+	}
+	return 1;
+}
+
+bool chclif_parse_req_charlist( int32 fd, char_session_data& sd ){
+	const PACKET_CH_CHARLIST_REQ* p = reinterpret_cast<PACKET_CH_CHARLIST_REQ*>( RFIFOP( fd, 0 ) );
+
+	chclif_mmo_send099d( fd, sd );
+
+	return true;
+}
+
+//Send player to map
+void chclif_send_map_data( int32 fd, std::shared_ptr<struct mmo_charstatus> cd, int32 map_server_index ){
+	PACKET_HC_NOTIFY_ZONESVR p = {};
+
+	p.packetType = HEADER_HC_NOTIFY_ZONESVR;
+	p.CID = cd->char_id;
+	mapindex_getmapname_ext( cd->last_point.map, p.mapname );
+	uint32 subnet_map_ip = char_lan_subnetcheck( session[fd]->client_addr ); // Advanced subnet check [LuzZza]
+	p.ip = htonl( ( subnet_map_ip ) ? subnet_map_ip : map_server[map_server_index].ip );
+	p.port = ntows( htons( map_server[map_server_index].port ) ); // [!] LE byte order here [!]
+#if PACKETVER >= 20170315
+	safestrncpy( p.domain, "", sizeof( p.domain ) );
+#endif
+#ifdef DEBUG
+	ShowDebug("Sending the client (%d %d.%d.%d.%d) to map-server with ip %d.%d.%d.%d and port %hu\n",
+			  cd->account_id, CONVIP( session[fd]->client_addr ), CONVIP((subnet_map_ip) ? subnet_map_ip : map_server[map_server_index].ip),
+			  map_server[map_server_index].port);
+#endif
+
+	socket_send( fd, p );
+}
+
+bool chclif_parse_select_accessible_map( int32 fd, struct char_session_data& sd ){
+#if PACKETVER >= 20100714
+	const PACKET_CH_SELECT_ACCESSIBLE_MAPNAME* p = reinterpret_cast<PACKET_CH_SELECT_ACCESSIBLE_MAPNAME*>( RFIFOP( fd, 0 ) );
+
+	char* data;
+
+	// Check if the character exists and is not scheduled for deletion
+	if( SQL_SUCCESS != Sql_Query( sql_handle, "SELECT `char_id` FROM `%s` WHERE `account_id`='%d' AND `char_num`='%d' AND `delete_date` = 0", schema_config.char_db, sd.account_id, p->slot )
+		|| SQL_SUCCESS != Sql_NextRow( sql_handle )
+		|| SQL_SUCCESS != Sql_GetData( sql_handle, 0, &data, nullptr ) ){
+		// Not found?? May be forged packet.
+		Sql_ShowDebug( sql_handle );
+		Sql_FreeResult( sql_handle );
+		chclif_reject( fd, 0 ); // rejected from server
+		return 1;
+	}
+
+	uint32 char_id = atoi( data );
+	Sql_FreeResult( sql_handle );
+
+	// Prevent select a char while retrieving guild bound items
+	if( sd.flag&1 ){
+		chclif_reject( fd, 0 ); // rejected from server
+		return 1;
+	}
+
+	/* client doesn't let it get to this point if you're banned, so its a forged packet */
+	if( sd.found_char[p->slot] == char_id && sd.unban_time[p->slot] > time( nullptr ) ) {
+		chclif_reject( fd, 0 ); // rejected from server
+		return 1;
+	}
+
+	/* set char as online prior to loading its data so 3rd party applications will realise the sql data is not reliable */
+	char_set_char_online( -2, char_id, sd.account_id );
+
+	struct mmo_charstatus char_dat;
+
+	if( !char_mmo_char_fromsql( char_id, &char_dat, true ) ) {
+		/* failed? set it back offline */
+		char_set_char_offline( char_id, sd.account_id );
+		/* failed to load something. REJECT! */
+		chclif_reject( fd, 0 ); // rejected from server
+		return 1;
+	}
+
+	// Have to switch over to the DB instance otherwise data won't propagate [Kevin]
+	std::shared_ptr<struct mmo_charstatus> cd = util::umap_find( char_get_chardb(), char_id );
+
+	if( charserv_config.log_char ){
+		char esc_name[NAME_LENGTH*2+1];
+
+		Sql_EscapeStringLen( sql_handle, esc_name, char_dat.name, strnlen( char_dat.name, NAME_LENGTH ) );
+
+		if( SQL_ERROR == Sql_Query( sql_handle, "INSERT INTO `%s`(`time`, `account_id`,`char_num`,`name`) VALUES (NOW(), '%d', '%d', '%s')", schema_config.charlog_db, sd.account_id, p->slot, esc_name ) ){
+			Sql_ShowDebug( sql_handle );
+		}
+	}
+
+	ShowInfo( "Selected char: (Account %d: %d - %s)\n", sd.account_id, p->slot, char_dat.name );
+
+	// Check if there is really no mapserver for the last point where the player was
+	int32 mapserver = char_search_mapserver( cd->last_point.map, -1, -1 );
+
+	// It was not an unavailable map
+	if( mapserver >= 0 ){
+		chclif_reject( fd, 0 ); // rejected from server
+		return 1;
+	}
+
+	if( static_cast<size_t>( p->mapnumber ) >= accessible_maps.size() ){
+		chclif_reject( fd, 0 ); // rejected from server
+		return 1;
+	}
+
+	s_point_str& accessible_map = accessible_maps[p->mapnumber];
+
+	safestrncpy( cd->last_point.map, accessible_map.map, sizeof( cd->last_point.map ) );
+	cd->last_point.x = accessible_map.x;

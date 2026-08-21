@@ -1,0 +1,169 @@
+
+/**
+ * attach(entity): create a GR2 instance bound to a mob/NPC entity. standbyIdx is classified
+ * by objecttype — NPC -> -1 (static poseAt(-1); SetAction never fires) vs MOB -> 0 (animated
+ * idx-0 standby). The renderer pulls pos/dir/action from the entity each frame (syncFromEntity).
+ */
+function attach(entity) {
+	acquire(entity.gr2);
+	const p = entity.position;
+	const isNpc = entity.objecttype === entity.constructor.TYPE_NPC;
+	const inst = {
+		entity: entity,
+		path: entity.gr2,
+		world: null,
+		worldBuilt: false,
+		actor: createActor(),
+		dir: entity.direction,
+		pos: [p[0], p[1], p[2]],
+		standbyIdx: isNpc ? -1 : 0,
+		animIndex: 0,
+		t: 0,
+		_lastAction: 'stand',
+		_lastTick: 0,
+		screenRect: null,
+		// Per-instance (per-guild) emblem texture + the image it was built from, for change detection.
+		emblemTex: null,
+		_emblemImg: null
+	};
+	_instances.push(inst);
+	return inst;
+}
+
+/**
+ * detach(inst): drop an entity's GR2 instance (called from EntityManager on removal). The type
+ * GL resources stay cached until map unload (free); the type set is bounded, so no leak.
+ */
+function detach(inst) {
+	const idx = _instances.indexOf(inst);
+	if (idx !== -1) {
+		_instances.splice(idx, 1);
+	}
+	const type = _types[inst.path];
+	if (type && type.refcount > 0) {
+		type.refcount--;
+	}
+	// Free this instance's per-guild emblem texture (the per-type cache is freed at map unload).
+	// Invariant (no leak on early detach): emblemTex is assigned ONLY inside render(), after _gl is
+	// set, and _gl is never nulled -- so emblemTex != null implies _gl != null. A spawn-then-detach
+	// before the first render leaves emblemTex null (nothing allocated), so the guard frees exactly
+	// what was created. The `&& _gl` is defensive, never the reason a real texture is skipped.
+	if (inst.emblemTex && _gl) {
+		_gl.deleteTexture(inst.emblemTex);
+		inst.emblemTex = null;
+	}
+	inst.entity = null;
+}
+
+/**
+ * spawn(path, opts) — dev harness: place a GR2 instance. opts = { pos, dir, action,
+ * standbyIdx }; pos/dir default to the player's position/facing. Returns the instance.
+ */
+function spawn(path, opts) {
+	const o = opts || {};
+	const ent = Session.Entity;
+	const pos = o.pos || (ent ? [ent.position[0], ent.position[1], ent.position[2]] : [0, 0, 0]);
+	const dir = o.dir != null ? o.dir : ent ? ent.direction : 0;
+	// Ground the base on the REAL terrain height at the target cell (what a real entity carries in
+	// position[2]) — so an offset dev spawn sits on the local ground, not the player's height.
+	pos[2] = Altitude.getCellHeight(pos[0], pos[1]);
+
+	acquire(path);
+
+	const actor = createActor();
+	if (o.action && o.action !== 'stand') {
+		setAction(actor, o.action, 0);
+		if (o.action === 'move') {
+			actor.loop = true;
+		}
+	}
+
+	const inst = {
+		path: path,
+		world: null,
+		worldBuilt: false,
+		actor: actor,
+		dir: dir,
+		pos: pos,
+		standbyIdx: o.standbyIdx != null ? o.standbyIdx : 0,
+		animIndex: 0,
+		t: 0
+	};
+	_instances.push(inst);
+	return inst;
+}
+
+/**
+ * spawnMany(path, n, opts) — dev stress path: spawn n instances of one type in a sunflower
+ * (phyllotaxis) spiral radiating out around the player, to prove same-type mobs collapse to one
+ * geometry upload + one poseAt per phase. opts.spacing scales the disk radius.
+ */
+function spawnMany(path, n, opts) {
+	const o = opts || {};
+	const ent = Session.Entity;
+	const base = o.pos || (ent ? [ent.position[0], ent.position[1], ent.position[2]] : [0, 0, 0]);
+	const spacing = o.spacing || 1.2;
+	const golden = Math.PI * (3 - Math.sqrt(5)); // ~137.5 deg — even phyllotaxis fill
+	const out = [];
+	for (let i = 0; i < n; i++) {
+		const r = spacing * Math.sqrt(i + 0.5); // radius grows outward, dense near the centre
+		const a = i * golden;
+		const inst = spawn(path, {
+			pos: [base[0] + r * Math.cos(a), base[1] + r * Math.sin(a), base[2]],
+			dir: o.dir,
+			action: o.action,
+			standbyIdx: o.standbyIdx
+		});
+		// decorrelate: phase-shift each instance by one 40 Hz tick so they land in distinct pose
+		// buckets (realistic non-synchronized load — poseAt count then caps at duration*40, not N).
+		if (o.decorrelate) {
+			inst.actor.startT = -i * (1000 / POSE_HZ);
+		}
+		out.push(inst);
+	}
+	return out;
+}
+
+/**
+ * clear() — dev: drop every instance (GL type resources stay cached for re-spawn; the map
+ * unload frees them via free(gl)).
+ */
+function clear() {
+	// Route every instance through detach() so per-guild emblem textures are freed and the type
+	// refcount is decremented (a bare `_instances = []` orphaned both). detach() mutates _instances,
+	// so iterate over a copy. Type GL resources stay cached for re-spawn (freed at map unload).
+	const insts = _instances.slice();
+	for (let i = 0; i < insts.length; i++) {
+		detach(insts[i]);
+	}
+	_poseCache = {};
+}
+
+export default {
+	init: init,
+	free: free,
+	render: render,
+	attach: attach,
+	detach: detach,
+	// True once a gr2 path has 404'd on fetch or thrown on decode; the Entity path falls back to Poring.
+	isMissing: function (path) {
+		return _missing[path] === true;
+	},
+	// True only for a model in GR2_ROSTER (has a working 3D decode + lighting path). Unsupported .gr2
+	// (dragon_5, Hugeling90_6, future models) return false so the Entity path substitutes a Poring
+	// sprite synchronously -- no I/O, no invisible-actor frame.
+	isSupported: function (path) {
+		return GR2_ROSTER[gr2Basename(path)] !== undefined;
+	},
+	spawn: spawn,
+	spawnMany: spawnMany,
+	clear: clear,
+	FADE: FADE,
+	// Debug: highlight each instance's anchor cell (see _debugCell). Toggle from the dev console.
+	get debugCell() {
+		return _debugCell;
+	},
+	set debugCell(v) {
+		_debugCell = !!v;
+	}
+};

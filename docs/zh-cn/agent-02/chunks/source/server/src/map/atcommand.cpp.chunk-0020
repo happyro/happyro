@@ -1,0 +1,500 @@
+	if (i >= 10) {
+		x = sd->x;
+		y = sd->y;
+	}
+
+	if((x = mob_clone_spawn(pl_sd, sd->m, x, y, "", master, MD_NONE, flag?1:0, 0)) > 0) {
+		clif_displaymessage(fd, msg_txt(sd,128+flag*2));	// Evil Clone spawned. Clone spawned. Slave clone spawned.
+		return 0;
+	}
+	clif_displaymessage(fd, msg_txt(sd,129+flag*2));	// Unable to spawn evil clone. Unable to spawn clone. Unable to spawn slave clone.
+	return 0;
+}
+
+/*=====================================
+ * Autorejecting Invites/Deals [LuzZza]
+ * Usage: @noask
+ *-------------------------------------*/
+ACMD_FUNC(noask)
+{
+	if(sd->state.noask) {
+		clif_displaymessage(fd, msg_txt(sd,391)); // Autorejecting is deactivated.
+		sd->state.noask = 0;
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,390)); // Autorejecting is activated.
+		sd->state.noask = 1;
+	}
+
+	return 0;
+}
+
+/*=====================================
+ * Send a @request message to all GMs of lowest_gm_level.
+ * Usage: @request <petition>
+ *-------------------------------------*/
+ACMD_FUNC(request)
+{
+	if (!message || !*message) {
+		clif_displaymessage(sd->fd,msg_txt(sd,277));	// Usage: @request <petition/message to online GMs>.
+		return -1;
+	}
+
+	sprintf(atcmd_output, msg_txt(sd,278), message);	// (@request): %s
+	intif_wis_message_to_gm(sd->status.name, PC_PERM_RECEIVE_REQUESTS, atcmd_output);
+	clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], atcmd_output, false, SELF);
+	clif_displaymessage(sd->fd,msg_txt(sd,279));	// @request sent.
+	return 0;
+}
+
+/*==========================================
+ * Feel (SG designated maps) Reset [HiddenDragon]
+ *------------------------------------------*/
+ACMD_FUNC(feelreset)
+{
+	if ((sd->class_&MAPID_SECONDMASK) != MAPID_STAR_GLADIATOR) {
+		clif_displaymessage(sd->fd,msg_txt(sd,35));	// You can't use this command with this class.
+		return -1;
+	}
+
+	pc_resetfeel(sd);
+	clif_displaymessage(fd, msg_txt(sd,1324)); // Reset 'Feeling' maps.
+
+	return 0;
+}
+
+/*==========================================
+ * Hate (SG designated monsters) Reset
+ *------------------------------------------*/
+ACMD_FUNC(hatereset)
+{
+	if ((sd->class_&MAPID_SECONDMASK) != MAPID_STAR_GLADIATOR) {
+		clif_displaymessage(sd->fd,msg_txt(sd,35));	// You can't use this command with this class.
+		return -1;
+	}
+
+	pc_resethate(sd);
+	clif_displaymessage(fd, msg_txt(sd,1515)); // Reset 'Hatred' monsters.
+
+	return 0;
+}
+
+/*==========================================
+ * AUCTION SYSTEM
+ *------------------------------------------*/
+ACMD_FUNC(auction)
+{
+	nullpo_ret(sd);
+
+	if (!battle_config.feature_auction) {
+		clif_messagecolor(sd, color_table[COLOR_RED], msg_txt(sd, 517), false, SELF);
+		return 0;
+	}
+
+	clif_Auction_openwindow(sd);
+
+	return 0;
+}
+
+/*==========================================
+ * Kill Steal Protection
+ *------------------------------------------*/
+ACMD_FUNC(ksprotection)
+{
+	nullpo_retr(-1,sd);
+
+	if( sd->state.noks ) {
+		sd->state.noks = 0;
+		clif_displaymessage(fd, msg_txt(sd,1325)); // [ K.S Protection Inactive ]
+	}
+	else
+	{
+		if( !message || !*message || !strcmpi(message, "party") )
+		{ // Default is Party
+			sd->state.noks = 2;
+			clif_displaymessage(fd, msg_txt(sd,1326)); // [ K.S Protection Active - Option: Party ]
+		}
+		else if( !strcmpi(message, "self") )
+		{
+			sd->state.noks = 1;
+			clif_displaymessage(fd, msg_txt(sd,1327)); // [ K.S Protection Active - Option: Self ]
+		}
+		else if( !strcmpi(message, "guild") )
+		{
+			sd->state.noks = 3;
+			clif_displaymessage(fd, msg_txt(sd,1328)); // [ K.S Protection Active - Option: Guild ]
+		}
+		else
+			clif_displaymessage(fd, msg_txt(sd,1329)); // Usage: @noks <self|party|guild>
+	}
+	return 0;
+}
+/*==========================================
+ * Map Kill Steal Protection Setting
+ *------------------------------------------*/
+ACMD_FUNC(allowks)
+{
+	nullpo_retr(-1,sd);
+
+	if( map_getmapflag(sd->m, MF_ALLOWKS) ) {
+		map_setmapflag(sd->m, MF_ALLOWKS, false);
+		clif_displaymessage(fd, msg_txt(sd,1330)); // [ Map K.S Protection Active ]
+	} else {
+		map_setmapflag(sd->m, MF_ALLOWKS, true);
+		clif_displaymessage(fd, msg_txt(sd,1331)); // [ Map K.S Protection Inactive ]
+	}
+	return 0;
+}
+
+ACMD_FUNC(resetstat)
+{
+	nullpo_retr(-1, sd);
+
+	pc_resetstate(sd);
+	sprintf(atcmd_output, msg_txt(sd,207), sd->status.name); // '%s' stats points reset.
+	clif_displaymessage(fd, atcmd_output);
+	return 0;
+}
+
+ACMD_FUNC(resetskill)
+{
+	nullpo_retr(-1,sd);
+
+	pc_resetskill(sd,1);
+	sprintf(atcmd_output, msg_txt(sd,206), sd->status.name); // '%s' skill points reset.
+	clif_displaymessage(fd, atcmd_output);
+	return 0;
+}
+
+/*==========================================
+ * #storagelist: Displays the items list of a player's storage.
+ * #cartlist: Displays contents of target's cart.
+ * #itemlist: Displays contents of target's inventory.
+ *------------------------------------------*/
+ACMD_FUNC(itemlist)
+{
+	int32 i, j, count, counter;
+	const char* location;
+	struct item* items;
+	int32 size;
+	StringBuf buf;
+
+	nullpo_retr(-1, sd);
+
+	parent_cmd = atcommand_alias_db.checkAlias(command+1);
+
+	if( strcmp(parent_cmd, "storagelist") == 0 ) {
+		location = "storage";
+		items = sd->storage.u.items_storage;
+		size = sd->storage.max_amount;
+	} else if( strcmp(parent_cmd, "cartlist") == 0 ) {
+		location = "cart";
+		items = sd->cart.u.items_cart;
+		size = MAX_CART;
+	} else if( strcmp(parent_cmd, "itemlist") == 0 ) {
+		location = "inventory";
+		items = sd->inventory.u.items_inventory;
+		size = MAX_INVENTORY;
+	} else
+		return 1;
+
+	StringBuf_Init(&buf);
+
+	count = 0; // total slots occupied
+	counter = 0; // total items found
+	for( i = 0; i < size; ++i ) {
+		struct item* it = &items[i];
+
+		if( it->nameid == 0  )
+			continue;
+
+		std::shared_ptr<item_data> itd = item_db.find(it->nameid);
+
+		if (itd == nullptr)
+			continue;
+
+		counter += it->amount;
+		count++;
+
+		if( count == 1 ) {
+			StringBuf_Printf(&buf, msg_txt(sd,1332), location, sd->status.name); // ------ %s items list of '%s' ------
+			clif_displaymessage(fd, StringBuf_Value(&buf));
+			StringBuf_Clear(&buf);
+		}
+
+		StringBuf_Printf(&buf, "%d %s (%s, id: %u)", it->amount, item_db.create_item_link( *it ).c_str(), itd->name.c_str(), it->nameid);
+
+		if( it->equip ) {
+			char equipstr[CHAT_SIZE_MAX];
+
+			strcpy(equipstr, msg_txt(sd,1333)); // | Equipped:
+			if( it->equip&EQP_GARMENT )
+				strcat(equipstr, msg_txt(sd,1334)); // Robe,
+			if( it->equip&EQP_ACC_L )
+				strcat(equipstr, msg_txt(sd,1335)); // Left Accessory,
+			if( it->equip&EQP_ARMOR )
+				strcat(equipstr, msg_txt(sd,1336)); // Body/Armor,
+			if( (it->equip&EQP_ARMS) == EQP_HAND_R )
+				strcat(equipstr, msg_txt(sd,1337)); // Right Hand,
+			if( (it->equip&EQP_ARMS) == EQP_HAND_L )
+				strcat(equipstr, msg_txt(sd,1338)); // Left Hand,
+			if( (it->equip&EQP_ARMS) == EQP_ARMS )
+				strcat(equipstr, msg_txt(sd,1339)); // Both Hands,
+			if( it->equip&EQP_SHOES )
+				strcat(equipstr, msg_txt(sd,1340)); // Shoes,
+			if( it->equip&EQP_ACC_R )
+				strcat(equipstr, msg_txt(sd,1341)); // Right Accessory,
+			if( (it->equip&EQP_HELM) == EQP_HEAD_LOW )
+				strcat(equipstr, msg_txt(sd,1342)); // Lower Head,
+			if( (it->equip&EQP_HELM) == EQP_HEAD_TOP )
+				strcat(equipstr, msg_txt(sd,1343)); // Top Head,
+			if( (it->equip&EQP_HELM) == (EQP_HEAD_LOW|EQP_HEAD_TOP) )
+				strcat(equipstr, msg_txt(sd,1344)); // Top/Lower Head,
+			if( (it->equip&EQP_HELM) == EQP_HEAD_MID )
+				strcat(equipstr, msg_txt(sd,1345)); // Mid Head,
+			if( (it->equip&EQP_HELM) == (EQP_HEAD_LOW|EQP_HEAD_MID) )
+				strcat(equipstr, msg_txt(sd,1346)); // Mid/Lower Head,
+			if( (it->equip&EQP_HELM) == EQP_HELM )
+				strcat(equipstr, msg_txt(sd,1347)); // Top/Mid/Lower Head,
+			if( (it->equip&EQP_COSTUME_HELM) == EQP_COSTUME_HEAD_LOW )
+				strcat(equipstr, msg_txt(sd,518)); // Lower Costume Head,
+			if( (it->equip&EQP_COSTUME_HELM) == EQP_COSTUME_HEAD_TOP )
+				strcat(equipstr, msg_txt(sd,519)); // Top Costume Head,
+			if( (it->equip&EQP_COSTUME_HELM) == (EQP_COSTUME_HEAD_LOW|EQP_COSTUME_HEAD_TOP) )
+				strcat(equipstr, msg_txt(sd,520)); // Top/Lower Costume Head,
+			if( (it->equip&EQP_COSTUME_HELM) == EQP_COSTUME_HEAD_MID )
+				strcat(equipstr, msg_txt(sd,521)); // Mid Costume Head,
+			if( (it->equip&EQP_COSTUME_HELM) == (EQP_COSTUME_HEAD_LOW|EQP_COSTUME_HEAD_MID) )
+				strcat(equipstr, msg_txt(sd,522)); // Mid/Lower Costume Head,
+			if( (it->equip&EQP_COSTUME_HELM) == EQP_COSTUME_HELM )
+				strcat(equipstr, msg_txt(sd,523)); // Top/Mid/Lower Costume Head,
+			if( it->equip&EQP_COSTUME_GARMENT )
+				strcat(equipstr, msg_txt(sd,524)); // Costume Robe,
+			//if( it->equip&EQP_COSTUME_FLOOR )
+				//strcat(equipstr, msg_txt(sd,525)); // Costume Floor,
+			if( it->equip&EQP_AMMO )
+				strcat(equipstr, msg_txt(sd,526)); // Ammo,
+			if( it->equip&EQP_SHADOW_ARMOR )
+				strcat(equipstr, msg_txt(sd,527)); // Shadow Body,
+			if( (it->equip&EQP_SHADOW_ARMS) == EQP_SHADOW_WEAPON )
+				strcat(equipstr, msg_txt(sd,528)); // Shadow Right Hand,
+			if( (it->equip&EQP_SHADOW_ARMS) == EQP_SHADOW_SHIELD )
+				strcat(equipstr, msg_txt(sd,529)); // Shadow Left Hand,
+			if( (it->equip&EQP_SHADOW_ARMS) == EQP_SHADOW_ARMS )
+				strcat(equipstr, msg_txt(sd,530)); // Shadow Both Hands,
+			if( it->equip&EQP_SHADOW_SHOES )
+				strcat(equipstr, msg_txt(sd,531)); // Shadow Shoes,
+			if( it->equip&EQP_SHADOW_ACC_R )
+				strcat(equipstr, msg_txt(sd,532)); // Shadow Right Accessory,
+			if( it->equip&EQP_SHADOW_ACC_L )
+				strcat(equipstr, msg_txt(sd,533)); // Shadow Left Accessory,
+			// remove final ', '
+			equipstr[strlen(equipstr) - 2] = '\0';
+			StringBuf_AppendStr(&buf, equipstr);
+		}
+
+		clif_displaymessage(fd, StringBuf_Value(&buf));
+		StringBuf_Clear(&buf);
+
+		if( it->card[0] == CARD0_PET ) { // pet egg
+			if (it->card[3]&1)
+				StringBuf_Printf(&buf, msg_txt(sd,1348), (uint32)MakeDWord(it->card[1], it->card[2])); //  -> (pet egg, pet id: %u, named)
+			else
+				StringBuf_Printf(&buf, msg_txt(sd,1349), (uint32)MakeDWord(it->card[1], it->card[2])); //  -> (pet egg, pet id: %u, unnamed)
+		} else if(it->card[0] == CARD0_FORGE) { // forged item
+			StringBuf_Printf(&buf, msg_txt(sd,1350), (uint32)MakeDWord(it->card[2], it->card[3]), it->card[1]>>8, it->card[1]&0x0f); //  -> (crafted item, creator id: %u, star crumbs %d, element %d)
+		} else if(it->card[0] == CARD0_CREATE) { // created item
+			StringBuf_Printf(&buf, msg_txt(sd,1351), (uint32)MakeDWord(it->card[2], it->card[3])); //  -> (produced item, creator id: %u)
+		} else { // normal item
+			int32 counter2 = 0;
+
+			for( j = 0; j < itd->slots; ++j ) {
+				if( it->card[j] == 0 )
+					continue;
+
+				std::shared_ptr<item_data> card = item_db.find(it->card[j]);
+
+				if (card == nullptr)
+					continue;
+
+				counter2++;
+
+				if( counter2 == 1 )
+					StringBuf_AppendStr(&buf, msg_txt(sd,1352)); //  -> (card(s):
+
+				if( counter2 != 1 )
+					StringBuf_AppendStr(&buf, ", ");
+
+				StringBuf_Printf(&buf, "#%d %s (id: %u)", counter2, item_db.create_item_link( card ).c_str(), card->nameid);
+			}
+
+			if( counter2 > 0 )
+				StringBuf_AppendStr(&buf, ")");
+		}
+
+		if( StringBuf_Length(&buf) > 0 )
+			clif_displaymessage(fd, StringBuf_Value(&buf));
+
+		StringBuf_Clear(&buf);
+	}
+
+	if( count == 0 )
+		StringBuf_Printf(&buf, msg_txt(sd,1353), location); // No item found in this player's %s.
+	else
+		StringBuf_Printf(&buf, msg_txt(sd,1354), counter, count, location); // %d item(s) found in %d %s slots.
+
+	clif_displaymessage(fd, StringBuf_Value(&buf));
+
+	return 0;
+}
+
+ACMD_FUNC(stats)
+{
+	char job_jobname[100];
+	char output[CHAT_SIZE_MAX];
+	int32 i;
+	struct {
+		const char* format;
+		int32 value;
+	} output_table[] = {
+		{ "Base Level - %d", 0 },
+		{ nullptr, 0 },
+		{ "Hp - %d", 0 },
+		{ "MaxHp - %d", 0 },
+		{ "Sp - %d", 0 },
+		{ "MaxSp - %d", 0 },
+		{ "Ap - %d", 0 },
+		{ "MaxAp - %d", 0 },
+		{ "Str - %3d", 0 },
+		{ "Agi - %3d", 0 },
+		{ "Vit - %3d", 0 },
+		{ "Int - %3d", 0 },
+		{ "Dex - %3d", 0 },
+		{ "Luk - %3d", 0 },
+		{ "Pow - %3d", 0 },
+		{ "Sta - %3d", 0 },
+		{ "Wis - %3d", 0 },
+		{ "Spl - %3d", 0 },
+		{ "Con - %3d", 0 },
+		{ "Crt - %3d", 0 },
+		{ "Zeny - %d", 0 },
+		{ "Free Status Points - %d", 0 },
+		{ "Free Trait Points - %d", 0 },
+		{ "Free Skill Points - %d", 0 },
+		{ "JobChangeLvl (2nd) - %d", 0 },
+		{ "JobChangeLvl (3rd) - %d", 0 },
+		{ "JobChangeLvl (4th) - %d", 0 },
+		{ nullptr, 0 }
+	};
+
+	memset(job_jobname, '\0', sizeof(job_jobname));
+	memset(output, '\0', sizeof(output));
+
+	//direct array initialization with variables is not standard C compliant.
+	output_table[0].value = sd->status.base_level;
+	output_table[1].format = job_jobname;
+	output_table[1].value = sd->status.job_level;
+	output_table[2].value = sd->status.hp;
+	output_table[3].value = sd->status.max_hp;
+	output_table[4].value = sd->status.sp;
+	output_table[5].value = sd->status.max_sp;
+	output_table[6].value = sd->status.ap;
+	output_table[7].value = sd->status.max_ap;
+	output_table[8].value = sd->status.str;
+	output_table[9].value = sd->status.agi;
+	output_table[10].value = sd->status.vit;
+	output_table[11].value = sd->status.int_;
+	output_table[12].value = sd->status.dex;
+	output_table[13].value = sd->status.luk;
+	output_table[14].value = sd->status.pow;
+	output_table[15].value = sd->status.sta;
+	output_table[16].value = sd->status.wis;
+	output_table[17].value = sd->status.spl;
+	output_table[18].value = sd->status.con;
+	output_table[19].value = sd->status.crt;
+	output_table[20].value = sd->status.zeny;
+	output_table[21].value = sd->status.status_point;
+	output_table[22].value = sd->status.trait_point;
+	output_table[23].value = sd->status.skill_point;
+	output_table[24].value = sd->change_level_2nd;
+	output_table[25].value = sd->change_level_3rd;
+	output_table[26].value = sd->change_level_4th;
+
+	sprintf(job_jobname, "Job - %s %s", job_name(sd->status.class_), "(level %d)");
+	sprintf(output, msg_txt(sd,53), sd->status.name); // '%s' stats:
+
+	clif_displaymessage(fd, output);
+
+	for (i = 0; output_table[i].format != nullptr; i++) {
+		sprintf(output, output_table[i].format, output_table[i].value);
+		clif_displaymessage(fd, output);
+	}
+
+	return 0;
+}
+
+ACMD_FUNC(delitem)
+{
+	char item_name[100];
+	int32 amount = 0, idx;
+
+	nullpo_retr(-1, sd);
+
+	if( !message || !*message || ( sscanf(message, "\"%99[^\"]\" %11d", item_name, &amount) < 2 && sscanf(message, "%99s %11d", item_name, &amount) < 2 ) || amount < 1 )
+	{
+		clif_displaymessage(fd, msg_txt(sd,1355)); // Please enter an item name/ID, a quantity, and a player name (usage: #delitem <player> <item_name_or_ID> <quantity>).
+		return -1;
+	}
+
+	std::shared_ptr<item_data> id = item_db.searchname( item_name );
+
+	if( id == nullptr ){
+		id = item_db.find( strtoul( item_name, nullptr, 10 ) );
+	}
+
+	if( id == nullptr ){
+		clif_displaymessage(fd, msg_txt(sd,19)); // Invalid item ID or name.
+		return -1;
+	}
+
+	t_itemid nameid = id->nameid;
+	int32 total = amount;
+
+	// delete items
+	while( amount && ( idx = pc_search_inventory(sd, nameid) ) != -1 )
+	{
+		int32 delamount = ( amount < sd->inventory.u.items_inventory[idx].amount ) ? amount : sd->inventory.u.items_inventory[idx].amount;
+
+		if( sd->inventory_data[idx]->type == IT_PETEGG && sd->inventory.u.items_inventory[idx].card[0] == CARD0_PET )
+		{// delete pet
+			intif_delete_petdata(MakeDWord(sd->inventory.u.items_inventory[idx].card[1], sd->inventory.u.items_inventory[idx].card[2]));
+		}
+		pc_delitem(sd, idx, delamount, 0, 0, LOG_TYPE_COMMAND);
+
+		amount-= delamount;
+	}
+
+	// notify target
+	sprintf(atcmd_output, msg_txt(sd,113), total-amount); // %d item(s) removed by a GM.
+	clif_displaymessage(sd->fd, atcmd_output);
+
+	// notify source
+	if( amount == total )
+	{
+		clif_displaymessage(fd, msg_txt(sd,116)); // Character does not have the item.
+	}
+	else if( amount )
+	{
+		sprintf(atcmd_output, msg_txt(sd,115), total-amount, total-amount, total); // %d item(s) removed. Player had only %d on %d items.
+		clif_displaymessage(fd, atcmd_output);
+	}
+	else
+	{
+		sprintf(atcmd_output, msg_txt(sd,114), total); // %d item(s) removed from the player.
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * Custom Fonts

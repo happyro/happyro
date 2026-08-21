@@ -1,0 +1,500 @@
+/**
+ * UI/GUIComponent.js
+ *
+ * Modern base class for UI components using Shadow DOM.
+ * Drop-in replacement for UIComponent — provides the same automation
+ * (prepare, append, remove, focus, draggable, clone, scrollbar, etc.)
+ * but uses native DOM + Shadow DOM instead of old UIComponent.
+ *
+ * @author AoShinHo
+ */
+
+import CommonCSS from './Common.css?raw';
+import Mouse from 'Controls/MouseEventHandler.js';
+import UIPreferences from 'Preferences/UI.js';
+import Session from 'Engine/SessionStorage.js';
+import Targa from 'Loaders/Targa.js';
+import ClampToViewport from 'UI/ClampToViewport.js';
+
+/**
+ * Heavy modules loaded lazily to keep viewer bundles lightweight.
+ * In Online/full-game context these resolve instantly (already loaded).
+ * In viewer context they are never triggered.
+ */
+let _Cursor = null;
+let _DB = null;
+let _Client = null;
+let _Renderer = null;
+let _EntityManager = null;
+let _ScrollBar = null;
+
+let _depsPromise = null;
+
+async function _loadHeavyDeps() {
+	if (_Cursor) return;
+	const [CursorMod, DBMod, ClientMod, RendererMod, EntityManagerMod, ScrollBarMod] = await Promise.all([
+		import('UI/CursorManager.js'),
+		import('DB/DBManager.js'),
+		import('Core/Client.js'),
+		import('Renderer/Renderer.js'),
+		import('Renderer/EntityManager.js'),
+		import('UI/Scrollbar.js')
+	]);
+	_Cursor = CursorMod.default;
+	_DB = DBMod.default;
+	_Client = ClientMod.default;
+	_Renderer = RendererMod.default;
+	_EntityManager = EntityManagerMod.default;
+	_ScrollBar = ScrollBarMod.default;
+}
+
+function _ensureDeps() {
+	if (!_depsPromise) {
+		_depsPromise = _loadHeavyDeps();
+	}
+	return _depsPromise;
+}
+
+/**
+ * Snap cache shared across all draggable instances (same as UIComponent)
+ */
+let _snapCache = [];
+
+/**
+ * Mouse interaction modes
+ */
+const MouseMode = Object.freeze({
+	CROSS: 0, // Cross the UI and intersect with scene
+	STOP: 1, // Block scene intersection when mouse is over the UI
+	FREEZE: 2 // Block scene intersection while UI is alive
+});
+
+/**
+ * CSS properties that are unitless (don't need 'px')
+ */
+const CSS_NUMBER = {
+	zIndex: true,
+	opacity: true,
+	fontWeight: true,
+	lineHeight: true,
+	columnCount: true,
+	fillOpacity: true,
+	orphans: true,
+	widows: true,
+	zoom: true
+};
+
+class GUIComponent {
+	/**
+	 * @param {string} name       - Unique component name
+	 * @param {string} [cssText]  - CSS content (injected into Shadow DOM)
+	 */
+	constructor(name, cssText) {
+		this.name = name;
+		this._cssText = cssText || null;
+		this._host = null; // The outer DOM element
+		this._shadow = null; // ShadowRoot
+		this._container = null; // Inner wrapper inside shadow
+
+		this.magnet = { TOP: false, BOTTOM: false, LEFT: false, RIGHT: false };
+		this._isDraggable = false;
+
+		this.mouseMode = MouseMode.STOP;
+		this.needFocus = true;
+		this.manager = null; // Set by UIManager.addComponent()
+
+		this.__loaded = false;
+		this.__active = false;
+		this.__scrollbarObserver = null;
+		this.__mouseStopBlock = null;
+
+		this._keyHandler = null;
+		this._enterCount = 0;
+		this._savedIntersect = false;
+
+		// Compatibility proxy — lets UIManager and old UIComponent
+		// instances call .ui.css(), .ui[0], .ui.offset(), etc.
+		this.ui = null; // Created in prepare()
+	}
+
+	// ─── Static ────────────────────────────────────────────
+
+	static MouseMode = MouseMode;
+
+	// ─── Lifecycle: prepare ────────────────────────────────
+
+	/**
+	 * Get the root element of the component.
+	 */
+
+	getRoot() {
+		return this._shadow || this._host;
+	}
+
+	/**
+	 * Build the Shadow DOM, inject CSS, call init(), set up
+	 * mouse intersection and touch handling.
+	 * Equivalent to UIComponent.prototype.prepare().
+	 */
+	prepare() {
+		if (this.__loaded) return;
+		_ensureDeps();
+
+		// Create host element
+		this._host = document.createElement('div');
+		this._host.id = this.name;
+		this._host.style.zIndex = '50';
+		this._host.style.position = 'absolute';
+
+		// Attach Shadow DOM (open for devtools inspection)
+		this._shadow = this._host.attachShadow({ mode: 'open' });
+
+		// Inject Common CSS (shared, immutable)
+		const commonStyle = document.createElement('style');
+		commonStyle.textContent = CommonCSS;
+		this._shadow.appendChild(commonStyle);
+
+		// Inject component CSS (hot-reloadable)
+		const compStyle = document.createElement('style');
+		compStyle.setAttribute('data-component', this.name);
+		compStyle.textContent = this._cssText || '';
+		this._shadow.appendChild(compStyle);
+
+		// Create inner container for component content
+		this._container = document.createElement('div');
+		this._container.classList.add('ui-component-root');
+		this._shadow.appendChild(this._container);
+
+		// Render component content (subclass provides this)
+		if (this.render) {
+			this._container.innerHTML = this.render();
+		}
+
+		// Process legacy data-* attributes (background, hover, down, text, etc.)
+		this._processAllDataAttrs();
+
+		// Create jQuery compatibility proxy
+		this._createUIProxy();
+
+		document.body.appendChild(this._host);
+
+		// Initialize (subclass provides this)
+		if (this.init) {
+			this.init();
+		}
+
+		// Mouse intersection handling
+		this._setupMouseMode();
+
+		this._host.remove();
+
+		this.__loaded = true;
+	}
+
+	// ─── Lifecycle: append ─────────────────────────────────
+
+	/**
+	 * Add the component to the DOM.
+	 * Equivalent to UIComponent.prototype.append().
+	 *
+	 * @param {HTMLElement|string} [target] - Target element. Defaults to document.body.
+	 */
+	append(target) {
+		this.__active = true;
+
+		if (!this.__loaded) {
+			this.prepare();
+			if (this.__active) this.append(target);
+			return;
+		}
+
+		// Append host to target
+		const parent = target ? (typeof target === 'string' ? document.querySelector(target) : target) : document.body;
+
+		if (!parent) {
+			console.error('[GUIComponent] Unable to find target element for appending UI.');
+			return;
+		}
+
+		parent.appendChild(this._host);
+
+		// Bind keydown
+		if (this.onKeyDown) {
+			this._bindKeyDown();
+		}
+
+		// Freeze mode
+		if (this.mouseMode === MouseMode.FREEZE) {
+			Mouse.intersect = false;
+			Session.FreezeUI = true;
+			_Cursor?.setType(_Cursor?.ACTION?.DEFAULT ?? 0);
+		}
+
+		// Hook
+		if (this.onAppend) {
+			this.onAppend();
+		}
+
+		// Scrollbars
+		this._setupScrollbars();
+
+		// Fix position overflow
+		this._fixPositionOverflow();
+
+		// Focus
+		this.focus();
+	}
+
+	/**
+	 * Fix component position after append or screen resize.
+	 * Ensures the component stays within the visible viewport
+	 * and respects magnet constraints.
+	 *
+	 * Skipped for non-draggable (fixed-position) components since their
+	 * CSS position is intentional and should not be overridden.
+	 */
+	_fixPositionOverflow() {
+		if (!this._host || !this._isDraggable) return;
+		const WIDTH = _Renderer?.width ?? window.innerWidth;
+		const HEIGHT = _Renderer?.height ?? window.innerHeight;
+		ClampToViewport(this._host, WIDTH, HEIGHT, this.magnet);
+	}
+
+	// ─── Lifecycle: remove ─────────────────────────────────
+
+	/**
+	 * Remove the component from the DOM.
+	 * Equivalent to UIComponent.prototype.remove().
+	 */
+	remove() {
+		this.__active = false;
+
+		if (this.__loaded && this._host && this._host.parentNode) {
+			// Hook
+			if (this.onRemove) {
+				this.onRemove();
+			}
+
+			// Unbind keydown
+			this._unbindKeyDown();
+
+			// Fire x_remove event (used by mouse intersection cleanup)
+			this._host.dispatchEvent(new Event('x_remove'));
+			if (this._shadow) {
+				this._shadow.querySelectorAll('*').forEach(node => {
+					node.dispatchEvent(new Event('x_remove'));
+				});
+			}
+
+			// Detach from DOM
+			this._host.remove();
+
+			// Freeze mode cleanup
+			if (this.mouseMode === MouseMode.FREEZE) {
+				Mouse.intersect = true;
+				Session.FreezeUI = false;
+			}
+
+			// Scrollbar observer cleanup
+			if (this.__scrollbarObserver) {
+				this.__scrollbarObserver.disconnect();
+				this.__scrollbarObserver = null;
+			}
+		}
+	}
+
+	// ─── Focus / zIndex management ─────────────────────────
+
+	/**
+	 * Focus the UI (bring to top of other components).
+	 * Equivalent to UIComponent.prototype.focus().
+	 */
+	focus() {
+		if (!this.manager || !this.needFocus) return;
+
+		const components = this.manager.components;
+		const list = [];
+
+		// Collect zIndex values from other active components
+		for (const name in components) {
+			const other = components[name];
+			if (other === this || !other.__active || !other.needFocus) continue;
+
+			// Works with both UIComponent (.ui.css) and GUIComponent (._host.style)
+			const z = parseInt(this._getZIndex(other), 10);
+			list[z - 50] = z;
+		}
+
+		// Re-organize to remove gaps
+		let j = 0;
+		for (let i = 0; i < list.length; i++) {
+			if (!list[i]) {
+				j++;
+				continue;
+			}
+			list[i] -= j;
+		}
+
+		// Apply new zIndex to all other components
+		for (const name in components) {
+			const other = components[name];
+			if (other === this || !other.__active || !other.needFocus) continue;
+
+			const z = parseInt(this._getZIndex(other), 10);
+			this._setZIndex(other, list[z - 50]);
+		}
+
+		// Push ourselves to top
+		this._setZIndex(this, list.length + 50 - j);
+	}
+
+	/**
+	 * Place on top of all other components.
+	 * Equivalent to UIComponent.prototype.placeOnTop().
+	 */
+	placeOnTop() {
+		if (!this.manager) return;
+
+		const components = this.manager.components;
+		const zList = [];
+
+		for (const name in components) {
+			const other = components[name];
+			if (other === this || !other.__active) continue;
+			zList.push(parseInt(this._getZIndex(other), 10));
+		}
+
+		this._setZIndex(this, Math.max(50, ...zList) + 1);
+	}
+
+	/**
+	 * Clone a component.
+	 * Equivalent to UIComponent.prototype.clone().
+	 *
+	 * @param {string} name - New component name
+	 * @param {boolean} [full] - Copy all properties
+	 * @returns {GUIComponent}
+	 */
+	clone(name, full) {
+		const cloned = new GUIComponent(name, this._cssText);
+
+		// Copy render function so the clone produces the same HTML
+		if (this.render) cloned.render = this.render;
+
+		// Always inherit behavioral properties
+		cloned.mouseMode = this.mouseMode;
+		cloned.needFocus = this.needFocus;
+
+		if (full) {
+			for (const key of Object.keys(this)) {
+				if (
+					key === '_host' ||
+					key === '_shadow' ||
+					key === '_container' ||
+					key === 'ui' ||
+					key === '__loaded' ||
+					key === '__scrollbarObserver'
+				) {
+					continue; // Don't copy DOM state
+				}
+				cloned[key] = this[key];
+			}
+		}
+
+		return cloned;
+	}
+
+	// ─── Event binding ─────────────────────────────────────
+
+	/**
+	 * Enable event type. Only 'keydown' is supported (same as UIComponent).
+	 * @param {string} type
+	 */
+	on(type) {
+		if (type.toLowerCase() === 'keydown' && this.onKeyDown) {
+			this._bindKeyDown();
+		}
+	}
+
+	/**
+	 * Disable event type.
+	 * @param {string} type
+	 */
+	off(type) {
+		if (type.toLowerCase() === 'keydown') {
+			this._unbindKeyDown();
+		}
+	}
+
+	// ─── Private: keydown helpers ──────────────────────────
+
+	_bindKeyDown() {
+		if (!this.onKeyDown) return;
+		this._unbindKeyDown();
+		const handler = this.onKeyDown.bind(this);
+		this._keyHandler = event => {
+			if (handler(event) === false) {
+				event.preventDefault();
+			}
+		};
+		const useCapture = !!this.captureKeyEvents;
+		window.addEventListener('keydown', this._keyHandler, useCapture);
+	}
+
+	_unbindKeyDown() {
+		if (this._keyHandler) {
+			window.removeEventListener('keydown', this._keyHandler);
+			window.removeEventListener('keydown', this._keyHandler, true); // capture phase
+			this._keyHandler = null;
+		}
+	}
+
+	/**
+	 * Check if an editable element is focused.
+	 * @returns {boolean}
+	 */
+	isEditableFocused() {
+		const root = this.getRoot();
+		const active = root && root.activeElement;
+		if (!active || !active.tagName) return false;
+		if (/input|textarea|select/i.test(active.tagName)) return true;
+		else if (active.getAttribute('contenteditable') === 'true') return true;
+		return false;
+	}
+
+	// ─── Private: zIndex helpers (cross-compatible) ────────
+
+	/**
+	 * Get zIndex from either a GUIComponent or a legacy UIComponent.
+	 * @param {GUIComponent|UIComponent} comp
+	 * @returns {string}
+	 */
+	_getZIndex(comp) {
+		if (comp._host) {
+			// GUIComponent
+			return comp._host.style.zIndex || '50';
+		}
+		// Legacy UIComponent (jQuery)
+		return comp.ui.css('zIndex') || '50';
+	}
+
+	/**
+	 * Set zIndex on either a GUIComponent or a legacy UIComponent.
+	 * @param {GUIComponent|UIComponent} comp
+	 * @param {number} value
+	 */
+	_setZIndex(comp, value) {
+		if (comp._host) {
+			comp._host.style.zIndex = value;
+		} else {
+			comp.ui.css('zIndex', value);
+		}
+	}
+
+	// ─── Draggable ─────────────────────────────────────────
+
+	/**
+	 * Make the component draggable.
+	 * Equivalent to UIComponent.prototype.draggable().
+	 *
+	 * @param {string|HTMLElement} [handle] - CSS selector or element to use as drag handle.

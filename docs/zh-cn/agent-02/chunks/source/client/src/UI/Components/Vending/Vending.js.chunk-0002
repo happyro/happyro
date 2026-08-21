@@ -1,0 +1,374 @@
+			}
+
+			_output[index].count = _type === Vending.Type.BUYING_STORE ? 0 : _output[index].count - count;
+
+			tmpItem = Object.assign({}, _input[index]);
+			tmpItem.count =
+				_type === Vending.Type.BUYING_STORE ? _input[index].total : _input[index].count + _output[index].count;
+
+			addItem(fromContent, _output[index], false);
+			addItem(toContent, tmpItem, true);
+		}
+	};
+})();
+
+function requestMoveItem(index, fromContent, toContent, isAdding) {
+	let count;
+	const item_price = 0;
+
+	const item = isAdding ? _input[index] : _output[index];
+
+	if (isAdding) {
+		if (!(countSlotsUsed() < _slots)) {
+			return false;
+		}
+		count = _input[index].count;
+	} else {
+		count = _output[index].count;
+	}
+
+	if ((item.count === 1 || !item.IsStackable) && _type === Vending.Type.VENDING_STORE) {
+		if (isAdding) {
+			InputBox.append();
+			InputBox.setType('price', false, item_price);
+			InputBox.onSubmitRequest = function (_item_price) {
+				InputBox.remove();
+				_output[index].price = _item_price;
+				if (_item_price > 0) {
+					transferItem(fromContent, toContent, isAdding, index, item.count);
+				}
+			};
+		} else {
+			transferItem(fromContent, toContent, isAdding, index, item.count);
+		}
+		return false;
+	}
+
+	InputBox.append();
+	InputBox.setType('number', false, count);
+	InputBox.onSubmitRequest = function (_count) {
+		InputBox.remove();
+		if (_count > 0) {
+			if (_count >= 9999 && _type === Vending.Type.BUYING_STORE) {
+				VendingModelMessage.setInit(1742);
+				return;
+			}
+
+			if (item.count + _count > 9999 && _type === Vending.Type.BUYING_STORE) {
+				VendingModelMessage.setInit(1728);
+				return;
+			}
+
+			if (isAdding) {
+				InputBox.append();
+				InputBox.setType('price', false, item_price);
+				InputBox.onSubmitRequest = function (_item_price) {
+					InputBox.remove();
+					_output[index].price = _item_price;
+					if (_item_price > 0) {
+						transferItem(fromContent, toContent, isAdding, index, _count);
+					}
+				};
+			} else {
+				transferItem(fromContent, toContent, isAdding, index, _count);
+			}
+		}
+	};
+}
+
+function onDrop(event) {
+	let data;
+
+	event.stopImmediatePropagation();
+	event.preventDefault();
+
+	try {
+		data = JSON.parse(event.dataTransfer.getData('Text'));
+	} catch (_e) {
+		return;
+	}
+
+	if (data.type !== 'item' || data.from !== 'Vending' || data.container === this.className) {
+		return;
+	}
+
+	const root = Vending.getRoot();
+	const fromContent = root.querySelector(`.${data.container} .content`);
+	const toContent = this.querySelector('.content');
+
+	requestMoveItem(data.index, fromContent, toContent, this.className === 'OutputWindow');
+}
+
+function onItemInfo(event) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+
+	const index = parseInt(this.parentNode.getAttribute('data-index'), 10);
+	const item = _input[index];
+
+	if (!item) {
+		return;
+	}
+
+	if (ItemInfo.uid === item.ITID) {
+		ItemInfo.remove();
+		return;
+	}
+
+	ItemInfo.append();
+	ItemInfo.uid = item.ITID;
+	ItemInfo.setItem(item);
+}
+
+function onItemSelected() {
+	if (_type === Vending.Type.BUY || _type === Vending.Type.VENDING_STORE) {
+		return;
+	}
+
+	const root = Vending.getRoot();
+	const inputWin = root.querySelector('.InputWindow');
+
+	let from, to;
+	if (inputWin.contains(this)) {
+		from = inputWin;
+		to = root.querySelector('.OutputWindow');
+	} else {
+		from = root.querySelector('.OutputWindow');
+		to = inputWin;
+	}
+
+	requestMoveItem(
+		parseInt(this.getAttribute('data-index'), 10),
+		from.querySelector('.content'),
+		to.querySelector('.content'),
+		from === inputWin
+	);
+}
+
+function onItemFocus() {
+	const root = Vending.getRoot();
+	root.querySelectorAll('.item.selected').forEach(el => el.classList.remove('selected'));
+	this.classList.add('selected');
+}
+
+function onScroll(event) {
+	let delta;
+
+	if (event.wheelDelta) {
+		delta = event.wheelDelta / 120;
+		if (window.opera) {
+			delta = -delta;
+		}
+	} else if (event.detail) {
+		delta = -event.detail;
+	}
+
+	this.scrollTop = Math.floor(this.scrollTop / 32) * 32 - delta * 32;
+	event.preventDefault();
+}
+
+function onDragStart(event) {
+	const root = Vending.getRoot();
+	const inputWin = root.querySelector('.InputWindow');
+	const outputWin = root.querySelector('.OutputWindow');
+
+	const container = (inputWin.contains(this) ? inputWin : outputWin).className;
+	const img = new Image();
+	const url = this.firstChild.style.backgroundImage.match(/\(([^)]+)/)[1].replace(/"/g, '');
+	img.decoding = 'async';
+	img.src = url;
+
+	event.dataTransfer.setDragImage(img, 12, 12);
+	event.dataTransfer.setData(
+		'Text',
+		JSON.stringify(
+			(window._OBJ_DRAG_ = {
+				type: 'item',
+				from: 'Vending',
+				container: container,
+				index: this.getAttribute('data-index')
+			})
+		)
+	);
+}
+
+function onResizeInput() {
+	const root = Vending.getRoot();
+	const inputWin = root.querySelector('.InputWindow');
+	const content = inputWin.querySelector('.container .content');
+	const top = inputWin.offsetTop;
+	let lastHeight = 0;
+
+	function resizing() {
+		const extraY = 31 + 19 - 30;
+
+		let h = Math.floor((Mouse.screen.y - top - extraY) / 32);
+
+		h = Math.min(Math.max(h, 2), 6);
+
+		if (h === lastHeight) {
+			return;
+		}
+
+		resize(content, h);
+		lastHeight = h;
+	}
+
+	const _Interval = setInterval(resizing, 30);
+
+	const onMouseUp = event => {
+		if (event.which === 1) {
+			clearInterval(_Interval);
+			window.removeEventListener('mouseup', onMouseUp);
+		}
+	};
+	window.addEventListener('mouseup', onMouseUp);
+}
+
+Vending.onVendingSkill = function onVendingSkill(pkt) {
+	if (Vending.isOpen) {
+		return;
+	}
+
+	_slots = pkt.itemcount;
+	this.setList(CartItems.list);
+
+	const root = Vending.getRoot();
+	root.querySelector('.add_shop').style.height = `${32 * _slots}px`;
+	root.querySelector('.shopname').value = '';
+	this._host.style.display = '';
+	this._fixPositionOverflow();
+
+	Vending.isOpen = true;
+};
+
+Vending.onBuyingSkill = function onBuyingSkill(pkt) {
+	if (Vending.isOpen) {
+		return;
+	}
+
+	_slots = pkt.itemcount;
+	const buyable = [];
+	for (const key in Inventory.getUI().list) {
+		const item = Inventory.getUI().list[key];
+		if (isItemStackable(item) && DB.isBuyable(item.ITID)) {
+			buyable.push(item);
+		}
+	}
+	this.setList(buyable);
+
+	const root = Vending.getRoot();
+	root.querySelector('.add_shop').style.height = `${32 * _slots}px`;
+	root.querySelector('.shopname').value = '';
+	this._host.style.display = '';
+	this._fixPositionOverflow();
+
+	Vending.isOpen = true;
+};
+
+Vending.onClose = function onClose() {
+	this._host.style.display = 'none';
+	Vending.isOpen = false;
+};
+
+Vending.onSubmit = function onSubmit() {
+	const output = [];
+	const count = _output.length;
+
+	const root = Vending.getRoot();
+	const shopname = root.querySelector('.shopname').value;
+
+	let limitZeny;
+	let ctr = 0;
+
+	for (let i = 0; i < count; ++i) {
+		if (_output[i] && _output[i].count) {
+			output.push(_output[i]);
+			ctr++;
+		}
+	}
+
+	if (ctr < 1) {
+		VendingModelMessage.setInit(2494);
+		return;
+	}
+
+	let pkt;
+	if (_type === Vending.Type.VENDING_STORE) {
+		pkt = new PACKET.CZ.REQ_OPENSTORE2();
+	} else {
+		pkt = new PACKET.CZ.REQ_OPEN_BUYING_STORE();
+		limitZeny = parseInt(root.querySelector('.limitZeny').value, 10);
+		if (limitZeny > Session.zeny) {
+			VendingModelMessage.setInit(3683);
+			return;
+		}
+		if (limitZeny <= 0) {
+			VendingModelMessage.setInit(1730);
+			return;
+		}
+		pkt.LimitZeny = limitZeny;
+	}
+
+	pkt.storeName = shopname;
+	pkt.result = 1;
+	pkt.storeList = output;
+
+	if (!shopname) {
+		VendingModelMessage.setInit(225);
+		return;
+	} else {
+		this._shopname = shopname;
+		submitNetworkPacket(pkt);
+	}
+
+	this.onRemove();
+};
+
+function countSlotsUsed() {
+	let count = 0;
+	_output.forEach(item => {
+		if (item.count > 0) {
+			count++;
+		}
+	});
+	return count;
+}
+
+function submitNetworkPacket(pkt) {
+	Network.sendPacket(pkt);
+}
+
+function onItemOver() {
+	if (!this.classList.contains('input')) {
+		return;
+	}
+
+	const idx = parseInt(this.getAttribute('data-index'), 10);
+	const item =
+		_type === Vending.Type.VENDING_STORE ? CartItems.getItemByIndex(idx) : Inventory.getUI().getItemByIndex(idx);
+
+	if (!item) {
+		return;
+	}
+
+	const root = Vending.getRoot();
+	const overlay = root.querySelector('.overlay');
+
+	overlay.style.display = '';
+	overlay.style.top = `${this.offsetTop - 20}px`;
+	overlay.style.left = `${this.offsetLeft - 10}px`;
+	overlay.textContent = `${DB.getItemName(item)} ${item.count || 1} ea`;
+}
+
+function onItemOut() {
+	const root = Vending.getRoot();
+	const overlay = root.querySelector('.overlay');
+	if (overlay) {
+		overlay.style.display = 'none';
+	}
+}
+
+Vending.mouseMode = GUIComponent.MouseMode.STOP;
+
+export default UIManager.addComponent(Vending);

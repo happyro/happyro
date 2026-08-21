@@ -1,0 +1,500 @@
+		const map_session_data* sd = BL_CAST(BL_PC,src);
+		if( sd == nullptr )
+			return;
+
+		for( i = 0; i < 5 /*MAX_DEVOTION*/; i++ ) // Client only able show to 5 links
+			WBUFL(buf,6+4*i) = sd->devotion[i];
+		WBUFW(buf,26) = skill_get_range2(src, CR_DEVOTION, pc_checkskill(sd, CR_DEVOTION), false);
+	}
+
+	if( tsd )
+		clif_send(buf, packet_len(0x1cf), tsd, SELF);
+	else
+		clif_send(buf, packet_len(0x1cf), src, AREA);
+}
+
+/// Notifies the client of an object's spirits.
+/// 01d0 <id>.L <amount>.W (ZC_SPIRITS)
+/// 01e1 <id>.L <amount>.W (ZC_SPIRITS2)
+void clif_spiritball( const block_list* bl, const block_list* target, enum send_target send_target ){
+	nullpo_retv( bl );
+
+	PACKET_ZC_SPIRITS p = {};
+
+	p.PacketType = HEADER_ZC_SPIRITS;
+	p.AID = bl->id;
+
+	switch( bl->type ){
+		case BL_PC:
+			p.num = static_cast<const map_session_data*>(bl)->spiritball;
+			break;
+		case BL_HOM:
+			p.num = static_cast<const homun_data*>(bl)->homunculus.spiritball;
+			break;
+	}
+
+	clif_send( &p, sizeof( p ), target == nullptr ? bl : target, send_target );
+}
+
+
+/// Notifies clients in area of a character's combo delay.
+/// 01d2 <account id>.L <delay>.L (ZC_COMBODELAY)
+void clif_combo_delay( const block_list& bl, t_tick wait ){
+	PACKET_ZC_COMBODELAY packet{};
+
+	packet.packetType = HEADER_ZC_COMBODELAY;
+	packet.AID = bl.id;
+	packet.delay = client_tick( wait );
+
+	clif_send( &packet, sizeof( packet ), &bl, AREA );
+}
+
+
+/// Notifies clients in area that a character has blade-stopped another.
+/// 01d1 <src id>.L <dst id>.L <flag>.L (ZC_BLADESTOP)
+/// flag:
+///     0 = inactive
+///     1 = active
+void clif_bladestop( const block_list& src, uint32 target_id, bool active ){
+	PACKET_ZC_BLADESTOP packet{};
+
+	packet.packetType = HEADER_ZC_BLADESTOP;
+	packet.srcId = src.id;
+	packet.targetId = target_id;
+	packet.flag = active;
+
+	clif_send( &packet, sizeof( packet ), &src, AREA );
+}
+
+
+/// MVP effect.
+/// 010c <account id>.L (ZC_MVP)
+void clif_mvp_effect( const map_session_data& sd ){
+	PACKET_ZC_MVP packet{};
+
+	packet.packetType = HEADER_ZC_MVP;
+	packet.AID = sd.id;
+
+	clif_send( &packet, sizeof( packet ), &sd, AREA );
+}
+
+
+/// MVP item reward message (ZC_MVP_GETTING_ITEM).
+/// 010a <name id>.W
+void clif_mvp_item( const map_session_data* sd, t_itemid nameid ){
+	PACKET_ZC_MVP_GETTING_ITEM p = {};
+
+	p.packetType = HEADER_ZC_MVP_GETTING_ITEM;
+	p.itemId = client_nameid( nameid );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+
+/// MVP EXP reward message.
+/// 010b <exp>.L (ZC_MVP_GETTING_SPECIAL_EXP)
+void clif_mvp_exp( const map_session_data& sd, t_exp exp ){
+#if PACKETVER >= 20131223		// Kro remove this packet [Napster]
+	if (battle_config.mvp_exp_reward_message) {
+		char e_msg[CHAT_SIZE_MAX];
+		sprintf(e_msg, msg_txt(&sd, 717), exp); // Congratulations! You are the MVP! Your reward EXP Points are %u !!
+		clif_messagecolor( &sd, color_table[COLOR_CYAN], e_msg, false, SELF );
+	}
+#else
+	PACKET_ZC_MVP_GETTING_SPECIAL_EXP packet{};
+
+	packet.packetType = HEADER_ZC_MVP_GETTING_SPECIAL_EXP;
+	packet.exp = static_cast<decltype(packet.exp)>(std::min(exp, MAX_EXP));
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+#endif
+}
+
+
+/// Dropped MVP item reward message.
+/// 010d (ZC_THROW_MVPITEM)
+///
+/// "You are the MVP, but cannot obtain the reward because you are overweight."
+void clif_mvp_noitem( const map_session_data& sd ){
+	PACKET_ZC_THROW_MVPITEM packet{};
+
+	packet.packetType = HEADER_ZC_THROW_MVPITEM;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Guild creation result.
+/// 0167 <result>.B (ZC_RESULT_MAKE_GUILD)
+/// result:
+///     0 = "Guild has been created."
+///     1 = "You are already in a Guild."
+///     2 = "That Guild Name already exists."
+///     3 = "You need the necessary item to create a Guild."
+void clif_guild_created( const map_session_data& sd, int32 flag ){
+	PACKET_ZC_RESULT_MAKE_GUILD p = {};
+
+	p.packetType = HEADER_ZC_RESULT_MAKE_GUILD;
+	p.result = static_cast<decltype(p.result)>( flag );
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Notifies the client that it is belonging to a guild (ZC_UPDATE_GDID).
+/// 016c <guild id>.L <emblem id>.L <mode>.L <ismaster>.B <inter sid>.L <guild name>.24B
+/// mode:
+///     &0x01 = allow invite
+///     &0x10 = allow expel
+void clif_guild_belonginfo( const map_session_data& sd ){
+	if( sd.guild == nullptr ){
+		return;
+	}
+
+	const auto &guild = sd.guild->guild;
+	int32 position = guild_getposition(sd);
+
+	if( position < 0 ){
+		return;
+	}
+
+	PACKET_ZC_UPDATE_GDID p = {};
+
+	p.PacketType = HEADER_ZC_UPDATE_GDID;
+	p.guildId = guild.guild_id;
+	p.emblemVersion = guild.emblem_id;
+	p.mode = guild.position[position].mode;
+	p.isMaster = ( sd.state.gmaster_flag == 1 );
+	p.interSid = 0; // InterSID (unknown purpose)
+	safestrncpy( p.guildName, guild.name, sizeof( p.guildName ) );
+#if PACKETVER_MAIN_NUM >= 20220216
+	p.masterGID = guild.member[0].char_id;
+#endif
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Guild member login notice.
+/// 016d <account id>.L <char id>.L <status>.L (ZC_UPDATE_CHARSTAT)
+/// 01f2 <account id>.L <char id>.L <status>.L <gender>.W <hair style>.W <hair color>.W (ZC_UPDATE_CHARSTAT2)
+/// status:
+///     0 = offline
+///     1 = online
+void clif_guild_memberlogin_notice(const struct mmo_guild &g,int32 idx,int32 flag)
+{
+	map_session_data* sd;
+	
+	PACKET_ZC_UPDATE_CHARSTAT p = {};
+
+	p.packetType = HEADER_ZC_UPDATE_CHARSTAT;
+	p.aid = g.member[idx].account_id;
+	p.cid = g.member[idx].char_id;
+	p.status = flag;
+
+	if( ( sd = g.member[idx].sd ) != nullptr )
+	{
+#if defined(PACKETVER)
+		p.gender = sd->status.sex;
+		p.hairStyle = sd->status.hair;
+		p.hairColor = sd->status.hair_color;
+#endif
+		clif_send(&p,sizeof(p),sd,GUILD_WOS);
+	}
+	else if( ( sd = guild_getavailablesd(g) ) != nullptr )
+	{
+#if defined(PACKETVER)
+		p.gender = 0;
+		p.hairStyle = 0;
+		p.hairColor = 0;
+#endif
+		clif_send(&p,sizeof(p),sd,GUILD);
+	}
+}
+
+// Function `clif_guild_memberlogin_notice` sends info about
+// logins and logouts of a guild member to the rest members.
+// But at the 1st time (after a player login or map changing)
+// the client won't show the message.
+// So I suggest use this function for sending "first-time-info"
+// to some player on entering the game or changing location.
+// At next time the client would always show the message.
+// The function sends all the statuses in the single packet
+// to economize traffic. [LuzZza]
+void clif_guild_send_onlineinfo( const map_session_data* sd )
+{
+	unsigned char buf[14*128];
+	int32 i, count=0, p_len;
+
+	nullpo_retv(sd);
+
+	p_len = packet_len(0x16d);
+
+	auto &g = sd->guild;
+	if (!g)
+		return;
+
+	for(i=0; i<g->guild.max_member; i++) {
+
+		if(g->guild.member[i].account_id > 0 &&
+			g->guild.member[i].account_id != sd->status.account_id) {
+
+			WBUFW(buf,count*p_len) = 0x16d;
+			WBUFL(buf,count*p_len+2) = g->guild.member[i].account_id;
+			WBUFL(buf,count*p_len+6) = g->guild.member[i].char_id;
+			WBUFL(buf,count*p_len+10) = g->guild.member[i].online;
+			count++;
+		}
+	}
+
+	clif_send(buf, p_len*count, sd, SELF);
+}
+
+
+/// Bitmask of enabled guild window tabs 
+/// 014e <menu flag>.L (ZC_ACK_GUILD_MENUINTERFACE)
+/// menu flag:
+///      0x00 = Basic Info (always on)
+///     &0x01 = Member manager
+///     &0x02 = Positions
+///     &0x04 = Skills
+///     &0x10 = Expulsion list
+///     &0x40 = Unknown (GMENUFLAG_ALLGUILDLIST)
+///     &0x80 = Notice
+void clif_guild_masterormember( const map_session_data& sd ){
+
+	PACKET_ZC_ACK_GUILD_MENUINTERFACE p{};
+
+	p.packetType = HEADER_ZC_ACK_GUILD_MENUINTERFACE;
+	if(sd.state.gmaster_flag){
+		p.menuFlag = 0xd7;
+	}else{
+		p.menuFlag = 0x57;
+	}
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Guild basic information (Territories [Valaris])
+/// 0150 <guild id>.L <level>.L <member num>.L <member max>.L <exp>.L <max exp>.L <points>.L <honor>.L <virtue>.L <emblem id>.L <name>.24B <master name>.24B <manage land>.16B (ZC_GUILD_INFO)
+/// 01b6 <guild id>.L <level>.L <member num>.L <member max>.L <exp>.L <max exp>.L <points>.L <honor>.L <virtue>.L <emblem id>.L <name>.24B <master name>.24B <manage land>.16B <zeny>.L (ZC_GUILD_INFO2)
+/// 0a84 <guild id>.L <level>.L <member num>.L <member max>.L <exp>.L <max exp>.L <points>.L <honor>.L <virtue>.L <emblem id>.L <name>.24B <manage land>.16B <zeny>.L <master char id>.L (ZC_GUILD_INFO3)
+void clif_guild_basicinfo( const map_session_data& sd ){
+	if( sd.guild == nullptr ){
+		return;
+	}
+
+	const auto &guild = sd.guild->guild;
+	PACKET_ZC_GUILD_INFO p = {};
+
+	p.PacketType = HEADER_ZC_GUILD_INFO;
+	p.GDID = guild.guild_id;
+	p.level = guild.guild_lv;
+	p.userNum = guild.connect_member;
+	p.maxUserNum = guild.max_member;
+	p.userAverageLevel = guild.average_lv;
+	p.exp = (uint32)cap_value( guild.exp, 0, MAX_GUILD_EXP );
+	p.maxExp = (uint32)cap_value( guild.next_exp, 0, MAX_GUILD_EXP );
+	p.point = 0; // Tax Points
+	p.honor = 0; // Honor: (left) Vulgar [-100,100] Famed (right)
+	p.virtue = 0; // Virtue: (down) Wicked [-100,100] Righteous (up)
+	p.emblemVersion = guild.emblem_id;
+	safestrncpy( p.guildname, guild.name, sizeof( p.guildname ) );
+	safestrncpy( p.manageLand, msg_txt( &sd, 300 + guild_checkcastles( guild ) ), sizeof( p.manageLand ) );
+	p.zeny = 0;
+#if PACKETVER >= 20200902
+	p.masterGID = guild.member[0].char_id; // leader
+	safestrncpy( p.masterName, guild.master, sizeof( p.masterName ) );
+#elif PACKETVER_MAIN_NUM >= 20161019 || PACKETVER_RE_NUM >= 20160921 || defined(PACKETVER_ZERO)
+	p.masterGID = guild.member[0].char_id; // leader
+#else
+	safestrncpy( p.masterName, guild.master, sizeof( p.masterName ) );
+#endif
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Guild alliance and opposition list 
+/// 014c <packet len>.W { <relation>.L <guild id>.L <guild name>.24B }* (ZC_MYGUILD_BASIC_INFO)
+void clif_guild_allianceinfo( const map_session_data& sd ){
+	const auto &g = sd.guild;
+
+	if (g == nullptr){
+		return;
+	}
+
+	PACKET_ZC_MYGUILD_BASIC_INFO* p = reinterpret_cast<PACKET_ZC_MYGUILD_BASIC_INFO*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_MYGUILD_BASIC_INFO;
+	p->PacketLength = sizeof(*p);
+
+	for(size_t i=0, c = 0;i<MAX_GUILDALLIANCE;i++){
+		const guild_alliance &a = g->guild.alliance[i];
+
+		if(a.guild_id<=0){
+			continue;
+		}
+
+		RELATED_GUILD_INFO& info = p->rgInfo[c];
+
+		info.relation = a.opposition;
+		info.GDID = a.guild_id;
+		safestrncpy(info.guildname,a.name,sizeof(info.guildname));
+
+		p->PacketLength += static_cast<decltype(p->PacketLength)>(sizeof(info));
+		c++;
+	}
+
+	clif_send(p,p->PacketLength,&sd,SELF);
+}
+
+
+/// Guild member manager information
+/// 0154 <packet len>.W { <account>.L <char id>.L <hair style>.W <hair color>.W <gender>.W <class>.W <level>.W <contrib exp>.L <state>.L <position>.L <memo>.50B <name>.24B }* (ZC_MEMBERMGR_INFO)
+/// state:
+///     0 = offline
+///     1 = online
+/// memo:
+///     probably member's self-introduction (unused, no client UI/packets for editing it)
+/// 0aa5 <packet len>.W { <account>.L <char id>.L <hair style>.W <hair color>.W <gender>.W <class>.W <level>.W <contrib exp>.L <state>.L <position>.L <lastlogin>.L }* (ZC_MEMBERMGR_INFO2)
+void clif_guild_memberlist( const map_session_data& sd ){
+	if( sd.guild == nullptr ){
+		return;
+	}
+
+	const auto &guild = sd.guild->guild;
+	PACKET_ZC_MEMBERMGR_INFO* p = reinterpret_cast<PACKET_ZC_MEMBERMGR_INFO*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_MEMBERMGR_INFO;
+	p->packetLength = sizeof( *p );
+
+	for( int32 i = 0, c = 0; i < guild.max_member; i++ ){
+		const auto &member = guild.member[i];
+
+		if( member.account_id == 0 ){
+			continue;
+		}
+
+		GUILD_MEMBER_INFO& member_info = p->guildMemberInfo[c];
+
+		member_info.AID = member.account_id;
+		member_info.GID = member.char_id;
+		member_info.head = member.hair;
+		member_info.headPalette = member.hair_color;
+		member_info.sex = member.gender;
+		member_info.job = member.class_;
+		member_info.level = member.lv;
+		member_info.contributionExp = (uint32)cap_value( member.exp, 0, MAX_GUILD_EXP );
+		member_info.currentState = member.online;
+		member_info.positionID = member.position;
+#if PACKETVER >= 20200902
+		member_info.lastLoginTime = member.last_login;
+		safestrncpy( member_info.char_name, member.name, sizeof( member_info.char_name ) );
+#elif PACKETVER_MAIN_NUM >= 20161214 || PACKETVER_RE_NUM >= 20161130 || defined(PACKETVER_ZERO)
+		member_info.lastLoginTime = member.last_login;
+#else
+		memset( member_info.intro, 0, sizeof( member_info.intro ) );  //[Ind] - This is displayed in the 'note' column but being you can't edit it it's sent empty.
+		safestrncpy( member_info.char_name, member.name, sizeof( member_info.char_name ) );
+#endif
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( member_info ) );
+		c++;
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+}
+
+
+/// Guild position name information (ZC_POSITION_ID_NAME_INFO).
+/// 0166 <packet len>.W { <position id>.L <position name>.24B }*
+static void clif_guild_positionnamelist( const map_session_data* sd )
+{
+	int32 i,fd;
+
+	nullpo_retv(sd);
+	auto &g = sd->guild;
+	if (!g)
+		return;
+
+	fd = sd->fd;
+	WFIFOHEAD(fd, MAX_GUILDPOSITION * 28 + 4);
+	WFIFOW(fd, 0)=0x166;
+	for(i=0;i<MAX_GUILDPOSITION;i++){
+		WFIFOL(fd,i*28+4)=i;
+		safestrncpy(WFIFOCP(fd,i*28+8),g->guild.position[i].name,NAME_LENGTH);
+	}
+	WFIFOW(fd,2)=i*28+4;
+	WFIFOSET(fd,WFIFOW(fd,2));
+}
+
+
+/// Guild position information 
+/// 0160 <packet len>.W { <position id>.L <mode>.L <ranking>.L <pay rate>.L }* (ZC_POSITION_INFO)
+/// mode:
+///     See enum e_guild_permission
+/// ranking:
+///     TODO
+static void clif_guild_positioninfolist(map_session_data& sd){
+	auto &g = sd.guild;
+
+	if (g == nullptr){
+		return;
+	}
+
+	PACKET_ZC_POSITION_INFO* p = reinterpret_cast<PACKET_ZC_POSITION_INFO*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_POSITION_INFO;
+	p->PacketLength = sizeof(*p);
+
+	for(size_t i=0;i<MAX_GUILDPOSITION;i++){
+		guild_position& gp = g->guild.position[i];
+		PACKET_ZC_POSITION_INFO_sub& position = p->posInfo[i];
+
+		position.positionID = static_cast<decltype(position.positionID)>( i );
+		position.right = gp.mode;
+		position.ranking = static_cast<decltype(position.ranking)>( i );
+		position.payRate = gp.exp_mode;
+
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( sizeof( position ) );
+	}
+
+	clif_send(p,p->PacketLength,&sd,SELF);
+}
+
+
+/// Notifies clients in a guild about updated position information.
+/// 0174 <packet len>.W { <position id>.L <mode>.L <ranking>.L <pay rate>.L <position name>.24B }* (ZC_ACK_CHANGE_GUILD_POSITIONINFO)
+/// mode:
+///     &0x01 = allow invite
+///     &0x10 = allow expel
+/// ranking:
+///     TODO
+void clif_guild_positionchanged(const struct mmo_guild &g,int32 idx)
+{
+	// FIXME: This packet is intended to update the clients after a
+	// commit of position info changes, not sending one packet per
+	// position.
+	map_session_data* sd = guild_getavailablesd(g);
+
+	if( sd == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_ACK_CHANGE_GUILD_POSITIONINFO* p = reinterpret_cast<PACKET_ZC_ACK_CHANGE_GUILD_POSITIONINFO*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_ACK_CHANGE_GUILD_POSITIONINFO;
+	p->packetLength = sizeof(*p);
+
+	PACKET_ZC_ACK_CHANGE_GUILD_POSITIONINFO_sub& info = p->posInfo[0];
+
+	info.positionID = idx;
+	info.mode = g.position[idx].mode;
+	info.ranking = idx;
+	info.payRate = g.position[idx].exp_mode;
+	safestrncpy(info.posName, g.position[idx].name, sizeof(info.posName));
+	p->packetLength += static_cast<decltype(p->packetLength)>(sizeof(info));
+
+	clif_send(p,p->packetLength,sd,GUILD);
+}

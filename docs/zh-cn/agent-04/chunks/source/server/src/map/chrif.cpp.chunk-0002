@@ -1,0 +1,500 @@
+	return 0;
+}
+
+/**
+ * @see DBApply
+ */
+static int32 chrif_reconnect(DBKey key, DBData *data, va_list ap) {
+	struct auth_node *node = (struct auth_node *)db_data2ptr(data);
+
+	switch (node->state) {
+		case ST_LOGIN:
+			if ( node->sd && node->char_dat == nullptr ) {//Since there is no way to request the char auth, make it fail.
+				pc_authfail(node->sd);
+				chrif_char_offline(node->sd);
+				chrif_auth_delete(node->account_id, node->char_id, ST_LOGIN);
+			}
+			break;
+		case ST_LOGOUT:
+			//Re-send final save
+			chrif_save(node->sd, CSAVE_QUIT|CSAVE_INVENTORY|CSAVE_CART);
+			break;
+		case ST_MAPCHANGE: { //Re-send map-change request.
+			map_session_data *sd = node->sd;
+			uint32 ip;
+			uint16 port;
+
+			if( map_mapname2ipport(sd->mapindex,&ip,&port) == 0 )
+				chrif_changemapserver(sd, ip, port);
+			else //too much lag/timeout is the closest explanation for this error.
+				clif_authfail_fd(sd->fd, 3);
+
+			break;
+			}
+	}
+
+	return 0;
+}
+
+
+/// Called when all the connection steps are completed.
+void chrif_on_ready(void) {
+	ShowStatus("Map Server is now online.\n");
+
+	chrif_state = 2;
+
+	//If there are players online, send them to the char-server. [Skotlex]
+	send_users_tochar();
+
+	//Auth db reconnect handling
+	auth_db->foreach(auth_db,chrif_reconnect);
+
+	//Re-save any storages that were modified in the disconnection time. [Skotlex]
+	do_reconnect_storage();
+
+	//Re-save any guild castles that were modified in the disconnection time.
+	guild_castle_reconnect(-1, CD_NONE, 0);
+	
+	// Charserver is ready for loading autotrader
+	if (!char_init_done)
+	{
+		do_init_buyingstore_autotrade();
+		do_init_vending_autotrade();
+		char_init_done = true;
+	}
+}
+
+
+/**
+ * Maps are sent, then received misc info from char-server
+ * - Server name
+ * HZ 0x2afb
+ **/
+int32 chrif_sendmapack(int32 fd) {
+	uint16 offs = 5;
+
+	if (RFIFOB(fd,4)) {
+		ShowFatalError("chrif : send map list to char server failed %d\n", RFIFOB(fd,2));
+		exit(EXIT_FAILURE);
+	}
+
+	// Whisper name
+	safestrncpy( wisp_server_name, RFIFOCP( fd, offs ), NAME_LENGTH );
+
+	// Server name
+	safestrncpy( charserver_name, RFIFOCP( fd, offs + NAME_LENGTH ), NAME_LENGTH );
+
+	ShowStatus( "Map-server connected to char-server '" CL_WHITE "%s" CL_RESET "' (whispername: %s).\n", charserver_name, wisp_server_name );
+
+	chrif_on_ready();
+
+	return 0;
+}
+
+/*==========================================
+ * Request sc_data from charserver [Skotlex]
+ *------------------------------------------*/
+int32 chrif_scdata_request(uint32 account_id, uint32 char_id) {
+
+#ifdef ENABLE_SC_SAVING
+	chrif_check(-1);
+
+	WFIFOHEAD(char_fd,10);
+	WFIFOW(char_fd,0) = 0x2afc;
+	WFIFOL(char_fd,2) = account_id;
+	WFIFOL(char_fd,6) = char_id;
+	WFIFOSET(char_fd,10);
+#endif
+	return 0;
+}
+
+/*==========================================
+ * Request skillcooldown from charserver
+ *------------------------------------------*/
+int32 chrif_skillcooldown_request(uint32 account_id, uint32 char_id) {
+	chrif_check(-1);
+	WFIFOHEAD(char_fd, 10);
+	WFIFOW(char_fd, 0) = 0x2b0a;
+	WFIFOL(char_fd, 2) = account_id;
+	WFIFOL(char_fd, 6) = char_id;
+	WFIFOSET(char_fd, 10);
+	return 0;
+}
+
+/*==========================================
+ * Request auth confirmation
+ *------------------------------------------*/
+void chrif_authreq(map_session_data *sd, bool autotrade) {
+	struct auth_node *node= chrif_search(sd->id);
+
+	if( node != nullptr || !chrif_isconnected() ) {
+		set_eof(sd->fd);
+		return;
+	}
+
+	WFIFOHEAD(char_fd,20);
+	WFIFOW(char_fd,0) = 0x2b26;
+	WFIFOL(char_fd,2) = sd->status.account_id;
+	WFIFOL(char_fd,6) = sd->status.char_id;
+	WFIFOL(char_fd,10) = sd->login_id1;
+	WFIFOB(char_fd,14) = sd->status.sex;
+	WFIFOL(char_fd,15) = htonl(session[sd->fd]->client_addr);
+	WFIFOB(char_fd,19) = autotrade;
+	WFIFOSET(char_fd,20);
+	chrif_sd_to_auth(sd, ST_LOGIN);
+}
+
+/*==========================================
+ * Auth confirmation ack
+ *------------------------------------------*/
+void chrif_authok(int32 fd) {
+	uint32 account_id, group_id, char_id;
+	uint32 login_id1,login_id2;
+	time_t expiration_time;
+	struct mmo_charstatus* status;
+	struct auth_node *node;
+	bool changing_mapservers;
+	TBL_PC* sd;
+
+	//Check if both servers agree on the struct's size
+	if( RFIFOW(fd,2) - 25 != sizeof(struct mmo_charstatus) ) {
+		ShowError("chrif_authok: Data size mismatch! %d != %" PRIuPTR "\n", RFIFOW(fd,2) - 25, sizeof(struct mmo_charstatus));
+		return;
+	}
+
+	account_id = RFIFOL(fd,4);
+	login_id1 = RFIFOL(fd,8);
+	login_id2 = RFIFOL(fd,12);
+	expiration_time = (time_t)(int32)RFIFOL(fd,16);
+	group_id = RFIFOL(fd,20);
+	changing_mapservers = (RFIFOB(fd,24)) > 0;
+	status = (struct mmo_charstatus*)RFIFOP(fd,25);
+	char_id = status->char_id;
+
+	//Check if we don't already have player data in our server
+	//Causes problems if the currently connected player tries to quit or this data belongs to an already connected player which is trying to re-auth.
+	if ( ( sd = map_id2sd(account_id) ) != nullptr )
+		return;
+
+	if ( ( node = chrif_search(account_id) ) == nullptr )
+		return; // should not happen
+
+	if ( node->state != ST_LOGIN )
+		return; //character in logout phase, do not touch that data.
+
+	if ( node->sd == nullptr ) {
+		/*
+		//When we receive double login info and the client has not connected yet,
+		//discard the older one and keep the new one.
+		chrif_auth_delete(node->account_id, node->char_id, ST_LOGIN);
+		*/
+		return; // should not happen
+	}
+
+	sd = node->sd;
+
+	if( global_core->is_running() &&
+		node->char_dat == nullptr &&
+		node->account_id == account_id &&
+		node->char_id == char_id &&
+		node->login_id1 == login_id1 )
+	{ //Auth Ok
+		if (pc_authok(sd, login_id2, expiration_time, group_id, status, changing_mapservers))
+			return;
+	} else { //Auth Failed
+		pc_authfail(sd);
+	}
+
+	chrif_char_offline(sd); //Set him offline, the char server likely has it set as online already.
+	chrif_auth_delete(account_id, char_id, ST_LOGIN);
+}
+
+// client authentication failed
+void chrif_authfail(int32 fd) {/* HELLO WORLD. ip in RFIFOL 15 is not being used (but is available) */
+	uint32 account_id, char_id;
+	uint32 login_id1;
+	char sex;
+	struct auth_node* node;
+
+	account_id = RFIFOL(fd,2);
+	char_id    = RFIFOL(fd,6);
+	login_id1  = RFIFOL(fd,10);
+	sex        = RFIFOB(fd,14);
+
+	node = chrif_search(account_id);
+
+	if( node != nullptr &&
+		node->account_id == account_id &&
+		node->char_id == char_id &&
+		node->login_id1 == login_id1 &&
+		node->sex == sex &&
+		node->state == ST_LOGIN )
+	{// found a match
+		clif_authfail_fd(node->fd, 0);
+		chrif_auth_delete(account_id, char_id, ST_LOGIN);
+	}
+}
+
+
+/**
+ * This can still happen (client times out while waiting for char to confirm auth data)
+ * @see DBApply
+ */
+int32 auth_db_cleanup_sub(DBKey key, DBData *data, va_list ap) {
+	struct auth_node *node = (struct auth_node *)db_data2ptr(data);
+	
+	if(DIFF_TICK(gettick(),node->node_created)>60000) {
+		const char* states[] = { "Login", "Logout", "Map change" };
+		switch (node->state) {
+			case ST_LOGOUT:
+				//Re-save attempt (->sd should never be null here).
+				node->node_created = gettick(); //Refresh tick (avoid char-server load if connection is really bad)
+				chrif_save(node->sd, CSAVE_QUIT|CSAVE_INVENTORY|CSAVE_CART);
+				break;
+			default:
+				//Clear data. any connected players should have timed out by now.
+				ShowInfo("auth_db: Node (state %s) timed out for %d:%d\n", states[node->state], node->account_id, node->char_id);
+				chrif_char_offline_nsd(node->account_id, node->char_id);
+				chrif_auth_delete(node->account_id, node->char_id, node->state);
+				break;
+		}
+		return 1;
+	}
+	return 0;
+}
+
+TIMER_FUNC(auth_db_cleanup){
+	chrif_check(0);
+	auth_db->foreach(auth_db, auth_db_cleanup_sub);
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+int32 chrif_charselectreq(map_session_data* sd, uint32 s_ip) {
+	nullpo_retr(-1, sd);
+
+	if( !sd || !sd->id || !sd->login_id1 )
+		return -1;
+
+	chrif_check(-1);
+
+	WFIFOHEAD(char_fd,18);
+	WFIFOW(char_fd, 0) = 0x2b02;
+	WFIFOL(char_fd, 2) = sd->id;
+	WFIFOL(char_fd, 6) = sd->login_id1;
+	WFIFOL(char_fd,10) = sd->login_id2;
+	WFIFOL(char_fd,14) = htonl(s_ip);
+	WFIFOSET(char_fd,18);
+
+	return 0;
+}
+
+/*==========================================
+ * Search Char trough id on char serv
+ *------------------------------------------*/
+int32 chrif_searchcharid(uint32 char_id) {
+
+	if( !char_id )
+		return -1;
+
+	chrif_check(-1);
+
+	WFIFOHEAD(char_fd,6);
+	WFIFOW(char_fd,0) = 0x2b08;
+	WFIFOL(char_fd,2) = char_id;
+	WFIFOSET(char_fd,6);
+
+	return 0;
+}
+
+/*==========================================
+ * Change Email
+ *------------------------------------------*/
+int32 chrif_changeemail(int32 id, const char *actual_email, const char *new_email) {
+
+	if (battle_config.etc_log)
+		ShowInfo("chrif_changeemail: account: %d, actual_email: '%s', new_email: '%s'.\n", id, actual_email, new_email);
+
+	chrif_check(-1);
+
+	WFIFOHEAD(char_fd,86);
+	WFIFOW(char_fd,0) = 0x2b0c;
+	WFIFOL(char_fd,2) = id;
+	memcpy(WFIFOP(char_fd,6), actual_email, 40);
+	memcpy(WFIFOP(char_fd,46), new_email, 40);
+	WFIFOSET(char_fd,86);
+
+	return 0;
+}
+
+/**
+ * S 2b0e <accid>.l <name>.24B <operation_type>.w <timediff>L <val1>L <val2>L
+ * Send an account modification request to the login server (via char server).
+ * @aid : Player requesting operation account id
+ * @character_name : Target of operation Player name
+ * @operation_type : see chrif_req_op
+ * @timediff : tick to add or remove to unixtimestamp
+ * @val1 : extra data value to transfer for operation
+ *		   CHRIF_OP_LOGIN_VIP: 0x1 : Select info and update old_groupid
+ *							   0x2 : VIP duration is changed by atcommand or script
+ *							   0x4 : Show status reply by char-server through 0x2b0f
+ *							   0x8 : First request on player login
+ * @val2 : extra data value to transfer for operation
+ */
+int32 chrif_req_login_operation(int32 aid, const char* character_name, enum chrif_req_op operation_type, int32 timediff, int32 val1, int32 val2) {
+	chrif_check(-1);
+
+	WFIFOHEAD(char_fd,44);
+	WFIFOW(char_fd,0) = 0x2b0e;
+	WFIFOL(char_fd,2) = aid;
+	safestrncpy(WFIFOCP(char_fd,6), character_name, NAME_LENGTH);
+	WFIFOW(char_fd,30) = operation_type;
+
+	if ( operation_type == CHRIF_OP_LOGIN_BAN || operation_type == CHRIF_OP_LOGIN_VIP)
+		WFIFOL(char_fd,32) = timediff;
+	WFIFOL(char_fd,36) = val1;
+	WFIFOL(char_fd,40) = val2;
+	WFIFOSET(char_fd,44);
+	return 0;
+}
+
+/**
+ * S 2b0e <accid>.l <name>.24B <operation_type>.w <timediff>L <val1>L <val2>L
+ * Send a sex change (for account or character) request to the login server (via char server).
+ * @sd : Player requesting operation
+ */
+int32 chrif_changesex(map_session_data *sd, bool change_account) {
+	chrif_check(-1);
+
+	WFIFOHEAD(char_fd,44);
+	WFIFOW(char_fd,0) = 0x2b0e;
+	WFIFOL(char_fd,2) = sd->status.account_id;
+	safestrncpy(WFIFOCP(char_fd,6), sd->status.name, NAME_LENGTH);
+	WFIFOW(char_fd,30) = (change_account ? CHRIF_OP_LOGIN_CHANGESEX : CHRIF_OP_CHANGECHARSEX);
+	if (!change_account)
+		WFIFOB(char_fd,32) = sd->status.sex == SEX_MALE ? SEX_FEMALE : SEX_MALE;
+	WFIFOSET(char_fd,44);
+
+	clif_displaymessage(sd->fd, msg_txt(sd,408)); //"Need disconnection to perform change-sex request..."
+
+	if (sd->fd)
+		clif_authfail_fd(sd->fd, 15);
+	else
+		map_quit(sd);
+	return 0;
+}
+
+/**
+ * R 2b0f <accid>.l <name>.24B <type>.w <answer>.w
+ * Processing a reply to chrif_req_login_operation() (request to modify an account).
+ * NB: That ack is received just after the char has sent the request to login and therefore didn't have login reply yet
+ * @param aid : player account id the request was concerning
+ * @param player_name : name the request was concerning
+ * @param type : code of operation done. See enum chrif_req_op
+ * @param answer : type of answer
+ *   0: login-server request done
+ *   1: player not found
+ *   2: gm level too low
+ *   3: login-server offline
+ */
+static void chrif_ack_login_req(int32 aid, const char* player_name, uint16 type, uint16 answer) {
+	map_session_data* sd;
+	char action[25];
+	char output[256];
+
+	sd = map_id2sd(aid);
+
+	if( aid < 0 || sd == nullptr ) {
+		ShowError("chrif_ack_login_req failed - player not online.\n");
+		return;
+	}
+
+	switch (type) {
+		case CHRIF_OP_LOGIN_CHANGESEX:
+		case CHRIF_OP_CHANGECHARSEX:
+			type = CHRIF_OP_LOGIN_CHANGESEX; // So we don't have to create a new msgstring.
+			[[fallthrough]];
+		case CHRIF_OP_LOGIN_BLOCK:
+		case CHRIF_OP_LOGIN_BAN:
+		case CHRIF_OP_LOGIN_UNBLOCK:
+		case CHRIF_OP_LOGIN_UNBAN:
+			snprintf(action,25,"%s",msg_txt(sd,427+type)); //block|ban|unblock|unban|change the sex of
+			break;
+		case CHRIF_OP_LOGIN_VIP:
+			if (!battle_config.disp_servervip_msg)
+				return;
+			snprintf(action,25,"%s",msg_txt(sd,436)); //VIP
+			break;
+		default:
+			snprintf(action,25,"???");
+			break;
+	}
+
+	switch (answer) {
+		case 0: sprintf(output, msg_txt(sd,424), action, NAME_LENGTH, player_name); break; //Login-serv has been asked to %s '%.*s'.
+		case 1: sprintf(output, msg_txt(sd,425), NAME_LENGTH, player_name); break;
+		case 2: sprintf(output, msg_txt(sd,426), action, NAME_LENGTH, player_name); break;
+		case 3: sprintf(output, msg_txt(sd,427), action, NAME_LENGTH, player_name); break;
+		case 4: sprintf(output, msg_txt(sd,424), action, NAME_LENGTH, player_name); break;
+		default: output[0] = '\0'; break;
+	}
+	clif_displaymessage(sd->fd, output);
+}
+
+/*==========================================
+ * Request char server to change sex of char (modified by Yor)
+ *------------------------------------------*/
+int32 chrif_changedsex(int32 fd) {
+	int32 acc, sex;
+	map_session_data *sd;
+
+	acc = RFIFOL(fd,2);
+	sex = RFIFOL(fd,6);
+
+	if ( battle_config.etc_log )
+		ShowNotice("chrif_changedsex %d.\n", acc);
+
+	sd = map_id2sd(acc);
+	if ( sd ) { //Normally there should not be a char logged on right now!
+		if ( sd->status.sex == sex )
+			return 0; //Do nothing? Likely safe.
+		sd->status.sex = !sd->status.sex;
+
+		// Reset skills of gender split jobs.
+		if ((sd->class_&MAPID_SECONDMASK) == MAPID_BARDDANCER || (sd->class_&MAPID_SECONDMASK) == MAPID_KAGEROUOBORO) {
+			const static struct {
+				e_skill start;
+				e_skill end;
+			} ranges[] = {
+				// Bard class exclusive skills
+				{ BA_MUSICALLESSON, BA_APPLEIDUN },
+				// Dancer class exclusive skills
+				{ DC_DANCINGLESSON, DC_SERVICEFORYOU },
+				// Minstrel class exclusive skills
+				{ MI_RUSH_WINDMILL, MI_HARMONIZE },
+				// Wanderer class exclusive skills
+				{ WA_SWING_DANCE, WA_MOONLIT_SERENADE },
+				// Kagerou class exclusive skills
+				{ KG_KAGEHUMI, KG_KAGEMUSYA },
+				// Oboro class exclusive skills
+				{ OB_ZANGETSU, OB_AKAITSUKI },
+			};
+
+			for( const auto& range : ranges ){
+				for( uint16 skill_id = range.start; skill_id <= range.end; skill_id++ ){
+					uint16 sk_idx = skill_get_index( skill_id );
+
+					if( sd->status.skill[sk_idx].id > 0 && sd->status.skill[sk_idx].flag == SKILL_FLAG_PERMANENT ){
+						sd->status.skill_point += sd->status.skill[sk_idx].lv;
+						sd->status.skill[sk_idx].id = 0;
+						sd->status.skill[sk_idx].lv = 0;
+					}
+				}
+			}
+
+			clif_updatestatus(*sd, SP_SKILLPOINT);
+			// Change to other gender version of the job if needed.
+			if (sd->status.sex)// Changed from female version of job.
+				sd->status.class_ -= 1;

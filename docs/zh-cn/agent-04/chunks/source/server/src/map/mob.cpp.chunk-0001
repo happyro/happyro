@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "mob.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <map>
+#include <unordered_map>
+#include <vector>
+
+#include <common/cbasetypes.hpp>
+#include <common/db.hpp>
+#include <common/ers.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "battle.hpp"
+#include "clif.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp"
+#include "log.hpp"
+#include "map.hpp"
+#include "mercenary.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "path.hpp"
+#include "pc.hpp"
+#include "pet.hpp"
+#include "quest.hpp"
+
+using namespace rathena;
+
+#define ACTIVE_AI_RANGE 4	//Distance added on top of 'AREA_SIZE' at which mobs enter active AI mode.
+
+const t_tick MOB_MAX_DELAY = 24 * 3600 * 1000;
+#define RUDE_ATTACKED_COUNT 1	//After how many rude-attacks should the skill be used?
+
+// On official servers, monsters will only seek targets that are closer to walk to than their
+// search range. The search range is affected depending on if the monster is walking or not.
+// On some maps there can be a quite long path for just walking two cells in a direction and
+// the client does not support displaying walk paths that are longer than 14 cells, so this
+// option reduces position lag in such situation. But doing a complex search for every possible
+// target, might be CPU intensive.
+// Disable this to make monsters not do any path search when looking for a target (old behavior).
+#define ACTIVEPATHSEARCH
+
+// Limits for the monster database
+#define MIN_MOB_DB 1000
+#define MAX_MOB_DB 3999
+#define MIN_MOB_DB2 20020
+#define MAX_MOB_DB2 31999
+
+// These define the range of available IDs for clones. [Valaris]
+#define MOB_CLONE_START MAX_MOB_DB
+#define MOB_CLONE_END MIN_MOB_DB2
+
+// holds Monster Spawn informations
+std::unordered_map<uint16, std::vector<spawn_info>> mob_spawn_data;
+
+MobItemRatioDatabase mob_item_drop_ratio;
+
+/// Mob skill struct for temporary storage
+struct s_mob_skill_db {
+	int32 mob_id; ///< Monster ID. -1 boss types, -2 normal types, -3 all monsters
+	std::vector<std::shared_ptr<s_mob_skill>> skill; ///< Skills
+};
+
+std::unordered_map<int32, std::shared_ptr<s_mob_skill_db>> mob_skill_db; /// Monster skill temporary db. s_mob_skill_db -> mobid
+
+std::unordered_map<uint32, std::shared_ptr<s_item_drop_list>> mob_delayed_drops;
+std::unordered_map<uint32, std::shared_ptr<s_item_drop_list>> mob_looted_drops;
+MobSummonDatabase mob_summon_db;
+MobChatDatabase mob_chat_db;
+MapDropDatabase map_drop_db;
+
+/*==========================================
+ * Local prototype declaration   (only required thing)
+ *------------------------------------------*/
+static TIMER_FUNC(mob_spawn_guardian_sub);
+int32 mob_skill_id2skill_idx(int32 mob_id,uint16 skill_id);
+
+/*========================================== [Playtester]
+* Removes all characters that spotted the monster but are no longer online
+* @param md: Monster whose spotted log should be cleaned
+*------------------------------------------*/
+void mob_clean_spotted(mob_data *md) {
+	int32 i;
+	for (i = 0; i < DAMAGELOG_SIZE; i++) {
+		if (md->spotted_log[i] && !map_charid2sd(md->spotted_log[i]))
+			md->spotted_log[i] = 0;
+	}
+}
+
+/*========================================== [Playtester]
+* Adds a char_id to the spotted log of a monster
+* @param md: Monster to whose spotted log char_id should be added
+* @param char_id: Char_id to add to the spotted log
+*------------------------------------------*/
+void mob_add_spotted(mob_data *md, uint32 char_id) {
+	int32 i;
+
+	//Check if char_id is already logged
+	for (i = 0; i < DAMAGELOG_SIZE; i++) {
+		if (md->spotted_log[i] == char_id)
+			return;
+	}
+
+	//Not logged, add char_id to first empty slot
+	for (i = 0; i < DAMAGELOG_SIZE; i++) {
+		if (md->spotted_log[i] == 0) {
+			md->spotted_log[i] = char_id;
+			return;
+		}
+	}
+}
+
+/*========================================== [Playtester]
+* Checks if a monster was spotted
+* @param md: Monster to check
+* @return Returns true if the monster is spotted, otherwise 0
+*------------------------------------------*/
+bool mob_is_spotted(mob_data *md) {
+	int32 i;
+
+	//Check if monster is spotted
+	for (i = 0; i < DAMAGELOG_SIZE; i++) {
+		if (md->spotted_log[i] != 0)
+			return true; //Spotted
+	}
+
+	return false; //Not spotted
+}
+
+/**
+ * Tomb spawn time calculations
+ * @param nd: NPC data
+ */
+int32 mvptomb_setdelayspawn(npc_data *nd) {
+	if (nd->u.tomb.spawn_timer != INVALID_TIMER)
+		delete_timer(nd->u.tomb.spawn_timer, mvptomb_delayspawn);
+	nd->u.tomb.spawn_timer = add_timer(gettick() + battle_config.mvp_tomb_delay, mvptomb_delayspawn, nd->id, 0);
+	return 0;
+}
+
+/**
+ * Tomb spawn with delay (timer function)
+ * @param tid: Timer ID
+ * @param tick: Time
+ * @param id: Block list ID
+ * @param data: Used for add_timer_func_list
+ */
+TIMER_FUNC(mvptomb_delayspawn){
+	npc_data *nd = BL_CAST(BL_NPC, map_id2bl(id));
+
+	if (nd) {
+		if (nd->u.tomb.spawn_timer != tid) {
+			ShowError("mvptomb_delayspawn: Timer mismatch: %d != %d\n", tid, nd->u.tomb.spawn_timer);
+			return 0;
+		}
+		nd->u.tomb.spawn_timer = INVALID_TIMER;
+		clif_spawn(nd);
+	}
+	return 0;
+}
+
+/**
+ * Create and display a tombstone on the map
+ * @param md: the mob to create a tombstone for
+ * @param killer: name of player who killed the mob
+ * @param time: time of mob's death
+ * @author [GreenBox]
+ */
+void mvptomb_create(mob_data *md, char *killer, time_t time)
+{
+	npc_data *nd;
+
+	if ( md->tomb_nid )
+		mvptomb_destroy(md);
+
+	CREATE(nd, npc_data, 1);
+	new (nd) npc_data();
+
+	nd->id = md->tomb_nid = npc_get_new_npc_id();
+
+	nd->ud.dir = md->ud.dir;
+	nd->m = md->m;
+	nd->x = md->x;
+	nd->y = md->y;
+	nd->type = BL_NPC;
+
+	safestrncpy(nd->name, msg_txt(nullptr,656), sizeof(nd->name));
+
+	nd->class_ = 565;
+	nd->speed = DEFAULT_NPC_WALK_SPEED;
+	nd->subtype = NPCTYPE_TOMB;
+
+	nd->u.tomb.md = md;
+	nd->u.tomb.kill_time = time;
+	nd->u.tomb.spawn_timer = INVALID_TIMER;
+
+	nd->dynamicnpc.owner_char_id = 0;
+	nd->dynamicnpc.last_interaction = 0;
+	nd->dynamicnpc.removal_tid = INVALID_TIMER;
+
+	if (killer)
+		safestrncpy(nd->u.tomb.killer_name, killer, NAME_LENGTH);
+	else
+		nd->u.tomb.killer_name[0] = '\0';
+
+	map_addnpc(nd->m, nd);
+	if(map_addblock(nd))
+		return;
+	status_set_viewdata(nd, nd->class_);
+	unit_dataset(nd);
+
+	mvptomb_setdelayspawn(nd);
+}
+
+/**
+ * Destroys MVP Tomb
+ * @param md: Mob data
+ */
+void mvptomb_destroy(mob_data *md) {
+	npc_data *nd;
+
+	if ( (nd = map_id2nd(md->tomb_nid)) ) {
+		int32 i;
+		struct map_data *mapdata = map_getmapdata(nd->m);
+
+		clif_clearunit_area( *nd, CLR_OUTSIGHT );
+		map_delblock(nd);
+
+		ARR_FIND( 0, mapdata->npc_num, i, mapdata->npc[i] == nd );
+		if( !(i == mapdata->npc_num) ) {
+			mapdata->npc_num--;
+			mapdata->npc[i] = mapdata->npc[mapdata->npc_num];
+			mapdata->npc[mapdata->npc_num] = nullptr;
+		}
+		map_deliddb(nd);
+		aFree(nd);
+	}
+
+	md->tomb_nid = 0;
+}
+
+/**
+ * Sub function for mob namesearch. Here is defined which are accepted.
+*/
+static bool mobdb_searchname_sub(uint16 mob_id, const char * const str, bool full_cmp)
+{
+	std::shared_ptr<s_mob_db> mob = mob_db.find(mob_id);
+
+	if (mob == nullptr)
+		return false;
+	
+	if( mobdb_checkid(mob_id) <= 0 )
+		return false; // invalid mob_id (includes clone check)
+	if (strcmpi(mob->sprite.c_str(), str) == 0)
+		return true; // If AegisName matches exactly, always return true
+	if(!mob->base_exp && !mob->job_exp && !mob_has_spawn(mob_id))
+		return false; // Monsters with no base/job exp and no spawn point are, by this criteria, considered "slave mobs" and excluded from search results
+	if( full_cmp ) {
+		// str must equal the db value
+		if( strcmpi(mob->name.c_str(), str) == 0 || 
+			strcmpi(mob->jname.c_str(), str) == 0)
+			return true;
+	} else {
+		// str must be in the db value
+		if( stristr(mob->name.c_str(), str) != nullptr ||
+			stristr(mob->jname.c_str(), str) != nullptr ||
+			stristr(mob->sprite.c_str(), str) != nullptr )
+			return true;
+	}
+	return false;
+}
+
+/**
+ * Searches for the Mobname
+*/
+uint16 mobdb_searchname_(const char * const str, bool full_cmp)
+{
+	for( auto const &mobdb_pair : mob_db ) {
+		const uint16 mob_id = mobdb_pair.first;
+		if( mobdb_searchname_sub(mob_id, str, full_cmp) )
+			return mob_id;
+	}
+	return 0;
+}
+
+uint16 mobdb_searchname(const char * const str)
+{
+	return mobdb_searchname_(str, true);
+}
+
+std::shared_ptr<s_mob_db> mobdb_search_aegisname( const char* str ){
+	for( auto &mobdb_pair : mob_db ){
+		if( strcmpi( str, mobdb_pair.second->sprite.c_str() ) == 0 ){
+			return mobdb_pair.second;
+		}
+	}
+
+	return nullptr;
+}
+
+/*==========================================
+ * Searches up to N matches. Prioritizing full matches first. Returns the number of matches
+ *------------------------------------------*/
+uint16 mobdb_searchname_array(const char *str, uint16 * out, uint16 size)
+{
+	uint16 count = 0;
+	const auto &mob_list = mob_db.getCache();
+
+	// Full compare first
+	for (const auto& mob : mob_list) {
+		if (mob == nullptr)
+			continue;
+		if (mobdb_searchname_sub(mob->id, str, true)) {
+			out[count] = mob->id;
+			if (++count >= size)
+				return count;
+		}
+	}
+	// If there are still free places, check if search string is contained in a name but not equal
+	if (count < size) {
+		for (const auto& mob : mob_list) {
+			if (mob == nullptr)
+				continue;
+			if (mobdb_searchname_sub(mob->id, str, false) && !mobdb_searchname_sub(mob->id, str, true)) {
+				out[count] = mob->id;
+				if (++count >= size)
+					return count;
+			}
+		}
+	}
+
+	return count;
+}
+
+/*==========================================
+ * Id Mob is checked.
+ *------------------------------------------*/
+int32 mobdb_checkid(const int32 id)
+{
+	if (!mob_db.exists(id))
+		return 0;
+	if (mob_is_clone(id)) //checkid is used mostly for random ID based code, therefore clone mobs are out of the question.
+		return 0;
+	return id;
+}
+
+/*==========================================
+ * Returns the view data associated to this mob class.
+ *------------------------------------------*/
+struct view_data * mob_get_viewdata(int32 mob_id)
+{
+	std::shared_ptr<s_mob_db> db = mob_db.find(mob_id);
+
+	if (db == nullptr)
+		return nullptr;
+
+	return &db->vd;
+}
+
+e_mob_bosstype s_mob_db::get_bosstype() const{
+	if( status_has_mode( &this->status, MD_MVP ) ){
+		return BOSSTYPE_MVP;
+	}else if( this->status.class_ == CLASS_BOSS ){
+		return BOSSTYPE_MINIBOSS;
+	}else{
+		return BOSSTYPE_NONE;
+	}
+}
+
+e_mob_bosstype mob_data::get_bosstype() const{
+	if( status_has_mode( &this->status, MD_MVP ) ){
+		return BOSSTYPE_MVP;
+	}else if( this->status.class_ == CLASS_BOSS ){
+		return BOSSTYPE_MINIBOSS;
+	}else{
+		return BOSSTYPE_NONE;
+	}
+}
+
+/**
+ * Create unique view data associated to a spawned monster.
+ * @param md: Mob to adjust
+ */
+void mob_set_dynamic_viewdata( mob_data* md ){
+	// If it is a valid monster and it has not already been created
+	if( md && !md->vd_changed ){
+		// Allocate a dynamic entry
+		struct view_data* vd = (struct view_data*)aMalloc( sizeof( struct view_data ) );
+
+		// Copy the current values
+		memcpy( vd, md->vd, sizeof( struct view_data ) );
+
+		// Update the pointer to the new entry
+		md->vd = vd;
+
+		// Flag it as changed so it is freed later on
+		md->vd_changed = true;
+	}
+}
+
+/**
+ * Free any view data associated to a spawned monster.
+ * @param md: Mob to free
+ */
+void mob_free_dynamic_viewdata( mob_data* md ){
+	// If it is a valid monster and it has already been allocated
+	if( md && md->vd_changed ){
+		// Free it
+		aFree( md->vd );
+
+		// Remove the reference
+		md->vd = nullptr;
+
+		// Unflag it as changed
+		md->vd_changed = false;
+	}
+}
+
+/*==========================================
+ * Cleans up mob-spawn data to make it "valid"
+ *------------------------------------------*/
+int32 mob_parse_dataset(struct spawn_data *data)
+{
+	size_t len;
+
+	if ((!mobdb_checkid(data->id) && !mob_is_clone(data->id)) || !data->num)
+		return 0;
+
+	if( ( len = strlen(data->eventname) ) > 0 )
+	{
+		if( data->eventname[len-1] == '"' )
+			data->eventname[len-1] = '\0'; //Remove trailing quote.
+		if( data->eventname[0] == '"' ) //Strip leading quotes
+			memmove(data->eventname, data->eventname+1, len-1);
+	}
+
+	if(strcmp(data->name,"--en--")==0)
+		safestrncpy(data->name, mob_db.find(data->id)->name.c_str(), sizeof(data->name));
+	else if(strcmp(data->name,"--ja--")==0)
+		safestrncpy(data->name, mob_db.find(data->id)->jname.c_str(), sizeof(data->name));
+
+	return 1;
+}
+
+/*==========================================
+ * Generates the basic mob data using the spawn_data provided.
+ *------------------------------------------*/
+mob_data* mob_spawn_dataset(struct spawn_data *data)
+{
+	mob_data *md = (mob_data*)aCalloc(1, sizeof(mob_data));
+	new(md) mob_data();
+	md->id= npc_get_new_npc_id();
+	md->type = BL_MOB;
+	md->m = data->m;
+	md->x = data->x;
+	md->y = data->y;
+	md->mob_id = data->id;
+	md->state.boss = data->state.boss;
+	md->db = mob_db.find(md->mob_id);
+	if (data->level > 0)
+		md->level = data->level;
+	memcpy(md->name, data->name, NAME_LENGTH);
+	if (data->state.ai)
+		md->special_state.ai = data->state.ai;
+	if (data->state.size)
+		md->special_state.size = data->state.size;
+	if (data->eventname[0] && strlen(data->eventname) >= 4)
+		safestrncpy(md->npc_event, data->eventname, EVENT_NAME_LENGTH);
+	if(status_has_mode(&md->db->status,MD_LOOTER))
+		md->lootitems = (struct s_mob_lootitem *)aCalloc(LOOTITEM_SIZE,sizeof(struct s_mob_lootitem));
+	md->spawn_timer = INVALID_TIMER;
+	md->deletetimer = INVALID_TIMER;
+	md->skill_idx = -1;
+	md->centerX = data->x;
+	md->centerY = data->y;
+	status_set_viewdata(md, md->mob_id);
+	unit_dataset(md);
+
+	map_addiddb(md);
+	return md;
+}
+
+/*==========================================

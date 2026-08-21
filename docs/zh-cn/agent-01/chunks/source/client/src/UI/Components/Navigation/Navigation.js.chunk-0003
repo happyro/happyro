@@ -1,0 +1,340 @@
+			targetCoordinates.style.opacity = '1';
+			targetCoordinates.style.color = _originalColor;
+			_blinking = false;
+		}
+	}
+};
+
+/**
+ * Set location title with proper formatting
+ */
+Navigation.setLocationTitle = function setLocationTitle(currentMap, targetMap, displayName) {
+	const root = Navigation.getRoot();
+	if (!root) {
+		return;
+	}
+
+	const title = formatLocationTitle(currentMap, targetMap, displayName);
+	const locationTitle = root.querySelector('.location-title');
+	if (locationTitle) {
+		locationTitle.textContent = title;
+	}
+};
+
+/**
+ * Set coordinates text with proper formatting
+ */
+Navigation.setCoordinatesText = function setCoordinatesText(x, y, options) {
+	const root = Navigation.getRoot();
+	if (!root) {
+		return;
+	}
+
+	const text = formatCoordinates(x, y, options);
+	const coords = root.querySelector('.coordinates');
+	if (coords) {
+		coords.textContent = text;
+	}
+};
+
+/**
+ * Set map name text with proper formatting
+ */
+Navigation.setMapNameText = function setMapNameText(mapName) {
+	const root = Navigation.getRoot();
+	if (!root) {
+		return;
+	}
+
+	const mapNameEl = root.querySelector('.map-name');
+	if (mapNameEl) {
+		mapNameEl.textContent = normalizeMapName(mapName);
+	}
+};
+
+/**
+ * Set mouse coordinates text with proper formatting
+ */
+Navigation.setMouseCoordinatesText = function setMouseCoordinatesText(x, y, options) {
+	const root = Navigation.getRoot();
+	if (!root) {
+		return;
+	}
+
+	const text = formatCoordinates(x, y, options);
+	const mouseCoords = root.querySelector('.mouse-coordinates');
+	if (mouseCoords) {
+		mouseCoords.textContent = text;
+	}
+};
+
+/**
+ * Find a path between two points using a web worker
+ */
+Navigation.findPath = function findPath(startX, startY, endX, endY) {
+	if (_pathFindingWorker && !_pathUpdateLock) {
+		_pathUpdateLock = true;
+
+		const naviLinkTable = DB.getNaviLinkTable();
+		const currentMap = getCurrentMap();
+		const warps = [];
+
+		if (naviLinkTable && naviLinkTable.length) {
+			for (let i = 0; i < naviLinkTable.length; i++) {
+				const warp = naviLinkTable[i];
+				if (!warp || warp.length < 11) {
+					continue;
+				}
+
+				const srcMap = warp[0].replace(/\.gat$/, '').toLowerCase();
+				const destMap = warp[8].replace(/\.gat$/, '').toLowerCase();
+
+				if (srcMap === currentMap && destMap === currentMap) {
+					warps.push({
+						id: warp[1],
+						type: warp[2],
+						srcX: warp[6],
+						srcY: warp[7],
+						destX: warp[9],
+						destY: warp[10]
+					});
+				}
+			}
+		}
+
+		_mapData.warps = warps;
+
+		_pathFindingWorker.postMessage({
+			type: 'findPath',
+			startX: startX,
+			startY: startY,
+			endX: endX,
+			endY: endY,
+			mapData: _mapData,
+			workerId: _pathFindingWorker.id,
+			existingPath: _path
+		});
+	}
+};
+
+/**
+ * Toggle the navigation window (show/hide)
+ */
+Navigation.toggle = function toggle() {
+	const hostDisplay = this._host ? getComputedStyle(this._host).display : 'none';
+	if (hostDisplay !== 'none') {
+		this.hide();
+	} else {
+		this.show();
+	}
+};
+
+/**
+ * Show the navigation window
+ */
+Navigation.show = function show() {
+	const root = Navigation.getRoot();
+
+	this.clearPath();
+	initializePathFindingWorker();
+
+	// Hide coordinate displays initially
+	const mouseInfo = root.querySelector('.mouse-info');
+	if (mouseInfo) {
+		mouseInfo.style.display = 'none';
+	}
+	const targetInfo = root.querySelector('.target-info');
+	if (targetInfo) {
+		targetInfo.style.display = 'none';
+	}
+
+	const mapName = getCurrentMap();
+	const currentPos = getPlayerPosition();
+
+	if (_finalTargetData) {
+		this.navigateTo({
+			startMap: mapName,
+			startX: currentPos.x,
+			startY: currentPos.y,
+			endMap: _finalTargetData.map,
+			endX: _finalTargetData.x,
+			endY: _finalTargetData.y,
+			displayName: _finalTargetData.displayName
+		});
+	}
+
+	this.setMapNameText(mapName);
+
+	const locationTitle = root.querySelector('.location-title');
+	if (locationTitle && !locationTitle.textContent) {
+		this.setLocationTitle(mapName, null);
+	}
+
+	this.ui.show();
+};
+
+/**
+ * Hide the navigation window
+ */
+Navigation.hide = function hide() {
+	this.ui.hide();
+	terminatePathFindingWorker();
+};
+
+Navigation.onKeyDown = function onKeyDown(event) {
+	const hostDisplay = this._host ? getComputedStyle(this._host).display : 'none';
+	if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && hostDisplay !== 'none') {
+		this.hide();
+	}
+};
+
+/**
+ * Handle mouse movement over the map to display coordinates
+ */
+Navigation.onMapMouseMove = function onMapMouseMove(event) {
+	const root = Navigation.getRoot();
+	const mapDisplay = root.querySelector('.map-display');
+	const rect = mapDisplay.getBoundingClientRect();
+	const x = Math.floor(event.clientX - rect.left);
+	const y = Math.floor(event.clientY - rect.top);
+
+	const mapCoords = this.screenToMapCoordinates(x, y);
+	const mapX = Math.floor(mapCoords.x);
+	const mapY = Math.floor(mapCoords.y);
+
+	const mouseInfo = root.querySelector('.mouse-info');
+	if (mouseInfo) {
+		mouseInfo.style.display = 'flex';
+	}
+	this.setMouseCoordinatesText(mapX, mapY);
+};
+
+/**
+ * Handle mouse leaving the map area
+ */
+Navigation.onMapMouseLeave = function onMapMouseLeave() {
+	const root = Navigation.getRoot();
+	const mouseInfo = root.querySelector('.mouse-info');
+	if (mouseInfo) {
+		mouseInfo.style.display = 'none';
+	}
+};
+
+/**
+ * Set the content of the navigation window based on NAVI info
+ */
+Navigation.setNaviInfo = function setNaviInfo(naviInfo, displayName) {
+	const parts = naviInfo.split(',');
+	if (parts.length < 3) {
+		return;
+	}
+
+	const mapName = parts[0];
+	const x = parseInt(parts[1], 10);
+	const y = parseInt(parts[2], 10);
+
+	// Clear the search input
+	const root = Navigation.getRoot();
+	const searchInput = root.querySelector('.search-input');
+	if (searchInput) {
+		searchInput.value = '';
+	}
+	_isMapClickTarget = false;
+
+	const currentMap = getCurrentMap();
+	const currentPos = getPlayerPosition();
+
+	this.navigateTo({
+		startMap: currentMap,
+		startX: currentPos.x,
+		startY: currentPos.y,
+		endMap: mapName,
+		endX: x,
+		endY: y,
+		displayName: displayName
+	});
+};
+
+/**
+ * Wait for map data to be loaded
+ */
+Navigation.waitForMapData = function waitForMapData(callback) {
+	if (!_mapData || _mapData.map !== getCurrentMap()) {
+		setTimeout(() => {
+			Navigation.waitForMapData(callback);
+		}, 100);
+	} else {
+		callback.bind(this)();
+	}
+};
+
+/**
+ * Unified navigation function that handles both same-map and cross-map navigation
+ */
+Navigation.navigateTo = function navigateTo(options) {
+	const root = Navigation.getRoot();
+	const startMap = normalizeMapName(options.startMap);
+	const endMap = normalizeMapName(options.endMap);
+	const displayName = options.displayName;
+
+	if (
+		_finalTargetData &&
+		(_finalTargetData.map !== endMap || _finalTargetData.x !== options.endX || _finalTargetData.y !== options.endY)
+	) {
+		this.clearPath();
+		resetPathFindingWorker();
+		this.setTargetCoordinatesText(options.endX, options.endY, {
+			targetMap: endMap
+		});
+		this.setTargetCoordinatesBlinking(true);
+	}
+
+	_finalTargetData = {
+		map: endMap,
+		x: options.endX,
+		y: options.endY,
+		displayName: displayName
+	};
+
+	// Get warp types based on Services checkbox
+	let warpTypes = [200, 201];
+	const servicesToggle = root.querySelector('.services-toggle');
+	if (servicesToggle && servicesToggle.checked) {
+		warpTypes = [200, 201, 202, 203, 204, 205];
+	}
+
+	const path = MapPathFinder.findPathBetweenMaps(
+		startMap,
+		options.startX,
+		options.startY,
+		endMap,
+		options.endX,
+		options.endY,
+		warpTypes
+	);
+
+	if (path && path.length > 0) {
+		const target = path[0];
+
+		this.waitForMapData(function () {
+			const walkableCell = this.findClosestWalkableCell(target.x, target.y);
+
+			if (walkableCell) {
+				_targetData = {
+					x: walkableCell.x,
+					y: walkableCell.y,
+					map: target.map,
+					displayName: displayName
+				};
+				this.findPath(options.startX, options.startY, _targetData.x, _targetData.y);
+			} else {
+				this.clear();
+			}
+		});
+	}
+};
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(Navigation);

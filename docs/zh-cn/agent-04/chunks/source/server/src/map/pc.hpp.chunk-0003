@@ -1,0 +1,500 @@
+	AMMO_DAGGER,
+	AMMO_BULLET,
+	AMMO_SHELL,
+	AMMO_GRENADE,
+	AMMO_SHURIKEN,
+	AMMO_KUNAI,
+	AMMO_CANNONBALL,
+	AMMO_THROWWEAPON,
+	MAX_AMMO_TYPE
+};
+
+enum e_card_type : uint8 {
+	CARD_NORMAL = 0,
+	CARD_ENCHANT,
+	MAX_CARD_TYPE
+};
+
+enum idletime_option {
+	IDLE_WALK          = 0x0001,
+	IDLE_USESKILLTOID  = 0x0002,
+	IDLE_USESKILLTOPOS = 0x0004,
+	IDLE_USEITEM       = 0x0008,
+	IDLE_ATTACK        = 0x0010,
+	IDLE_CHAT          = 0x0020,
+	IDLE_SIT           = 0x0040,
+	IDLE_EMOTION       = 0x0080,
+	IDLE_DROPITEM      = 0x0100,
+	IDLE_ATCOMMAND     = 0x0200,
+	IDLE_NPC_CLOSE     = 0x0400,
+	IDLE_NPC_INPUT     = 0x0800,
+	IDLE_NPC_MENU      = 0x1000,
+	IDLE_NPC_NEXT      = 0x2000,
+	IDLE_NPC_PROGRESS  = 0x4000,
+};
+
+enum adopt_responses {
+	ADOPT_ALLOWED = 0,
+	ADOPT_ALREADY_ADOPTED,
+	ADOPT_MARRIED_AND_PARTY,
+	ADOPT_EQUIP_RINGS,
+	ADOPT_NOT_NOVICE,
+	ADOPT_CHARACTER_NOT_FOUND,
+	ADOPT_MORE_CHILDREN,
+	ADOPT_LEVEL_70,
+	ADOPT_MARRIED,
+};
+
+enum item_check {
+	ITMCHK_NONE      = 0x0,
+	ITMCHK_INVENTORY = 0x1,
+	ITMCHK_CART      = 0x2,
+	ITMCHK_STORAGE   = 0x4,
+	ITMCHK_ALL       = ITMCHK_INVENTORY|ITMCHK_CART|ITMCHK_STORAGE,
+};
+
+enum e_penalty_type : uint16{
+	PENALTY_NONE,
+	PENALTY_EXP,
+	PENALTY_DROP,
+	PENALTY_MVP_EXP,
+	PENALTY_MVP_DROP,
+	PENALTY_MAX
+};
+
+struct s_penalty{
+	e_penalty_type type;
+	uint16 rate[MAX_LEVEL * 2 - 1];
+};
+
+class PenaltyDatabase : public TypesafeYamlDatabase<uint16, s_penalty> {
+public:
+	PenaltyDatabase() : TypesafeYamlDatabase( "PENALTY_DB", 1 ){
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+	void loadingFinished() override;
+};
+
+struct s_job_info {
+	uint16 job_id;
+	std::vector<uint32> base_hp;
+	std::vector<uint32> base_sp;
+	std::vector<uint32> base_ap;
+	uint32 hp_factor;
+	uint32 hp_increase;
+	uint32 sp_factor;
+	uint32 sp_increase;
+	uint32 ap_factor;
+	uint32 ap_increase;
+	uint32 max_weight_base;
+	std::vector<std::array<uint16,PARAM_MAX>> job_bonus;
+	std::vector<int16> aspd_base;
+	t_exp base_exp[MAX_LEVEL], job_exp[MAX_LEVEL];
+	uint16 max_base_level, max_job_level;
+	uint16 max_param[PARAM_MAX];
+	struct s_job_noenter_map {
+		uint32 zone;
+		uint8 group_lv;
+	} noenter_map;
+	std::vector<uint16> alternate_outfits;
+};
+
+class JobDatabase : public TypesafeCachedYamlDatabase<uint16, s_job_info> {
+public:
+	JobDatabase() : TypesafeCachedYamlDatabase( "JOB_STATS", 4, 2 ){
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+	void loadingFinished() override;
+
+	// Additional
+	uint32 get_maxBaseLv(uint16 job_id) const;
+	uint32 get_maxJobLv(uint16 job_id) const;
+	t_exp get_baseExp(uint16 job_id, uint32 level) const;
+	t_exp get_jobExp(uint16 job_id, uint32 level) const;
+	int32 get_maxWeight(uint16 job_id) const;
+
+private:
+	uint32 calc_basehp( const uint16 level, const std::shared_ptr<s_job_info>& job );
+	uint32 calc_basesp( const uint16 level, const std::shared_ptr<s_job_info>& job );
+	uint32 calc_baseap( const uint16 level, const std::shared_ptr<s_job_info>& job );
+};
+
+extern JobDatabase job_db;
+
+#define EQP_WEAPON EQP_HAND_R
+#define EQP_SHIELD EQP_HAND_L
+#define EQP_ARMS (EQP_HAND_R|EQP_HAND_L)
+#define EQP_HELM (EQP_HEAD_LOW|EQP_HEAD_MID|EQP_HEAD_TOP)
+#define EQP_ACC (EQP_ACC_L|EQP_ACC_R)
+#define EQP_COSTUME (EQP_COSTUME_HEAD_TOP|EQP_COSTUME_HEAD_MID|EQP_COSTUME_HEAD_LOW|EQP_COSTUME_GARMENT)
+#define EQP_COSTUME_HELM (EQP_COSTUME_HEAD_TOP|EQP_COSTUME_HEAD_MID|EQP_COSTUME_HEAD_LOW)
+#define EQP_SHADOW_GEAR (EQP_SHADOW_ARMOR|EQP_SHADOW_WEAPON|EQP_SHADOW_SHIELD|EQP_SHADOW_SHOES|EQP_SHADOW_ACC_R|EQP_SHADOW_ACC_L)
+#define EQP_SHADOW_ACC (EQP_SHADOW_ACC_R|EQP_SHADOW_ACC_L)
+#define EQP_SHADOW_ARMS (EQP_SHADOW_WEAPON|EQP_SHADOW_SHIELD)
+
+/// Equip positions that use a visible sprite
+#if PACKETVER < 20110111
+	#define EQP_VISIBLE EQP_HELM
+#else
+	#define EQP_VISIBLE (EQP_HELM|EQP_GARMENT|EQP_COSTUME)
+#endif
+
+#define pc_setdead(sd)        ( (sd)->state.dead_sit = (sd)->vd.dead_sit = 1 )
+#define pc_setsit(sd)         { unit_stop_walking( (sd), USW_FIXPOS|USW_MOVE_FULL_CELL ); unit_stop_attack( (sd) ); (sd)->state.dead_sit = (sd)->vd.dead_sit = 2; }
+#define pc_isdead(sd)         ( (sd)->state.dead_sit == 1 )
+#define pc_issit(sd)          ( (sd)->vd.dead_sit == 2 )
+#define pc_isidle_party(sd)   ( (sd)->chatID || (sd)->state.vending || (sd)->state.buyingstore || DIFF_TICK(last_tick, (sd)->idletime) >= battle_config.idle_no_share )
+#define pc_isidle_hom(sd)     ( (sd)->hd && ( (sd)->chatID || (sd)->state.vending || (sd)->state.buyingstore || DIFF_TICK(last_tick, (sd)->idletime_hom) >= battle_config.hom_idle_no_share ) )
+#define pc_isidle_mer(sd)     ( (sd)->md && ( (sd)->chatID || (sd)->state.vending || (sd)->state.buyingstore || DIFF_TICK(last_tick, (sd)->idletime_mer) >= battle_config.mer_idle_no_share ) )
+#define pc_istrading(sd)      ( (sd)->npc_id || (sd)->state.vending || (sd)->state.buyingstore || (sd)->state.trading )
+static bool pc_cant_act2( map_session_data* sd ){
+	return sd->state.vending || sd->state.buyingstore || (sd->sc.opt1 && sd->sc.opt1 != OPT1_BURNING)
+		|| sd->state.trading || sd->state.storage_flag || sd->state.prevend || sd->state.refineui_open
+		|| sd->state.stylist_open || sd->state.inventory_expansion_confirmation || sd->npc_shopid
+		|| sd->state.barter_open || sd->state.barter_extended_open
+		|| sd->state.laphine_synthesis || sd->state.laphine_upgrade
+		|| sd->state.roulette_open || sd->state.enchantgrade_open
+		|| sd->state.item_reform || sd->state.item_enchant_index;
+}
+// equals pc_cant_act2 and additionally checks for chat rooms and npcs
+static bool pc_cant_act( map_session_data* sd ){
+	return sd->npc_id || sd->chatID || pc_cant_act2( sd );
+}
+
+#define pc_setdir(sd,b,h)     ( (sd)->ud.dir = (b) ,(sd)->head_dir = (h) )
+#define pc_setchatid(sd,n)    ( (sd)->chatID = n )
+#define pc_ishiding(sd)       ( (sd)->sc.option&(OPTION_HIDE|OPTION_CLOAK|OPTION_CHASEWALK) )
+#define pc_iscloaking(sd)     ( !((sd)->sc.option&OPTION_CHASEWALK) && ((sd)->sc.option&OPTION_CLOAK) )
+#define pc_ischasewalk(sd)    ( (sd)->sc.option&OPTION_CHASEWALK )
+#ifdef VIP_ENABLE
+	#define pc_isvip(sd)      ( (sd)->vip.enabled ? true : false )
+#else
+	#define pc_isvip(sd)      ( false )
+#endif
+#ifdef NEW_CARTS
+	#define pc_iscarton(sd)       ( (sd)->sc.getSCE(SC_PUSH_CART) )
+#else
+	#define pc_iscarton(sd)       ( (sd)->sc.option&OPTION_CART )
+#endif
+
+#define pc_isfalcon(sd)       ( (sd)->sc.option&OPTION_FALCON )
+#define pc_isriding(sd)       ( (sd)->sc.option&OPTION_RIDING )
+#define pc_isinvisible(sd)    ( (sd)->sc.option&OPTION_INVISIBLE )
+
+static inline bool pc_hasprogress(map_session_data *sd, enum e_wip_block progress) {
+	return sd == nullptr || (sd->state.workinprogress&progress) == progress;
+}
+
+uint16 pc_maxparameter( const map_session_data* sd, e_params param );
+int16 pc_maxaspd( const map_session_data* sd );
+
+/**
+ * Ranger
+ **/
+#define pc_iswug(sd)       ( (sd)->sc.option&OPTION_WUG )
+#define pc_isridingwug(sd) ( (sd)->sc.option&OPTION_WUGRIDER )
+// Mechanic Magic Gear
+enum e_mado_type : uint16 {
+	MADO_ROBOT = 0x00,
+	MADO_UNUSED,
+	MADO_SUIT,
+	MADO_MAX
+};
+
+#define pc_ismadogear(sd) ( (sd)->sc.option&OPTION_MADOGEAR )
+// Rune Knight Dragon
+#define pc_isridingdragon(sd) ( (sd)->sc.option&OPTION_DRAGON )
+
+//Weapon check considering dual wielding.
+#define pc_check_weapontype(sd, type) ((type)&((sd)->status.weapon < MAX_WEAPON_TYPE? \
+	1<<(sd)->status.weapon:(1<<(sd)->weapontype1)|(1<<(sd)->weapontype2)|(1<<(sd)->status.weapon)))
+//Checks if the given class value corresponds to a player class. [Skotlex]
+//JOB_NOVICE isn't checked for class_ is supposed to be unsigned
+#define pcdb_checkid_sub(class_) ( \
+	( (class_) < JOB_MAX_BASIC ) || \
+	( (class_) >= JOB_NOVICE_HIGH			&& (class_) <= JOB_DARK_COLLECTOR ) || \
+	( (class_) >= JOB_RUNE_KNIGHT			&& (class_) <= JOB_MECHANIC_T2    ) || \
+	( (class_) >= JOB_BABY_RUNE_KNIGHT		&& (class_) <= JOB_BABY_MECHANIC2 ) || \
+	( (class_) >= JOB_SUPER_NOVICE_E		&& (class_) <= JOB_SUPER_BABY_E   ) || \
+	( (class_) >= JOB_KAGEROU				&& (class_) <= JOB_OBORO          ) || \
+	  (class_) == JOB_REBELLION				|| (class_) == JOB_SUMMONER         || \
+	  (class_) == JOB_BABY_SUMMONER			|| \
+	( (class_) >= JOB_BABY_NINJA			&& (class_) <= JOB_BABY_REBELLION ) || \
+	( (class_) >= JOB_BABY_STAR_GLADIATOR2	&& (class_) <= JOB_BABY_STAR_EMPEROR2 ) || \
+	( (class_) >= JOB_DRAGON_KNIGHT			&& (class_) <= JOB_TROUVERE       ) || \
+	( (class_) >= JOB_WINDHAWK2				&& (class_) <= JOB_IMPERIAL_GUARD2 ) || \
+	( (class_) >= JOB_SKY_EMPEROR			&& (class_) <= JOB_SPIRIT_HANDLER ) || \
+	  (class_) == JOB_SKY_EMPEROR2 \
+)
+#define pcdb_checkid(class_) pcdb_checkid_sub((uint32)class_)
+
+// clientside display macros (values to the left/right of the "+")
+#ifdef RENEWAL
+	#define pc_leftside_atk(sd) ((sd)->battle_status.batk)
+	#define pc_rightside_atk(sd) ((sd)->battle_status.watk + (sd)->battle_status.watk2 + (sd)->battle_status.eatk)
+	#define pc_leftside_def(sd) ((sd)->battle_status.def2)
+	#define pc_rightside_def(sd) ((sd)->battle_status.def)
+	#define pc_leftside_mdef(sd) ((sd)->battle_status.mdef2)
+	#define pc_rightside_mdef(sd) ((sd)->battle_status.mdef)
+	#define pc_leftside_matk(sd) (status_base_matk_min((sd), status_get_status_data(*(sd)), (sd)->status.base_level))
+#define pc_rightside_matk(sd) \
+	(\
+	(sd)->battle_status.rhw.matk + \
+	(sd)->battle_status.lhw.matk + \
+	(sd)->bonus.ematk + \
+	status_calc_consumablematk(&(sd)->sc, 0) + \
+	status_calc_pseudobuff_matk((sd), &(sd)->sc, 0) \
+	)
+#else
+	#define pc_leftside_atk(sd) ((sd)->battle_status.batk + (sd)->battle_status.rhw.atk + (sd)->battle_status.lhw.atk)
+	#define pc_rightside_atk(sd) ((sd)->battle_status.rhw.atk2 + (sd)->battle_status.lhw.atk2)
+	#define pc_leftside_def(sd) ((sd)->battle_status.def)
+	#define pc_rightside_def(sd) ((sd)->battle_status.def2)
+	#define pc_leftside_mdef(sd) ((sd)->battle_status.mdef)
+	#define pc_rightside_mdef(sd) ( (sd)->battle_status.mdef2 - ((sd)->battle_status.vit / 2) )
+#define pc_leftside_matk(sd) \
+    (\
+    ((sd)->sc.getSCE(SC_MAGICPOWER) && (sd)->sc.getSCE(SC_MAGICPOWER)->val4) \
+		?((sd)->battle_status.matk_min * 100 + 50) / ((sd)->sc.getSCE(SC_MAGICPOWER)->val3+100) \
+        :(sd)->battle_status.matk_min \
+    )
+#define pc_rightside_matk(sd) \
+    (\
+    ((sd)->sc.getSCE(SC_MAGICPOWER) && (sd)->sc.getSCE(SC_MAGICPOWER)->val4) \
+		?((sd)->battle_status.matk_max * 100 + 50) / ((sd)->sc.getSCE(SC_MAGICPOWER)->val3+100) \
+        :(sd)->battle_status.matk_max \
+    )
+#endif
+
+struct s_attendance_reward {
+	t_itemid item_id;
+	uint16 amount;
+};
+
+struct s_attendance_period {
+	uint32 start;
+	uint32 end;
+	std::map<uint32, std::shared_ptr<struct s_attendance_reward>> rewards;
+};
+
+class AttendanceDatabase : public TypesafeYamlDatabase<uint32, s_attendance_period> {
+public:
+	AttendanceDatabase() : TypesafeYamlDatabase("ATTENDANCE_DB", 1) {
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+};
+
+extern AttendanceDatabase attendance_db;
+
+struct s_reputation{
+	int64 id;
+	std::string name;
+	std::string variable;
+	int64 minimum;
+	int64 maximum;
+#ifdef MAP_GENERATOR
+	enum e_visibility {ALWAYS, NEVER, EXIST} visibility;
+#endif
+};
+
+class ReputationDatabase : public TypesafeYamlDatabase<int64, s_reputation>{
+public:
+	ReputationDatabase() : TypesafeYamlDatabase( "REPUTATION_DB", 1 ){
+#ifdef MAP_GENERATOR
+	setGenerator(true);
+#endif
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode( const ryml::NodeRef& node ) override;
+};
+
+extern ReputationDatabase reputation_db;
+
+struct s_reputationgroup {
+	int64 id;
+	std::string script_name;
+	std::string name;
+	std::vector<int64> reputations;
+};
+
+class ReputationGroupDatabase : public TypesafeYamlDatabase<int64, s_reputationgroup> {
+public:
+	ReputationGroupDatabase() : TypesafeYamlDatabase("REPUTATION_GROUP_DB", 1) {
+#ifdef MAP_GENERATOR
+	setGenerator(true);
+#endif
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+};
+
+extern ReputationGroupDatabase reputationgroup_db;
+
+struct s_statpoint_entry{
+	uint16 level;
+	uint32 statpoints;
+	uint32 traitpoints;
+};
+
+class PlayerStatPointDatabase : public TypesafeCachedYamlDatabase<uint16, s_statpoint_entry>{
+public:
+	PlayerStatPointDatabase() : TypesafeCachedYamlDatabase("STATPOINT_DB", 2, 1) {
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+	void loadingFinished() override;
+
+	// Additional
+	uint32 pc_gets_status_point(uint16 level) const;
+	uint32 get_table_point(uint16 level) const;
+	uint32 pc_gets_trait_point(uint16 level) const;
+	uint32 get_trait_table_point(uint16 level) const;
+};
+
+extern PlayerStatPointDatabase statpoint_db;
+
+/// Enum of Summoner Power of 
+enum e_summoner_power_type {
+	SUMMONER_POWER_LAND = 0,
+	SUMMONER_POWER_LIFE,
+	SUMMONER_POWER_SEA,
+};
+
+void pc_set_reg_load(bool val);
+int32 pc_class2idx(int32 class_);
+int32 pc_get_group_level( const map_session_data* sd );
+int32 pc_get_group_id( const map_session_data* sd );
+bool pc_can_sell_item( const map_session_data* sd, const item* item, enum npc_subtype shoptype );
+bool pc_can_give_items( const map_session_data* sd );
+bool pc_can_give_bounded_items( const map_session_data* sd );
+bool pc_can_trade_item( const map_session_data* sd, int32 index );
+
+bool pc_can_use_command( const map_session_data* sd, const char *command, AtCommandType type );
+bool pc_has_permission( const map_session_data* sd, e_pc_permission permission );
+bool pc_should_log_commands( const map_session_data* sd );
+
+void pc_setrestartvalue(map_session_data *sd, char type);
+void pc_makesavestatus(map_session_data *sd);
+void pc_respawn(map_session_data* sd, clr_type clrtype);
+void pc_setnewpc(map_session_data *sd, uint32 account_id, uint32 char_id, int32 login_id1, t_tick client_tick, int32 sex, int32 fd);
+bool pc_authok(map_session_data *sd, uint32 login_id2, time_t expiration_time, int32 group_id, struct mmo_charstatus *st, bool changing_mapservers);
+void pc_authfail(map_session_data *sd);
+void pc_reg_received(map_session_data *sd);
+void pc_close_npc(map_session_data *sd,int32 flag);
+TIMER_FUNC(pc_close_npc_timer);
+
+void pc_setequipindex( map_session_data *sd );
+uint8 pc_isequip( const map_session_data* sd, int32 n );
+int32 pc_equippoint( const map_session_data* sd, int32 n );
+int32 pc_equippoint_sub( const map_session_data* sd, const item_data* id );
+void pc_setinventorydata( map_session_data& sd );
+
+int32 pc_get_skillcooldown( const map_session_data* sd, uint16 skill_id, uint16 skill_lv );
+uint8 pc_checkskill( const map_session_data* sd,uint16 skill_id );
+e_skill_flag pc_checkskill_flag( const map_session_data &sd, uint16 skill_id );
+uint8 pc_checkskill_summoner( const map_session_data* sd, e_summoner_power_type type);
+uint8 pc_checkskill_imperial_guard( const map_session_data* sd, int16 flag);
+int16 pc_checkequip( const map_session_data* sd, int32 pos, bool checkall = false );
+bool pc_checkequip2( const map_session_data* sd, t_itemid nameid, int32 min, int32 max );
+
+void pc_scdata_received(map_session_data *sd);
+void pc_check_expiration(map_session_data *sd);
+TIMER_FUNC(pc_expiration_timer);
+TIMER_FUNC(pc_global_expiration_timer);
+void pc_expire_check(map_session_data *sd);
+
+void pc_calc_skilltree(map_session_data *sd);
+uint64 pc_calc_skilltree_normalize_job(map_session_data *sd);
+void pc_clean_skilltree(map_session_data *sd);
+
+#define pc_checkoverhp(sd) ((sd)->battle_status.hp == (sd)->battle_status.max_hp)
+#define pc_checkoversp(sd) ((sd)->battle_status.sp == (sd)->battle_status.max_sp)
+
+enum e_setpos{
+	SETPOS_OK = 0,
+	SETPOS_MAPINDEX = 1,
+	SETPOS_NO_MAPSERVER = 2,
+	SETPOS_AUTOTRADE = 3
+};
+
+enum e_setpos pc_setpos(map_session_data* sd, uint16 mapindex, int32 x, int32 y, clr_type clrtype);
+enum e_setpos pc_setpos_savepoint( map_session_data& sd, clr_type clrtype = CLR_TELEPORT );
+void pc_setsavepoint(map_session_data *sd, int16 mapindex,int32 x,int32 y);
+char pc_randomwarp(map_session_data *sd,clr_type type,bool ignore_mapflag = false);
+bool pc_memo(map_session_data* sd, int32 pos);
+
+char pc_checkadditem( const map_session_data* sd, t_itemid nameid, int32 amount );
+uint8 pc_inventoryblank( const map_session_data* sd );
+int16 pc_search_inventory( const map_session_data* sd, t_itemid nameid);
+char pc_payzeny(map_session_data *sd, int32 zeny, enum e_log_pick_type type, uint32 log_charid = 0);
+enum e_additem_result pc_additem(map_session_data *sd, struct item *item, int32 amount, e_log_pick_type log_type, bool favorite=false);
+char pc_getzeny(map_session_data *sd, int32 zeny, enum e_log_pick_type type, uint32 log_charid = 0);
+char pc_delitem(map_session_data *sd, int32 n, int32 amount, int32 type, int16 reason, e_log_pick_type log_type);
+
+uint64 pc_generate_unique_id(map_session_data *sd);
+
+//Bound items
+int32 pc_bound_chk( const map_session_data* sd, enum bound_type type, int32* idxlist );
+
+// Special Shop System
+int32 pc_paycash( map_session_data *sd, int32 price, int32 points, e_log_pick_type type );
+int32 pc_getcash( map_session_data *sd, int32 cash, int32 points, e_log_pick_type type );
+
+enum e_additem_result pc_cart_additem(map_session_data *sd,struct item *item_data,int32 amount,e_log_pick_type log_type);
+void pc_cart_delitem(map_session_data *sd,int32 n,int32 amount,int32 type,e_log_pick_type log_type);
+void pc_putitemtocart(map_session_data *sd,int32 idx,int32 amount);
+bool pc_getitemfromcart(map_session_data *sd,int32 idx,int32 amount);
+int32 pc_cartitem_amount(map_session_data *sd,int32 idx,int32 amount);
+
+bool pc_takeitem(map_session_data *sd,flooritem_data *fitem);
+bool pc_dropitem(map_session_data *sd,int32 n,int32 amount);
+
+bool pc_isequipped(map_session_data *sd, t_itemid nameid);
+enum adopt_responses pc_try_adopt( const map_session_data* p1_sd, const map_session_data* p2_sd, const map_session_data* b_sd);
+bool pc_adoption(map_session_data *p1_sd, map_session_data *p2_sd, map_session_data *b_sd);
+
+uint16 pc_getpercentweight(const map_session_data& sd, uint32 weight = 0);
+void pc_updateweightstatus(map_session_data& sd);
+
+bool pc_addautobonus(std::vector<std::shared_ptr<s_autobonus>> &bonus, const char *script, int16 rate, uint32 dur, uint16 atk_type, const char *o_script, uint32 pos, bool onskill);
+void pc_exeautobonus(map_session_data &sd, std::vector<std::shared_ptr<s_autobonus>> *bonus, std::shared_ptr<s_autobonus> autobonus);
+TIMER_FUNC(pc_endautobonus);
+void pc_delautobonus(map_session_data &sd, std::vector<std::shared_ptr<s_autobonus>> &bonus, bool restore);
+
+void pc_bonus(map_session_data *sd, int32 type, int32 val);
+void pc_bonus2(map_session_data *sd, int32 type, int32 type2, int32 val);
+void pc_bonus3(map_session_data *sd, int32 type, int32 type2, int32 type3, int32 val);
+void pc_bonus4(map_session_data *sd, int32 type, int32 type2, int32 type3, int32 type4, int32 val);
+void pc_bonus5(map_session_data *sd, int32 type, int32 type2, int32 type3, int32 type4, int32 type5, int32 val);
+
+enum e_addskill_type {
+	ADDSKILL_PERMANENT			= 0,	///< Permanent skill. Remove the skill if level is 0
+	ADDSKILL_TEMP				= 1,	///< Temporary skill. If player learned the skill and the given level is higher, level will be replaced and learned level will be palced in skill flag. `flag = learned + SKILL_FLAG_REPLACED_LV_0; learned_level = level;`
+	ADDSKILL_TEMP_ADDLEVEL		= 2,	///< Like PCSKILL_TEMP, except the level will be stacked. `learned_level += level`. The flag is used to store original learned level
+	ADDSKILL_PERMANENT_GRANTED	= 3,	///< Grant permanent skill, ignore skill tree and learned level
+};
+
+bool pc_skill(map_session_data *sd, uint16 skill_id, int32 level, enum e_addskill_type type);
+bool pc_skill_plagiarism(map_session_data &sd, uint16 skill_id, uint16 skill_lv);
+bool pc_skill_plagiarism_reset(map_session_data &sd, uint8 type);
+
+int32 pc_insert_card(map_session_data *sd,int32 idx_card,int32 idx_equip);
+
+int32 pc_identifyall(map_session_data *sd, bool identify_item);
+
+bool pc_steal_item(map_session_data *sd,block_list *bl, uint16 skill_lv);
+
+int32 pc_modifybuyvalue( const map_session_data*, int32 orig_value );

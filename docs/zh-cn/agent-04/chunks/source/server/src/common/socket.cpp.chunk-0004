@@ -1,0 +1,262 @@
+		}
+		else
+		{
+			int32 pos;
+			for( pos=0; pos < ic.ifc_len && num < max; )
+			{
+				struct ifreq* ir = (struct ifreq*)(buf+pos);
+				struct sockaddr_in*a = (struct sockaddr_in*) &(ir->ifr_addr);
+				if( a->sin_family == AF_INET ){
+					ad = ntohl(a->sin_addr.s_addr);
+					if( ad != INADDR_LOOPBACK && ad != INADDR_ANY )
+						ips[num++] = (uint32)ad;
+				}
+	#if (defined(BSD) && BSD >= 199103) || defined(_AIX) || defined(__APPLE__)
+				pos += ir->ifr_addr.sa_len + sizeof(ir->ifr_name);
+	#else// not AIX or APPLE
+				pos += sizeof(struct ifreq);
+	#endif//not AIX or APPLE
+			}
+		}
+		sClose(fd);
+	}
+#endif // not W32
+
+	// Use loopback if no ips are found
+	if( num == 0 )
+		ips[num++] = (uint32)INADDR_LOOPBACK;
+
+	return num;
+}
+
+void socket_init(void)
+{
+	const char *SOCKET_CONF_FILENAME = "conf/packet_athena.conf";
+	uint32 rlim_cur = MAXCONN;
+
+#ifdef WIN32
+	{// Start up windows networking
+		WSADATA wsaData;
+		WORD wVersionRequested = MAKEWORD(2, 0);
+		if( WSAStartup(wVersionRequested, &wsaData) != 0 )
+		{
+			ShowError("socket_init: WinSock not available!\n");
+			return;
+		}
+		if( LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 0 )
+		{
+			ShowError("socket_init: WinSock version mismatch (2.0 or compatible required)!\n");
+			return;
+		}
+	}
+#elif defined(HAVE_SETRLIMIT) && !defined(CYGWIN)
+	// NOTE: getrlimit and setrlimit have bogus behaviour in cygwin.
+	//       "Number of fds is virtually unlimited in cygwin" (sys/param.h)
+	{// set socket limit to MAXCONN
+		struct rlimit rlp;
+		if( 0 == getrlimit(RLIMIT_NOFILE, &rlp) )
+		{
+			rlp.rlim_cur = MAXCONN;
+			if( 0 != setrlimit(RLIMIT_NOFILE, &rlp) )
+			{// failed, try setting the maximum too (permission to change system limits is required)
+				rlp.rlim_max = MAXCONN;
+				if( 0 != setrlimit(RLIMIT_NOFILE, &rlp) )
+				{// failed
+					const char *errmsg = error_msg();
+					int32 rlim_ori;
+					// set to maximum allowed
+					getrlimit(RLIMIT_NOFILE, &rlp);
+					rlim_ori = (int32)rlp.rlim_cur;
+					rlp.rlim_cur = rlp.rlim_max;
+					setrlimit(RLIMIT_NOFILE, &rlp);
+					// report limit
+					getrlimit(RLIMIT_NOFILE, &rlp);
+					rlim_cur = rlp.rlim_cur;
+					ShowWarning("socket_init: failed to set socket limit to %d, setting to maximum allowed (original limit=%d, current limit=%d, maximum allowed=%d, %s).\n", MAXCONN, rlim_ori, (int32)rlp.rlim_cur, (int32)rlp.rlim_max, errmsg);
+				}
+			}
+		}
+	}
+#endif
+
+	// Get initial local ips
+	naddr_ = socket_getips(addr_,16);
+
+#ifndef SOCKET_EPOLL
+	// Select based Event Dispatcher:
+	sFD_ZERO(&readfds);
+	ShowInfo( "Server uses '" CL_WHITE "select" CL_RESET "' as event dispatcher\n" );
+#else
+	// Epoll based Event Dispatcher
+	epfd = epoll_create( MAXCONN ); // 2.6.8 or newer ignores the expected socket amount argument
+
+	if( epfd == SOCKET_ERROR ){
+		ShowError( "Failed to create epoll event dispatcher: %s\n", error_msg() );
+		exit( EXIT_FAILURE );
+	}
+
+	memset( &epevent, 0x00, sizeof( struct epoll_event ) );
+	epevents = (struct epoll_event *)aCalloc( epoll_maxevents, sizeof( struct epoll_event ) );
+
+	ShowInfo( "Server uses '" CL_WHITE "epoll" CL_RESET "' with up to " CL_WHITE "%d" CL_RESET " events per cycle as event dispatcher\n", epoll_maxevents );
+#endif
+
+#if defined(SEND_SHORTLIST)
+	memset(send_shortlist_set, 0, sizeof(send_shortlist_set));
+#endif
+
+	socket_config_read(SOCKET_CONF_FILENAME);
+
+	// initialise last send-receive tick
+	last_tick = time(nullptr);
+
+	// session[0] is now currently used for disconnected sessions of the map server, and as such,
+	// should hold enough buffer (it is a vacuum so to speak) as it is never flushed. [Skotlex]
+	create_session(0, null_recv, null_send, null_parse); //FIXME this is causing leak
+
+#ifndef MINICORE
+	// Delete old connection history every 5 minutes
+	memset(connect_history, 0, sizeof(connect_history));
+	add_timer_func_list(connect_check_clear, "connect_check_clear");
+	add_timer_interval(gettick()+1000, connect_check_clear, 0, 0, 5*60*1000);
+#endif
+
+	ShowInfo("Server supports up to '" CL_WHITE "%u" CL_RESET "' concurrent connections.\n", rlim_cur);
+}
+
+
+bool session_isValid(int32 fd)
+{
+	return ( fd > 0 && fd < MAXCONN && session[fd] != nullptr );
+}
+
+bool session_isActive(int32 fd)
+{
+	return ( session_isValid(fd) && !session[fd]->flag.eof );
+}
+
+#ifdef HAVE_GETADDRINFO
+uint32_t host2ip(const char* hostname)
+{
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;  // IPv4 address
+    hints.ai_socktype = SOCK_STREAM;
+
+    int32 err = getaddrinfo(hostname, nullptr, &hints, &res);
+    if (err != 0 || res == nullptr)
+    {
+        return 0;  // Return 0 if there's an error resolving the hostname
+    }
+
+    struct sockaddr_in* sockaddr_in = reinterpret_cast<struct sockaddr_in *>(res->ai_addr);
+    uint32_t ip = ntohl(sockaddr_in->sin_addr.s_addr);
+    freeaddrinfo(res);  // Don't forget to free the memory used by getaddrinfo
+
+    return ip;
+}
+#else
+// Resolves hostname into a numeric ip.
+uint32 host2ip(const char* hostname)
+{
+	struct hostent* h = gethostbyname(hostname);
+	return (h != nullptr) ? ntohl(*(uint32*)h->h_addr) : 0;
+}
+#endif
+
+// Converts a numeric ip into a dot-formatted string.
+// Result is placed either into a user-provided buffer or a static system buffer.
+const char* ip2str(uint32 ip, char ip_str[16])
+{
+	struct in_addr addr;
+	addr.s_addr = htonl(ip);
+	return (ip_str == nullptr) ? inet_ntoa(addr) : strncpy(ip_str, inet_ntoa(addr), 16);
+}
+
+// Converts a dot-formatted ip string into a numeric ip.
+uint32 str2ip(const char* ip_str)
+{
+	return ntohl(inet_addr(ip_str));
+}
+
+// Reorders bytes from network to little endian (Windows).
+// Necessary for sending port numbers to the RO client until Gravity notices that they forgot ntohs() calls.
+uint16 ntows(uint16 netshort)
+{
+	return ((netshort & 0xFF) << 8) | ((netshort & 0xFF00) >> 8);
+}
+
+#ifdef SEND_SHORTLIST
+// Add a fd to the shortlist so that it'll be recognized as a fd that needs
+// sending or eof handling.
+void send_shortlist_add_fd(int32 fd)
+{
+	int32 i;
+	int32 bit;
+
+	if( !session_isValid(fd) )
+		return;// out of range
+
+	i = fd/32;
+	bit = fd%32;
+
+	if( (send_shortlist_set[i]>>bit)&1 )
+		return;// already in the list
+
+	if( send_shortlist_count >= ARRAYLENGTH(send_shortlist_array) )
+	{
+		ShowDebug("send_shortlist_add_fd: shortlist is full, ignoring... (fd=%d shortlist.count=%" PRIuPTR " shortlist.length=%d)\n", fd, send_shortlist_count, ARRAYLENGTH(send_shortlist_array));
+		return;
+	}
+
+	// set the bit
+	send_shortlist_set[i] |= 1<<bit;
+	// Add to the end of the shortlist array.
+	send_shortlist_array[send_shortlist_count++] = fd;
+}
+
+// Do pending network sends and eof handling from the shortlist.
+void send_shortlist_do_sends()
+{
+	for( int32 i = static_cast<int32>( send_shortlist_count - 1 ); i >= 0; --i ){
+		int32 fd = send_shortlist_array[i];
+		int32 idx = fd/32;
+		int32 bit = fd%32;
+
+		// Remove fd from shortlist, move the last fd to the current position
+		--send_shortlist_count;
+		send_shortlist_array[i] = send_shortlist_array[send_shortlist_count];
+		send_shortlist_array[send_shortlist_count] = 0;
+
+		if( fd <= 0 || fd >= MAXCONN )
+		{
+			ShowDebug("send_shortlist_do_sends: fd is out of range, corrupted memory? (fd=%d)\n", fd);
+			continue;
+		}
+		if( ((send_shortlist_set[idx]>>bit)&1) == 0 )
+		{
+			ShowDebug("send_shortlist_do_sends: fd is not set, why is it in the shortlist? (fd=%d)\n", fd);
+			continue;
+		}
+		send_shortlist_set[idx]&=~(1<<bit);// unset fd
+		// If this session still exists, perform send operations on it and
+		// check for the eof state.
+		if( session[fd] )
+		{
+			// Send data
+			if( session[fd]->wdata_size )
+				session[fd]->func_send(fd);
+
+			// If it's been marked as eof, call the parse func on it so that
+			// the socket will be immediately closed.
+			if( session[fd]->flag.eof )
+				session[fd]->func_parse(fd);
+
+			// If the session still exists, is not eof and has things left to
+			// be sent from it we'll re-add it to the shortlist.
+			if( session_isActive(fd) && session[fd]->wdata_size )
+				send_shortlist_add_fd(fd);
+		}
+	}
+}
+#endif
