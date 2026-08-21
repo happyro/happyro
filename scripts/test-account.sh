@@ -20,7 +20,7 @@ umask 077
 if [[ ! -f "$account_file" ]]; then
 	mkdir -p "$(dirname "$account_file")"
 	{
-		printf 'TEST_ACCOUNT_USER=happytest\n'
+		printf 'TEST_ACCOUNT_USER=happyro1\n'
 		printf 'TEST_ACCOUNT_PASSWORD=happyro\n'
 		printf 'TEST_ACCOUNT_SEX=M\n'
 	} > "$account_file"
