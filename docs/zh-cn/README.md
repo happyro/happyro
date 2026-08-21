@@ -25,13 +25,13 @@
 
 ## 工作规则
 
-1. 以 translation-scan-baseline.md 和 translation-manifest.tsv 作为本轮翻译的初始基准。
-2. 每个 agent 只处理 docs/zh-cn/agent-xx/manifest.tsv 中预先分配的文件或切片。
-3. 超过 500 行的文件按原始行范围切成每片最多 500 行；翻译输出写入自己的 chunks/translated/。
-4. 翻译期间不修改正式源码、不合并切片，只更新自己的 agent-xx/ 目录（包括 chunks/source/ 和 chunks/translated/），不修改根目录总表，不提交代码。
-5. 完成翻译后，将实际修改过的文件或切片登记到自己的 modified-files.tsv，并更新 progress.md 中的已处理文件数和百分比；最终合并到 translated-files.tsv。
-6. 新增稳定译名、人名和保留原样项登记到自己的 terms-names.csv；最终合并到根目录 terms-names.csv。
-7. 四个 agent 全部完成后，严格校验切片范围和行数，统一合并源码、按去重后的源文件数更新 translation-progress.md，并重新运行扫描器。
+- 以 translation-scan-baseline.md 和 translation-manifest.tsv 作为本轮翻译的初始基准。
+- 每个 agent 只处理 docs/zh-cn/agent-xx/manifest.tsv 中预先分配的文件或切片。
+- 超过 500 行的文件按原始行范围切成每片最多 500 行；翻译输出写入自己的 chunks/translated/。
+- 翻译期间不修改正式源码、不合并切片，只更新自己的 agent-xx/ 目录（包括 chunks/source/ 和 chunks/translated/），不修改根目录总表，不提交代码。
+- 完成处理后，只将实际翻译完成的文件或切片登记到自己的 translated-files.tsv，并更新 progress.md 中的已处理文件数和百分比；最终合并到根目录 translated-files.tsv。
+- 新增稳定译名、人名和保留原样项登记到自己的 terms-names.csv；最终合并到根目录 terms-names.csv。
+- 四个 agent 全部完成后，严格校验切片范围和行数，统一合并源码、按去重后的已处理源文件数更新 translation-progress.md，并重新运行扫描器。
 
 翻译切片必须保持与原始切片相同的物理行数；边界不确定时保留原文，不删除或新增行。
 
@@ -43,20 +43,23 @@
 你是 HappyRO 中文翻译 Agent，独立负责 docs/zh-cn/agent-xx/manifest.tsv 中分配的全部工作单元。
 
 规则：
-1. 只处理自己的 manifest.tsv 中列出的工作单元；unit_type=file 表示完整小文件，unit_type=chunk 表示大文件切片，不处理其他 agent 的任务。
-2. 对 manifest.tsv 中的所有工作单元执行翻译：unit_type=file 使用 chunks/source/ 下对应的 .full 文件，unit_type=chunk 使用对应的 chunk 文件；结果一律写入 chunks/translated/，不要修改正式源码，不提交、不推送、不合并切片。
-3. unit_type=file 必须保留完整文件的物理行数；unit_type=chunk 必须保留该原始切片的物理行数；不确定的边界行保留原文，不删除或新增行。
-4. 完成后更新自己的 manifest.tsv、modified-files.tsv、progress.md 和 terms-names.csv。
-5. progress.md 以已处理源文件数为主；切片状态只用于恢复。
-6. 保留所有 ID、变量名、标签、占位符、颜色码、格式化参数和控制流。
-7. 中断后先读取自己的 progress.md 和 manifest.tsv，从第一个未完成工作单元继续。
-8. 不修改根目录 docs/zh-cn/ 总表，不运行 git commit、git push、reset 或 checkout。
+- 只处理自己的 manifest.tsv 中列出的工作单元；unit_type=file 表示完整小文件，unit_type=chunk 表示大文件切片，不处理其他 agent 的任务。
+- 对 manifest.tsv 中的所有工作单元逐一独立翻译：unit_type=file 使用 chunks/source/ 下对应的 .full 文件，unit_type=chunk 使用对应的 chunk 文件；不得使用脚本、批量翻译或预生成翻译内容。
+- 翻译结果一律手动写入对应的 chunks/translated/ 文件，不要修改正式源码，不提交、不推送、不合并切片。
+- unit_type=file 必须保留完整文件的物理行数；unit_type=chunk 必须保留该原始切片的物理行数；不确定的文本保留原文，不删除或新增行。
+- 代码注释、变量名、函数名、标签、协议字段和代码逻辑不翻译；agent 必须自行判断并在 manifest.tsv 的 notes 中记录跳过原因。
+- text_scope=unknown 必须结合文件内容完成分类，不得以 unknown 状态结束工作单元。
+- 实际完成翻译的文件或 chunk 才能写入 translated-files.tsv；只跳过代码或内部内容的工作单元不写入该表。
+- 完成后更新自己的 manifest.tsv、translated-files.tsv、progress.md 和 terms-names.csv。
+- progress.md 以已处理源文件数为主；一个文件的全部工作单元都得到已翻译、跳过或阻塞状态后，计为 1 个已处理文件。
+- 中断后先读取自己的 progress.md 和 manifest.tsv，从第一个未完成工作单元继续。
+- 不修改根目录 docs/zh-cn/ 总表，不运行 git commit、git push、reset 或 checkout。
 
 完成一个工作单元后立即保存进度。所有工作完成后报告：
 - 已处理源文件数；
-- 已完成、跳过、待复核、阻塞的工作单元；
+- 已翻译、跳过、阻塞的工作单元；
 - 新增术语数量；
-- 仍需人工处理的问题。
+- 仍需 agent 自行处理的问题。
 
-所有翻译必须遵守根仓库 AGENTS.md 中的仓库边界、标识符保护和分支规则。当前阶段不进行自动测试，全部源码翻译完成后由用户统一手动验收。
+所有翻译必须遵守根仓库 AGENTS.md 中的仓库边界、标识符保护和分支规则。agent 必须独立完成判断和翻译，不依赖人工逐项处理。
 ```

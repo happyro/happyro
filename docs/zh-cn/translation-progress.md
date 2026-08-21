@@ -47,10 +47,12 @@
 - translated-files.tsv 初始只保留表头；只有 agent 完成翻译后才新增记录。
 - terms-names.csv 初始只保留表头；不要预先导入旧术语。
 - translation-manifest.tsv 是冻结的全量候选工作单元和分配清单；翻译期间不重新分配文件或切片。
-- 每个 agent 只更新自己的 manifest.tsv、chunks/translated/、modified-files.tsv、progress.md 和 terms-names.csv。
+- 每个 agent 只更新自己的 manifest.tsv、chunks/translated/、translated-files.tsv、progress.md 和 terms-names.csv。
+- 状态只使用：待处理、进行中、已翻译、跳过、阻塞；不使用待复核或待验收。
+- text_scope=unknown 只能作为初始状态；agent 必须分类后才能结束工作单元。
 - 不用历史提交、旧批次编号或翻译行数推断完成状态；根目录进度以去重后的已处理源文件数为主，切片状态只用于恢复工作。
-- 当前阶段不进行自动测试，全部源码翻译完成后由用户统一手动验收。
+- 代码注释、代码逻辑和标识符由 agent 判断并保留原样，不依赖外部复核。
 
 ## 下一步
 
-从 C1 开始，按完整用户流程选择登录、角色、聊天、主界面、背包、装备等关联文件；完成一个可独立复核的批次后再登记记录。
+从 C1 开始，按完整用户流程选择登录、角色、聊天、主界面、背包、装备等关联文件；agent 完成一个可独立处理的批次后再登记记录。
