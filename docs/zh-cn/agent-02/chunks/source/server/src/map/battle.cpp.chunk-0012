@@ -1,0 +1,500 @@
+			}
+		}
+
+		//Card Fix for target (tsd), 2 is not added to the "left" flag meaning "target cards only"
+		if (tsd && skill_id != NJ_ISSEN && skill_id != GN_FIRE_EXPANSION_ACID) { // These skills will do a card fix later
+			std::bitset<NK_MAX> ignoreele_nk = nk;
+
+			ignoreele_nk.set(NK_IGNOREELEMENT);
+			wd.statusAtk += battle_calc_cardfix(BF_WEAPON, src, target, ignoreele_nk, right_element, left_element, wd.statusAtk, 0, wd.flag);
+			wd.weaponAtk += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.weaponAtk, 0, wd.flag);
+			wd.equipAtk += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.equipAtk, 0, wd.flag);
+			wd.masteryAtk += battle_calc_cardfix(BF_WEAPON, src, target, ignoreele_nk, right_element, left_element, wd.masteryAtk, 0, wd.flag);
+			if (is_attack_left_handed(src, skill_id)) {
+				wd.statusAtk2 += battle_calc_cardfix(BF_WEAPON, src, target, ignoreele_nk, right_element, left_element, wd.statusAtk2, 1, wd.flag);
+				wd.weaponAtk2 += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.weaponAtk2, 1, wd.flag);
+				wd.equipAtk2 += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.equipAtk2, 1, wd.flag);
+				wd.masteryAtk2 += battle_calc_cardfix(BF_WEAPON, src, target, ignoreele_nk, right_element, left_element, wd.masteryAtk2, 1, wd.flag);
+			}
+		}
+
+		// final attack bonuses that aren't affected by cards
+		battle_attack_sc_bonus(&wd, src, target, skill_id, skill_lv);
+
+		if (sd) { //monsters, homuns and pets have their damage computed directly
+			wd.damage = wd.statusAtk + wd.weaponAtk + wd.equipAtk + wd.percentAtk;
+			if( is_attack_left_handed( src, skill_id ) ){
+				wd.damage2 = wd.statusAtk2 + wd.weaponAtk2 + wd.equipAtk2 + wd.percentAtk2;
+			}
+			// Apply P.ATK mod
+			// But for Dragonbreaths it only applies if Dragonic Aura is skilled
+			if( ( skill_id != RK_DRAGONBREATH && skill_id != RK_DRAGONBREATH_WATER ) || pc_checkskill( sd, DK_DRAGONIC_AURA ) > 0 ){
+				wd.damage = (int64)floor( (float)( wd.damage * ( 100 + sstatus->patk ) / 100 ) );
+				if( is_attack_left_handed( src, skill_id ) ){
+					wd.damage2 = (int64)floor( (float)( wd.damage2 * ( 100 + sstatus->patk ) / 100 ) );
+				}
+			}
+			// Apply MasteryATK
+			wd.damage += wd.masteryAtk;
+			if( is_attack_left_handed( src, skill_id ) ){
+				wd.damage2 += wd.masteryAtk2;
+			}
+
+			// CritAtkRate modifier
+			if (wd.type == DMG_CRITICAL || wd.type == DMG_MULTI_HIT_CRITICAL) {
+				if (skill_id > 0) {
+					wd.damage += (int64)floor((float)(wd.damage * sd->bonus.crit_atk_rate / 200));
+					if (is_attack_left_handed(src, skill_id))
+						wd.damage2 += (int64)floor((float)(wd.damage2 * sd->bonus.crit_atk_rate / 200));
+				}
+				else {
+					wd.damage += (int64)floor((float)(wd.damage * sd->bonus.crit_atk_rate / 100));
+					if (is_attack_left_handed(src, skill_id))
+						wd.damage2 += (int64)floor((float)(wd.damage2 * sd->bonus.crit_atk_rate / 100));
+				}
+			}
+			else if (std::shared_ptr<s_skill_db> skill_tmp = skill_db.find(skill_id); skill_tmp == nullptr || !skill_tmp->inf2[INF2_IGNORENONCRITATKBONUS]) {
+				ATK_ADDRATE(wd.damage, wd.damage2, sd->bonus.non_crit_atk_rate);
+			}
+
+			if (wd.flag & BF_SHORT)
+				ATK_ADDRATE(wd.damage, wd.damage2, sd->bonus.short_attack_atk_rate);
+			if(wd.flag&BF_LONG && (skill_id != RA_WUGBITE && skill_id != RA_WUGSTRIKE)) //Long damage rate addition doesn't use weapon + equip attack
+				ATK_ADDRATE(wd.damage, wd.damage2, sd->bonus.long_attack_atk_rate);
+		}
+
+		// Skill ratio
+		ATK_RATE(wd.damage, wd.damage2, battle_calc_attack_skill_ratio(&wd, src, target, skill_id, skill_lv));
+
+		// Additive damage bonus
+		ATK_ADD(wd.damage, wd.damage2, battle_calc_skill_constant_addition(&wd, src, target, skill_id, skill_lv));
+
+		// Advance Katar Mastery
+		if (sd) {
+			uint16 katar_skill;
+
+			if (sd->status.weapon == W_KATAR && (katar_skill = pc_checkskill(sd, ASC_KATAR)) > 0) // Adv. Katar Mastery applied after calculate with skillratio.
+				ATK_ADDRATE(wd.damage, wd.damage2, (10 + 2 * katar_skill));
+		}
+
+		// Res reduces physical damage by a percentage and is calculated before DEF and other reductions.
+		// All skills that use the simple defense formula (damage substracted by DEF+DEF2) ignore Res
+		if ((wd.damage + wd.damage2) && tstatus->res > 0 && !nk[NK_SIMPLEDEFENSE]) {
+			// (Res flat reduction is already applied)
+			int16 res = tstatus->res;
+
+			// % Res ignored
+			int16 ignore_res = 0;
+
+			if (sd != nullptr) {
+				// (in case other bonuses are implemented) % Res ignored is the sum of all types of % Res
+				ignore_res += sd->indexed_bonus.ignore_res_by_race[tstatus->race] + sd->indexed_bonus.ignore_res_by_race[RC_ALL];
+			}
+
+			// Attacker status's that pierce Res.
+			if (sc != nullptr) {
+				if (sc->getSCE(SC_A_TELUM) != nullptr)
+					ignore_res += sc->getSCE(SC_A_TELUM)->val2;
+				if (sc->getSCE(SC_POTENT_VENOM) != nullptr)
+					ignore_res += sc->getSCE(SC_POTENT_VENOM)->val2;
+			}
+
+			// % Res ignored is capped to 50% on official server
+			ignore_res = min(ignore_res, battle_config.max_res_mres_ignored);
+
+			res = static_cast<decltype(res)>(res - ignore_res * res / 100.0);
+
+			// Apply damage reduction.
+			wd.damage -= static_cast<decltype(wd.damage)>(static_cast<float>(res / (res + 400.0)) * 80.0 / 100.0 * static_cast<double>(wd.damage));
+			wd.damage2 -= static_cast<decltype(wd.damage2)>(static_cast<float>(res / (res + 400.0)) * 80.0 / 100.0 * static_cast<double>(wd.damage2));
+		}
+
+#else
+		// final attack bonuses that aren't affected by cards
+		battle_attack_sc_bonus(&wd, src, target, skill_id, skill_lv);
+#endif
+
+		if (wd.damage + wd.damage2) {
+#ifdef RENEWAL
+			// Check if attack ignores DEF (in pre-renewal we need to update base damage even when the skill ignores DEF)
+			if(!attack_ignores_def(&wd, src, target, skill_id, skill_lv, EQI_HAND_L) || !attack_ignores_def(&wd, src, target, skill_id, skill_lv, EQI_HAND_R))
+#else
+			// Shield Boomerang and Rapid Smiting already calculated the defense before the skill ratio was applied
+			if(skill_id != PA_SHIELDCHAIN && skill_id != CR_SHIELDBOOMERANG)
+#endif
+				battle_calc_defense_reduction(&wd, src, target, skill_id, skill_lv);
+
+			battle_calc_attack_post_defense(&wd, src, target, skill_id, skill_lv);
+		}
+
+#ifdef RENEWAL
+		// add any miscellaneous player ATK bonuses
+		if( sd && skill_id && (i = pc_skillatk_bonus(sd, skill_id))) {
+			ATK_ADDRATE(wd.damage, wd.damage2, i);
+			RE_ALLATK_ADDRATE(&wd, i);
+		}
+		if (tsd && (i = pc_sub_skillatk_bonus(tsd, skill_id))) {
+			ATK_ADDRATE(wd.damage, wd.damage2, -i);
+			RE_ALLATK_ADDRATE(&wd, -i);
+		}
+#endif
+	}
+
+	battle_calc_element_damage(&wd, src, target, skill_id, skill_lv);
+
+#ifdef RENEWAL
+	if (is_attack_critical(&wd, src, target, skill_id, skill_lv, false)) {
+		if (sd) { //Check for player so we don't crash out, monsters don't have bonus crit rates [helvetica]
+			wd.damage = (int64)floor((float)((wd.damage * (1.4f + (0.01f * sstatus->crate)))));
+			if (is_attack_left_handed(src, skill_id))
+				wd.damage2 = (int64)floor((float)((wd.damage2 * (1.4f + (0.01f * sstatus->crate)))));
+		} else
+			wd.damage = (int64)floor((float)(wd.damage * 1.4f));
+
+		if (tsd && tsd->bonus.crit_def_rate != 0)
+			ATK_ADDRATE(wd.damage, wd.damage2, -tsd->bonus.crit_def_rate);
+	}
+#endif
+
+	switch (skill_id) {
+		case TK_DOWNKICK:
+		case TK_STORMKICK:
+		case TK_TURNKICK:
+		case TK_COUNTER:
+			if(sd && sd->weapontype1 == W_FIST && sd->weapontype2 == W_FIST)
+				ATK_ADD(wd.damage, wd.damage2, 10 * pc_checkskill(sd, TK_RUN));
+			break;
+		case LG_SHIELDPRESS:
+			if (sd) {
+				int32 damagevalue = 0;
+				int16 index = sd->equip_index[EQI_HAND_L];
+
+				if (index >= 0 && sd->inventory_data[index] && sd->inventory_data[index]->type == IT_ARMOR)
+					damagevalue = sstatus->vit * sd->inventory.u.items_inventory[index].refine;
+				ATK_ADD(wd.damage, wd.damage2, damagevalue);
+			}
+			break;
+		case SR_TIGERCANNON:
+			// (Tiger Cannon skill level x 240) + (Target Base Level x 40)
+			if (wd.miscflag&8) {
+				ATK_ADD(wd.damage, wd.damage2, skill_lv * 500 + status_get_lv(target) * 40);
+			} else
+				ATK_ADD(wd.damage, wd.damage2, skill_lv * 240 + status_get_lv(target) * 40);
+			break;
+		case SR_GATEOFHELL: {
+			status_data* sstatus = status_get_status_data(*src);
+			double bonus = 1 + skill_lv * 2 / 10;
+
+			ATK_ADD(wd.damage, wd.damage2, sstatus->max_hp - sstatus->hp);
+			if(sc && sc->getSCE(SC_COMBO) && sc->getSCE(SC_COMBO)->val1 == SR_FALLENEMPIRE) {
+				ATK_ADD(wd.damage, wd.damage2, static_cast<int64>(sstatus->max_sp * bonus) + 40 * status_get_lv(src));
+			} else
+				ATK_ADD(wd.damage, wd.damage2, static_cast<int64>(sstatus->sp * bonus) + 10 * status_get_lv(src));
+		}
+			break;
+		case MH_TINDER_BREAKER:
+			ATK_ADD(wd.damage, wd.damage2, 2500 * skill_lv + status_get_lv(src)); // !TODO: Confirm base level bonus
+			break;
+		case MH_CBC:
+			ATK_ADD(wd.damage, wd.damage2, 4000 * skill_lv + status_get_lv(src)); // !TODO: Confirm base level bonus
+			break;
+		case MH_EQC:
+			ATK_ADD(wd.damage, wd.damage2, 6000 * skill_lv + status_get_lv(src)); // !TODO: Confirm base level bonus
+			break;
+		case NPC_MAXPAIN_ATK:
+			if (sc) {
+				auto * sce = sc->getSCE(SC_MAXPAIN);
+				if (sce) {
+					if (sce->val2)
+						wd.damage = sce->val2 * skill_lv / 10;
+					else if (sce->val3)
+						wd.damage = sce->val3 * skill_lv / 10;
+				}
+			}
+			else 
+				wd.damage = 0;
+			break;
+	}
+
+	if(sd) {
+#ifndef RENEWAL
+		uint16 skill;
+
+		if ((skill = pc_checkskill(sd, BS_WEAPONRESEARCH)) > 0)
+			ATK_ADD(wd.damage, wd.damage2, skill * 2);
+		if (skill_id == GS_GROUNDDRIFT)
+			ATK_ADD(wd.damage, wd.damage2, 50 * skill_lv);
+		if (skill_id != MC_CARTREVOLUTION && pc_checkskill(sd, BS_HILTBINDING) > 0)
+			ATK_ADD(wd.damage, wd.damage2, 4);
+
+		//Card Fix for attacker (sd), 2 is added to the "left" flag meaning "attacker cards only"
+		switch(skill_id) {
+			case RK_DRAGONBREATH:
+			case RK_DRAGONBREATH_WATER:
+				if(wd.flag&BF_LONG) { //Add check here, because we want to apply the same behavior in pre-renewal [exneval]
+					wd.damage = wd.damage * (100 + sd->bonus.long_attack_atk_rate) / 100;
+					if(is_attack_left_handed(src, skill_id))
+						wd.damage2 = wd.damage2 * (100 + sd->bonus.long_attack_atk_rate) / 100;
+				}
+				break;
+			default:
+				wd.damage += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.damage, 2, wd.flag);
+				if( is_attack_left_handed(src, skill_id ))
+					wd.damage2 += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.damage2, 3, wd.flag);
+				break;
+		}
+#endif
+	}
+
+#ifdef RENEWAL
+	// In renewal only do it for non player attacks
+	if( tsd && !sd ){
+#else
+	if( tsd ){
+#endif
+		// Card Fix for target (tsd), 2 is not added to the "left" flag meaning "target cards only"
+		wd.damage += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.damage, 0, wd.flag);
+		if(is_attack_left_handed(src, skill_id))
+			wd.damage2 += battle_calc_cardfix(BF_WEAPON, src, target, nk, right_element, left_element, wd.damage2, 1, wd.flag);
+	}
+
+	// only do 1 dmg to plant, no need to calculate rest
+	if(infdef){
+		battle_calc_attack_plant(&wd, src, target, skill_id, skill_lv);
+		return wd;
+	}
+
+	//Apply DAMAGE_DIV_FIX and check for min damage
+	battle_apply_div_fix(&wd, skill_id);
+
+	battle_calc_attack_left_right_hands(&wd, src, target, skill_id, skill_lv);
+
+#ifdef RENEWAL
+	switch (skill_id) {
+		case NJ_ISSEN:
+			case GN_FIRE_EXPANSION_ACID:
+			return wd; //These skills will do a GVG fix later
+		default:
+#endif
+			battle_calc_attack_gvg_bg(&wd, src, target, skill_id, skill_lv);
+#ifdef RENEWAL
+			break;
+	}
+#endif
+
+	battle_calc_weapon_final_atk_modifiers(&wd, src, target, skill_id, skill_lv);
+
+	battle_absorb_damage(target, &wd);
+
+	battle_do_reflect(BF_WEAPON,&wd, src, target, skill_id, skill_lv); //WIP [lighta]
+
+	return wd;
+}
+
+/*==========================================
+ * Calculate "magic"-type attacks and skills
+ *------------------------------------------
+ * Credits:
+ *	Original coder DracoRPG
+ *	Refined and optimized by helvetica
+ */
+struct Damage battle_calc_magic_attack(block_list *src,block_list *target,uint16 skill_id,uint16 skill_lv,int32 mflag)
+{
+	int32 i, skill_damage = 0;
+	int16 s_ele = 0;
+
+	TBL_PC *sd;
+	TBL_PC *tsd;
+	status_change *sc, *tsc;
+	struct Damage ad;
+	struct {
+		unsigned imdef : 1;
+		unsigned infdef : 1;
+	} flag;
+
+	memset(&ad,0,sizeof(ad));
+	memset(&flag,0,sizeof(flag));
+
+	if (src == nullptr || target == nullptr) {
+		nullpo_info(NLP_MARK);
+		return ad;
+	}
+
+	status_data* sstatus = status_get_status_data(*src);
+	status_data* tstatus = status_get_status_data(*target);
+
+	// Initial Values
+	// Set to 1 because magic damage on plants is 1 per hit; if target is not a plant this gets reinitialized to 0 later
+	ad.damage = 1;
+	ad.div_ = skill_get_num(skill_id,skill_lv);
+	ad.amotion = (skill_get_inf(skill_id)&INF_GROUND_SKILL ? 0 : sstatus->amotion); //Amotion should be 0 for ground skills.
+	ad.dmotion = tstatus->dmotion;
+	ad.blewcount = skill_get_blewcount(skill_id, skill_lv);
+	ad.flag = BF_MAGIC|BF_SKILL;
+	ad.miscflag = mflag;
+	ad.dmg_lv = ATK_DEF;
+
+	std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+	std::bitset<NK_MAX> nk;
+
+	if (skill)
+		nk = skill->nk;
+
+	flag.imdef = nk[NK_IGNOREDEFENSE] ? 1 : 0;
+
+	sd = BL_CAST(BL_PC, src);
+	tsd = BL_CAST(BL_PC, target);
+	s_elemental_data* ed = BL_CAST(BL_ELEM, src);
+	sc = status_get_sc(src);
+	tsc = status_get_sc(target);
+
+	//Initialize variables that will be used afterwards
+	s_ele = battle_get_magic_element(ad, *src, *target, skill_id, skill_lv);
+
+	//Set miscellaneous data that needs be filled
+	if(sd) {
+		sd->state.arrow_atk = 0;
+		ad.blewcount += battle_blewcount_bonus(sd, skill_id);
+	}
+
+	//Skill Range Criteria
+	ad.flag |= battle_range_type(src, target, skill_id, skill_lv);
+
+	// Update Damage data based on skill
+	if (skill != nullptr && skill->impl != nullptr) {
+		skill->impl->modifyDamageData(ad, *src, *target, skill_lv);
+	}
+
+	//Infinite defense (plant mode)
+	flag.infdef = is_infinite_defense(target, ad.flag)?1:0;
+
+	if (!flag.infdef) { //No need to do the math for plants
+		int32 skillratio = 100; //Skill dmg modifiers.
+		if (sd != nullptr)
+			skillratio += sd->bonus.skill_ratio;
+
+#ifdef RENEWAL
+		// Some skills do not use S.MATK and skillratio
+		bool has_skillratio = false;
+#endif
+		//Damage was set to 1 to simulate plant damage; if not plant, need to reinitialize damage with 0
+		ad.damage = 0;
+//MATK_RATE scales the damage. 100 = no change. 50 is halved, 200 is doubled, etc
+#define MATK_RATE(a) { ad.damage = ad.damage * (a) / 100; }
+//Adds dmg%. 100 = +100% (double) damage. 10 = +10% damage
+#define MATK_ADDRATE(a) { ad.damage += ad.damage * (a) / 100; }
+//Adds an absolute value to damage. 100 = +100 damage
+#define MATK_ADD(a) { ad.damage += a; }
+
+		//Calc base damage according to skill
+		switch (skill_id) {
+			case AL_HEAL:
+			case PR_BENEDICTIO:
+			case PR_SANCTUARY:
+			case AB_HIGHNESSHEAL:
+				ad.damage = skill_calc_heal(src, target, skill_id, skill_lv, false);
+				break;
+			case PR_ASPERSIO:
+				ad.damage = 40;
+				break;
+			case ALL_RESURRECTION:
+			case PR_TURNUNDEAD:
+				//Undead check is on skill_castend_damageid code.
+#ifdef RENEWAL
+				i = 10 * skill_lv + sstatus->luk + sstatus->int_ + status_get_lv(src)
+				  	+ 300 - 300 * tstatus->hp / tstatus->max_hp;
+#else
+				i = 20 * skill_lv + sstatus->luk + sstatus->int_ + status_get_lv(src)
+				  	+ 200 - 200 * tstatus->hp / tstatus->max_hp;
+#endif
+				if(i > 700)
+					i = 700;
+				if(rnd()%1000 < i && !status_has_mode(tstatus,MD_STATUSIMMUNE))
+					ad.damage = tstatus->hp;
+				else {
+#ifdef RENEWAL
+					if (sstatus->matk_max > sstatus->matk_min) {
+						MATK_ADD(sstatus->matk_min+rnd()%(sstatus->matk_max-sstatus->matk_min));
+					} else {
+						MATK_ADD(sstatus->matk_min);
+					}
+					MATK_RATE(skill_lv);
+#else
+					ad.damage = status_get_lv(src) + sstatus->int_ + skill_lv * 10;
+#endif
+				}
+				break;
+			case NPC_DARKBREATH:
+				ad.damage = tstatus->hp * (skill_lv <= 5 ? 100 / (2 * (6 - skill_lv)) : 50) / 100;
+				break;
+			case PF_SOULBURN:
+				ad.damage = tstatus->sp * 2;
+				break;
+			case AB_RENOVATIO:
+				ad.damage = status_get_lv(src) * 10 + sstatus->int_;
+				break;
+			case NPC_EARTHQUAKE:
+				if (mflag & NPC_EARTHQUAKE_FLAG) {
+					ad.flag |= NPC_EARTHQUAKE_FLAG; // Pass flag to battle_calc_damage
+					mflag &= ~NPC_EARTHQUAKE_FLAG; // Remove before NK_SPLASHSPLIT check
+				}
+
+				// TODO: This code is only accurate for pre-renewal
+				// In renewal, monsters should use NPC_EARTHQUAKE_K instead, but it's not implemented yet
+				if (sd != nullptr) {
+#ifdef RENEWAL
+					ad.damage = sstatus->str * 2 + battle_calc_weapon_attack(src, target, skill_id, skill_lv, mflag).damage;
+#else
+					ad.damage = sd->battle_status.batk + sd->battle_status.rhw.atk;
+#endif
+				}
+				else {
+					ad.damage = battle_calc_base_damage(src, sstatus, &sstatus->rhw, sc, tstatus->size, 0);
+#ifndef RENEWAL
+					if (sc != nullptr)
+						MATK_RATE(battle_get_atkpercent(*src, skill_id, *sc));
+#endif
+				}
+
+				MATK_RATE(200 + 100 * skill_lv + 100 * (skill_lv / 2) + ((skill_lv > 4) ? 100 : 0));
+
+				if (nk[NK_SPLASHSPLIT] && mflag > 1)
+					ad.damage /= mflag;
+				break;
+			case NPC_ICEMINE:
+			case NPC_FLAMECROSS:
+				ad.damage = static_cast<int64>( sstatus->rhw.atk ) * static_cast<int64>( 20 ) * static_cast<int64>( skill_lv );
+				break;
+			default: {
+				if (sstatus->matk_max > sstatus->matk_min) {
+					MATK_ADD(sstatus->matk_min+rnd()%(sstatus->matk_max-sstatus->matk_min));
+				} else {
+					MATK_ADD(sstatus->matk_min);
+				}
+
+				if (nk[NK_SPLASHSPLIT]) { // Divide MATK in case of multiple targets skill
+					if (mflag>0)
+						ad.damage /= mflag;
+					else
+						ShowError("0 enemies targeted by %d:%s, divide per 0 avoided!\n", skill_id, skill_get_name(skill_id));
+				}
+
+				if (skill != nullptr && skill->impl != nullptr) {
+					skill->impl->calculateSkillRatio(&ad, src, target, skill_lv, skillratio, mflag);
+				}
+
+				if (sc) {// Insignia's increases the damage of offensive magic by a fixed percentage depending on the element.
+					if ((sc->getSCE(SC_FIRE_INSIGNIA) && sc->getSCE(SC_FIRE_INSIGNIA)->val1 == 3 && s_ele == ELE_FIRE) ||
+						(sc->getSCE(SC_WATER_INSIGNIA) && sc->getSCE(SC_WATER_INSIGNIA)->val1 == 3 && s_ele == ELE_WATER) ||
+						(sc->getSCE(SC_WIND_INSIGNIA) && sc->getSCE(SC_WIND_INSIGNIA)->val1 == 3 && s_ele == ELE_WIND) ||
+						(sc->getSCE(SC_EARTH_INSIGNIA) && sc->getSCE(SC_EARTH_INSIGNIA)->val1 == 3 && s_ele == ELE_EARTH))
+						skillratio += 25;
+				}
+#ifdef RENEWAL
+				has_skillratio = true;
+#else
+				MATK_RATE(skillratio);
+#endif
+				//Constant/misc additions from skills
+				if (skill_id == WZ_FIREPILLAR)
+					MATK_ADD(100 + 50 * skill_lv);

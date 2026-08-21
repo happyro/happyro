@@ -1,0 +1,378 @@
+	if (containerHeight >= maxHeight) {
+		containerHeight = maxHeight;
+	}
+
+	if (container) {
+		container.style.height = `${containerHeight}px`;
+	}
+	if (description) {
+		description.style.height = `${containerHeight - 45}px`;
+	}
+}
+
+function addEvent(item) {
+	const root = ItemInfo.getRoot();
+	let event = root.querySelector('.event_view');
+	if (!event) {
+		if (!validateFieldsExist(event)) {
+			event = root.querySelector('.event_view');
+		}
+	}
+	if (!event) {
+		return;
+	}
+
+	const viewBtn = event.querySelector('.view');
+	if (viewBtn) {
+		viewBtn.style.display = 'none';
+	}
+	const canvases = event.querySelectorAll('canvas');
+	canvases.forEach(c => c.remove());
+
+	Renderer.stop(rendering);
+
+	switch (item.type) {
+		case ItemType.CARD:
+			if (viewBtn) {
+				viewBtn.style.display = 'block';
+			}
+			break;
+		case ItemType.ETC: {
+			const filenameBook = `data/book/${item.ITID}.txt`;
+			Client.loadFile(filenameBook, data => {
+				try {
+					MakeReadBook.startBook(data, item);
+				} catch (e) {
+					console.error('ItemInfo::addEvent() - startBook failed:', e.message);
+				}
+				eventsBooks();
+			});
+			break;
+		}
+		default:
+			if (viewBtn) {
+				viewBtn.style.display = 'none';
+			}
+			break;
+	}
+}
+
+function updatePreviewButton(item) {
+	const root = ItemInfo.getRoot();
+	const previewButton = root.querySelector('.btn_mounting');
+	if (!previewButton) {
+		return;
+	}
+
+	if (!canPreviewItem(item)) {
+		previewButton.style.display = 'none';
+		return;
+	}
+
+	previewButton.style.display = 'block';
+	// Remove old listener by cloning
+	const newBtn = previewButton.cloneNode(true);
+	previewButton.parentNode.replaceChild(newBtn, previewButton);
+	newBtn.addEventListener('click', e => {
+		e.stopImmediatePropagation();
+		toggleItemPreview(item);
+	});
+}
+
+function canPreviewItem(item) {
+	if (!item) {
+		return false;
+	}
+
+	const location = getPreviewLocation(item);
+	const previewLocations =
+		EquipLocation.HEAD_BOTTOM |
+		EquipLocation.HEAD_MID |
+		EquipLocation.HEAD_TOP |
+		EquipLocation.COSTUME_HEAD_BOTTOM |
+		EquipLocation.COSTUME_HEAD_MID |
+		EquipLocation.COSTUME_HEAD_TOP |
+		EquipLocation.COSTUME_ROBE;
+
+	if (!(location & previewLocations)) {
+		return false;
+	}
+
+	const it = DB.getItemInfo(item.ITID);
+	return getPreviewSpriteId(item, it) > 0;
+}
+
+function getPreviewLocation(item) {
+	if ('location' in item) {
+		return item.location;
+	}
+
+	if ('WearState' in item) {
+		return item.WearState;
+	}
+
+	if ('WearLocation' in item) {
+		return item.WearLocation;
+	}
+
+	return 0;
+}
+
+function getPreviewSpriteId(item, it) {
+	if (item && item.wItemSpriteNumber) {
+		return item.wItemSpriteNumber;
+	}
+
+	if (it && it.ClassNum) {
+		return it.ClassNum;
+	}
+
+	return 0;
+}
+
+function toggleItemPreview(item) {
+	if (
+		ItemPreview.ui &&
+		ItemPreview._host &&
+		ItemPreview._host.style.display !== 'none' &&
+		ItemPreview.uid === item.ITID
+	) {
+		ItemPreview.remove();
+		return;
+	}
+
+	ItemPreview.append();
+	ItemPreview.uid = item.ITID;
+	ItemPreview.setItem(item);
+}
+
+function eventsBooks() {
+	const root = ItemInfo.getRoot();
+	const event = root.querySelector('.event_view');
+	if (!event) {
+		return;
+	}
+
+	Client.getFiles(
+		['data/sprite/book/\xc3\xa5\xc0\xd0\xb1\xe2.spr', 'data/sprite/book/\xc3\xa5\xc0\xd0\xb1\xe2.act'],
+		function (spr, act) {
+			try {
+				_sprite = new Sprite(spr);
+				_action = new Action(act);
+			} catch (e) {
+				console.error('Book::init() - ' + e.message);
+				return;
+			}
+			const canvas = _sprite.getCanvasFromFrame(0);
+			canvas.className = 'book_open event_add_cursor';
+			event.appendChild(canvas);
+
+			const bookOpen = root.querySelector('.book_open');
+			if (bookOpen) {
+				bookOpen.addEventListener('mouseover', e => {
+					e.stopImmediatePropagation();
+					const overlayOpen = root.querySelector('.overlay_open');
+					if (overlayOpen) {
+						overlayOpen.style.display = 'block';
+					}
+				});
+				bookOpen.addEventListener('mouseout', e => {
+					e.stopImmediatePropagation();
+					const overlayOpen = root.querySelector('.overlay_open');
+					if (overlayOpen) {
+						overlayOpen.style.display = 'none';
+					}
+				});
+				bookOpen.addEventListener('click', e => {
+					e.stopImmediatePropagation();
+					MakeReadBook.openBook();
+				});
+			}
+
+			// icon read book
+			const readCanvas = document.createElement('canvas');
+			readCanvas.width = 21;
+			readCanvas.height = 15;
+			readCanvas.className = 'book_read event_add_cursor';
+			event.appendChild(readCanvas);
+			_ctx = readCanvas.getContext('2d');
+
+			const bookRead = root.querySelector('.book_read');
+			if (bookRead) {
+				bookRead.addEventListener('mouseover', e => {
+					e.stopImmediatePropagation();
+					const overlayRead = root.querySelector('.overlay_read');
+					if (overlayRead) {
+						overlayRead.style.display = 'block';
+					}
+				});
+				bookRead.addEventListener('mouseout', e => {
+					e.stopImmediatePropagation();
+					const overlayRead = root.querySelector('.overlay_read');
+					if (overlayRead) {
+						overlayRead.style.display = 'none';
+					}
+				});
+				bookRead.addEventListener('click', e => {
+					e.stopImmediatePropagation();
+					MakeReadBook.highlighter();
+				});
+			}
+			Renderer.render(rendering);
+		}
+	);
+}
+
+/**
+ * Rendering animation
+ */
+const rendering = (function renderingClosure() {
+	const position = new Uint16Array([0, 0]);
+
+	return function render() {
+		const _entity = new Entity();
+		const action = _action.actions[_type];
+		const anim = Math.floor((Renderer.tick - _start) / action.delay);
+
+		const animation = action.animations[anim % action.animations.length];
+
+		let i, count;
+		count = animation.layers.length;
+
+		// Initialize context
+		SpriteRenderer.bind2DContext(_ctx, 10, 25);
+		_ctx.clearRect(0, 0, _ctx.canvas.width, _ctx.canvas.height);
+
+		// Render layers
+		for (i = 0, count = animation.layers.length; i < count; ++i) {
+			_entity.renderLayer(animation.layers[i], _sprite, _sprite, 1.0, position, false);
+		}
+	};
+})();
+
+function validateFieldsExist(event) {
+	const root = ItemInfo.getRoot();
+
+	if (!event) {
+		const validExitElement =
+			'<div class="event_view">' +
+			'<button class="view" data-background="btn_view.bmp" data-down="btn_view_a.bmp" data-hover="btn_view_b.bmp"></button>' +
+			'<span class="overlay_open">' +
+			DB.getMessage(1294) +
+			'</span>' +
+			'<span class="overlay_read">' +
+			DB.getMessage(1295) +
+			'</span>' +
+			'</div>';
+		const collection = root.querySelector('.collection');
+		if (collection) {
+			collection.insertAdjacentHTML('afterend', validExitElement);
+		}
+		return false;
+	}
+
+	if (!root.querySelector('.overlay_open') && !root.querySelector('.overlay_read')) {
+		event.insertAdjacentHTML(
+			'beforeend',
+			'<span class="overlay_open">' +
+				DB.getMessage(1294) +
+				'</span>' +
+				'<span class="overlay_read">' +
+				DB.getMessage(1295) +
+				'</span>'
+		);
+	}
+
+	if (!event.querySelector('button')) {
+		event.insertAdjacentHTML(
+			'beforeend',
+			'<button class="view" data-background="btn_view.bmp" data-down="btn_view_a.bmp" data-hover="btn_view_b.bmp"></button>'
+		);
+	}
+
+	return true;
+}
+
+/**
+ * A function that handles previewing an item.
+ *
+ * @param {object} pkt - The packet containing information about the item
+ * @return {boolean} Indicates success or failure of the preview action
+ */
+function onItemPreview(pkt) {
+	if (pkt) {
+		const item = Inventory.getUI().getItemByIndex(pkt.index);
+
+		if (!item) {
+			return false;
+		}
+
+		// Remove existing compare UI if it's currently displayed
+		if (ItemCompare.ui) {
+			ItemCompare.remove();
+		}
+
+		// Don't add the same UI twice, remove it
+		if (ItemInfo.uid === item.ITID) {
+			ItemInfo.remove();
+			if (ItemCompare.ui) {
+				ItemCompare.remove();
+			}
+			return false;
+		}
+
+		// Add ui to window
+		ItemInfo.append();
+		ItemInfo.uid = item.ITID;
+		ItemInfo.setItem(item);
+
+		// Check if there is an equipped item in the same location
+		const compareItem = Equipment.getUI().isInEquipList(item.location);
+
+		// If a comparison item is found, display comparison
+		if (compareItem && Inventory.getUI().itemcomp) {
+			ItemCompare.prepare();
+			ItemCompare.append();
+			ItemCompare.uid = compareItem.ITID;
+			ItemCompare.setItem(compareItem);
+		}
+	}
+}
+
+/**
+ * Build moveInfo tooltip html content
+ * @param {object} moveInfo
+ * @returns {string} html content
+ */
+function buildMoveInfoTooltip(moveInfo) {
+	const lines = [];
+
+	for (const entry of MOVE_INFO_MESSAGES) {
+		if (moveInfo[entry.key] === true) {
+			lines.push(DB.getMessage(entry.msgId));
+		}
+	}
+	return lines.map(l => `<div>${l}</div>`).join('');
+}
+
+/**
+ * Cleanup moveInfo tooltip and restore cursor state.
+ * Called when ItemInfo UI is removed.
+ */
+ItemInfo.hideMoveInfoTooltip = function hideMoveInfoTooltip() {
+	const tooltip = document.getElementById('moveinfo-tooltip');
+	if (tooltip) {
+		tooltip.style.display = 'none';
+	}
+	Cursor.setType(Cursor.ACTION.DEFAULT);
+};
+
+/**
+ * Packet Hooks to functions
+ */
+Network.hookPacket(PACKET.ZC.CHANGE_ITEM_OPTION, onItemPreview);
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(ItemInfo);

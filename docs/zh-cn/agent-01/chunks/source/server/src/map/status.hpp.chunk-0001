@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#ifndef STATUS_HPP
+#define STATUS_HPP
+
+#include <algorithm>
+#include <bitset>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
+#include <common/database.hpp>
+#include <common/mmo.hpp>
+#include <common/timer.hpp>
+
+#include "map.hpp"
+#include "script.hpp"
+
+enum e_race2 : uint8;
+struct block_list;
+struct mob_data;
+struct pet_data;
+struct homun_data;
+struct s_mercenary_data;
+struct s_elemental_data;
+struct npc_data;
+class status_change;
+
+/**
+ * Max Refine available to your server
+ **/
+#ifdef RENEWAL
+#	define MAX_REFINE 20
+#else
+#	define MAX_REFINE 10
+#endif
+
+/**
+ * Minimum ASPD (maximum delay between attacks)
+ * Default value of 8000 effectively results in a minimum ASPD of -200 for players
+ */
+#ifndef MIN_ASPD
+	#define MIN_ASPD 8000
+#endif
+
+/**
+ * Maximum ASPD for non-players (minimum delay between attacks)
+ * This is applied after ASPD adjustments, so a monster can theoretically be naturally faster than this
+ * Officially no buff can reduce the delay below 100ms
+ * This is also the default value for monsters if AttackMotion and AttackDelay are not defined
+ * The maximum ASPD for players is defined in player.conf
+ */
+#ifndef MAX_ASPD_NOPC
+	#define MAX_ASPD_NOPC 100
+#endif
+
+// DO NOT MODIFY THESE!
+// The amotion divider defines the relation between amotion and adelay
+// For players amotion is half of adelay
+#define AMOTION_DIVIDER_PC 2
+// For monsters, homunculus, mercenaries and elementals, amotion and adelay are equal or independent
+#define AMOTION_DIVIDER_NOPC 1
+// Value for amotion that is represented as 0 ASPD on the client
+#define AMOTION_ZERO_ASPD 2000
+// Value that represents by how much each ASPD point reduces amotion
+#define AMOTION_INTERVAL 10
+
+/// Refine type
+enum e_refine_type : uint16{
+	REFINE_TYPE_ARMOR = 0,
+	REFINE_TYPE_WEAPON,
+	REFINE_TYPE_SHADOW_ARMOR,
+	REFINE_TYPE_SHADOW_WEAPON,
+	REFINE_TYPE_MAX
+};
+
+/// Refine cost type
+enum e_refine_cost_type : uint16{
+	REFINE_COST_NORMAL = 0,
+	REFINE_COST_HD,
+	REFINE_COST_ENRICHED,
+	REFINE_COST_MAX
+};
+
+/// Refine script parameters
+enum e_refine_parameter{
+	REFINE_MATERIAL_ID = 0,
+	REFINE_ZENY_COST
+};
+
+struct s_refine_cost{
+	uint16 index;
+	t_itemid nameid;
+	uint16 chance;
+	uint32 zeny;
+	uint16 breaking_rate;
+	uint16 downgrade_amount;
+};
+
+struct s_refine_level_info{
+	uint16 level;
+	uint32 bonus;
+	uint32 randombonus_max;
+	uint16 blessing_amount;
+	bool broadcast_success;
+	bool broadcast_failure;
+	std::unordered_map<uint16, std::shared_ptr<s_refine_cost>> costs;
+};
+
+struct s_refine_levels_info{
+	uint16 level;
+	std::unordered_map<uint16, std::shared_ptr<s_refine_level_info>> levels;
+};
+
+struct s_refine_info{
+	uint16 groupId;
+	std::unordered_map<uint16, std::shared_ptr<s_refine_levels_info>> levels;
+};
+
+class RefineDatabase : public TypesafeYamlDatabase<uint16, s_refine_info>{
+private:
+	bool calculate_refine_info( const struct item_data& data, e_refine_type& refine_type, uint16& level );
+	std::shared_ptr<s_refine_level_info> findLevelInfoSub( const struct item_data& data, struct item& item, uint16 refine );
+
+public:
+	RefineDatabase() : TypesafeYamlDatabase( "REFINE_DB", 2, 1 ){
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode( const ryml::NodeRef& node ) override;
+
+	// Additional
+	std::shared_ptr<s_refine_level_info> findLevelInfo( const struct item_data& data, struct item& item );
+	std::shared_ptr<s_refine_level_info> findCurrentLevelInfo( const struct item_data& data, struct item& item );
+};
+
+extern RefineDatabase refine_db;
+
+/// Weapon attack modification for size
+struct s_sizefix_db {
+	uint16 small, medium, large;
+};
+
+class SizeFixDatabase : public TypesafeYamlDatabase<int32, s_sizefix_db> {
+public:
+	SizeFixDatabase() : TypesafeYamlDatabase("SIZE_FIX_DB", 1) {
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+};
+
+extern SizeFixDatabase size_fix_db;
+
+class AttributeDatabase : public YamlDatabase {
+private:
+	int16 attr_fix_table[MAX_ELE_LEVEL][ELE_MAX][ELE_MAX];
+
+public:
+	AttributeDatabase() : YamlDatabase("ATTRIBUTE_DB", 1) {
+		this->clear();
+	}
+
+	void clear() override{
+		std::fill_n(&attr_fix_table[0][0][0], MAX_ELE_LEVEL * ELE_MAX * ELE_MAX, 100);
+	}
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+
+	// Additional
+	int16 getAttribute(uint16 level, uint16 atk_ele, uint16 def_ele);
+};
+
+extern AttributeDatabase elemental_attribute_db;
+
+enum e_enchantgrade_result{
+	ENCHANTGRADE_UPGRADE_SUCCESS,
+	ENCHANTGRADE_UPGRADE_FAILED,
+	ENCHANTGRADE_UPGRADE_DOWNGRADE,
+	ENCHANTGRADE_UPGRADE_BREAK,
+	ENCHANTGRADE_UPGRADE_PROTECTED,
+};
+
+struct s_enchantgradeoption{
+	uint16 id;
+	t_itemid item;
+	uint16 amount;
+	uint32 zeny;
+	uint16 breaking_rate;
+	uint16 downgrade_amount;
+};
+
+struct s_enchantgradelevel{
+	e_enchantgrade grade;
+	uint16 chances[MAX_REFINE + 1];
+	uint16 bonus;
+	bool announceSuccess;
+	bool announceFail;
+	struct{
+		t_itemid item;
+		uint16 amountPerStep;
+		uint16 maximumSteps;
+		uint16 chanceIncrease;
+	}catalyst;
+	std::map<uint16,std::shared_ptr<s_enchantgradeoption>> options;
+};
+
+struct s_enchantgrade{
+	uint16 itemtype;
+	std::map<uint16,std::map<e_enchantgrade,std::shared_ptr<s_enchantgradelevel>>> levels;
+};
+
+class EnchantgradeDatabase : public TypesafeYamlDatabase<uint16, s_enchantgrade>{
+public:
+	EnchantgradeDatabase() : TypesafeYamlDatabase( "ENCHANTGRADE_DB", 3 ){
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode( const ryml::NodeRef& node ) override;
+	void loadingFinished() override;
+
+	// Additional
+	std::shared_ptr<s_enchantgradelevel> findCurrentLevelInfo( const struct item_data& data, struct item& item );
+};
+
+extern EnchantgradeDatabase enchantgrade_db;
+
+/// Status changes listing. These code are for use by the server.
+enum sc_type : int16 {
+	SC_NONE = -1,
+
+	//First we enumerate common status ailments which are often used around.
+	SC_STONE = 0,
+	SC_COMMON_MIN = SC_STONE, // begin
+	SC_FREEZE,
+	SC_STUN,
+	SC_SLEEP,
+	SC_POISON,
+	SC_CURSE,
+	SC_SILENCE,
+	SC_CONFUSION,
+	SC_BLIND,
+	SC_BLEEDING,
+	SC_DPOISON, //10
+	SC_STONEWAIT,
+	SC_COMMON_MAX = SC_STONEWAIT, // end
+
+	//Next up, we continue on 20, to leave enough room for additional "common" ailments in the future.
+	SC_PROVOKE = 20,
+	SC_ENDURE,
+	SC_TWOHANDQUICKEN,
+	SC_CONCENTRATE,
+	SC_HIDING,
+	SC_CLOAKING,
+	SC_ENCPOISON,
+	SC_POISONREACT,
+	SC_QUAGMIRE,
+	SC_ANGELUS,
+	SC_BLESSING, //30
+	SC_SIGNUMCRUCIS,
+	SC_INCREASEAGI,
+	SC_DECREASEAGI,
+	SC_SLOWPOISON,
+	SC_IMPOSITIO  ,
+	SC_SUFFRAGIUM,
+	SC_ASPERSIO,
+	SC_BENEDICTIO,
+	SC_KYRIE,
+	SC_MAGNIFICAT, //40
+	SC_GLORIA,
+	SC_AETERNA,
+	SC_ADRENALINE,
+	SC_WEAPONPERFECTION,
+	SC_OVERTHRUST,
+	SC_MAXIMIZEPOWER,
+	SC_TRICKDEAD,
+	SC_LOUD,
+	SC_ENERGYCOAT,
+	SC_BROKENARMOR, //50 - NOTE: These two aren't used anywhere, and they have an icon...
+	SC_BROKENWEAPON,
+	SC_HALLUCINATION,
+	SC_WEIGHT50,
+	SC_WEIGHT90,
+	SC_ASPDPOTION0,
+	SC_ASPDPOTION1,
+	SC_ASPDPOTION2,
+	SC_ASPDPOTION3,
+	SC_SPEEDUP0,
+	SC_SPEEDUP1, //60
+	SC_ATKPOTION,
+	SC_MATKPOTION,
+	SC_WEDDING,
+	SC_SLOWDOWN,
+	SC_ANKLE,
+	SC_KEEPING,
+	SC_BARRIER,
+	SC_STRIPWEAPON,
+	SC_STRIPSHIELD,
+	SC_STRIPARMOR, //70
+	SC_STRIPHELM,
+	SC_CP_WEAPON,
+	SC_CP_SHIELD,
+	SC_CP_ARMOR,
+	SC_CP_HELM,
+	SC_AUTOGUARD,
+	SC_REFLECTSHIELD,
+	SC_SPLASHER,
+	SC_PROVIDENCE,
+	SC_DEFENDER, //80
+	SC_MAGICROD,
+	SC_SPELLBREAKER,
+	SC_AUTOSPELL,
+	SC_SIGHTTRASHER,
+	SC_AUTOBERSERK,
+	SC_SPEARQUICKEN,
+	SC_AUTOCOUNTER,
+	SC_SIGHT,
+	SC_SAFETYWALL,
+	SC_RUWACH, //90
+	SC_EXTREMITYFIST,
+	SC_EXPLOSIONSPIRITS,
+	SC_COMBO,
+	SC_BLADESTOP_WAIT,
+	SC_BLADESTOP,
+	SC_FIREWEAPON,
+	SC_WATERWEAPON,
+	SC_WINDWEAPON,
+	SC_EARTHWEAPON,
+	SC_VOLCANO, //100,
+	SC_DELUGE,
+	SC_VIOLENTGALE,
+	SC_WATK_ELEMENT,
+	SC_ARMOR,
+	SC_ARMOR_ELEMENT_WATER,
+	SC_NOCHAT,
+	SC_PROTECTEXP,
+	SC_AURABLADE,
+	SC_PARRYING,
+	SC_CONCENTRATION, //110
+	SC_TENSIONRELAX,
+	SC_BERSERK,
+	SC_FURY,
+	SC_GOSPEL,
+	SC_ASSUMPTIO,
+	SC_BASILICA,
+	SC_GUILDAURA,
+	SC_MAGICPOWER,
+	SC_EDP,
+	SC_TRUESIGHT, //120
+	SC_WINDWALK,
+	SC_MELTDOWN,
+	SC_CARTBOOST,
+	SC_CHASEWALK,
+	SC_REJECTSWORD,
+	SC_MARIONETTE,
+	SC_MARIONETTE2,
+	SC_CHANGEUNDEAD,
+	SC_JOINTBEAT,
+	SC_MINDBREAKER, //130
+	SC_MEMORIZE,
+	SC_FOGWALL,
+	SC_SPIDERWEB,
+	SC_DEVOTION,
+	SC_SACRIFICE,
+	SC_STEELBODY,
+	SC_ORCISH,
+	SC_READYSTORM,
+	SC_READYDOWN,
+	SC_READYTURN, //140
+	SC_READYCOUNTER,
+	SC_DODGE,
+	SC_RUN,
+	SC_SHADOWWEAPON,
+	SC_ADRENALINE2,
+	SC_GHOSTWEAPON,
+	SC_KAIZEL,
+	SC_KAAHI,
+	SC_KAUPE,
+	SC_ONEHAND, //150
+	SC_PRESERVE,
+	SC_BATTLEORDERS,
+	SC_REGENERATION,
+	SC_DOUBLECAST,
+	SC_GRAVITATION,
+	SC_MAXOVERTHRUST,
+	SC_LONGING,
+	SC_HERMODE,
+	SC_SHRINK,
+	SC_SIGHTBLASTER, //160
+	SC_WINKCHARM,
+	SC_CLOSECONFINE,
+	SC_CLOSECONFINE2,
+	SC_DANCING,
+	SC_ELEMENTALCHANGE,
+	SC_RICHMANKIM,
+	SC_ETERNALCHAOS,
+	SC_DRUMBATTLE,
+	SC_NIBELUNGEN,
+	SC_ROKISWEIL, //170
+	SC_INTOABYSS,
+	SC_SIEGFRIED,
+	SC_WHISTLE,
+	SC_ASSNCROS,
+	SC_POEMBRAGI,
+	SC_APPLEIDUN,
+	SC_MODECHANGE,
+	SC_HUMMING,
+	SC_DONTFORGETME,
+	SC_FORTUNE, //180
+	SC_SERVICE4U,
+	SC_STOP,	//Prevents inflicted chars from walking. [Skotlex]
+	SC_SPURT,
+	SC_SPIRIT,
+	SC_COMA, //Not a real SC_, it makes a char's HP/SP hit 1.
+	SC_INTRAVISION,
+	SC_INCALLSTATUS,
+	SC_INCSTR,
+	SC_INCAGI,
+	SC_INCVIT, //190
+	SC_INCINT,
+	SC_INCDEX,
+	SC_INCLUK,
+	SC_INCHIT,
+	SC_INCHITRATE,
+	SC_INCFLEE,
+	SC_INCFLEERATE,
+	SC_INCMHPRATE,
+	SC_INCMSPRATE,
+	SC_INCATKRATE, //200
+	SC_INCMATKRATE,
+	SC_INCDEFRATE,
+	SC_STRFOOD,
+	SC_AGIFOOD,
+	SC_VITFOOD,
+	SC_INTFOOD,
+	SC_DEXFOOD,
+	SC_LUKFOOD,
+	SC_HITFOOD,
+	SC_FLEEFOOD, //210
+	SC_BATKFOOD,
+	SC_WATKFOOD,
+	SC_MATKFOOD,
+	SC_SCRESIST, //Increases resistance to status changes.
+	SC_XMAS, // Xmas Suit [Valaris]
+	SC_WARM, //SG skills [Komurka]
+	SC_SUN_COMFORT,
+	SC_MOON_COMFORT,
+	SC_STAR_COMFORT,
+	SC_FUSION, //220
+	SC_SKILLRATE_UP,
+	SC_SKE,
+	SC_KAITE,
+	SC_SWOO, // [marquis007]
+	SC_SKA, // [marquis007]
+	SC_EARTHSCROLL,
+	SC_MIRACLE, //SG 'hidden' skill [Komurka]
+	SC_MADNESSCANCEL,
+	SC_ADJUSTMENT,
+	SC_INCREASING,  //230
+	SC_GATLINGFEVER,
+	SC_TATAMIGAESHI,
+	SC_UTSUSEMI,
+	SC_BUNSINJYUTSU,
+	SC_KAENSIN,
+	SC_SUITON,
+	SC_NEN,
+	SC_KNOWLEDGE,
+	SC_SMA,
+	SC_FLING,	//240
+	SC_AVOID,
+	SC_CHANGE,
+	SC_BLOODLUST,
+	SC_FLEET,
+	SC_SPEED,
+	SC_DEFENCE,
+	SC_INCASPDRATE,
+	SC_INCFLEE2 = 248,
+	SC_JAILED,
+	SC_ENCHANTARMS,	//250
+	SC_MAGICALATTACK,
+	SC_ARMORCHANGE,
+	SC_CRITICALWOUND,
+	SC_MAGICMIRROR,
+	SC_SLOWCAST,
+	SC_SUMMER,
+	SC_EXPBOOST,
+	SC_ITEMBOOST,
+	SC_BOSSMAPINFO,
+	SC_LIFEINSURANCE, //260
+	SC_INCCRI,
+	//SC_INCDEF,
+	//SC_INCBASEATK = 263,
+	//SC_FASTCAST,
+	SC_MDEF_RATE = 265,
+	//SC_HPREGEN,
+	SC_INCHEALRATE = 267,

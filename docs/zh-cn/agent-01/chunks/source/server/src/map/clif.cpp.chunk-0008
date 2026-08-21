@@ -1,0 +1,500 @@
+		return;
+	}
+
+	pc_setpos(sd, gc->mapindex, gc->warp_x, gc->warp_y, CLR_OUTSIGHT);
+#endif
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+static int32 clif_hpmeter_sub( block_list *bl, va_list ap ){
+	map_session_data* sd = va_arg( ap, map_session_data* );
+	map_session_data* tsd = BL_CAST( BL_PC, bl );
+
+	nullpo_ret(sd);
+	nullpo_ret(tsd);
+
+	if( pc_has_permission( tsd, PC_PERM_VIEW_HPMETER ) ){
+		 clif_hpmeter_single( *tsd, sd->status.account_id, sd->battle_status.hp, sd->battle_status.max_hp );
+	}
+	return 0;
+}
+
+/*==========================================
+ * Server tells all players that are allowed to view HP bars
+ * and are nearby 'sd' that 'sd' hp bar was updated.
+ *------------------------------------------*/
+static int32 clif_hpmeter( const map_session_data* sd )
+{
+	nullpo_ret(sd);
+	map_foreachinallarea(clif_hpmeter_sub, sd->m, sd->x-AREA_SIZE, sd->y-AREA_SIZE, sd->x+AREA_SIZE, sd->y+AREA_SIZE, BL_PC, sd);
+	return 0;
+}
+
+/**
+ * Send HP bar update to others.
+ * @param sd: Player invoking update
+ */
+void clif_update_hp( const map_session_data &sd ) {
+	if (map_getmapdata(sd.m)->hpmeter_visible)
+		clif_hpmeter(&sd);
+	if (!battle_config.party_hp_mode && sd.status.party_id)
+		clif_party_hp( sd );
+	if (sd.bg_id)
+		clif_bg_hp(&sd);
+}
+
+/// Notifies client of a character parameter change.
+/// 00b0 <var id>.W <value>.L (ZC_PAR_CHANGE)
+static void clif_par_change( const map_session_data& sd, uint16 varId, int32 count ) {
+	PACKET_ZC_PAR_CHANGE packet{};
+
+	packet.PacketType = HEADER_ZC_PAR_CHANGE;
+	packet.varID = varId;
+	packet.count = count;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Notifies client of a character parameter change.
+/// 00b1 <var id>.W <value>.L (ZC_LONGPAR_CHANGE)
+static void clif_longpar_change(map_session_data& sd, uint16 varId, int32 amount) {
+	PACKET_ZC_LONGPAR_CHANGE packet{};
+
+	packet.PacketType = HEADER_ZC_LONGPAR_CHANGE;
+	packet.varID = varId;
+	packet.amount = amount;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Notifies client of a character parameter change.
+/// 00be <status id>.W <value>.B (ZC_STATUS_CHANGE)
+static void clif_zc_status_change(map_session_data& sd, uint16 status_id, uint8 value) {
+	PACKET_ZC_STATUS_CHANGE packet{};
+
+	packet.PacketType = HEADER_ZC_STATUS_CHANGE;
+	packet.statusID = status_id;
+	packet.value = value;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Notifies client of a character parameter change.
+/// 0121 <current count>.W <max count>.W <current weight>.L <max weight>.L (ZC_NOTIFY_CARTITEM_COUNTINFO)
+static void clif_cartcount( map_session_data& sd ){
+	PACKET_ZC_NOTIFY_CARTITEM_COUNTINFO packet{};
+
+	packet.PacketType = HEADER_ZC_NOTIFY_CARTITEM_COUNTINFO;
+	packet.curCount = sd.cart_num;
+	packet.maxCount = MAX_CART;
+	packet.curWeight = sd.cart_weight;
+	packet.maxWeight = sd.cart_weight_max;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Tells the client how far it is allowed to attack (weapon range)
+/// 013a <atk range>.W (ZC_ATTACK_RANGE)
+static void clif_attackrange( map_session_data& sd, int16 range ){
+	PACKET_ZC_ATTACK_RANGE packet{};
+
+	packet.PacketType = HEADER_ZC_ATTACK_RANGE;
+	packet.currentAttRange = range;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Notifies client of a character parameter change.
+/// 0141 <status id>.L <base status>.L <plus status>.L (ZC_COUPLESTATUS)
+static void clif_couplestatus(map_session_data& sd, uint32 status_type, int32 defaultStatus, int32 plusStatus) {
+	PACKET_ZC_COUPLESTATUS packet{};
+
+	packet.PacketType = HEADER_ZC_COUPLESTATUS;
+	packet.statusType = status_type;
+	packet.defaultStatus = defaultStatus;
+	packet.plusStatus = plusStatus;
+
+	clif_send(&packet, sizeof(packet), &sd, SELF);
+}
+
+/// Notifies client of a character parameter change.
+/// 0acb <var id>.W <value>.Q (ZC_LONGLONGPAR_CHANGE)
+static void clif_longlongpar_change(map_session_data& sd, uint16 varId, int64 amount) {
+#if PACKETVER_MAIN_NUM >= 20170906 || PACKETVER_RE_NUM >= 20170830 || defined(PACKETVER_ZERO)
+	PACKET_ZC_LONGLONGPAR_CHANGE packet{};
+
+	packet.PacketType = HEADER_ZC_LONGLONGPAR_CHANGE;
+	packet.varID = varId;
+	packet.amount = amount;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+#endif
+}
+
+/// Notifies client of a character parameter change.
+void clif_updatestatus( map_session_data& sd, enum _sp type ){
+	switch(type){
+		case SP_WEIGHT:
+			pc_updateweightstatus(sd);
+			clif_par_change(sd, type, sd.weight);
+			break;
+		case SP_MAXWEIGHT:
+			clif_par_change(sd, type, sd.max_weight);
+			break;
+		case SP_SPEED:
+			clif_par_change(sd, type, sd.battle_status.speed);
+			break;
+		case SP_BASELEVEL:
+			clif_par_change(sd, type, sd.status.base_level);
+			break;
+		case SP_JOBLEVEL:
+			clif_par_change(sd, type, sd.status.job_level);
+			break;
+		case SP_KARMA:
+			// Adding this back, I wonder if the client intercepts this - [Lance]
+			clif_par_change(sd, type, sd.status.karma);
+			break;
+		case SP_MANNER:
+			clif_par_change(sd, type, sd.status.manner);
+			break;
+		case SP_STATUSPOINT:
+			clif_par_change(sd, type, sd.status.status_point);
+			break;
+		case SP_SKILLPOINT:
+			clif_par_change(sd, type, sd.status.skill_point);
+			break;
+		case SP_HIT:
+			clif_par_change(sd, type, sd.battle_status.hit);
+			break;
+		case SP_FLEE1:
+			clif_par_change(sd, type, sd.battle_status.flee);
+			break;
+		case SP_FLEE2:
+			clif_par_change(sd, type, sd.battle_status.flee2/10);
+			break;
+		case SP_MAXHP:
+			clif_par_change(sd, type, sd.battle_status.max_hp);
+			break;
+		case SP_MAXSP:
+			clif_par_change(sd, type, sd.battle_status.max_sp);
+			break;
+		case SP_HP:
+			// On officials the HP never go below 1, even if you die [Lemongrass]
+			// On officials the HP Novice class never go below 50%, even if you die [Napster]
+			if (sd.battle_status.hp == 0) {
+				clif_par_change(sd, type, (sd.class_&MAPID_SECONDMASK) != MAPID_NOVICE ? 1 : sd.battle_status.max_hp/2);
+			} else {
+				clif_par_change(sd, type, sd.battle_status.hp);
+			}
+			break;
+		case SP_SP:
+			clif_par_change(sd, type, sd.battle_status.sp);
+			break;
+		case SP_ASPD:
+			clif_par_change(sd, type, sd.battle_status.amotion);
+			break;
+		case SP_ATK1:
+			clif_par_change(sd, type, pc_leftside_atk(&sd));
+			break;
+		case SP_DEF1:
+			clif_par_change(sd, type, pc_leftside_def(&sd));
+			break;
+		case SP_MDEF1:
+			clif_par_change(sd, type, pc_leftside_mdef(&sd));
+			break;
+		case SP_ATK2:
+			clif_par_change(sd, type, pc_rightside_atk(&sd));
+			break;
+		case SP_DEF2:
+			clif_par_change(sd, type, pc_rightside_def(&sd));
+			break;
+		case SP_MDEF2: {
+				//negative check (in case you have something like Berserk active)
+				int32 mdef2 = pc_rightside_mdef(&sd);
+
+#ifndef RENEWAL
+				clif_par_change(sd, type, mdef2 < 0 ? 0 : mdef2);
+#else
+				clif_par_change(sd, type, mdef2);
+#endif
+			}
+			break;
+		case SP_CRITICAL:
+			clif_par_change(sd, type, sd.battle_status.cri/10);
+			break;
+		case SP_MATK1:
+			clif_par_change(sd, type, pc_rightside_matk(&sd));
+			break;
+		case SP_MATK2:
+			clif_par_change(sd, type, pc_leftside_matk(&sd));
+			break;
+
+		case SP_ZENY:
+			clif_longpar_change(sd, type, sd.status.zeny);
+			break;
+#if PACKETVER >= 20170830
+		case SP_BASEEXP:
+			clif_longlongpar_change(sd, type, client_exp(sd.status.base_exp));
+			break;
+		case SP_JOBEXP:
+			clif_longlongpar_change(sd, type, client_exp(sd.status.job_exp));
+			break;
+		case SP_NEXTBASEEXP:
+			clif_longlongpar_change(sd, type, client_exp(pc_nextbaseexp(&sd)));
+			break;
+		case SP_NEXTJOBEXP:
+			clif_longlongpar_change(sd, type, client_exp(pc_nextjobexp(&sd)));
+			break;
+#else
+		case SP_BASEEXP:
+			clif_longpar_change(sd, type, client_exp(sd.status.base_exp));
+			break;
+		case SP_JOBEXP:
+			clif_longpar_change(sd, type, client_exp(sd.status.job_exp));
+			break;
+		case SP_NEXTBASEEXP:
+			clif_longpar_change(sd, type, client_exp(pc_nextbaseexp(&sd)));
+			break;
+		case SP_NEXTJOBEXP:
+			clif_longpar_change(sd, type, client_exp(pc_nextjobexp(&sd)));
+			break;
+#endif
+
+		/**
+		 * SP_U<STAT> are used to update the amount of points necessary to increase that stat
+		 **/
+		case SP_USTR:
+		case SP_UAGI:
+		case SP_UVIT:
+		case SP_UINT:
+		case SP_UDEX:
+		case SP_ULUK:
+			clif_zc_status_change(sd, static_cast<uint16>(type), static_cast<uint8>(pc_need_status_point(&sd, type-SP_USTR+SP_STR, 1)));
+			break;
+
+		case SP_ATTACKRANGE:
+			clif_attackrange( sd, sd.battle_status.rhw.range );
+			break;
+
+		case SP_STR:
+			clif_couplestatus(sd, type, sd.status.str, sd.battle_status.str - sd.status.str);
+			break;
+		case SP_AGI:
+			clif_couplestatus(sd, type, sd.status.agi, sd.battle_status.agi - sd.status.agi);
+			break;
+		case SP_VIT:
+			clif_couplestatus(sd, type, sd.status.vit, sd.battle_status.vit - sd.status.vit);
+			break;
+		case SP_INT:
+			clif_couplestatus(sd, type, sd.status.int_, sd.battle_status.int_ - sd.status.int_);
+			break;
+		case SP_DEX:
+			clif_couplestatus(sd, type, sd.status.dex, sd.battle_status.dex - sd.status.dex);
+			break;
+		case SP_LUK:
+			clif_couplestatus(sd, type, sd.status.luk, sd.battle_status.luk - sd.status.luk);
+			break;
+
+		case SP_CARTINFO:
+			clif_cartcount( sd );
+			break;
+
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+		case SP_AP:
+			clif_par_change( sd, SP_AP, sd.battle_status.ap );
+			break;
+		case SP_TRAITPOINT:
+			clif_par_change( sd, SP_TRAITPOINT, sd.status.trait_point );
+			break;
+		case SP_MAXAP:
+			clif_par_change( sd, SP_MAXAP, sd.battle_status.max_ap );
+			break;
+
+		case SP_POW:
+			clif_couplestatus( sd, SP_POW, sd.status.pow, sd.battle_status.pow - sd.status.pow );
+			break;
+		case SP_STA:
+			clif_couplestatus( sd, SP_STA, sd.status.sta, sd.battle_status.sta - sd.status.sta );
+			break;
+		case SP_WIS:
+			clif_couplestatus( sd, SP_WIS, sd.status.wis, sd.battle_status.wis - sd.status.wis );
+			break;
+		case SP_SPL:
+			clif_couplestatus( sd, SP_SPL, sd.status.spl, sd.battle_status.spl - sd.status.spl );
+			break;
+		case SP_CON:
+			clif_couplestatus( sd, SP_CON, sd.status.con, sd.battle_status.con - sd.status.con );
+			break;
+		case SP_CRT:
+			clif_couplestatus( sd, SP_CRT, sd.status.crt, sd.battle_status.crt - sd.status.crt );
+			break;
+
+		case SP_UPOW:
+		case SP_USTA:
+		case SP_UWIS:
+		case SP_USPL:
+		case SP_UCON:
+		case SP_UCRT:
+			clif_zc_status_change( sd, static_cast<uint16>( type ), static_cast<uint8>( pc_need_trait_point( &sd, type - SP_UPOW + SP_POW, 1 ) ) );
+			break;
+
+		case SP_PATK:
+			clif_par_change( sd, SP_PATK, sd.battle_status.patk );
+			break;
+		case SP_SMATK:
+			clif_par_change( sd, SP_SMATK, sd.battle_status.smatk );
+			break;
+		case SP_RES:
+			clif_par_change( sd, SP_RES, sd.battle_status.res );
+			break;
+		case SP_MRES:
+			clif_par_change( sd, SP_MRES, sd.battle_status.mres );
+			break;
+		case SP_HPLUS:
+			clif_par_change( sd, SP_HPLUS, sd.battle_status.hplus );
+			break;
+		case SP_CRATE:
+			clif_par_change( sd, SP_CRATE, sd.battle_status.crate );
+			break;
+#else
+		case SP_AP:
+		case SP_TRAITPOINT:
+		case SP_MAXAP:
+		case SP_POW:
+		case SP_STA:
+		case SP_WIS:
+		case SP_SPL:
+		case SP_CON:
+		case SP_CRT:
+		case SP_UPOW:
+		case SP_USTA:
+		case SP_UWIS:
+		case SP_USPL:
+		case SP_UCON:
+		case SP_UCRT:
+		case SP_PATK:
+		case SP_SMATK:
+		case SP_RES:
+		case SP_MRES:
+		case SP_HPLUS:
+		case SP_CRATE:
+			// 4th job status are not supported by older clients
+			return;
+#endif
+
+	default:
+		ShowError("clif_updatestatus : unrecognized type %d\n",type);
+		return;
+	}
+
+	// Additional update packets that should be sent right after
+	switch( type ){
+		case SP_BASELEVEL:
+			if( sd.status.party_id ){
+				struct party_data* p;
+				int32 i;
+		
+				if( ( p = party_search( sd.status.party_id ) ) != nullptr ){
+					ARR_FIND(0, MAX_PARTY, i, p->party.member[i].char_id == sd.status.char_id);
+
+					if( i < MAX_PARTY ){
+						p->party.member[i].lv = sd.status.base_level;
+						clif_party_job_and_level( sd );
+					}
+				}
+			}
+			break;
+		case SP_HP:
+			clif_update_hp( sd );
+			break;
+	}
+}
+
+
+/// Notifies client of a parameter change of an another player.
+/// 01ab <account id>.L <var id>.W <value>.L (ZC_PAR_CHANGE_USER)
+/// var id:
+///     SP_MANNER
+///     ?
+void clif_changemanner( const map_session_data& sd ) {
+	PACKET_ZC_PAR_CHANGE_USER packet{};
+
+	packet.packetType = HEADER_ZC_PAR_CHANGE_USER;
+	packet.gid = sd.id;
+	packet.type = static_cast<decltype(packet.type)>(SP_MANNER);
+	packet.value = sd.status.manner;
+
+	clif_send( &packet, sizeof( packet ), &sd, AREA_WOS );
+}
+
+
+/// 00c3 <id>.L <type>.B <value>.B (ZC_SPRITE_CHANGE)
+/// 01d7 <id>.L <type>.B <value1>.W <value2>.W (ZC_SPRITE_CHANGE2)
+void clif_sprite_change( const block_list* bl, int32 id, int32 type, int32 val, int32 val2, enum send_target target ){
+	switch( type ){
+		case LOOK_BODY2:
+#if PACKETVER < 20231220
+			if( val > JOB_SECOND_JOB_START && val < JOB_SECOND_JOB_END ){
+				val = 1;
+			}else{
+				val = 0;
+			}
+#elif PACKETVER < 20141022
+			return;
+#endif
+			break;
+	}
+
+	PACKET_ZC_SPRITE_CHANGE p = {};
+
+	p.packetType = sendLookType;
+	p.AID = id;
+	p.type = type;
+	p.val = val;
+#if PACKETVER >= 4
+	p.val2 = val2;
+#endif
+
+	clif_send( &p, sizeof( p ), bl, target );
+}
+
+
+/// Updates sprite/style properties of an object.
+void clif_changelook(block_list *bl,int32 type,int32 val) {
+	map_session_data* sd;
+	status_change* sc;
+	struct view_data* vd;
+	enum send_target target = AREA;
+	int32 val2 = 0;
+	nullpo_retv(bl);
+
+	sd = BL_CAST(BL_PC, bl);
+	sc = status_get_sc(bl);
+	vd = status_get_viewdata(bl);
+
+	if( vd ) //temp hack to let Warp Portal change appearance
+		switch(type) {
+			case LOOK_WEAPON:
+				if (sd) {
+					sd->update_look( LOOK_WEAPON );
+					sd->update_look( LOOK_SHIELD );
+					val = vd->look[LOOK_WEAPON];
+				}
+				else 
+					vd->look[LOOK_WEAPON] = val;
+				break;
+			case LOOK_SHIELD:
+				if (sd) {
+					sd->update_look( LOOK_WEAPON );
+					sd->update_look( LOOK_SHIELD );
+					val = vd->look[LOOK_SHIELD];
+				}
+				else 
+					vd->look[LOOK_SHIELD] = val;
+				break;
+			case LOOK_BASE:
+				if ( val == JT_INVISIBLE )
+					return;
+

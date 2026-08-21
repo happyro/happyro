@@ -1,0 +1,500 @@
+/**
+ * UI/Components/CharSelect/CharSelectCommon.js
+ *
+ * Shared factory for the Character Selection windows.
+ *
+ * Collapses the CharSelect version siblings (V1, V2, V3, V4) into a single
+ * createCharSelect(config) factory. Each version file passes its own
+ * htmlText/cssText plus capability flags describing its real differences:
+ *   - V1 : paginated (3-slot) layout, immediate delete only, no countdown.
+ *   - V2 : paginated layout, delete-reservation flow gated by PACKETVER.
+ *   - V3 : paginated layout with page balls + per-slot make buttons.
+ *   - V4 : grid layout (`gridLayout`) with background-image slots and
+ *          duration-based countdown intervals.
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import DB from 'DB/DBManager.js';
+import MonsterTable from 'DB/Monsters/MonsterTable.js';
+import Preferences from 'Core/Preferences.js';
+import Client from 'Core/Client.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import Renderer from 'Renderer/Renderer.js';
+import Entity from 'Renderer/Entity/Entity.js';
+import SpriteRenderer from 'Renderer/SpriteRenderer.js';
+import StatusConst from 'DB/Status/StatusState.js';
+import Camera from 'Renderer/Camera.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+
+export function createCharSelect(config) {
+	const {
+		name,
+		htmlText,
+		cssText,
+		gridLayout = false,
+		hostHeight = 342,
+		defaultMaxSlots = 3 * 9,
+		deleteReservation = false,
+		packetverGatedDelete = false,
+		pageBalls = false
+	} = config;
+
+	const Component = new GUIComponent(name, cssText);
+
+	Component.render = () => htmlText;
+
+	/**
+	 * @var {Preferences} save where the cursor position is
+	 */
+	const _preferences = Preferences.get(
+		name,
+		{
+			index: 0
+		},
+		1.0
+	);
+
+	/**
+	 * @var {number} max slots
+	 */
+	let _maxSlots = defaultMaxSlots;
+
+	/**
+	 * var {Array} list of characters
+	 */
+	const _list = [];
+
+	/**
+	 * @var {Array} list of characters (index by slot)
+	 */
+	const _slots = [];
+
+	/**
+	 * @var {Array} list of entities (index by slot)
+	 */
+	const _entitySlots = [];
+
+	/**
+	 * @var {number} selector index
+	 */
+	let _index = 0;
+
+	/**
+	 * @var {Array} canvas context
+	 */
+	const _ctx = [];
+
+	/**
+	 * var {number} sex
+	 */
+	let _sex = 0;
+
+	/**
+	 * var {boolean} disable input
+	 */
+	let _disable_UI = false;
+
+	/**
+	 * Grid (V4) background/countdown state
+	 */
+	let img = 0;
+	let _curindex = 0;
+	let shouldRunBackgroundChange = false;
+	let countdownInterval;
+	let _bgInterval = null;
+
+	const render = gridLayout ? renderGrid : renderPaginated;
+	const moveCursorTo = gridLayout ? moveCursorToGrid : moveCursorToPaginated;
+
+	/**
+	 * Initialize UI
+	 */
+	Component.init = function init() {
+		const root = this.getRoot();
+
+		if (gridLayout) {
+			// Bind buttons
+			root.querySelector('.ok').addEventListener('click', connect);
+			root.querySelector('.cancel').addEventListener('click', cancel);
+			root.querySelector('.delete').addEventListener('click', reserve);
+			root.querySelector('.canceldelete').addEventListener('click', removedelete);
+			root.querySelector('.finaldelete').addEventListener('click', suppress);
+
+			// Bind canvas
+			for (let i = 0; i < 15; i++) {
+				const slot = root.querySelector(`#slot${i}`);
+				if (slot) {
+					slot.addEventListener('mousedown', genericCanvasDown(i));
+				}
+			}
+
+			root.querySelectorAll('canvas').forEach(canvas => {
+				canvas.addEventListener('dblclick', () => {
+					if (_slots[_index]) {
+						connect();
+					} else {
+						create();
+					}
+				});
+				_ctx.push(canvas.getContext('2d'));
+			});
+
+			// Load charinfo panel background
+			Client.loadFile(`${DB.INTERFACE_PATH}select_character_ver3/img_info.bmp`, dataURI => {
+				root.querySelector('.charinfo').style.backgroundImage = `url(${dataURI})`;
+			});
+
+			// Load default slot backgrounds
+			for (let i = 0; i < 15; i++) {
+				const slotCanvas = root.querySelector(`#slot${i}`);
+				if (slotCanvas) {
+					Client.loadFile(`${DB.INTERFACE_PATH}select_character_ver3/img_slot2_normal.bmp`, dataURI => {
+						slotCanvas.style.backgroundImage = `url(${dataURI})`;
+					});
+				}
+			}
+
+			return;
+		}
+
+		this.draggable();
+
+		// Bind buttons
+		root.querySelector('.ok').addEventListener('click', connect);
+		root.querySelector('.cancel').addEventListener('click', cancel);
+		root.querySelector('.make').addEventListener('click', create);
+		root.querySelector('.delete').addEventListener('click', deleteReservation ? reserve : suppress);
+
+		if (deleteReservation) {
+			root.querySelector('.canceldelete').addEventListener('click', removedelete);
+			root.querySelector('.finaldelete').addEventListener('click', suppress);
+		}
+
+		root.querySelector('.arrow.left').addEventListener('mousedown', genericArrowDown(-1));
+		root.querySelector('.arrow.right').addEventListener('mousedown', genericArrowDown(+1));
+
+		// Bind canvas
+		root.querySelector('.slot1').addEventListener('mousedown', genericCanvasDown(0));
+		root.querySelector('.slot2').addEventListener('mousedown', genericCanvasDown(1));
+		root.querySelector('.slot3').addEventListener('mousedown', genericCanvasDown(2));
+
+		if (pageBalls) {
+			root.querySelector('.make1').addEventListener('mousedown', e => {
+				genericCanvasDown(0)(e);
+				create();
+			});
+			root.querySelector('.make2').addEventListener('mousedown', e => {
+				genericCanvasDown(1)(e);
+				create();
+			});
+			root.querySelector('.make3').addEventListener('mousedown', e => {
+				genericCanvasDown(2)(e);
+				create();
+			});
+		}
+
+		root.querySelectorAll('canvas').forEach(canvas => {
+			canvas.addEventListener('dblclick', () => {
+				if (_slots[_index]) {
+					connect();
+				} else {
+					create();
+				}
+			});
+			_ctx.push(canvas.getContext('2d'));
+		});
+	};
+
+	/**
+	 * Once append to body
+	 */
+	Component.onAppend = function onAppend() {
+		if (gridLayout) {
+			Component.updateCharSlot();
+
+			startCountdownInterval();
+
+			// Update values
+			moveCursorTo(_index);
+			_bgInterval = setInterval(changeBackgroundEverySecond, 250);
+			// Start rendering
+			Renderer.render(render);
+			return;
+		}
+
+		const root = this.getRoot();
+
+		this._host.style.top = `${(Renderer.height - hostHeight) / 2}px`;
+		this._host.style.left = `${(Renderer.width - 576) / 2}px`;
+
+		_index = _preferences.index;
+
+		root.querySelector('.slotinfo .number').textContent = `${_list.length} / ${_maxSlots}`;
+		if (!pageBalls) {
+			root.querySelector('.pageinfo .count').textContent = _maxSlots / 3;
+		}
+
+		// Update values
+		moveCursorTo(_index);
+
+		// Start rendering
+		Renderer.render(render);
+	};
+
+	/**
+	 * Stop rendering
+	 */
+	Component.onRemove = function onRemove() {
+		if (gridLayout) {
+			if (_bgInterval) {
+				clearInterval(_bgInterval);
+				_bgInterval = null;
+			}
+			stopCountdownInterval();
+			_preferences.index = _index;
+			_preferences.save();
+			Renderer.stop();
+			return;
+		}
+
+		const root = this.getRoot();
+
+		_preferences.index = _index;
+		_preferences.save();
+		if (deleteReservation) {
+			root.querySelectorAll('.timedelete').forEach(el => {
+				el.style.display = 'none';
+				el.textContent = '';
+			});
+		}
+		Renderer.stop();
+	};
+
+	/**
+	 * Bind Key events
+	 *
+	 * @param {object} event
+	 */
+	Component.onKeyDown = function onKeyDown(event) {
+		if (this._host.style.display === 'none') {
+			return true;
+		}
+		switch (event.which) {
+			case KEYS.ESCAPE:
+				cancel();
+				break;
+
+			case KEYS.LEFT:
+				if (gridLayout) {
+					moveCursorTo(_index - 1 > _list.length - 1 ? _list.length - 1 : _index - 1 < 0 ? 0 : _index - 1);
+				} else {
+					moveCursorTo(_index - 1);
+				}
+				break;
+
+			case KEYS.RIGHT:
+				if (gridLayout) {
+					moveCursorTo(_index + 1 > _list.length - 1 ? _list.length - 1 : _index + 1 < 0 ? 0 : _index + 1);
+				} else {
+					moveCursorTo(_index + 1);
+				}
+				break;
+
+			case KEYS.SUPR:
+				if (_slots[_index]) {
+					suppress();
+				}
+				break;
+
+			case KEYS.ENTER:
+				if (_slots[_index]) {
+					connect();
+				} else {
+					create();
+				}
+				break;
+
+			default:
+				return true;
+		}
+
+		event.stopImmediatePropagation();
+		return false;
+	};
+
+	/**
+	 * Add players to window
+	 *
+	 * @param {object} pkt - packet structure
+	 */
+	Component.setInfo = function setInfo(pkt) {
+		if (gridLayout) {
+			Component.clearAllSlots();
+
+			_maxSlots = Math.floor(pkt.TotalSlotNum + pkt.PremiumStartSlot || 15); // default 15 ?
+			_sex = pkt.sex;
+
+			if (pkt.charInfo) {
+				for (let i = 0, count = pkt.charInfo.length; i < count; ++i) {
+					Component.addCharacter(pkt.charInfo[i]);
+				}
+			}
+
+			moveCursorTo(_index);
+			return;
+		}
+
+		const root = this.getRoot();
+
+		_maxSlots = Math.floor(pkt.TotalSlotNum + pkt.PremiumStartSlot || 9); // default 9 ?
+		_sex = pkt.sex;
+		_slots.length = 0;
+		_entitySlots.length = 0;
+		_list.length = 0;
+
+		if (pkt.charInfo) {
+			for (let i = 0, count = pkt.charInfo.length; i < count; ++i) {
+				Component.addCharacter(pkt.charInfo[i]);
+
+				// Guess the max slot
+				// required if the client is < 20100413 and have more than 9 slots
+				_maxSlots = Math.max(_maxSlots, Math.floor(pkt.charInfo[i].CharNum / 3 + 1) * 3);
+			}
+		}
+
+		root.querySelector('.slotinfo .number').textContent = `${_list.length} / ${_maxSlots}`;
+		if (!pageBalls) {
+			root.querySelector('.pageinfo .count').textContent = _maxSlots / 3;
+		}
+
+		moveCursorTo(_index);
+	};
+
+	/**
+	 * Answer from server to delete a character
+	 *
+	 * @param {number} error id
+	 */
+	Component.deleteAnswer = function deleteAnswer(error) {
+		this.on('keydown');
+
+		if (gridLayout) {
+			switch (error) {
+				// Do nothing, just re-set the keydown
+				case -1:
+				case -2:
+					return;
+
+				// Success (clean up character)
+				case 1: {
+					delete _slots[_index];
+					delete _entitySlots[_index];
+
+					if (_preferences.index === _index) {
+						_preferences.index = 0;
+					}
+
+					let i = 0;
+					let count = _list.length;
+
+					while (i < count) {
+						if (_list[i].CharNum === _index) {
+							_list.splice(i, 1);
+							--count;
+						} else {
+							i++;
+						}
+					}
+
+					Component.updateCharSlot(_index);
+
+					// Refresh UI
+					moveCursorTo(_index);
+					return;
+				}
+
+				default: // Others error ?
+				case 0:
+				case 2: // 2: Due to system settings can not be deleted.
+				case 6: // 6: Name does not match.
+					UIManager.showMessageBox(DB.getMessage(1821), 'ok');
+					return;
+				case 3: // 3: A database error occurred.
+					UIManager.showMessageBox(DB.getMessage(1817), 'ok');
+					return;
+				case 4: // 4: Deleting not yet possible time.
+					UIManager.showMessageBox(DB.getMessage(1820), 'ok');
+					return;
+				case 5: // 5: Date of birth do not match.
+					UIManager.showMessageBox(DB.getMessage(1822), 'ok');
+					return;
+				case 7: // 7: Character Deletion has failed because you have entered an incorrect e-mail address.
+					UIManager.showMessageBox(DB.getMessage(301), 'ok');
+					return;
+			}
+		}
+
+		const useNew = deleteReservation && (!packetverGatedDelete || PACKETVER.value >= 20100803);
+
+		if (useNew) {
+			const root = this.getRoot();
+
+			switch (error) {
+				// Do nothing, just re-set the keydown
+				case -1:
+				case -2:
+					return;
+
+				// Success (clean up character)
+				case 1: {
+					delete _slots[_index];
+					delete _entitySlots[_index];
+
+					let i = 0;
+					let count = _list.length;
+
+					while (i < count) {
+						if (_list[i].CharNum === _index) {
+							_list.splice(i, 1);
+							--count;
+						} else {
+							i++;
+						}
+					}
+
+					// Refresh UI
+					moveCursorTo(_index);
+					root.querySelector('.slotinfo .number').textContent = `${_list.length} / ${_maxSlots}`;
+					return;
+				}
+
+				default: // Others error ?
+				case 0:
+				case 2: // 2: Due to system settings can not be deleted.
+				case 6: // 6: Name does not match.
+					UIManager.showMessageBox(DB.getMessage(1821), 'ok');
+					return;
+				case 3: // 3: A database error occurred.
+					UIManager.showMessageBox(DB.getMessage(1817), 'ok');
+					return;
+				case 4: // 4: Deleting not yet possible time.
+					UIManager.showMessageBox(DB.getMessage(1820), 'ok');
+					return;
+				case 5: // 5: Date of birth do not match.
+					UIManager.showMessageBox(DB.getMessage(1822), 'ok');
+					return;
+				case 7: // 7: Character Deletion has failed because you have entered an incorrect e-mail address.
+					UIManager.showMessageBox(DB.getMessage(301), 'ok');
+					return;
+			}
+		} else {
+			switch (error) {
+				// Do nothing, just re-set the keydown
+				case -2:
+					return;

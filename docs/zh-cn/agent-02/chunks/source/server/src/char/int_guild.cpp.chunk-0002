@@ -1,0 +1,500 @@
+		Sql_GetData(sql_handle, 3, &data, nullptr); e->char_id = strtoul(data, nullptr, 10);
+	}
+
+	//printf("- Read guild_skill %d from sql \n",guild_id);
+	if( SQL_ERROR == Sql_Query(sql_handle, "SELECT `id`,`lv` FROM `%s` WHERE `guild_id`='%d' ORDER BY `id`", schema_config.guild_skill_db, guild_id) )
+	{
+		Sql_ShowDebug(sql_handle);
+		return nullptr;
+	}
+
+	for(i = 0; i < MAX_GUILDSKILL; i++)
+	{	//Skill IDs must always be initialized. [Skotlex]
+		g->guild.skill[i].id = i + GD_SKILLBASE;
+	}
+
+	while( SQL_SUCCESS == Sql_NextRow(sql_handle) )
+	{
+		int32 id;
+		Sql_GetData(sql_handle, 0, &data, nullptr); id = atoi(data) - GD_SKILLBASE;
+		if( id < 0 || id >= MAX_GUILDSKILL )
+			continue;// invalid guild skill
+		Sql_GetData(sql_handle, 1, &data, nullptr); g->guild.skill[id].lv = atoi(data);
+	}
+	Sql_FreeResult(sql_handle);
+
+	// Add to cache
+	guild_db[g->guild.guild_id] = g;
+
+	// But set it to be removed, in case it is not needed for long.
+	g->save_flag |= GS_REMOVE;
+
+	if (charserv_config.save_log)
+		ShowInfo("Guild loaded (%d - %s)\n", guild_id, g->guild.name);
+
+	return g;
+}
+
+/**
+ * Get the max storage size of a guild.
+ * @param guild_id: Guild ID to search
+ * @return Guild storage max size
+ */
+uint16 inter_guild_storagemax(int32 guild_id)
+{
+#ifdef OFFICIAL_GUILD_STORAGE
+	auto g = inter_guild_fromsql( guild_id );
+	uint16 max = 0;
+
+	if( g == nullptr ){
+		ShowError("Guild %d not found!\n", guild_id);
+		return 0;
+	}
+
+	max = guild_checkskill(g, GD_GUILD_STORAGE);
+	if (max)
+		max = 100 + max * 100; // Level 1..5 => 200..600
+
+	return max;
+#else
+	return MAX_GUILD_STORAGE;
+#endif
+}
+
+// `guild_castle` (`castle_id`, `guild_id`, `economy`, `defense`, `triggerE`, `triggerD`, `nextTime`, `payTime`, `createTime`, `visibleC`, `visibleG0`, `visibleG1`, `visibleG2`, `visibleG3`, `visibleG4`, `visibleG5`, `visibleG6`, `visibleG7`)
+int32 inter_guildcastle_tosql( std::shared_ptr<struct guild_castle> gc ){
+	StringBuf buf;
+	int32 i;
+
+	StringBuf_Init(&buf);
+	StringBuf_Printf(&buf, "REPLACE INTO `%s` SET `castle_id`='%d', `guild_id`='%d', `economy`='%d', `defense`='%d', "
+	    "`triggerE`='%d', `triggerD`='%d', `nextTime`='%d', `payTime`='%d', `createTime`='%d', `visibleC`='%d'",
+	    schema_config.guild_castle_db, gc->castle_id, gc->guild_id, gc->economy, gc->defense,
+	    gc->triggerE, gc->triggerD, gc->nextTime, gc->payTime, gc->createTime, gc->visibleC);
+	for (i = 0; i < MAX_GUARDIANS; ++i)
+		StringBuf_Printf(&buf, ", `visibleG%d`='%d'", i, gc->guardian[i].visible);
+
+	if (SQL_ERROR == Sql_Query(sql_handle, StringBuf_Value(&buf)))
+		Sql_ShowDebug(sql_handle);
+	else if(charserv_config.save_log)
+		ShowInfo("Saved guild castle (%d)\n", gc->castle_id);
+
+	return 0;
+}
+
+// Read guild_castle from SQL
+std::shared_ptr<struct guild_castle> inter_guildcastle_fromsql( int32 castle_id ){
+	char *data;
+	int32 i;
+	StringBuf buf;
+
+	std::shared_ptr<struct guild_castle> gc = util::umap_find( castle_db, castle_id );
+
+	if( gc != nullptr ){
+		return gc;
+	}
+
+	StringBuf_Init(&buf);
+	StringBuf_AppendStr(&buf, "SELECT `castle_id`, `guild_id`, `economy`, `defense`, `triggerE`, "
+	                    "`triggerD`, `nextTime`, `payTime`, `createTime`, `visibleC`");
+	for (i = 0; i < MAX_GUARDIANS; ++i)
+		StringBuf_Printf(&buf, ", `visibleG%d`", i);
+	StringBuf_Printf(&buf, " FROM `%s` WHERE `castle_id`='%d'", schema_config.guild_castle_db, castle_id);
+	if (SQL_ERROR == Sql_Query(sql_handle, StringBuf_Value(&buf))) {
+		Sql_ShowDebug(sql_handle);
+		return nullptr;
+	}
+
+	gc = std::make_shared<struct guild_castle>();
+
+	gc->castle_id = castle_id;
+
+	if (SQL_SUCCESS == Sql_NextRow(sql_handle)) {
+		Sql_GetData(sql_handle, CD_GUILD_ID, &data, nullptr); gc->guild_id =  atoi(data);
+		Sql_GetData(sql_handle, CD_CURRENT_ECONOMY, &data, nullptr); gc->economy = atoi(data);
+		Sql_GetData(sql_handle, CD_CURRENT_DEFENSE, &data, nullptr); gc->defense = atoi(data);
+		Sql_GetData(sql_handle, CD_INVESTED_ECONOMY, &data, nullptr); gc->triggerE = atoi(data);
+		Sql_GetData(sql_handle, CD_INVESTED_DEFENSE, &data, nullptr); gc->triggerD = atoi(data);
+		Sql_GetData(sql_handle, CD_NEXT_TIME, &data, nullptr); gc->nextTime = atoi(data);
+		Sql_GetData(sql_handle, CD_PAY_TIME, &data, nullptr); gc->payTime = atoi(data);
+		Sql_GetData(sql_handle, CD_CREATE_TIME, &data, nullptr); gc->createTime = atoi(data);
+		Sql_GetData(sql_handle, CD_ENABLED_KAFRA, &data, nullptr); gc->visibleC = atoi(data);
+		for (i = CD_ENABLED_GUARDIAN00; i < CD_MAX; i++) {
+			Sql_GetData(sql_handle, i, &data, nullptr); gc->guardian[i - CD_ENABLED_GUARDIAN00].visible = atoi(data);
+		}
+	}
+	Sql_FreeResult(sql_handle);
+
+	castle_db[gc->castle_id] = gc;
+
+	if (charserv_config.save_log)
+		ShowInfo("Loaded guild castle (%d - guild %d)\n", castle_id, gc->guild_id);
+
+	return gc;
+}
+
+
+int32 inter_guild_CharOnline(uint32 char_id, int32 guild_id)
+{
+	int32 i;
+
+	if (guild_id == -1) {
+		//Get guild_id from the database
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT guild_id FROM `%s` WHERE char_id='%d'", schema_config.char_db, char_id) )
+		{
+			Sql_ShowDebug(sql_handle);
+			return 0;
+		}
+
+		if( SQL_SUCCESS == Sql_NextRow(sql_handle) )
+		{
+			char* data;
+
+			Sql_GetData(sql_handle, 0, &data, nullptr);
+			guild_id = atoi(data);
+		}
+		else
+		{
+			guild_id = 0;
+		}
+		Sql_FreeResult(sql_handle);
+	}
+	if (guild_id == 0)
+		return 0; //No guild...
+
+	auto g = inter_guild_fromsql( guild_id );
+
+	if( g == nullptr ){
+		ShowError("Character %d's guild %d not found!\n", char_id, guild_id);
+		return 0;
+	}
+
+	//Member has logged in before saving, tell saver not to delete
+	if(g->save_flag & GS_REMOVE)
+		g->save_flag &= ~GS_REMOVE;
+
+	//Set member online
+	ARR_FIND( 0, g->guild.max_member, i, g->guild.member[i].char_id == char_id );
+	if( i < g->guild.max_member )
+	{
+		g->guild.member[i].online = 1;
+		g->guild.member[i].modified = GS_MEMBER_MODIFIED;
+	}
+
+	return 1;
+}
+
+int32 inter_guild_CharOffline(uint32 char_id, int32 guild_id)
+{
+	int32 online_count, i;
+
+	if (guild_id == -1)
+	{
+		//Get guild_id from the database
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT guild_id FROM `%s` WHERE char_id='%d'", schema_config.char_db, char_id) )
+		{
+			Sql_ShowDebug(sql_handle);
+			return 0;
+		}
+
+		if( SQL_SUCCESS == Sql_NextRow(sql_handle) )
+		{
+			char* data;
+
+			Sql_GetData(sql_handle, 0, &data, nullptr);
+			guild_id = atoi(data);
+		}
+		else
+		{
+			guild_id = 0;
+		}
+		Sql_FreeResult(sql_handle);
+	}
+	if (guild_id == 0)
+		return 0; //No guild...
+
+	//Character has a guild, set character offline and check if they were the only member online
+	auto g = inter_guild_fromsql( guild_id );
+
+	// Guild not found?
+	if( g == nullptr ){
+		return 0;
+	}
+
+	//Set member offline
+	ARR_FIND( 0, g->guild.max_member, i, g->guild.member[i].char_id == char_id );
+	if( i < g->guild.max_member )
+	{
+		g->guild.member[i].online = 0;
+		g->guild.member[i].modified = GS_MEMBER_MODIFIED;
+	}
+
+	online_count = 0;
+	for( i = 0; i < g->guild.max_member; i++ )
+		if( g->guild.member[i].online )
+			online_count++;
+
+	// Remove guild from memory if no players online
+	if( online_count == 0 )
+		g->save_flag |= GS_REMOVE;
+
+	return 1;
+}
+
+const std::string GuildExpDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/exp_guild.yml";
+}
+
+uint64 GuildExpDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	if (!this->nodesExist(node, { "Level", "Exp" })) {
+		return 0;
+	}
+
+	uint16 level;
+
+	if (!this->asUInt16(node, "Level", level))
+		return 0;
+
+	if (level == 0) {
+		this->invalidWarning(node, "The minimum guild level is 1.\n");
+		return 0;
+	}
+	if (level >= MAX_GUILDLEVEL) {
+		this->invalidWarning(node["Level"], "Guild level %d exceeds maximum level %d, skipping.\n", level, MAX_GUILDLEVEL);
+		return 0;
+	}
+
+	t_exp exp;
+
+	if (!this->asUInt64(node, "Exp", exp))
+		return 0;
+
+	if (exp > MAX_GUILD_EXP) {
+		this->invalidWarning(node["Exp"], "Guild exp %" PRIu64 " exceeds max of %" PRIu64 ".\n", exp, MAX_GUILD_EXP);
+		return 0;
+	}
+
+	std::shared_ptr<s_guild_exp_db> guild_exp = this->find(level);
+	bool exists = guild_exp != nullptr;
+
+	if (!exists) {
+		guild_exp = std::make_shared<s_guild_exp_db>();
+		guild_exp->level = level;
+	}
+
+	guild_exp->exp = static_cast<t_exp>(exp);
+
+	if (!exists)
+		this->put(level, guild_exp);
+
+	return 1;
+}
+
+GuildExpDatabase guild_exp_db;
+
+void GuildExpDatabase::loadingFinished() {
+	for (uint16 level = 1; level < MAX_GUILDLEVEL; level++) {
+		if (this->get_nextexp(level) == 0)
+			ShowError("Missing experience for guild level %d.\n", level);
+	}
+}
+
+// Initialize guild sql and read exp_guild.yml
+void inter_guild_sql_init(void) {
+	guild_exp_db.load();
+	add_timer_func_list(guild_save_timer, "guild_save_timer");
+	add_timer(gettick() + 10000, guild_save_timer, 0, 0);
+}
+
+void inter_guild_sql_final(void)
+{
+	for( const auto& pair : guild_db ){
+		auto guild = pair.second;
+
+		if( guild->save_flag&GS_MASK ){
+			inter_guild_tosql( guild->guild, guild->save_flag&GS_MASK );
+		}
+	}
+	guild_db.clear();
+	castle_db.clear();
+}
+
+// Get guild_id by its name. Returns 0 if not found, -1 on error.
+int32 search_guildname(char *str)
+{
+	int32 guild_id;
+	char esc_name[NAME_LENGTH*2+1];
+
+	Sql_EscapeStringLen(sql_handle, esc_name, str, safestrnlen(str, NAME_LENGTH));
+	//Lookup guilds with the same name
+	if( SQL_ERROR == Sql_Query(sql_handle, "SELECT guild_id FROM `%s` WHERE name='%s'", schema_config.guild_db, esc_name) )
+	{
+		Sql_ShowDebug(sql_handle);
+		return -1;
+	}
+
+	if( SQL_SUCCESS == Sql_NextRow(sql_handle) )
+	{
+		char* data;
+
+		Sql_GetData(sql_handle, 0, &data, nullptr);
+		guild_id = atoi(data);
+	}
+	else
+	{
+		guild_id = 0;
+	}
+	Sql_FreeResult(sql_handle);
+	return guild_id;
+}
+
+// Check if guild is empty
+bool guild_check_empty( std::shared_ptr<CharGuild> g ){
+	int32 i;
+	ARR_FIND( 0, g->guild.max_member, i, g->guild.member[i].account_id > 0 );
+	//Let the calling function handle the guild removal in case they need
+	//to do something else with it before freeing the data. [Skotlex]
+	return i < g->guild.max_member ? false : true; // not empty
+}
+
+t_exp GuildExpDatabase::get_nextexp(uint16 level) {
+	std::shared_ptr<s_guild_exp_db> guild_exp = guild_exp_db.find(level);
+
+	return ((guild_exp == nullptr) ? 0 : guild_exp->exp);
+}
+
+int32 guild_checkskill( std::shared_ptr<CharGuild> g, int32 id ){
+	int32 idx = id - GD_SKILLBASE;
+	return idx < 0 || idx >= MAX_GUILDSKILL ? 0 : g->guild.skill[idx].lv;
+}
+
+int32 guild_calcinfo( std::shared_ptr<CharGuild> g ){
+	int32 i,c;
+	struct mmo_guild before = g->guild; // Save guild current values
+
+	if(g->guild.guild_lv<=0)
+		g->guild.guild_lv = 1;
+	g->guild.next_exp = guild_exp_db.get_nextexp(g->guild.guild_lv);
+
+	// Consume guild exp and increase guild level
+	while(g->guild.exp >= g->guild.next_exp && g->guild.next_exp > 0 && g->guild.guild_lv < MAX_GUILDLEVEL){
+		g->guild.exp-=g->guild.next_exp;
+		g->guild.guild_lv++;
+		g->guild.skill_point++;
+		g->guild.next_exp = guild_exp_db.get_nextexp(g->guild.guild_lv);
+	}
+
+	// Set the max number of members, Guild Extention skill - currently adds 6 to max per skill lv.
+	g->guild.max_member = 16 + guild_checkskill(g, GD_EXTENSION) * 6;
+	if(g->guild.max_member > MAX_GUILD)
+	{
+		ShowError("Guild %d:%s has capacity for too many guild members (%d), max supported is %d\n", g->guild.guild_id, g->guild.name, g->guild.max_member, MAX_GUILD);
+		g->guild.max_member = MAX_GUILD;
+	}
+
+	// Compute the guild average level
+	g->guild.average_lv=0;
+	g->guild.connect_member=0;
+	for(i=c=0;i<g->guild.max_member;i++)
+	{
+		if(g->guild.member[i].account_id>0)
+		{
+			if (g->guild.member[i].lv >= 0)
+			{
+				g->guild.average_lv+=g->guild.member[i].lv;
+				c++;
+			}
+			else
+			{
+				ShowWarning("Guild %d:%s, member %d:%s has an invalid level %d\n", g->guild.guild_id, g->guild.name, g->guild.member[i].char_id, g->guild.member[i].name, g->guild.member[i].lv);
+			}
+
+			if(g->guild.member[i].online)
+				g->guild.connect_member++;
+		}
+	}
+	if(c)
+		g->guild.average_lv /= c;
+
+	// Check if guild stats has change
+	if(g->guild.max_member != before.max_member || g->guild.guild_lv != before.guild_lv || g->guild.skill_point != before.skill_point	)
+	{
+		g->save_flag |= GS_LEVEL;
+		mapif_guild_info(-1,g->guild);
+		return 1;
+	}
+
+	return 0;
+}
+
+//-------------------------------------------------------------------
+// Packet sent to map server
+
+int32 mapif_guild_created( int32 fd, uint32 account_id, struct mmo_guild *g ){
+	WFIFOHEAD(fd, 10);
+	WFIFOW(fd,0)=0x3830;
+	WFIFOL(fd,2)=account_id;
+	if(g != nullptr)
+	{
+		WFIFOL(fd,6)=g->guild_id;
+		ShowInfo("int_guild: Guild created (%d - %s)\n",g->guild_id,g->name);
+	} else
+		WFIFOL(fd,6)=0;
+
+	WFIFOSET(fd,10);
+	return 0;
+}
+
+// Guild not found
+int32 mapif_guild_noinfo(int32 fd,int32 guild_id)
+{
+	unsigned char buf[12];
+	WBUFW(buf,0)=0x3831;
+	WBUFW(buf,2)=8;
+	WBUFL(buf,4)=guild_id;
+	ShowWarning("int_guild: info not found %d\n",guild_id);
+	if(fd<0)
+		chmapif_sendall(buf,8);
+	else
+		chmapif_send(fd,buf,8);
+	return 0;
+}
+
+// Send guild info
+int32 mapif_guild_info( int32 fd, const struct mmo_guild &g ){
+	unsigned char buf[8+sizeof(struct mmo_guild)];
+	WBUFW(buf,0)=0x3831;
+	WBUFW(buf,2)=4+sizeof(struct mmo_guild);
+	memcpy( buf + 4, &g, sizeof( struct mmo_guild ) );
+	if(fd<0)
+		chmapif_sendall(buf,WBUFW(buf,2));
+	else
+		chmapif_send(fd,buf,WBUFW(buf,2));
+	return 0;
+}
+
+// ACK member add
+int32 mapif_guild_memberadded(int32 fd,int32 guild_id,uint32 account_id,uint32 char_id,int32 flag)
+{
+	WFIFOHEAD(fd, 15);
+	WFIFOW(fd,0)=0x3832;
+	WFIFOL(fd,2)=guild_id;
+	WFIFOL(fd,6)=account_id;
+	WFIFOL(fd,10)=char_id;
+	WFIFOB(fd,14)=flag;
+	WFIFOSET(fd,15);
+	return 0;
+}
+
+// ACK member leave
+int32 mapif_guild_withdraw(int32 guild_id,uint32 account_id,uint32 char_id,int32 flag, const char *name, const char *mes)
+{
+	unsigned char buf[55+NAME_LENGTH];
+	WBUFW(buf, 0)=0x3834;
+	WBUFL(buf, 2)=guild_id;
+	WBUFL(buf, 6)=account_id;
+	WBUFL(buf,10)=char_id;
+	WBUFB(buf,14)=flag;
+	memcpy(WBUFP(buf,15),mes,40);
+	memcpy(WBUFP(buf,55),name,NAME_LENGTH);
+	chmapif_sendall(buf,55+NAME_LENGTH);

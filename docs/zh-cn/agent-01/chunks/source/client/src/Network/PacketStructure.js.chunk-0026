@@ -1,0 +1,500 @@
+	pkt_buf.writeUShort(this.Titlelength);
+	pkt_buf.writeUShort(this.Bodylength);
+	pkt_buf.writeString(this.title);
+	pkt_buf.writeString(this.body);
+	return pkt_buf;
+};
+
+// 0xa6e
+PACKET.CZ.REQ_SEND_RODEX2 = function PACKET_CZ_REQ_SEND_RODEX2() {
+	this.receiver = '';
+	this.sender = '';
+	this.zeny = 0;
+	this.Titlelength = 0;
+	this.Bodylength = 0;
+	this.CharID = 0;
+	this.title = '';
+	this.body = '';
+};
+PACKET.CZ.REQ_SEND_RODEX2.prototype.build = function () {
+	const pkt_len = 2 + 66 + this.Titlelength + this.Bodylength;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0xa6e);
+	pkt_buf.writeShort(pkt_len);
+	pkt_buf.writeString(this.receiver, 24);
+	pkt_buf.writeString(this.sender, 24);
+	pkt_buf.writeULong(this.zeny);
+	pkt_buf.writeULong(0); // TODO check or convert to 8 bytes (UINT64)
+	pkt_buf.writeUShort(this.Titlelength);
+	pkt_buf.writeUShort(this.Bodylength);
+	pkt_buf.writeULong(this.CharID);
+	pkt_buf.writeString(this.title);
+	pkt_buf.writeString(this.body);
+	return pkt_buf;
+};
+
+// 0xa13
+PACKET.CZ.CHECK_RECEIVE_CHARACTER_NAME = function PACKET_CZ_CHECK_RECEIVE_CHARACTER_NAME() {
+	this.name = '';
+};
+PACKET.CZ.CHECK_RECEIVE_CHARACTER_NAME.prototype.build = function () {
+	const pkt_len = 2 + 24;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0xa13);
+	pkt_buf.writeString(this.name, 24);
+	return pkt_buf;
+};
+
+// 0xb97
+PACKET.CZ.CHECK_RODEX_RECEIVE = function PACKET_CZ_CHECK_RODEX_RECEIVE() {
+	this.name = '';
+	this.unknown = 1;
+};
+PACKET.CZ.CHECK_RODEX_RECEIVE.prototype.build = function () {
+	const pkt_len = 2 + 24 + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0xb97);
+	pkt_buf.writeString(this.name, 24);
+	pkt_buf.writeUChar(this.unknown);
+	return pkt_buf;
+};
+
+/*
+ * TODO:
+ * 0B98: RODEX_RETURN
+ */
+
+// 0xa14
+PACKET.ZC.CHECK_RECEIVE_CHARACTER_NAME = function PACKET_ZC_CHECK_RECEIVE_CHARACTER_NAME(fp, end) {
+	this.CharID = fp.readULong();
+	this.Job = fp.readUShort();
+	this.level = fp.readUShort();
+};
+PACKET.ZC.CHECK_RECEIVE_CHARACTER_NAME.size = 10;
+
+// 0xa51
+PACKET.ZC.CHECK_RECEIVE_CHARACTER_NAME2 = function PACKET_ZC_CHECK_RECEIVE_CHARACTER_NAME2(fp, end) {
+	this.CharID = fp.readULong();
+	this.Job = fp.readUShort();
+	this.level = fp.readUShort();
+	this.name = fp.readString(NAME_LENGTH);
+};
+PACKET.ZC.CHECK_RECEIVE_CHARACTER_NAME2.size = 34;
+
+// 0x9f7
+PACKET.ZC.PROPERTY_HOMUN2 = function PACKET_ZC_PROPERTY_HOMUN2(fp, end) {
+	this.szName = fp.readString(NAME_LENGTH); // <name>.24B
+	this.bModified = fp.readUChar(); // <modified>.B
+	this.nLevel = fp.readShort(); // <level>.W
+	this.nFullness = fp.readShort(); // <hunger>.W
+	this.nRelationship = fp.readShort(); // <intimacy>.W
+
+	this.ITID = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort(); // <equip id>.W
+
+	this.atk = fp.readShort(); // <atk>.W
+	this.Matk = fp.readShort(); // <matk>.W
+	this.hit = fp.readShort(); // <hit>.W
+	this.critical = fp.readShort(); // <crit>.W
+	this.def = fp.readShort(); // <def>.W
+	this.Mdef = fp.readShort(); // <mdef>.W
+	this.flee = fp.readShort(); // <flee>.W
+	this.aspd = fp.readShort(); // <aspd>.W // todo wrong
+
+	this.hp = fp.readLong(); // <hp>.L
+	this.maxHP = fp.readLong(); // <max hp>.L
+	this.sp = fp.readShort(); // <sp>.W
+	this.maxSP = fp.readShort(); // <max sp>.W
+	this.exp = fp.readLong(); // <exp>.L
+	this.maxEXP = fp.readLong(); // <max exp>.L
+	this.SKPoint = fp.readShort(); // <skill points>.W
+	this.ATKRange = fp.readShort(); // <atk range>.W
+};
+PACKET.ZC.PROPERTY_HOMUN2.size = 75;
+
+// 0x9f8
+PACKET.ZC.ALL_QUEST_LIST_V3 = function PACKET_ZC_ALL_QUEST_LIST_V3(fp, end) {
+	this.questCount = fp.readLong();
+	this.QuestList = (function (questCount) {
+		const out = new Array(questCount);
+		for (let i = 0; i < questCount; ++i) {
+			out[i] = {};
+			out[i].questID = fp.readULong();
+			out[i].active = fp.readUChar();
+			out[i].quest_svrTime = fp.readULong();
+			out[i].quest_endTime = fp.readULong();
+			out[i].count = fp.readShort();
+			out[i].hunt = new Array(out[i].count);
+			for (let j = 0; j < out[i].count; j++) {
+				out[i].hunt[j] = {};
+				out[i].hunt[j].huntID = fp.readULong();
+				out[i].hunt[j].mobType = fp.readULong();
+				out[i].hunt[j].mobGID = fp.readULong();
+				out[i].hunt[j].lvlMin = fp.readShort();
+				out[i].hunt[j].lvlMax = fp.readShort();
+				out[i].hunt[j].huntCount = fp.readShort();
+				out[i].hunt[j].maxCount = fp.readShort();
+				out[i].hunt[j].mobName = fp.readString(NAME_LENGTH);
+			}
+		}
+		return out;
+	})(this.questCount);
+};
+PACKET.ZC.ALL_QUEST_LIST_V3.size = -1;
+
+// 0x9f9
+PACKET.ZC.ADD_QUEST2 = function PACKET_ZC_ADD_QUEST2(fp, end) {
+	this.questID = fp.readULong();
+	this.active = fp.readUChar();
+	this.quest_svrTime = fp.readLong();
+	this.quest_endTime = fp.readLong();
+	this.count = fp.readShort();
+	this.hunt = (function (count) {
+		const out = new Array(count);
+		for (let i = 0; i < count; ++i) {
+			out[i] = {};
+			out[i].huntID = fp.readULong();
+			out[i].mobType = fp.readULong();
+			out[i].mobGID = fp.readULong();
+			out[i].lvlMin = fp.readShort();
+			out[i].lvlMax = fp.readShort();
+			out[i].huntCount = fp.readShort();
+			out[i].mobName = fp.readString(NAME_LENGTH);
+		}
+		return out;
+	})(this.count);
+};
+PACKET.ZC.ADD_QUEST2.size = 143;
+
+// 0x9fa
+PACKET.ZC.UPDATE_MISSION_HUNT3 = function PACKET_ZC_UPDATE_MISSION_HUNT3(fp, end) {
+	this.questCount = fp.readShort();
+	this.hunt = (function () {
+		const count = ((end - fp.tell()) / 12) | 0;
+		const out = new Array(count);
+		for (let i = 0; i < count; ++i) {
+			out[i] = {};
+			out[i].questID = fp.readULong();
+			out[i].huntID = fp.readULong();
+			out[i].maxCount = fp.readShort();
+			out[i].huntCount = fp.readShort();
+		}
+		return out;
+	})();
+};
+PACKET.ZC.UPDATE_MISSION_HUNT3.size = -1;
+
+// 0x9fb
+PACKET.CZ.PET_EVOLUTION = function PACKET_CZ_PET_EVOLUTION() {
+	this.evolutionPetEggITID = 0;
+};
+PACKET.CZ.PET_EVOLUTION.prototype.build = function () {
+	const isNew = PACKETVER.value >= 20181121;
+	const pkt_len = 2 + 2 + (isNew ? 4 : 2);
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x9fb);
+	pkt_buf.writeShort(pkt_len);
+	if (isNew) {
+		pkt_buf.writeULong(this.evolutionPetEggITID);
+	} else {
+		pkt_buf.writeUShort(this.evolutionPetEggITID);
+	}
+	return pkt_buf;
+};
+
+// 0x9fc
+PACKET.ZC.PET_EVOLUTION_RESULT = function PACKET_ZC_PET_EVOLUTION_RESULT(fp, end) {
+	this.result = fp.readULong();
+};
+PACKET.ZC.PET_EVOLUTION_RESULT.size = 6;
+
+// 0x9fd
+PACKET.ZC.NOTIFY_MOVEENTRY11 = function PACKET_ZC_NOTIFY_MOVEENTRY11(fp, end) {
+	this.objecttype = fp.readUChar();
+	this.GID = fp.readULong();
+	this.AID = fp.readULong();
+	this.speed = fp.readShort();
+	this.bodyState = fp.readShort();
+	this.healthState = fp.readShort();
+	this.effectState = fp.readLong();
+	this.job = fp.readShort();
+	this.head = fp.readUShort();
+	this.weapon = fp.readULong();
+	if (PACKETVER.value >= 20181121) {
+		this.shield = fp.readULong();
+	}
+	this.accessory = fp.readUShort();
+	this.moveStartTime = fp.readULong();
+	this.accessory2 = fp.readUShort();
+	this.accessory3 = fp.readUShort();
+	this.headpalette = fp.readShort();
+	this.bodypalette = fp.readShort();
+	this.headDir = fp.readShort();
+	this.Robe = fp.readUShort();
+	this.GUID = fp.readULong();
+	this.GEmblemVer = fp.readShort();
+	this.honor = fp.readShort();
+	this.virtue = fp.readLong();
+	this.isPKModeON = fp.readUChar();
+	this.sex = fp.readUChar();
+	this.MoveData = fp.readPos2();
+	this.xSize = fp.readUChar();
+	this.ySize = fp.readUChar();
+	this.clevel = fp.readShort();
+	this.font = fp.readShort();
+	this.maxhp = fp.readLong();
+	this.hp = fp.readLong();
+	this.isBoss = fp.readUChar();
+	this.body = fp.readUShort();
+	this.name = fp.readString(end - fp.tell());
+};
+PACKET.ZC.NOTIFY_MOVEENTRY11.size = -1;
+
+// 0x9fe
+PACKET.ZC.NOTIFY_NEWENTRY11 = function PACKET_ZC_NOTIFY_NEWENTRY11(fp, end) {
+	this.objecttype = fp.readUChar();
+	this.GID = fp.readULong();
+	this.AID = fp.readULong();
+	this.speed = fp.readShort();
+	this.bodyState = fp.readShort();
+	this.healthState = fp.readShort();
+	this.effectState = fp.readLong();
+	this.job = fp.readShort();
+	this.head = fp.readShort();
+	this.weapon = fp.readLong();
+	if (PACKETVER.value >= 20181121) {
+		this.shield = fp.readLong();
+	}
+	this.accessory = fp.readShort();
+	this.accessory2 = fp.readShort();
+	this.accessory3 = fp.readShort();
+	this.headpalette = fp.readShort();
+	this.bodypalette = fp.readShort();
+	this.headDir = fp.readShort();
+	this.Robe = fp.readShort();
+	this.GUID = fp.readULong();
+	this.GEmblemVer = fp.readShort();
+	this.honor = fp.readShort();
+	this.virtue = fp.readLong();
+	this.isPKModeON = fp.readUChar();
+	this.sex = fp.readUChar();
+	this.PosDir = fp.readPos();
+	this.xSize = fp.readUChar();
+	this.ySize = fp.readUChar();
+	this.clevel = fp.readShort();
+	this.font = fp.readShort();
+	this.hp = fp.readLong();
+	this.maxhp = fp.readLong();
+	this.isBoss = fp.readUChar();
+	this.body = fp.readShort();
+	this.name = fp.readString(end - fp.tell());
+};
+PACKET.ZC.NOTIFY_NEWENTRY11.size = -1;
+
+// 0x9ff
+PACKET.ZC.NOTIFY_STANDENTRY11 = function PACKET_ZC_NOTIFY_STANDENTRY11(fp, end) {
+	this.objecttype = fp.readUChar();
+	this.GID = fp.readULong();
+	this.AID = fp.readULong();
+	this.speed = fp.readShort();
+	this.bodyState = fp.readShort();
+	this.healthState = fp.readShort();
+	this.effectState = fp.readLong();
+	this.job = fp.readShort();
+	this.head = fp.readShort();
+	this.weapon = fp.readLong();
+	if (PACKETVER.value >= 20181121) {
+		this.shield = fp.readLong();
+	}
+	this.accessory = fp.readShort();
+	this.accessory2 = fp.readShort();
+	this.accessory3 = fp.readShort();
+	this.headpalette = fp.readShort();
+	this.bodypalette = fp.readShort();
+	this.headDir = fp.readShort();
+	this.Robe = fp.readShort();
+	this.GUID = fp.readULong();
+	this.GEmblemVer = fp.readShort();
+	this.honor = fp.readShort();
+	this.virtue = fp.readLong();
+	this.isPKModeON = fp.readUChar();
+	this.sex = fp.readUChar();
+	this.PosDir = fp.readPos();
+	this.xSize = fp.readUChar();
+	this.ySize = fp.readUChar();
+	this.state = fp.readUChar();
+	this.clevel = fp.readShort();
+	this.font = fp.readShort();
+	this.hp = fp.readLong();
+	this.maxhp = fp.readLong();
+	this.isBoss = fp.readUChar();
+	this.body = fp.readShort();
+	this.name = fp.readString(end - fp.tell());
+};
+PACKET.ZC.NOTIFY_STANDENTRY11.size = -1;
+
+// 0xa00
+PACKET.ZC.SHORTCUT_KEY_LIST_V3 = function PACKET_ZC_SHORTCUT_KEY_LIST_V3(fp, end) {
+	fp.seek(0x1, SEEK_CUR);
+	this.ShortCutKey = (function () {
+		const count = 38;
+		const out = new Array(count);
+		for (let i = 0; i < count; ++i) {
+			out[i] = {};
+			out[i].isSkill = fp.readChar();
+			out[i].ID = fp.readULong();
+			out[i].count = fp.readShort();
+		}
+		return out;
+	})();
+};
+PACKET.ZC.SHORTCUT_KEY_LIST_V3.size = 269;
+
+// 0xa07
+PACKET.ZC.ACK_REMOVE_ITEM_MAIL = function ACK_REMOVE_ITEM_MAIL(fp, end) {
+	this.success = fp.readChar();
+	this.index = fp.readUShort();
+	this.amount = fp.readUShort();
+	this.weight_ = fp.readShort();
+};
+PACKET.ZC.ACK_REMOVE_ITEM_MAIL.size = 9;
+
+// 0xa08
+PACKET.CZ.REQ_OPEN_WRITE_MAIL = function PACKET_CZ_REQ_OPEN_WRITE_MAIL() {
+	this.receiver = '';
+};
+PACKET.CZ.REQ_OPEN_WRITE_MAIL.prototype.build = function () {
+	const pkt_len = 2 + 24;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x64);
+	pkt_buf.writeString(this.receiver);
+	return pkt_buf;
+};
+
+// 0xa09
+PACKET.ZC.ADD_EXCHANGE_ITEM3 = function PACKET_ZC_ADD_EXCHANGE_ITEM3(fp, end) {
+	const option = new Struct('short index', 'short value', 'char param');
+
+	this.ITID = fp.readUShort();
+	this.type = fp.readUChar();
+	this.count = fp.readLong();
+	this.IsIdentified = fp.readUChar();
+	this.IsDamaged = fp.readUChar();
+	this.RefiningLevel = fp.readUChar();
+	this.slot = {};
+	this.slot.card1 = fp.readUShort();
+	this.slot.card2 = fp.readUShort();
+	this.slot.card3 = fp.readUShort();
+	this.slot.card4 = fp.readUShort();
+
+	this.Options = [];
+	this.Options[1] = fp.readStruct(option);
+	this.Options[2] = fp.readStruct(option);
+	this.Options[3] = fp.readStruct(option);
+	this.Options[4] = fp.readStruct(option);
+	this.Options[5] = fp.readStruct(option);
+};
+PACKET.ZC.ADD_EXCHANGE_ITEM3.size = 45;
+
+// 0xa0a
+PACKET.ZC.ADD_ITEM_TO_STORE3 = function PACKET_ZC_ADD_ITEM_TO_STORE3(fp, end) {
+	const option = new Struct('short index', 'short value', 'char param');
+
+	this.index = fp.readShort();
+	this.count = fp.readLong();
+	this.ITID = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.type = fp.readUChar();
+	this.IsIdentified = fp.readUChar();
+	this.IsDamaged = fp.readUChar();
+	this.RefiningLevel = fp.readUChar();
+	this.slot = {};
+	this.slot.card1 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.slot.card2 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.slot.card3 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.slot.card4 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+
+	this.Options = [];
+	this.Options[1] = fp.readStruct(option);
+	this.Options[2] = fp.readStruct(option);
+	this.Options[3] = fp.readStruct(option);
+	this.Options[4] = fp.readStruct(option);
+	this.Options[5] = fp.readStruct(option);
+};
+PACKET.ZC.ADD_ITEM_TO_STORE3.size = PACKETVER.value >= 20181121 ? 57 : 47;
+
+// 0xa0b
+PACKET.ZC.ADD_ITEM_TO_CART3 = function PACKET_ZC_ADD_ITEM_TO_CART3(fp, end) {
+	const option = new Struct('short index', 'short value', 'char param');
+
+	this.index = fp.readShort();
+	this.count = fp.readLong();
+	this.ITID = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.type = fp.readUChar();
+	this.IsIdentified = fp.readUChar();
+	this.IsDamaged = fp.readUChar();
+	this.RefiningLevel = fp.readUChar();
+	this.slot = {};
+	this.slot.card1 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.slot.card2 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.slot.card3 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+	this.slot.card4 = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort();
+
+	this.Options = [];
+	this.Options[1] = fp.readStruct(option);
+	this.Options[2] = fp.readStruct(option);
+	this.Options[3] = fp.readStruct(option);
+	this.Options[4] = fp.readStruct(option);
+	this.Options[5] = fp.readStruct(option);
+};
+PACKET.ZC.ADD_ITEM_TO_CART3.size = PACKETVER.value >= 20181121 ? 57 : 47;
+
+//0xa0c
+PACKET.ZC.ITEM_PICKUP_ACK6 = function PACKET_ZC_ITEM_PICKUP_ACK6(fp, end) {
+	const option = new Struct('short index', 'short value', 'char param');
+
+	this.index = fp.readUShort();
+	this.count = fp.readUShort();
+	this.ITID = fp.readUShort();
+	this.IsIdentified = fp.readUChar();
+	this.IsDamaged = fp.readUChar();
+	this.RefiningLevel = fp.readUChar();
+	this.slot = {};
+	this.slot.card1 = fp.readUShort();
+	this.slot.card2 = fp.readUShort();
+	this.slot.card3 = fp.readUShort();
+	this.slot.card4 = fp.readUShort();
+	this.location = fp.readLong();
+	this.type = fp.readUChar();
+	this.result = fp.readUChar();
+	this.HireExpireDate = fp.readLong();
+	this.bindOnEquipType = fp.readUShort();
+	this.Options = [];
+	this.Options[1] = fp.readStruct(option);
+	this.Options[2] = fp.readStruct(option);
+	this.Options[3] = fp.readStruct(option);
+	this.Options[4] = fp.readStruct(option);
+	this.Options[5] = fp.readStruct(option);
+};
+PACKET.ZC.ITEM_PICKUP_ACK6.size = 56;
+
+//0xa0d
+PACKET.ZC.EQUIPMENT_ITEMLIST5 = function PACKET_ZC_EQUIPMENT_ITEMLIST5(fp, end) {
+	const option = new Struct('short index', 'short value', 'char param');
+	this.ItemInfo = (function () {
+		const count = ((end - fp.tell()) / 57) | 0;
+		const out = new Array(count);
+		for (let i = 0; i < count; ++i) {
+			out[i] = {};
+			out[i].index = fp.readShort();
+			out[i].ITID = fp.readUShort();
+			out[i].type = fp.readUChar();
+
+			out[i].location = fp.readULong();
+			out[i].WearState = fp.readULong();
+			out[i].RefiningLevel = fp.readUChar();
+			out[i].slot = {};
+			out[i].slot.card1 = fp.readUShort();

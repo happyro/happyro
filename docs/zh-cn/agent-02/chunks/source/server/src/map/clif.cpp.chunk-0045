@@ -1,0 +1,500 @@
+			}else if( pc_attendance_enabled() ){
+				clif_ui_open( *sd, OUT_UI_ATTENDANCE, pc_attendance_counter( sd ) );
+			}else{
+				clif_msg_color( *sd, MSI_CHECK_ATTENDANCE_NOT_EVENT, color_table[COLOR_RED] );
+			}
+			break;
+#if PACKETVER >= 20160316
+		case IN_UI_MACRO_REGISTER:
+			clif_ui_open(*sd, OUT_UI_CAPTCHA, 0);
+			break;
+		case IN_UI_MACRO_DETECTOR:
+			clif_ui_open(*sd, OUT_UI_MACRO, 0);
+			break;
+#endif
+	}
+}
+
+/// Response for attedance request
+/// 0AF0 <unknown>.L <data>.L
+void clif_attendence_response( const map_session_data* sd, int32 data ){
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0xAF0));
+	WFIFOW(fd,0) = 0xAF0;
+	WFIFOL(fd,2) = 0;
+	WFIFOL(fd,6) = data;
+	WFIFOSET(fd,packet_len(0xAF0));
+}
+
+/// Request from the client to retrieve today's attendance reward
+/// 0AEF
+void clif_parse_attendance_request( int32 fd, map_session_data* sd ){
+	pc_attendance_claim_reward(sd);
+}
+
+/// Send out the percentage of weight that causes it to be displayed in red.
+/// 0ADE <percentage>.L
+void clif_weight_limit( const map_session_data* sd ){
+#if PACKETVER >= 20171025
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0xADE));
+	WFIFOW(fd, 0) = 0xADE;
+	WFIFOL(fd, 2) = battle_config.natural_heal_weight_rate;
+	WFIFOSET(fd, packet_len(0xADE));
+#endif
+}
+
+enum e_private_airship_response : uint32{
+	PRIVATEAIRSHIP_OK,
+	PRIVATEAIRSHIP_RETRY,
+	PRIVATEAIRSHIP_ITEM_NOT_ENOUGH,
+	PRIVATEAIRSHIP_DESTINATION_MAP_INVALID,
+	PRIVATEAIRSHIP_SOURCE_MAP_INVALID,
+	PRIVATEAIRSHIP_ITEM_UNAVAILABLE
+};
+
+/// Send out the response to a private airship request
+/// 0A4A <response>.L
+void clif_private_airship_response( map_session_data* sd, enum e_private_airship_response response ){
+#if PACKETVER >= 20180321
+	nullpo_retv( sd );
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD( fd, packet_len( 0xA4A ) );
+	WFIFOW( fd, 0 ) = 0xA4A;
+	WFIFOL( fd, 2 ) = response;
+	WFIFOSET( fd, packet_len( 0xA4A ) );
+#endif
+}
+
+/// Parses a request for a private airship
+/// 0A49 <mapname>.16B <itemid>.W
+void clif_parse_private_airship_request( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20180321
+	// Check if the feature is enabled
+	if( !battle_config.feature_privateairship ){
+		clif_messagecolor( sd, color_table[COLOR_RED], msg_txt( sd, 792 ), false, SELF ); // The private airship system is disabled.
+		return;
+	}
+
+	// Check if the player is allowed to warp from the source map
+	if( !map_getmapflag( sd->m, MF_PRIVATEAIRSHIP_SOURCE ) ){
+		clif_private_airship_response( sd, PRIVATEAIRSHIP_SOURCE_MAP_INVALID );
+		return;
+	}
+
+	const PACKET_CZ_PRIVATE_AIRSHIP_REQUEST* p = reinterpret_cast<PACKET_CZ_PRIVATE_AIRSHIP_REQUEST*>( RFIFOP( fd, 0 ) );
+
+	char mapname[MAP_NAME_LENGTH_EXT];
+
+	safestrncpy( mapname, p->mapName, MAP_NAME_LENGTH_EXT );
+
+	int16 mapindex = mapindex_name2id( mapname );
+
+	// Check if we know the mapname
+	if( mapindex < 0 ){
+		clif_private_airship_response( sd, PRIVATEAIRSHIP_DESTINATION_MAP_INVALID );
+		return;
+	}
+
+	int16 mapid = map_mapindex2mapid( mapindex );
+
+	// Check if the map is available on this server
+	if( mapid < 0 ){
+		// TODO: add multi map-server support, cant validate the mapflags of the other server
+		return;
+	}
+
+	// Check if the player tried to warp to the map he is on
+	if( sd->m == mapid ){
+		// This is blocked by the client, but just to be sure
+		return;
+	}
+
+	// This can only be a hack, so we prevent it
+	if( map_getmapdata( mapid )->instance_id ){
+		// Ignore requests to warp directly into a running instance
+		return;
+	}
+
+	// Check if the player is allowed to warp to the target map
+	if( !map_getmapflag( mapid, MF_PRIVATEAIRSHIP_DESTINATION ) ){
+		clif_private_airship_response( sd, PRIVATEAIRSHIP_DESTINATION_MAP_INVALID );
+		return;
+	}
+
+	t_itemid item_id = p->ItemID;
+
+	// Check if the item sent by the client is known to us
+	if( !itemdb_group.item_exists(IG_PRIVATE_AIRSHIP, item_id) ){
+		clif_private_airship_response( sd, PRIVATEAIRSHIP_ITEM_UNAVAILABLE );
+		return;
+	}
+
+	int32 idx = pc_search_inventory( sd, item_id );
+
+	// Check if the player has the item at all
+	if( idx < 0 ){
+		clif_private_airship_response( sd, PRIVATEAIRSHIP_ITEM_NOT_ENOUGH );
+		return;
+	}
+
+	// Delete the chosen item
+	if( pc_delitem( sd, idx, 1, 0, 0, LOG_TYPE_PRIVATE_AIRSHIP ) ){
+		clif_private_airship_response( sd, PRIVATEAIRSHIP_RETRY );
+		return;
+	}
+
+	// Warp the player to a random spot on the destination map
+	pc_setpos( sd, mapindex, 0, 0, CLR_TELEPORT );
+#endif
+}
+
+/// Sends out the usage history of the guild storage
+/// 09DA <size>.W <result>.W <count>.W { <id>.L <item id>.W <amount>.L <action>.B <refine>.L <unique id>.Q <identify>.B <item type>.W
+///      { <card item id>.W }*4 <name>.24B <time>.24B <attribute>.B }*count (ZC_ACK_GUILDSTORAGE_LOG)
+void clif_guild_storage_log( const map_session_data& sd, const std::vector<guild_log_entry>& log, enum e_guild_storage_log result ){
+#if PACKETVER >= 20140205
+	PACKET_ZC_ACK_GUILDSTORAGE_LOG* p = reinterpret_cast<PACKET_ZC_ACK_GUILDSTORAGE_LOG*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_ACK_GUILDSTORAGE_LOG;
+	p->PacketLength = sizeof( *p );
+	p->result = result;
+
+	if( result == GUILDSTORAGE_LOG_FINAL_SUCCESS ){
+		p->amount = (uint16)log.size();
+
+		for( int32 i = 0; i < log.size(); i++ ){
+			PACKET_ZC_ACK_GUILDSTORAGE_LOG_sub& item = p->items[i];
+			const guild_log_entry& entry = log[i];
+
+			item.id = entry.id;
+			item.itemId = client_nameid( entry.item.nameid );
+			item.amount = (uint16)( entry.amount > 0 ? entry.amount : ( entry.amount * -1 ) );
+			item.action = entry.amount > 0; // action = true(put), false(get)
+			item.refine = entry.item.refine;
+			item.uniqueId = entry.item.unique_id;
+			item.IsIdentified = entry.item.identify;
+			item.itemType = itemtype( entry.item.nameid );
+			clif_addcards( &item.slot, &entry.item );
+			safestrncpy( item.name, entry.name, NAME_LENGTH );
+			safestrncpy( item.time, entry.time, NAME_LENGTH );
+			item.attribute = entry.item.attribute;
+
+			p->PacketLength += static_cast<decltype(p->PacketLength)>( sizeof ( item ) );
+		}
+	}else{
+		p->amount = 0;
+	}
+	
+	clif_send( p, p->PacketLength, &sd, SELF );
+#endif
+}
+
+/// Activates the client camera info or updates the client camera with the given values.
+/// 0A78 <type>.B <range>.F <rotation>.F <latitude>.F
+void clif_camerainfo( const map_session_data* sd, bool show, float range, float rotation, float latitude ){
+#if PACKETVER >= 20160525
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0xa78));
+	WFIFOW(fd, 0) = 0xa78;
+	WFIFOB(fd, 2) = show;
+	WFIFOF(fd, 3) = range;
+	WFIFOF(fd, 7) = rotation;
+	WFIFOF(fd, 11) = latitude;
+	WFIFOSET(fd, packet_len(0xa78));
+#endif
+}
+
+/// Activates or deactives the client camera info or updates the camera settings.
+/// This packet is triggered by /viewpointvalue or /setcamera
+/// 0A77 <type>.B <range>.F <rotation>.F <latitude>.F
+void clif_parse_camerainfo( int32 fd, map_session_data* sd ){
+	char command[CHAT_SIZE_MAX];
+
+	// /viewpointvalue
+	if( RFIFOB( fd, 2 ) == 1 ){
+		safesnprintf( command, sizeof( command ), "%ccamerainfo", atcommand_symbol );
+	// /setcamera
+	}else{
+		safesnprintf( command, sizeof( command ), "%ccamerainfo %03.03f %03.03f %03.03f", atcommand_symbol, RFIFOF( fd, 3 ), RFIFOF( fd, 7 ), RFIFOF( fd, 11 ) );
+	}
+
+	is_atcommand( fd, sd, command, 1 );
+}
+
+/// Send the full list of items in the equip switch window
+/// 0a9b <length>.W { <index>.W <position>.L }*
+void clif_equipswitch_list( const map_session_data* sd ){
+#if PACKETVER >= 20170208
+	int32 fd = sd->fd;
+	int32 offset, i, position;
+
+	WFIFOW(fd, 0) = 0xa9b;
+	for( i = 0, offset = 4, position = 0; i < EQI_MAX; i++ ){
+		int16 index = sd->equip_switch_index[i];
+
+		if( index >= 0 && !( position & equip_bitmask[i] ) ){
+			WFIFOW(fd, offset) = index + 2;
+			WFIFOL(fd, offset + 2) = sd->inventory.u.items_inventory[index].equipSwitch;
+			position |= sd->inventory.u.items_inventory[index].equipSwitch;
+			offset += 6;
+		}
+	}
+	WFIFOW(fd, 2) = offset;
+	WFIFOSET(fd, offset);
+#endif
+}
+
+/// Acknowledgement for removing an equip to the equip switch window
+/// 0a9a <index>.W <position.>.L <failure>.W
+void clif_equipswitch_remove( const map_session_data* sd, uint16 index, uint32 pos, bool failed ){
+#if PACKETVER >= 20170208
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0xa9a));
+	WFIFOW(fd, 0) = 0xa9a;
+	WFIFOW(fd, 2) = index + 2;
+	WFIFOL(fd, 4) = pos;
+	WFIFOW(fd, 8) = failed;
+	WFIFOSET(fd, packet_len(0xa9a));
+#endif
+}
+
+/// Request to remove an equip from the equip switch window
+/// 0a99 <index>.W <position>.L <= 20170502
+/// 0a99 <index>.W
+void clif_parse_equipswitch_remove( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20170208
+	uint16 index = RFIFOW(fd, 2) - 2;
+	bool removed = false;
+
+	if( !battle_config.feature_equipswitch ){
+		return;
+	}
+
+	// Check if the index is valid
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	pc_equipswitch_remove( sd, index );
+#endif
+}
+
+/// Acknowledgement for adding an equip to the equip switch window
+/// 0a98 <index>.W <position.>.L <flag>.L  <= 20170502
+/// 0a98 <index>.W <position.>.L <flag>.W
+void clif_equipswitch_add( const map_session_data* sd, uint16 index, uint32 pos, uint8 flag ){
+#if PACKETVER >= 20170208
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0xa98));
+	WFIFOW(fd, 0) = 0xa98;
+	WFIFOW(fd, 2) = index + 2;
+	WFIFOL(fd, 4) = pos;
+#if PACKETVER <= 20170502
+	WFIFOL(fd, 8) = flag;
+#else
+	WFIFOW(fd, 8) = flag;
+#endif
+	WFIFOSET(fd,packet_len(0xa98));
+#endif
+}
+
+/// Request to add an equip to the equip switch window
+/// 0a97 <index>.W <position>.L
+void clif_parse_equipswitch_add( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20170208
+	uint16 index = RFIFOW(fd, 2) - 2;
+	uint32 position = RFIFOL(fd, 4);
+
+	if( !battle_config.feature_equipswitch ){
+		return;
+	}
+
+	if( index >= MAX_INVENTORY || sd->inventory_data[index] == nullptr ){
+		return;
+	}
+
+	if( sd->state.trading || sd->npc_shopid ){
+		clif_equipswitch_add( sd, index, position, ITEM_EQUIP_ACK_OK );
+		return;
+	}
+
+	if( sd->inventory_data[index]->type == IT_AMMO ){
+		position = EQP_AMMO;
+	}
+
+	pc_equipitem( sd, index, position, true );
+#endif
+}
+
+/// Acknowledgement packet for the full equip switch
+/// 0a9d <failed>.W
+void clif_equipswitch_reply( const map_session_data* sd, bool failed ){
+#if PACKETVER >= 20170208
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0xa9d));
+	WFIFOW(fd, 0) = 0xa9d;
+	WFIFOW(fd, 2) = failed;
+	WFIFOSET(fd, packet_len(0xa9d));
+#endif
+}
+
+/// Request to do a full equip switch
+/// 0a9c
+void clif_parse_equipswitch_request( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20170208
+	int32 i;
+	t_tick tick = gettick();
+	uint16 skill_id = ALL_EQSWITCH, skill_lv = 1;
+
+	if( DIFF_TICK(tick, sd->equipswitch_tick) < 0 ) {
+		// Client will not let you send a request
+		return;
+	}
+
+	sd->equipswitch_tick = tick + skill_get_cooldown( skill_id, skill_lv );
+
+	if( !battle_config.feature_equipswitch ){
+		return;
+	}
+
+	ARR_FIND( 0, EQI_MAX, i, sd->equip_switch_index[i] >= 0 );
+
+	if( i == EQI_MAX ){
+		// client will show: "There is no item to replace." and should not even come here
+		clif_equipswitch_reply( sd, false );
+		return;
+	}
+
+	if( pc_issit(sd) && !pc_setstand( sd, false ) ){
+		return;
+	}
+
+	clif_parse_skill_toid( sd, skill_id, skill_lv, sd->id );
+#endif
+}
+
+/// Request to do a single equip switch
+/// 0ace <index>.W
+void clif_parse_equipswitch_request_single( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20170502
+	uint16 index = RFIFOW(fd, 2) - 2;
+
+	if( !battle_config.feature_equipswitch ){
+		return;
+	}
+
+	// Check if the index is valid
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	// Check if the item exists
+	if (sd->inventory_data[index] == nullptr)
+		return;
+
+	// Check if the item was already added to equip switch
+	if( sd->inventory.u.items_inventory[index].equipSwitch ){
+		if( sd->npc_id ){
+#ifdef RENEWAL
+			if( pc_hasprogress( sd, WIP_DISABLE_SKILLITEM ) ){
+				clif_msg( *sd, MSI_BUSY );
+				return;
+			}
+#endif
+			if( !sd->npc_item_flag ){
+				return;
+			}
+		}
+
+		pc_equipswitch( sd, index );
+		return;
+	}
+
+	pc_equipitem( sd, index, pc_equippoint(sd, index), true );
+#endif
+}
+
+void clif_parse_StartUseSkillToId( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20181002 || PACKETVER_RE_NUM >= 20181002 || PACKETVER_ZERO_NUM >= 20181010
+	const PACKET_CZ_USE_SKILL_START* p = reinterpret_cast<PACKET_CZ_USE_SKILL_START*>( RFIFOP( fd, 0 ) );
+
+	// Only rolling cutter is supported for now
+	if( p->skillId != GC_ROLLINGCUTTER ){
+		return;
+	}
+
+	// Already running - cant happen on officials, since only one skill is supported
+	if( sd->skill_keep_using.skill_id != 0 ){
+		return;
+	}
+
+	sd->skill_keep_using.tid = INVALID_TIMER;
+	sd->skill_keep_using.skill_id = p->skillId;
+	sd->skill_keep_using.level = p->skillLv;
+	sd->skill_keep_using.target = p->targetId;
+
+	clif_parse_skill_toid( sd, sd->skill_keep_using.skill_id, sd->skill_keep_using.level, sd->skill_keep_using.target );
+#endif
+}
+
+void clif_parse_StopUseSkillToId( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20181002 || PACKETVER_RE_NUM >= 20181002 || PACKETVER_ZERO_NUM >= 20181010
+	const PACKET_CZ_USE_SKILL_END* p = reinterpret_cast<PACKET_CZ_USE_SKILL_END*>( RFIFOP( fd, 0 ) );
+
+	// Not running
+	if( sd->skill_keep_using.skill_id == 0 ){
+		return;
+	}
+
+#if 0
+	// Hack
+	if( p->skillId != sd->skill_keep_using.skill_id ){
+		return;
+	}
+#endif
+
+	if( sd->skill_keep_using.tid != INVALID_TIMER ){
+		delete_timer( sd->skill_keep_using.tid, skill_keep_using );
+		sd->skill_keep_using.tid = INVALID_TIMER;
+	}
+	sd->skill_keep_using.skill_id = 0;
+	sd->skill_keep_using.level = 0;
+	sd->skill_keep_using.target = 0;
+#endif
+}
+
+void clif_ping( map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20190213 || PACKETVER_RE_NUM >= 20190213 || PACKETVER_ZERO_NUM >= 20190130
+	nullpo_retv( sd );
+
+	int32 fd = sd->fd;
+
+	if( !session_isActive( fd ) ){
+		return;
+	}
+
+	PACKET_ZC_PING_LIVE p = {};
+
+	p.packetType = HEADER_ZC_PING_LIVE;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+int32 clif_ping_timer_sub( map_session_data *sd, va_list ap ){
+	nullpo_ret( sd );
+
+	int32 fd = sd->fd;

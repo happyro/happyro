@@ -1,0 +1,500 @@
+/**
+ * Engine/MapEngine/Group.js
+ *
+ * Manage group/party
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+/**
+ * Load dependencies
+ */
+import DB from 'DB/DBManager.js';
+import Inflate from 'Utils/Inflate.js';
+import Texture from 'Utils/Texture.js';
+import BinaryWriter from 'Utils/BinaryWriter.js';
+import Session from 'Engine/SessionStorage.js';
+import Network from 'Network/NetworkManager.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import EntityManager from 'Renderer/EntityManager.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Guild from 'UI/Components/Guild/Guild.js';
+import GuildCompanion from 'UI/Components/GuildCompanion/GuildCompanion.js';
+import UIManager from 'UI/UIManager.js';
+import Configs from 'Core/Configs.js';
+import MiniMap from 'UI/Components/MiniMap/MiniMap.js';
+
+/**
+ * @var {Object} emblem list
+ */
+const _emblems = {};
+
+/**
+ * Engine namespace
+ */
+class GuildEngine {
+	/**
+	 * @var {number} our guild id
+	 */
+	static guild_id = -1;
+	/**
+	 * Initialize engine
+	 */
+	static init() {
+		Network.hookPacket(PACKET.ZC.GUILD_CHAT, onMemberTalk);
+		Network.hookPacket(PACKET.ZC.NOTIFY_POSITION_TO_GUILDM, onMemberMove);
+		Network.hookPacket(PACKET.ZC.GUILD_INFO, onGuildInfo);
+		Network.hookPacket(PACKET.ZC.GUILD_INFO2, onGuildInfo);
+		Network.hookPacket(PACKET.ZC.GUILD_INFO3, onGuildInfo);
+		Network.hookPacket(PACKET.ZC.GUILD_INFO4, onGuildInfo);
+		Network.hookPacket(PACKET.ZC.MYGUILD_BASIC_INFO, onGuildRelation);
+		Network.hookPacket(PACKET.ZC.GUILD_EMBLEM_IMG, onGuildEmblem);
+		Network.hookPacket(PACKET.ZC.MEMBERMGR_INFO, onGuildMembers);
+		Network.hookPacket(PACKET.ZC.MEMBERMGR_INFO2, onGuildMembers);
+		Network.hookPacket(PACKET.ZC.MEMBERMGR_INFO3, onGuildMembers);
+		Network.hookPacket(PACKET.ZC.ACK_GUILD_MEMBER_INFO, onGuildMemberUpdate);
+		Network.hookPacket(PACKET.ZC.POSITION_INFO, onGuildPositions);
+		Network.hookPacket(PACKET.ZC.POSITION_ID_NAME_INFO, onGuildPositionsName);
+		Network.hookPacket(PACKET.ZC.ACK_CHANGE_GUILD_POSITIONINFO, onGuildPositions);
+		Network.hookPacket(PACKET.ZC.GUILD_SKILLINFO, onGuildSkillList);
+		Network.hookPacket(PACKET.ZC.GUILD_NOTICE, onGuildNotice);
+		Network.hookPacket(PACKET.ZC.ACK_REQ_CHANGE_MEMBERS, onGuildMemberPositionUpdate);
+		Network.hookPacket(PACKET.ZC.ACK_GUILD_MENUINTERFACE, onGuildAccess);
+		Network.hookPacket(PACKET.ZC.RESULT_MAKE_GUILD, onGuildCreationResult);
+		Network.hookPacket(PACKET.ZC.UPDATE_GDID, onGuildOwnInfo);
+		Network.hookPacket(PACKET.ZC.UPDATE_GDID2, onGuildOwnInfo);
+		Network.hookPacket(PACKET.ZC.BAN_LIST, onGuildExpelList);
+		Network.hookPacket(PACKET.ZC.ACK_DISORGANIZE_GUILD_RESULT, onGuildDestroy);
+		Network.hookPacket(PACKET.ZC.REQ_JOIN_GUILD, onGuildInviteRequest);
+		Network.hookPacket(PACKET.ZC.ACK_REQ_JOIN_GUILD, onGuildInviteResult);
+		Network.hookPacket(PACKET.ZC.UPDATE_CHARSTAT, onGuildMemberStatus);
+		Network.hookPacket(PACKET.ZC.UPDATE_CHARSTAT2, onGuildMemberStatus);
+		Network.hookPacket(PACKET.ZC.ACK_BAN_GUILD, onGuildMemberExpulsion);
+		Network.hookPacket(PACKET.ZC.ACK_BAN_GUILD_SSO, onGuildMemberExpulsion);
+		Network.hookPacket(PACKET.ZC.ACK_LEAVE_GUILD, onGuildMemberLeave);
+		Network.hookPacket(PACKET.ZC.DELETE_RELATED_GUILD, onGuildAllianceDeleteAck);
+		Network.hookPacket(PACKET.ZC.ADD_RELATED_GUILD, onGuildAllianceAdd);
+		Network.hookPacket(PACKET.ZC.REQ_ALLY_GUILD, onGuildAskForAlliance);
+		Network.hookPacket(PACKET.ZC.ACK_REQ_ALLY_GUILD, onGuildAllianceResult);
+		Network.hookPacket(PACKET.ZC.ACK_REQ_HOSTILE_GUILD, onGuildHostilityResult);
+		Network.hookPacket(PACKET.ZC.GUILD_AGIT_INFO, onGuildCastleInfo);
+
+		// Hook UI
+		Guild.onGuildInfoRequest = GuildEngine.requestInfo;
+		Guild.onPositionUpdateRequest = GuildEngine.requestPositionUpdate;
+		Guild.onChangeMemberPosRequest = GuildEngine.requestChangeMemberPos;
+		Guild.onNoticeUpdateRequest = GuildEngine.requestNoticeUpdate;
+		Guild.onRequestLeave = GuildEngine.requestLeave;
+		Guild.onRequestMemberExpel = GuildEngine.requestMemberExpel;
+		Guild.onRequestMemberInfo = GuildEngine.requestMemberInfo;
+		Guild.onRequestDeleteRelation = GuildEngine.requestDeleteRelatedGuild;
+		Guild.onRequestAccess = GuildEngine.requestAccess;
+		Guild.onRequestCreateGuild = GuildEngine.createGuild;
+		GuildCompanion.onRequestCreateGuild = GuildEngine.createGuild;
+		GuildCompanion.onRequestBreakGuild = GuildEngine.breakGuild;
+		Guild.onRequestBreakGuild = GuildEngine.breakGuild;
+		Guild.onRequestGuildEmblem = GuildEngine.requestGuildEmblem;
+		Guild.onSendEmblem = GuildEngine.sendEmblem;
+	}
+
+	/**
+	 * Ask server to get guild informations
+	 *
+	 * @param {number} type (page)
+	 */
+	static requestInfo(type) {
+		if (type > 4) {
+			return;
+		}
+
+		const pkt = new PACKET.CZ.REQ_GUILD_MENU();
+		pkt.Type = type;
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Ask to get an emblem
+	 *
+	 * @param {number} guild id
+	 * @param {number} version
+	 * @param {function} callback
+	 */
+	static requestGuildEmblem(guild_id, version, callback) {
+		// Guild does not exist
+		if (!_emblems[guild_id]) {
+			_emblems[guild_id] = {
+				version: -1,
+				image: new Image(),
+				gif: null,
+				callback: []
+			};
+		}
+
+		if (Session.Entity.GUID === guild_id) {
+			GuildEngine.guild_id = guild_id;
+		}
+		const emblem = _emblems[guild_id];
+
+		// Lower version, update it to the current
+		if (version <= emblem.version) {
+			EntityManager.forEach(entity => {
+				if (entity.GUID === guild_id) {
+					entity.setEntityGuildEmblem(emblem.image, emblem.gif);
+				}
+			});
+			callback(emblem.image, emblem.gif);
+			return;
+		}
+
+		if (PACKETVER.value >= 20170315) {
+			if (
+				!guild_id ||
+				typeof guild_id === 'undefined' ||
+				!Session.AID ||
+				Session.AID === 0 ||
+				!Session.ServerName ||
+				Session.ServerName === undefined ||
+				!Session.WebToken ||
+				Session.WebToken === undefined
+			) {
+				return;
+			}
+
+			const formData = new FormData();
+			formData.append('GDID', guild_id);
+			formData.append('WorldName', Session.ServerName);
+			formData.append('AuthToken', Session.WebToken);
+			formData.append('AID', Session.AID);
+
+			const xhr = new XMLHttpRequest();
+
+			let webserverAddress = '';
+			if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
+				webserverAddress = Configs.get('webserverAddress', 'http://127.0.0.1:8888');
+			}
+
+			xhr.open('POST', webserverAddress + '/emblem/download', true);
+			xhr.responseType = 'blob';
+
+			xhr.timeout = 5000;
+			xhr.onload = () => {
+				if (xhr.status !== 200) {
+					console.warn('Emblem download returned non-200 status:', xhr.status);
+					return;
+				}
+				try {
+					const contentType = xhr.getResponseHeader('Content-Type');
+					const isGif = contentType === 'image/gif';
+					if (!isGif) {
+						const img = new Image();
+						img.onload = () => {
+							emblem.version = version;
+							emblem.image = img;
+							emblem.gif = null;
+
+							callback(emblem.image, emblem.gif);
+							EntityManager.forEach(entity => {
+								if (entity.GUID === guild_id) {
+									entity.setEntityGuildEmblem(img);
+								}
+							});
+						};
+						img.decoding = 'async';
+						const blobUrl = URL.createObjectURL(xhr.response);
+						// Load the emblem, remove magenta, free blob from memory
+						Texture.load(blobUrl, function () {
+							img.src = this.toDataURL();
+							URL.revokeObjectURL(blobUrl);
+						});
+					} else {
+						Texture.processGifToSpriteSheet(xhr.response, function (sucess) {
+							if (sucess) {
+								const gifCanvas = this;
+								const img = new Image();
+								img.onload = () => {
+									emblem.version = version;
+									emblem.image = img;
+									emblem.gif = gifCanvas;
+
+									callback(emblem.image, emblem.gif);
+
+									EntityManager.forEach(entity => {
+										if (entity.GUID === guild_id) {
+											entity.setEntityGuildEmblem(img, gifCanvas);
+										}
+									});
+								};
+								img.decoding = 'async';
+								const blobUrl = URL.createObjectURL(xhr.response);
+								// Load the emblem as img, remove magenta, free blob from memory
+								Texture.load(blobUrl, function () {
+									img.src = this.toDataURL();
+									URL.revokeObjectURL(blobUrl);
+								});
+							}
+						});
+					}
+				} catch (e) {
+					console.error('Error processing guild emblem:', e);
+				}
+			}; // End xhr.onload
+			xhr.onerror = () => {
+				console.warn('Emblem download failed: web-server unreachable');
+			};
+			xhr.ontimeout = () => {
+				console.warn('Emblem download timed out');
+			};
+
+			xhr.send(formData);
+		} else {
+			// Ask for new version via Packet
+			const pkt = new PACKET.CZ.REQ_GUILD_EMBLEM_IMG();
+			pkt.GDID = guild_id;
+			Network.sendPacket(pkt);
+			emblem.callback.push(callback);
+		}
+	}
+
+	/**
+	 * Need to know the access we have to the guild UI
+	 */
+	static requestAccess() {
+		Network.sendPacket(new PACKET.CZ.REQ_GUILD_MENUINTERFACE());
+	}
+
+	/**
+	 * Ask the server to create a guild
+	 *
+	 * @param {string} guild name
+	 */
+	static createGuild(name) {
+		const pkt = new PACKET.CZ.REQ_MAKE_GUILD();
+		pkt.GID = Session.GID;
+		pkt.GName = name;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Ask the server to delete the guild
+	 *
+	 * @param {string} guild name
+	 */
+	static breakGuild(name) {
+		const pkt = new PACKET.CZ.REQ_DISORGANIZE_GUILD();
+		pkt.key = name;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Send new positions list to server
+	 *
+	 * @param {Array} positions
+	 */
+	static requestPositionUpdate(positions) {
+		const pkt = new PACKET.CZ.REG_CHANGE_GUILD_POSITIONINFO();
+		pkt.memberList = positions;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Send new player position
+	 *
+	 * @param {Array} positions
+	 */
+	static requestChangeMemberPos(memberInfo) {
+		const pkt = new PACKET.CZ.REQ_CHANGE_MEMBERPOS();
+		pkt.memberInfo = memberInfo;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Send new notice to server
+	 *
+	 * @param {string} subject
+	 * @param {string} content
+	 */
+	static requestNoticeUpdate(subject, content) {
+		const pkt = new PACKET.CZ.GUILD_NOTICE();
+		pkt.GDID = GuildEngine.guild_id;
+		pkt.subject = subject;
+		pkt.notice = content;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Send an invitation to the player
+	 *
+	 * @param {number} target account id
+	 */
+	static requestPlayerInvitation(AID) {
+		const pkt = new PACKET.CZ.REQ_JOIN_GUILD();
+		pkt.AID = AID;
+		pkt.MyAID = Session.AID;
+		pkt.MyGID = Session.GID;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Send a guild alliance to a target player
+	 *
+	 * @param {number} target account id
+	 */
+	static requestAlliance(AID) {
+		const pkt = new PACKET.CZ.REQ_ALLY_GUILD();
+		pkt.AID = AID;
+		pkt.MyAID = Session.AID;
+		pkt.MyGID = Session.GID;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Set a guild as hostile
+	 *
+	 * @param {number} target account id
+	 */
+	static requestHostility(AID) {
+		const pkt = new PACKET.CZ.REQ_HOSTILE_GUILD();
+		pkt.AID = AID;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Request to leave the guild
+	 *
+	 * @param {number} account id
+	 * @param {number} character id
+	 * @param {string} reason for the leave
+	 */
+	static requestLeave(AID, GID, reason) {
+		const pkt = new PACKET.CZ.REQ_LEAVE_GUILD();
+		pkt.GDID = GuildEngine.guild_id;
+		pkt.AID = AID;
+		pkt.GID = GID;
+		pkt.reasonDesc = reason;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Request to expel a member from the guild
+	 *
+	 * @param {number} account id
+	 * @param {number} character id
+	 * @param {string} reason to expel
+	 */
+	static requestMemberExpel(AID, GID, reason) {
+		const pkt = new PACKET.CZ.REQ_BAN_GUILD();
+		pkt.GDID = GuildEngine.guild_id;
+		pkt.AID = AID;
+		pkt.GID = GID;
+		pkt.reasonDesc = reason;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Request to get member information
+	 *
+	 * @param {number} account id
+	 */
+	static requestMemberInfo(AID) {
+		const pkt = new PACKET.CZ.REQ_OPEN_MEMBER_INFO();
+		pkt.AID = AID;
+
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Request to delete an ally or antagonist
+	 *
+	 * @param {number} guild_id
+	 * @param {number} relation (0 = Ally, 1 = Enemy)
+	 */
+	static requestDeleteRelatedGuild(guild_id, relation) {
+		const pkt = new PACKET.CZ.REQ_DELETE_RELATED_GUILD();
+
+		pkt.OpponentGDID = guild_id;
+		pkt.Relation = relation;
+		Network.sendPacket(pkt);
+	}
+
+	/**
+	 * Send Emblem to server.
+	 * Note: it's a hacky way that do not compress the emblem.
+	 *
+	 * @param {Uint8Array} file
+	 */
+	static sendEmblem(data) {
+		if (PACKETVER.value >= 20170315) {
+			function getFileType(_data) {
+				// "GI" Magic Bytes check (same from src)
+				if (_data.length >= 3 && _data[0] === 0x47 && _data[1] === 0x49 && _data[2] === 0x46) {
+					return { type: 'image/gif', imgType: 'GIF' };
+				}
+				return { type: 'image/bmp', imgType: 'BMP' };
+			}
+			const fileInfo = getFileType(data);
+			const formData = new FormData();
+			formData.append('GDID', Session.Entity.GUID);
+			formData.append('WorldName', Session.ServerName);
+			formData.append('AuthToken', Session.WebToken);
+			formData.append('AID', Session.AID);
+			formData.append('Img', new Blob([data], { type: fileInfo.type }));
+			formData.append('ImgType', fileInfo.imgType);
+
+			const xhr = new XMLHttpRequest();
+
+			let webserverAddress = '';
+			if (window.location.protocol !== 'http:' && window.location.protocol !== 'https:') {
+				webserverAddress = Configs.get('webserverAddress', 'http://127.0.0.1:8888');
+			}
+			xhr.open('POST', webserverAddress + '/emblem/upload', true);
+
+			xhr.timeout = 5000;
+			xhr.onload = () => {
+				if (xhr.status !== 200) {
+					console.warn('Emblem upload returned non-200 status:', xhr.status);
+					return;
+				}
+				try {
+					const response = JSON.parse(xhr.responseText);
+					console.log('Emblem uploaded successfully, version:', response.version);
+
+					GuildEngine.requestGuildEmblem(Session.Entity.GUID, response.version, (image, _gif) => {
+						Guild.setEmblem(image);
+					});
+				} catch (e) {
+					console.error('Error parsing emblem upload response:', e);
+				}
+			};
+			xhr.onerror = () => {
+				console.warn('Emblem upload failed: web-server unreachable');
+			};
+
+			xhr.send(formData);
+		} else {
+			const len = data.length;
+			const out = new BinaryWriter(2 + 1 + 2 + 2 + len + 4);
+
+			// zlib compression
+			out.writeUChar(0x78);
+			out.writeUChar(0x1);
+			out.writeUChar(0x1);
+			out.writeUShort(len);
+			out.writeUShort(~len & 0xffff);
+			out.writeBuffer(data.buffer);
+			out.view.setInt32(out.offset, adler32(data), false); // big endian
+
+			// send packet
+			const pkt = new PACKET.CZ.REGISTER_GUILD_EMBLEM_IMG();

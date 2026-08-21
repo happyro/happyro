@@ -1,0 +1,500 @@
+				return;
+			}
+
+			// Same target item id
+			if( item->nameid == item2->nameid ){
+				return;
+			}
+		}
+
+		s_barter_purchase purchase = {};
+
+		purchase.item = item;
+		purchase.amount = p->list[i].amount;
+
+		purchases.push_back( purchase );
+	}
+
+	clif_npc_buy_result( sd, npc_barter_purchase( *sd, barter, purchases )  );
+#endif
+}
+
+void clif_summon_init(const mob_data& md) {
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+	const block_list* master_bl = battle_get_master(&md);
+
+	if( master_bl == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_SUMMON_HP_INIT p = {};
+
+	p.PacketType = HEADER_ZC_SUMMON_HP_INIT;
+	p.summonAID = md.id;
+	p.CurrentHP = md.status.hp;
+	p.MaxHP = md.status.max_hp;
+
+	clif_send( &p, sizeof( p ), master_bl, SELF );
+#endif
+}
+
+void clif_summon_hp_bar(const mob_data& md) {
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+	const block_list* master_bl = battle_get_master(&md);
+
+	if( master_bl == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_SUMMON_HP_UPDATE p = {};
+
+	p.PacketType = HEADER_ZC_SUMMON_HP_UPDATE;
+	p.summonAID = md.id;
+	p.VarId = SP_HP; // HP parameter
+	p.Value = md.status.hp;
+
+	clif_send( &p, sizeof( p ), master_bl, SELF );
+#endif
+}
+
+void clif_laphine_synthesis_open( map_session_data *sd, const std::shared_ptr<const s_laphine_synthesis> synthesis ){
+#if PACKETVER_MAIN_NUM >= 20160601 || PACKETVER_RE_NUM >= 20160525 || defined(PACKETVER_ZERO)
+	nullpo_retv( sd );
+
+	sd->state.laphine_synthesis = synthesis->item_id;
+
+	PACKET_ZC_RANDOM_COMBINE_ITEM_UI_OPEN p = {};
+
+	p.packetType = HEADER_ZC_RANDOM_COMBINE_ITEM_UI_OPEN;
+	p.itemId = client_nameid( synthesis->item_id );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+void clif_parse_laphine_synthesis_close( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20160601 || PACKETVER_RE_NUM >= 20160525 || defined(PACKETVER_ZERO)
+	sd->state.laphine_synthesis = 0;
+#endif
+}
+
+enum e_laphine_synthesis_result : int16{
+	LAPHINE_SYNTHESIS_SUCCESS = 0,
+	LAPHINE_SYNTHESIS_AMOUNT = 5,
+	LAPHINE_SYNTHESIS_ITEM = 7
+};
+
+void clif_laphine_synthesis_result( map_session_data* sd, enum e_laphine_synthesis_result result ){
+#if PACKETVER_MAIN_NUM >= 20160601 || PACKETVER_RE_NUM >= 20160525 || defined(PACKETVER_ZERO)
+	nullpo_retv( sd );
+
+	PACKET_ZC_ACK_RANDOM_COMBINE_ITEM p = {};
+
+	p.packetType = HEADER_ZC_ACK_RANDOM_COMBINE_ITEM;
+	p.result = result;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+void clif_parse_laphine_synthesis( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20160601 || PACKETVER_RE_NUM >= 20160525 || defined(PACKETVER_ZERO)
+	if( sd->state.laphine_synthesis == 0 ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_RANDOM_COMBINE_ITEM* p = reinterpret_cast<PACKET_CZ_REQ_RANDOM_COMBINE_ITEM*>( RFIFOP( fd, 0 ) );
+
+	if( sd->state.laphine_synthesis != p->itemId ){
+		return;
+	}
+
+	std::shared_ptr<s_laphine_synthesis> synthesis = laphine_synthesis_db.find( sd->state.laphine_synthesis );
+
+	if( synthesis == nullptr ){
+		return;
+	}
+
+	size_t count = ( p->packetLength - sizeof( PACKET_CZ_REQ_RANDOM_COMBINE_ITEM ) ) / sizeof( PACKET_CZ_REQ_RANDOM_COMBINE_ITEM_sub );
+
+	// Player sent more or less than actually required
+	if( count != synthesis->requiredRequirements ){
+		return;
+	}
+
+	// Check for duplicates
+	for( size_t i = 0; i < count; i++ ){
+		for( size_t j = i + 1; j < count; j++ ){
+			if( p->items[i].index == p->items[j].index ){
+				return;
+			}
+		}
+	}
+
+	for( size_t i = 0; i < count; i++ ){
+		int16 index = server_index( p->items[i].index );
+
+		if( index >= MAX_INVENTORY ){
+			return;
+		}
+
+		if( sd->inventory_data[index] == nullptr ){
+			return;
+		}
+
+		struct item* item = &sd->inventory.u.items_inventory[index];
+
+		std::shared_ptr<s_laphine_synthesis_requirement> requirement = util::umap_find( synthesis->requirements, item->nameid );
+
+		if( requirement == nullptr ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_ITEM );
+			return;
+		}
+
+		if( p->items[i].count != requirement->amount ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_AMOUNT );
+			return;
+		}
+
+		if( item->amount < requirement->amount ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_AMOUNT );
+			return;
+		}
+
+		if( item->refine < synthesis->minimumRefine ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_ITEM );
+			return;
+		}
+
+		if( item->refine > synthesis->maximumRefine ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_ITEM );
+			return;
+		}
+
+		if( item->equip != 0 ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_ITEM );
+			return;
+		}
+
+		if( item->equipSwitch != 0 ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_ITEM );
+			return;
+		}
+	}
+
+	// If triggered from item
+	if( sd->itemid == sd->state.laphine_synthesis ){
+		int16 index = pc_search_inventory( sd, sd->state.laphine_synthesis );
+
+		if( index < 0 ){
+			clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_ITEM );
+			return;
+		}
+
+		if( ( sd->inventory_data[index]->flag.delay_consume & DELAYCONSUME_NOCONSUME ) == 0 ){
+			if( pc_delitem( sd, index, 1, 0, 0, LOG_TYPE_LAPHINE ) != 0 ){
+				return;
+			}
+		}
+	}
+
+	for( size_t i = 0; i < count; i++ ){
+		int16 index = server_index( p->items[i].index );
+
+		if( pc_delitem( sd, index, p->items[i].count, 0, 0, LOG_TYPE_LAPHINE ) != 0 ){
+			return;
+		}
+	}
+
+	itemdb_group.pc_get_itemgroup( synthesis->rewardGroupId, true, *sd );
+
+	clif_laphine_synthesis_result( sd, LAPHINE_SYNTHESIS_SUCCESS );
+#endif
+}
+
+void clif_laphine_upgrade_open( map_session_data* sd, const std::shared_ptr<const s_laphine_upgrade> upgrade ){
+#if PACKETVER_MAIN_NUM >= 20170726 || PACKETVER_RE_NUM >= 20170621 || defined(PACKETVER_ZERO)
+	nullpo_retv( sd );
+
+	sd->state.laphine_upgrade = upgrade->item_id;
+
+	PACKET_ZC_RANDOM_UPGRADE_ITEM_UI_OPEN p = {};
+
+	p.packetType = HEADER_ZC_RANDOM_UPGRADE_ITEM_UI_OPEN;
+	p.itemId = client_nameid( upgrade->item_id );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+void clif_parse_laphine_upgrade_close( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20170726 || PACKETVER_RE_NUM >= 20170621 || defined(PACKETVER_ZERO)
+	sd->state.laphine_upgrade = 0;
+#endif
+}
+
+void clif_laphine_upgrade_result( map_session_data *sd, bool failed ){
+#if PACKETVER_MAIN_NUM >= 20170726 || PACKETVER_RE_NUM >= 20170621 || defined(PACKETVER_ZERO)
+	PACKET_ZC_ACK_RANDOM_UPGRADE_ITEM p = {};
+
+	p.packetType = HEADER_ZC_ACK_RANDOM_UPGRADE_ITEM;
+	p.result = failed;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+static void clif_item_preview( map_session_data *sd, int16 index ){
+#if PACKETVER_MAIN_NUM >= 20170726 || PACKETVER_RE_NUM >= 20170621 || defined(PACKETVER_ZERO)
+	nullpo_retv( sd );
+
+	struct item* item = &sd->inventory.u.items_inventory[index];
+
+	PACKET_ZC_CHANGE_ITEM_OPTION p = {};
+
+	p.packetType = HEADER_ZC_CHANGE_ITEM_OPTION;
+	p.index = client_index( index );
+#if PACKETVER_MAIN_NUM >= 20181017 || PACKETVER_RE_NUM >= 20181017 || PACKETVER_ZERO_NUM >= 20181024
+	p.isDamaged = item->attribute != 0;
+#endif
+	p.refiningLevel = item->refine;
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200723
+	p.grade = item->enchantgrade;
+#endif
+	clif_addcards( &p.slot, item );
+	clif_add_random_options( p.option_data, *item );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+void clif_parse_laphine_upgrade( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20170726 || PACKETVER_RE_NUM >= 20170621 || defined(PACKETVER_ZERO)
+	if( sd->state.laphine_upgrade == 0 ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_RANDOM_UPGRADE_ITEM* p = reinterpret_cast<PACKET_CZ_REQ_RANDOM_UPGRADE_ITEM*>( RFIFOP( fd, 0 ) );
+
+	if( sd->state.laphine_upgrade != p->itemId ){
+		return;
+	}
+
+	std::shared_ptr<s_laphine_upgrade> upgrade = laphine_upgrade_db.find( sd->state.laphine_upgrade );
+
+	if( upgrade == nullptr ){
+		return;
+	}
+
+	uint16 index = server_index( p->index );
+
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	if( sd->inventory_data[index] == nullptr ){
+		return;
+	}
+
+	struct item* item = &sd->inventory.u.items_inventory[index];
+
+	// Not a valid target item
+	if( !util::vector_exists( upgrade->target_item_ids, item->nameid ) ){
+		clif_laphine_upgrade_result( sd, true );
+		return;
+	}
+
+	// If target item is not identified
+	if( item->identify == 0 ){
+		clif_laphine_upgrade_result( sd, true );
+		return;
+	}
+
+	// If target item is equipped
+	if( item->equip != 0 ){
+		clif_laphine_upgrade_result( sd, true );
+		return;
+	}
+
+	// If target item is in equipswitch
+	if( item->equipSwitch != 0 ){
+		clif_laphine_upgrade_result( sd, true );
+		return;
+	}
+
+	// Check minimum refine requirement
+	if( item->refine < upgrade->minimumRefine ){
+		clif_laphine_upgrade_result( sd, true );
+		return;
+	}
+
+	// Check maximum refine requirement
+	if( item->refine > upgrade->maximumRefine ){
+		clif_laphine_upgrade_result( sd, true );
+		return;
+	}
+
+	// If no cards are allowed
+	if( !upgrade->cardsAllowed ){
+		for( int32 i = 0; i < MAX_SLOTS; i++ ){
+			if( item->card[i] != 0 ){
+				clif_laphine_upgrade_result( sd, true );
+				return;
+			}
+		}
+	}
+
+	// If random options are required
+	if( upgrade->requiredRandomOptions > 0 ){
+		int32 i;
+
+		for( i = MAX_ITEM_RDM_OPT - 1; i >= 0; i-- ){
+			if( item->option[i].id != 0 ){
+				break;
+			}
+		}
+
+		if( ( i + 1 ) < upgrade->requiredRandomOptions ){
+			clif_laphine_upgrade_result( sd, true );
+			return;
+		}
+	}
+
+	int16 index2 = pc_search_inventory( sd, sd->state.laphine_upgrade );
+
+	if( index2 < 0 ){
+		clif_laphine_upgrade_result( sd, true );
+		return;
+	}
+
+	if( ( sd->inventory_data[index2]->flag.delay_consume & DELAYCONSUME_NOCONSUME ) == 0 ){
+		if( pc_delitem( sd, index2, 1, 0, 0, LOG_TYPE_LAPHINE ) != 0 ){
+			return;
+		}
+	}
+
+	// Log removal of item
+	log_pick_pc( sd, LOG_TYPE_LAPHINE, -1, item );
+
+	// Visually remove it from the client
+	clif_delitem( *sd, index, 1, 0 );
+
+	// Apply the random options
+	if( upgrade->randomOptionGroup != nullptr ){
+		upgrade->randomOptionGroup->apply( *item );
+	}
+
+	// Change the refine rate if needed
+	if( upgrade->resultRefine > 0 ){
+		// Absolute refine level change
+		item->refine = max( item->refine, upgrade->resultRefine );
+	}else if( upgrade->resultRefineMaximum > 0 ){
+		// If a minimum is specified it can also downgrade
+		if( upgrade->resultRefineMinimum ){
+			item->refine = static_cast<uint8>( rnd_value<uint16>( upgrade->resultRefineMinimum, upgrade->resultRefineMaximum ) );
+		}else{
+			// Otherwise it can only be upgraded until the maximum, but not downgraded
+			item->refine = static_cast<uint8>( rnd_value<uint16>( item->refine, upgrade->resultRefineMaximum ) );
+		}
+	}else if( upgrade->resultRefineMinimum > 0 ){
+		// No maximum has been specified, so it can be anything between minimum and MAX_REFINE
+		item->refine = static_cast<uint8>( rnd_value<uint16>( upgrade->resultRefineMinimum, MAX_REFINE ) );
+	}
+
+	// Log retrieving the item again -> with the new options
+	log_pick_pc( sd, LOG_TYPE_LAPHINE, 1, item );
+
+	// Make it visible for the client again
+	clif_additem( sd, index, 1, 0 );
+
+	// Open a preview of the item
+	clif_item_preview( sd, index );
+
+	// Tell the client we are done
+	clif_laphine_upgrade_result( sd, false );
+#endif
+}
+
+void clif_enchantgrade_add( map_session_data& sd, uint16 index = UINT16_MAX, std::shared_ptr<s_enchantgradelevel> gradeLevel = nullptr ){
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+	PACKET_ZC_GRADE_ENCHANT_MATERIAL_LIST* p = reinterpret_cast<PACKET_ZC_GRADE_ENCHANT_MATERIAL_LIST*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_GRADE_ENCHANT_MATERIAL_LIST;
+	p->PacketLength = sizeof( *p );
+
+	if( index < UINT16_MAX ){
+		p->index = client_index( index );
+		p->success_chance = gradeLevel->chances[sd.inventory.u.items_inventory[index].refine] / 100;
+		p->blessing_info.id = client_nameid( gradeLevel->catalyst.item );
+		p->blessing_info.amount = gradeLevel->catalyst.amountPerStep;
+		p->blessing_info.max_blessing = gradeLevel->catalyst.maximumSteps;
+		p->blessing_info.bonus = gradeLevel->catalyst.chanceIncrease / 100;
+		// Not displayed by client
+		p->protect_itemid = 0;
+		p->protect_amount = 0;
+
+		int32 i = 0;
+		for( const auto& pair : gradeLevel->options ){
+			GRADE_ENCHANT_MATERIAL& mat = p->material_info[i];
+			std::shared_ptr<s_enchantgradeoption> option = pair.second;
+
+			mat.nameid = client_nameid( option->item );
+			mat.amount = option->amount;
+			mat.price = option->zeny;
+			mat.downgrade = option->downgrade_amount > 0;
+			mat.breakable = option->breaking_rate > 0;
+
+			p->PacketLength += static_cast<decltype(p->PacketLength)>( sizeof( mat ) );
+			i++;
+		}
+	}else{
+		p->index = -1;
+		p->success_chance = 0;
+		p->blessing_info.id = 0;
+		p->blessing_info.amount = 0;
+		p->blessing_info.max_blessing = 0;
+		p->blessing_info.bonus = 0;
+		p->protect_itemid = 0;
+		p->protect_amount = 0;
+	}
+
+	clif_send( p, p->PacketLength, &sd, SELF );
+#endif
+}
+
+void clif_parse_enchantgrade_add( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+	nullpo_retv( sd );
+
+	if( !sd->state.enchantgrade_open ){
+		return;
+	}
+
+	const PACKET_CZ_GRADE_ENCHANT_SELECT_EQUIPMENT* p = reinterpret_cast<PACKET_CZ_GRADE_ENCHANT_SELECT_EQUIPMENT*>( RFIFOP( fd, 0 ) );
+
+	uint16 index = server_index( p->index );
+
+	if( index >= MAX_INVENTORY || sd->inventory_data[index] == nullptr ){
+		return;
+	}
+
+	std::shared_ptr<s_enchantgrade> enchantgrade = enchantgrade_db.find( sd->inventory_data[index]->type );
+
+	// Unsupported item type - no answer, because client should have actually prevented this request
+	if( enchantgrade == nullptr ){
+		return;
+	}
+
+	// Item can't be enhanced
+	if( !sd->inventory_data[index]->flag.gradable ){
+		return;
+	}
+
+	uint16 level = 0;
+
+	if( sd->inventory_data[index]->type == IT_WEAPON ){
+		level = sd->inventory_data[index]->weapon_level;
+	}else if( sd->inventory_data[index]->type == IT_ARMOR ){
+		level = sd->inventory_data[index]->armor_level;
+	}
+

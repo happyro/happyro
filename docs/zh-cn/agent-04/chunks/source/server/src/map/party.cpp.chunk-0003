@@ -1,0 +1,500 @@
+
+	// Update info.
+	intif_party_leaderchange(p->party.party_id,p->party.member[tmi].account_id,p->party.member[tmi].char_id);
+	clif_party_info( *p );
+
+	return 1;
+}
+
+/// Invoked (from char-server) when a party member
+/// - changes maps
+/// - logs in or out
+/// - gains a level (disabled)
+int32 party_recv_movemap( int32 party_id, uint32 account_id, uint32 char_id, int32 online, int32 lv, const char* map ){
+	struct party_member* m;
+	struct party_data* p;
+	int32 i;
+
+	p = party_search(party_id);
+
+	if( p == nullptr )
+		return 0;
+
+	ARR_FIND( 0, MAX_PARTY, i, p->party.member[i].account_id == account_id && p->party.member[i].char_id == char_id );
+	if( i == MAX_PARTY ) {
+		ShowError("party_recv_movemap: char %d/%d not found in party %s (id:%d)",account_id,char_id,p->party.name,party_id);
+		return 0;
+	}
+
+	m = &p->party.member[i];
+	safestrncpy( m->map, map, sizeof( m->map ) );
+	m->online = online;
+	m->lv = lv;
+	//Check if they still exist on this map server
+	p->data[i].sd = party_sd_check(party_id, account_id, char_id);
+
+	clif_party_info( *p );
+
+	return 0;
+}
+
+void party_send_movemap(map_session_data *sd)
+{
+	struct party_data *p;
+
+	if( !sd->status.party_id )
+		return;
+
+	intif_party_changemap(sd,1);
+
+	p=party_search(sd->status.party_id);
+	if (!p) return;
+
+	if(sd->state.connect_new) {
+		//Note that this works because this function is invoked before connect_new is cleared.
+		clif_party_option(p,sd,0x100);
+		clif_party_info( *p, sd );
+		clif_party_member_info( *p, *sd );
+	}
+
+	if (sd->fd) { // synchronize minimap positions with the rest of the party
+		int32 i;
+		for(i=0; i < MAX_PARTY; i++) {
+			if (p->data[i].sd &&
+				p->data[i].sd != sd &&
+				p->data[i].sd->m == sd->m)
+			{
+				clif_party_xy_single( *sd, *p->data[i].sd );
+				clif_party_xy_single( *p->data[i].sd, *sd );
+			}
+		}
+	}
+	return;
+}
+
+void party_send_levelup(map_session_data *sd)
+{
+	intif_party_changemap(sd,1);
+}
+
+int32 party_send_logout(map_session_data *sd)
+{
+	struct party_data *p;
+	int32 i;
+
+	if(!sd->status.party_id)
+		return 0;
+
+	intif_party_changemap(sd,0);
+	p=party_search(sd->status.party_id);
+	if(!p) return 0;
+
+	ARR_FIND( 0, MAX_PARTY, i, p->data[i].sd == sd );
+	if( i < MAX_PARTY )
+		memset(&p->data[i], 0, sizeof(p->data[0]));
+	else
+		ShowError("party_send_logout: Failed to locate member %d:%d in party %d!\n", sd->status.account_id, sd->status.char_id, p->party.party_id);
+
+	return 1;
+}
+
+int32 party_send_message(map_session_data *sd,const char *mes, size_t len)
+{
+	if(sd->status.party_id == 0)
+		return 0;
+	intif_party_message(sd->status.party_id,sd->status.account_id,mes,len);
+	party_recv_message(sd->status.party_id,sd->status.account_id,mes,len);
+
+	// Chat logging type 'P' / Party Chat
+	log_chat(LOG_CHAT_PARTY, sd->status.party_id, sd->status.char_id, sd->status.account_id, mapindex_id2name(sd->mapindex), sd->x, sd->y, nullptr, mes);
+
+	return 0;
+}
+
+int32 party_recv_message( int32 party_id, uint32 account_id, const char *mes, size_t len ){
+	struct party_data *p;
+	if( (p=party_search(party_id))==nullptr)
+		return 0;
+	clif_party_message( *p, account_id, mes, len );
+	return 0;
+}
+
+int32 party_skill_check(map_session_data *sd, int32 party_id, uint16 skill_id, uint16 skill_lv)
+{
+	struct party_data *p;
+	map_session_data *p_sd;
+	int32 i;
+
+	if(!party_id || (p = party_search(party_id)) == nullptr)
+		return 0;
+	party_check_state(p);
+	switch(skill_id) {
+		case TK_COUNTER: //Increase Triple Attack rate of Monks.
+			if (!p->state.monk) return 0;
+			break;
+		case MO_COMBOFINISH: //Increase Counter rate of Star Gladiators
+			if (!p->state.sg) return 0;
+			break;
+		case AM_TWILIGHT2: //Twilight Pharmacy, requires Super Novice
+			return p->state.snovice;
+		case AM_TWILIGHT3: //Twilight Pharmacy, Requires Taekwon
+			return p->state.tk;
+		default:
+			return 0; //Unknown case?
+	}
+
+	for(i = 0; i < MAX_PARTY; i++) {
+		if ((p_sd = p->data[i].sd) == nullptr)
+			continue;
+
+		if (sd->m != p_sd->m)
+			continue;
+
+		switch(skill_id) {
+			case TK_COUNTER: //Increase Triple Attack rate of Monks.
+				if((p_sd->class_&MAPID_SECONDMASK) == MAPID_MONK
+					&& pc_checkskill(p_sd,MO_TRIPLEATTACK)) {
+					sc_start4(p_sd,p_sd,SC_SKILLRATE_UP,100,MO_TRIPLEATTACK,
+						50+50*skill_lv, //+100/150/200% rate
+						0,0,skill_get_time(SG_FRIEND, 1));
+				}
+				break;
+			case MO_COMBOFINISH: //Increase Counter rate of Star Gladiators
+				if((p_sd->class_&MAPID_SECONDMASK) == MAPID_STAR_GLADIATOR
+					&& p_sd->sc.getSCE(SC_READYCOUNTER)
+					&& pc_checkskill(p_sd,SG_FRIEND)) {
+					sc_start4(p_sd,p_sd,SC_SKILLRATE_UP,100,TK_COUNTER,
+						50+50*pc_checkskill(p_sd,SG_FRIEND), //+100/150/200% rate
+						0,0,skill_get_time(SG_FRIEND, 1));
+				}
+				break;
+		}
+	}
+
+	return 0;
+}
+
+TIMER_FUNC(party_send_xy_timer){
+	struct party_data* p;
+
+	DBIterator *iter = db_iterator(party_db);
+
+	// for each existing party
+	for( p = (struct party_data*)dbi_first(iter); dbi_exists(iter); p = (struct party_data*)dbi_next(iter) ) {
+		int32 i;
+
+		if( !p->party.count ) // no online party members so do not iterate
+			continue;
+
+		// for each member of this party
+		for( i = 0; i < MAX_PARTY; i++ ) {
+			map_session_data* sd = p->data[i].sd;
+
+			if( !sd )
+				continue;
+
+			if( p->data[i].x != sd->x || p->data[i].y != sd->y ) { // perform position update
+				clif_party_xy( *sd );
+				p->data[i].x = sd->x;
+				p->data[i].y = sd->y;
+			}
+
+			if (battle_config.party_hp_mode && p->data[i].hp != sd->battle_status.hp) { // perform hp update
+				clif_party_hp( *sd );
+				p->data[i].hp = sd->battle_status.hp;
+			}
+		}
+	}
+	dbi_destroy(iter);
+
+	return 0;
+}
+
+int32 party_send_xy_clear(struct party_data *p)
+{
+	int32 i;
+
+	nullpo_ret(p);
+
+	for(i = 0; i < MAX_PARTY; i++) {
+		if(!p->data[i].sd)
+			continue;
+
+		p->data[i].hp = 0;
+		p->data[i].x = 0;
+		p->data[i].y = 0;
+	}
+	return 0;
+}
+
+/** Party EXP and Zeny sharing
+ * @param p Party data
+ * @param src EXP source (for renewal level penalty)
+ * @param base_exp Base EXP gained from killed mob
+ * @param job_exp Job EXP gained from killed mob
+ * @param zeny Zeny gained from killed mob
+ * @author Valaris
+ **/
+void party_exp_share(struct party_data* p, block_list* src, t_exp base_exp, t_exp job_exp, int32 zeny)
+{
+	map_session_data* sd[MAX_PARTY];
+	uint32 i, c;
+#ifdef RENEWAL_EXP
+	TBL_MOB *md = BL_CAST(BL_MOB, src);
+
+	if (!md)
+		return;
+#endif
+
+	nullpo_retv(p);
+
+	// count the number of players eligible for exp sharing
+	for (i = c = 0; i < MAX_PARTY; i++) {
+		if( (sd[c] = p->data[i].sd) == nullptr || sd[c]->m != src->m || pc_isdead(sd[c]) || (battle_config.idle_no_share && pc_isidle_party(sd[c])) )
+			continue;
+		c++;
+	}
+	if (c < 1)
+		return;
+
+	base_exp/=c;
+	job_exp/=c;
+	zeny/=c;
+
+	if (battle_config.party_even_share_bonus && c > 1) {
+		double bonus = 100 + battle_config.party_even_share_bonus*(c-1);
+
+		if (base_exp)
+			base_exp = (t_exp) cap_value(base_exp * bonus/100, 0, MAX_EXP);
+		if (job_exp)
+			job_exp = (t_exp) cap_value(job_exp * bonus/100, 0, MAX_EXP);
+		if (zeny)
+			zeny = (uint32)cap_value(zeny * bonus/100, INT_MIN, INT_MAX);
+	}
+
+	for (i = 0; i < c; i++) {
+#ifdef RENEWAL_EXP
+		t_exp base_gained = base_exp, job_gained = job_exp;
+		if (base_exp || job_exp) {
+			int32 rate = pc_level_penalty_mod( sd[i], PENALTY_EXP, nullptr, md );
+			if (rate != 100) {
+				if (base_exp)
+					base_gained = (t_exp)cap_value(apply_rate(base_exp, rate), 1, MAX_EXP);
+				if (job_exp)
+					job_gained = (t_exp)cap_value(apply_rate(job_exp, rate), 1, MAX_EXP);
+			}
+		}
+		pc_gainexp(sd[i], src, base_gained, job_gained, 0);
+#else
+		pc_gainexp(sd[i], src, base_exp, job_exp, 0);
+#endif
+
+		if (zeny) // zeny from mobs [Valaris]
+			pc_getzeny(sd[i],zeny,LOG_TYPE_PICKDROP_MONSTER);
+	}
+}
+
+//Does party loot. first_charid holds the charid of the player who has time priority to take the item.
+int32 party_share_loot(struct party_data* p, map_session_data* sd, struct item* item, int32 first_charid)
+{
+	TBL_PC* target = nullptr;
+	int32 i;
+
+	if (p && p->party.item&2 && (first_charid || !(battle_config.party_share_type&1))) {
+		//item distribution to party members.
+		if (battle_config.party_share_type&2) { // Round Robin
+			TBL_PC* psd;
+
+			i = p->itemc;
+
+			do {
+				i++;
+				if (i >= MAX_PARTY)
+					i = 0;	// reset counter to 1st person in party so it'll stop when it reaches "itemc"
+
+				if( (psd = p->data[i].sd) == nullptr || sd->m != psd->m || pc_isdead(psd) || (battle_config.idle_no_share && pc_isidle_party(psd)) )
+					continue;
+
+				if (pc_additem(psd,item,item->amount,LOG_TYPE_PICKDROP_PLAYER))
+					continue; //Chosen char can't pick up loot.
+
+				//Successful pick.
+				p->itemc = i;
+				target = psd;
+				break;
+			} while (i != p->itemc);
+		} else { // Random pick
+			TBL_PC* psd[MAX_PARTY];
+			int32 count = 0;
+
+			//Collect pick candidates
+			for (i = 0; i < MAX_PARTY; i++) {
+				if( (psd[count] = p->data[i].sd) == nullptr || psd[count]->m != sd->m || pc_isdead(psd[count]) || (battle_config.idle_no_share && pc_isidle_party(psd[count])) )
+					continue;
+
+				count++;
+			}
+
+			while (count > 0) { //Pick a random member.
+				i = rnd_value(0, count-1);
+
+				if (pc_additem(psd[i],item,item->amount,LOG_TYPE_PICKDROP_PLAYER)) { // Discard this receiver.
+					psd[i] = psd[count-1];
+					count--;
+				} else { // Successful pick.
+					target = psd[i];
+					break;
+				}
+			}
+		}
+	}
+
+	if (!target) {
+		target = sd; //Give it to the char that picked it up
+
+		if ((i = pc_additem(sd,item,item->amount,LOG_TYPE_PICKDROP_PLAYER)))
+			return i;
+	}
+
+	if( p && battle_config.party_show_share_picker && battle_config.show_picker_item_type&(1<<itemdb_type(item->nameid)) )
+		clif_party_show_picker(target, item);
+
+	return 0;
+}
+
+int32 party_send_dot_remove(map_session_data *sd)
+{
+	if (sd->status.party_id)
+		clif_party_xy_remove(sd);
+
+	return 0;
+}
+
+/**
+ * Check whether a party member is in autotrade or idle for count functions
+ * @param bl: Object invoking the counter
+ * @param ap: List of parameters
+ * @return 1 when neither autotrading and not idle or 0 otherwise
+ */
+int32 party_sub_count(block_list *bl, va_list ap)
+{
+	map_session_data *sd = reinterpret_cast<map_session_data*>(bl);
+
+	if (sd->state.autotrade)
+		return 0;
+
+	if (battle_config.idle_no_share && pc_isidle_party(sd))
+		return 0;
+
+	return 1;
+}
+
+/**
+ * To use for counting classes in a party.
+ * @param bl: Object invoking the counter
+ * @param ap: List of parameters: Class_Mask, Class_ID
+ * @return 1 when class exists in party or 0 otherwise
+ */
+int32 party_sub_count_class(block_list *bl, va_list ap)
+{
+	map_session_data *sd = (TBL_PC *)bl;
+	uint32 mask = va_arg(ap, uint32);
+	uint32 mapid_class = va_arg(ap, uint32);
+
+	if( !party_sub_count(bl, ap) )
+		return 0;
+
+	if( (sd->class_&mask) != mapid_class )
+		return 0;
+
+	return 1;
+}
+
+/// Executes 'func' for each party member on the same map and in range (0:whole map)
+int32 party_foreachsamemap(int32 (*func)(block_list*,va_list),const map_session_data* sd,int32 range,...)
+{
+	struct party_data *p;
+	int32 i;
+	int32 x0,y0,x1,y1;
+	block_list *list[MAX_PARTY];
+	int32 blockcount=0;
+	int32 total = 0; //Return value.
+
+	nullpo_ret(sd);
+
+	if((p = party_search(sd->status.party_id)) == nullptr)
+		return 0;
+
+	x0 = sd->x-range;
+	y0 = sd->y-range;
+	x1 = sd->x+range;
+	y1 = sd->y+range;
+
+	for(i = 0; i < MAX_PARTY; i++) {
+		map_session_data *psd = p->data[i].sd;
+
+		if(!psd)
+			continue;
+
+		if(psd->m!=sd->m || !psd->prev)
+			continue;
+
+		if(range &&
+			(psd->x<x0 || psd->y<y0 ||
+			 psd->x>x1 || psd->y>y1 ) )
+			continue;
+
+		list[blockcount++]=psd;
+	}
+
+	FreeBlockLock freeLock;
+
+	for(i = 0; i < blockcount; i++) {
+		va_list ap;
+		va_start(ap, range);
+		total += func(list[i], ap);
+		va_end(ap);
+	}
+
+	return total;
+}
+
+/*==========================================
+ * Party Booking in KRO [Spiria]
+ *------------------------------------------*/
+static struct party_booking_ad_info* create_party_booking_data(void)
+{
+	struct party_booking_ad_info *pb_ad;
+
+	CREATE(pb_ad, struct party_booking_ad_info, 1);
+	pb_ad->index = party_booking_nextid++;
+
+	return pb_ad;
+}
+
+void party_booking_register(map_session_data *sd, int16 level, int16 mapid, int16* job)
+{
+	struct party_booking_ad_info *pb_ad;
+	int32 i;
+
+	pb_ad = (struct party_booking_ad_info*)idb_get(party_booking_db, sd->status.char_id);
+
+	if( pb_ad == nullptr ) {
+		pb_ad = create_party_booking_data();
+		idb_put(party_booking_db, sd->status.char_id, pb_ad);
+	} else { // already registered
+		clif_PartyBookingRegisterAck(sd, 2);
+		return;
+	}
+
+	memcpy(pb_ad->charname,sd->status.name,NAME_LENGTH);
+	pb_ad->starttime = (int32)time(nullptr);
+	pb_ad->p_detail.level = level;
+	pb_ad->p_detail.mapid = mapid;
+
+	for(i = 0; i < MAX_PARTY_BOOKING_JOBS; i++)
+		if(job[i] != 0xFF)
+			pb_ad->p_detail.job[i] = job[i];
+		else pb_ad->p_detail.job[i] = -1;
+
+	clif_PartyBookingRegisterAck(sd, 0);

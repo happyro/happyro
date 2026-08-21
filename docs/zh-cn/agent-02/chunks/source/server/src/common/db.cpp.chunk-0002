@@ -1,0 +1,500 @@
+		x = y->right;
+	} else if (y->right == nullptr) { // no right
+		x = y->left;
+	} else { // both exist, go to the leftmost node of the right sub-tree
+		y = y->right;
+		while (y->left != nullptr)
+			y = y->left;
+		x = y->right;
+	}
+
+	// Remove the node from the tree
+	if (y != node) { // both child existed
+		// put the left of 'node' in the left of 'y'
+		node->left->parent = y;
+		y->left = node->left;
+
+		// 'y' is not the direct child of 'node'
+		if (y != node->right) {
+			// put 'x' in the old position of 'y'
+			x_parent = y->parent;
+			if (x) x->parent = y->parent;
+			y->parent->left = x;
+			// put the right of 'node' in 'y'
+			y->right = node->right;
+			node->right->parent = y;
+			// 'y' is a direct child of 'node'
+		} else {
+			x_parent = y;
+		}
+
+		// link 'y' and the parent of 'node'
+		if (*root == node) {
+			*root = y; // 'node' was the root
+		} else if (node->parent->left == node) {
+			node->parent->left = y; // 'node' was at the left
+		} else {
+			node->parent->right = y; // 'node' was at the right
+		}
+		y->parent = node->parent;
+		// switch colors
+		{
+			node_color tmp = y->color;
+			y->color = node->color;
+			node->color = tmp;
+		}
+		y = node;
+	} else { // one child did not exist
+		// put x in node's position
+		x_parent = y->parent;
+		if (x) x->parent = y->parent;
+		// link x and node's parent
+		if (*root == node) {
+			*root = x; // node was the root
+		} else if (node->parent->left == node) {
+			node->parent->left = x; // node was at the left
+		} else {
+			node->parent->right = x;  // node was at the right
+		}
+	}
+
+	// Restore the RED-BLACK properties
+	if (y->color != RED) {
+		while (x != *root && (x == nullptr || x->color == BLACK)) {
+			DBNode *w;
+			if (x == x_parent->left) {
+				w = x_parent->right;
+				if (w->color == RED) {
+					w->color = BLACK;
+					x_parent->color = RED;
+					db_rotate_left(x_parent, root);
+					w = x_parent->right;
+				}
+				if ((w->left == nullptr || w->left->color == BLACK) &&
+					(w->right == nullptr || w->right->color == BLACK)) {
+					w->color = RED;
+					x = x_parent;
+					x_parent = x_parent->parent;
+				} else {
+					if (w->right == nullptr || w->right->color == BLACK) {
+						if (w->left) w->left->color = BLACK;
+						w->color = RED;
+						db_rotate_right(w, root);
+						w = x_parent->right;
+					}
+					w->color = x_parent->color;
+					x_parent->color = BLACK;
+					if (w->right) w->right->color = BLACK;
+					db_rotate_left(x_parent, root);
+					break;
+				}
+			} else {
+				w = x_parent->left;
+				if (w->color == RED) {
+					w->color = BLACK;
+					x_parent->color = RED;
+					db_rotate_right(x_parent, root);
+					w = x_parent->left;
+				}
+				if ((w->right == nullptr || w->right->color == BLACK) &&
+					(w->left == nullptr || w->left->color == BLACK)) {
+					w->color = RED;
+					x = x_parent;
+					x_parent = x_parent->parent;
+				} else {
+					if (w->left == nullptr || w->left->color == BLACK) {
+						if (w->right) w->right->color = BLACK;
+						w->color = RED;
+						db_rotate_left(w, root);
+						w = x_parent->left;
+					}
+					w->color = x_parent->color;
+					x_parent->color = BLACK;
+					if (w->left) w->left->color = BLACK;
+					db_rotate_right(x_parent, root);
+					break;
+				}
+			}
+		}
+		if (x) x->color = BLACK;
+	}
+}
+
+/**
+ * Returns not 0 if the key is considered to be nullptr.
+ * @param type Type of database
+ * @param key Key being tested
+ * @return not 0 if considered nullptr, 0 otherwise
+ * @private
+ * @see #db_obj_get(DBMap*,DBKey)
+ * @see #db_obj_put(DBMap*,DBKey,DBData)
+ * @see #db_obj_remove(DBMap*,DBKey)
+ */
+static int32 db_is_key_null(DBType type, DBKey key)
+{
+	DB_COUNTSTAT(db_is_key_null);
+	switch (type) {
+		case DB_STRING:
+		case DB_ISTRING:
+			return (key.str == nullptr);
+
+		default: // Not a pointer
+			return 0;
+	}
+}
+
+/**
+ * Duplicate the key used in the database.
+ * @param db Database the key is being used in
+ * @param key Key to be duplicated
+ * @param Duplicated key
+ * @private
+ * @see #db_free_add(DBMap_impl*,DBNode *,DBNode **)
+ * @see #db_free_remove(DBMap_impl*,DBNode *)
+ * @see #db_obj_put(DBMap*,DBKey,void *)
+ * @see #db_dup_key_free(DBMap_impl*,DBKey)
+ */
+static DBKey db_dup_key(DBMap_impl* db, DBKey key)
+{
+	char *str;
+	size_t len;
+
+	DB_COUNTSTAT(db_dup_key);
+	switch (db->type) {
+		case DB_STRING:
+		case DB_ISTRING:
+			len = strnlen(key.str, db->maxlen);
+			str = (char*)aMalloc(len + 1);
+			memcpy(str, key.str, len);
+			str[len] = '\0';
+			key.str = str;
+			return key;
+
+		default:
+			return key;
+	}
+}
+
+/**
+ * Free a key duplicated by db_dup_key.
+ * @param db Database the key is being used in
+ * @param key Key to be freed
+ * @private
+ * @see #db_dup_key(DBMap_impl*,DBKey)
+ */
+static void db_dup_key_free(DBMap_impl* db, DBKey key)
+{
+	DB_COUNTSTAT(db_dup_key_free);
+	switch (db->type) {
+		case DB_STRING:
+		case DB_ISTRING:
+			aFree((char*)key.str);
+			return;
+
+		default:
+			return;
+	}
+}
+
+/**
+ * Add a node to the free_list of the database.
+ * Marks the node as deleted.
+ * If the key isn't duplicated, the key is duplicated and released.
+ * @param db Target database
+ * @param root Root of the tree from the node
+ * @param node Target node
+ * @private
+ * @see #struct db_free
+ * @see DBMap_impl#free_list
+ * @see DBMap_impl#free_count
+ * @see DBMap_impl#free_max
+ * @see #db_obj_remove(DBMap*,DBKey)
+ * @see #db_free_remove(DBMap_impl*,DBNode *)
+ */
+static void db_free_add(DBMap_impl* db, DBNode *node, DBNode **root)
+{
+	DBKey old_key;
+
+	DB_COUNTSTAT(db_free_add);
+	if (db->free_lock == (uint32)~0) {
+		ShowFatalError("db_free_add: free_lock overflow\n"
+				"Database allocated at %s:%d\n",
+				db->alloc_file, db->alloc_line);
+		exit(EXIT_FAILURE);
+	}
+	if (!(db->options&DB_OPT_DUP_KEY)) { // Make sure we have a key until the node is freed
+		old_key = node->key;
+		node->key = db_dup_key(db, node->key);
+		db->release(old_key, node->data, DB_RELEASE_KEY);
+	}
+	if (db->free_count == db->free_max) { // No more space, expand free_list
+		db->free_max = (db->free_max<<2) +3; // = db->free_max*4 +3
+		if (db->free_max <= db->free_count) {
+			if (db->free_count == (uint32)~0) {
+				ShowFatalError("db_free_add: free_count overflow\n"
+						"Database allocated at %s:%d\n",
+						db->alloc_file, db->alloc_line);
+				exit(EXIT_FAILURE);
+			}
+			db->free_max = (uint32)~0;
+		}
+		RECREATE(db->free_list, struct db_free, db->free_max);
+	}
+	node->deleted = 1;
+	db->free_list[db->free_count].node = node;
+	db->free_list[db->free_count].root = root;
+	db->free_count++;
+	db->item_count--;
+}
+
+/**
+ * Remove a node from the free_list of the database.
+ * Marks the node as not deleted.
+ * NOTE: Frees the duplicated key of the node.
+ * @param db Target database
+ * @param node Node being removed from free_list
+ * @private
+ * @see #struct db_free
+ * @see DBMap_impl#free_list
+ * @see DBMap_impl#free_count
+ * @see #db_obj_put(DBMap*,DBKey,DBData)
+ * @see #db_free_add(DBMap_impl*,DBNode**,DBNode*)
+ */
+static void db_free_remove(DBMap_impl* db, DBNode *node)
+{
+	uint32 i;
+
+	DB_COUNTSTAT(db_free_remove);
+	for (i = 0; i < db->free_count; i++) {
+		if (db->free_list[i].node == node) {
+			if (i < db->free_count -1) // copy the last item to where the removed one was
+				memcpy(&db->free_list[i], &db->free_list[db->free_count -1], sizeof(struct db_free));
+			db_dup_key_free(db, node->key);
+			break;
+		}
+	}
+	node->deleted = 0;
+	if (i == db->free_count) {
+		ShowWarning("db_free_remove: node was not found - database allocated at %s:%d\n", db->alloc_file, db->alloc_line);
+	} else {
+		db->free_count--;
+	}
+	db->item_count++;
+}
+
+/**
+ * Increment the free_lock of the database.
+ * @param db Target database
+ * @private
+ * @see DBMap_impl#free_lock
+ * @see #db_unlock(DBMap_impl*)
+ */
+static void db_free_lock(DBMap_impl* db)
+{
+	DB_COUNTSTAT(db_free_lock);
+	if (db->free_lock == (uint32)~0) {
+		ShowFatalError("db_free_lock: free_lock overflow\n"
+				"Database allocated at %s:%d\n",
+				db->alloc_file, db->alloc_line);
+		exit(EXIT_FAILURE);
+	}
+	db->free_lock++;
+}
+
+/**
+ * Decrement the free_lock of the database.
+ * If it was the last lock, frees the nodes of the database.
+ * Keeps the tree balanced.
+ * NOTE: Frees the duplicated keys of the nodes
+ * @param db Target database
+ * @private
+ * @see DBMap_impl#free_lock
+ * @see #db_free_dbn(DBNode*)
+ * @see #db_lock(DBMap_impl*)
+ */
+static void db_free_unlock(DBMap_impl* db)
+{
+	uint32 i;
+
+	DB_COUNTSTAT(db_free_unlock);
+	if (db->free_lock == 0) {
+		ShowWarning("db_free_unlock: free_lock was already 0\n"
+				"Database allocated at %s:%d\n",
+				db->alloc_file, db->alloc_line);
+	} else {
+		db->free_lock--;
+	}
+	if (db->free_lock)
+		return; // Not last lock
+
+	for (i = 0; i < db->free_count ; i++) {
+		db_rebalance_erase(db->free_list[i].node, db->free_list[i].root);
+		db_dup_key_free(db, db->free_list[i].node->key);
+		DB_COUNTSTAT(db_node_free);
+		ers_free(db->nodes, db->free_list[i].node);
+	}
+	db->free_count = 0;
+}
+
+/*****************************************************************************\
+ *  (3) Section of protected functions used internally.                      *
+ *  NOTE: the protected functions used in the database interface are in the  *
+ *           next section.                                                   *
+ *  db_int_cmp         - Default comparator for DB_INT databases.            *
+ *  db_uint_cmp        - Default comparator for DB_UINT databases.           *
+ *  db_string_cmp      - Default comparator for DB_STRING databases.         *
+ *  db_istring_cmp     - Default comparator for DB_ISTRING databases.        *
+ *  db_int64_cmp       - Default comparator for DB_INT64 databases.          *
+ *  db_uint64_cmp      - Default comparator for DB_UINT64 databases.         *
+ *  db_int_hash        - Default hasher for DB_INT databases.                *
+ *  db_uint_hash       - Default hasher for DB_UINT databases.               *
+ *  db_string_hash     - Default hasher for DB_STRING databases.             *
+ *  db_istring_hash    - Default hasher for DB_ISTRING databases.            *
+ *  db_int64_hash      - Default hasher for DB_INT64 databases.              *
+ *  db_uint64_hash     - Default hasher for DB_UINT64 databases.             *
+ *  db_release_nothing - Releaser that releases nothing.                     *
+ *  db_release_key     - Releaser that only releases the key.                *
+ *  db_release_data    - Releaser that only releases the data.               *
+ *  db_release_both    - Releaser that releases key and data.                *
+\*****************************************************************************/
+
+/**
+ * Default comparator for DB_INT databases.
+ * Compares key1 to key2.
+ * Return 0 if equal, negative if lower and positive if higher.
+ * <code>maxlen</code> is ignored.
+ * @param key1 Key to be compared
+ * @param key2 Key being compared to
+ * @param maxlen Maximum length of the key to hash
+ * @return 0 if equal, negative if lower and positive if higher
+ * @see DBType#DB_INT
+ * @see #DBComparator
+ * @see #db_default_cmp(DBType)
+ */
+static int32 db_int_cmp(DBKey key1, DBKey key2, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_int_cmp);
+	if (key1.i < key2.i) return -1;
+	if (key1.i > key2.i) return 1;
+	return 0;
+}
+
+/**
+ * Default comparator for DB_UINT databases.
+ * Compares key1 to key2.
+ * Return 0 if equal, negative if lower and positive if higher.
+ * <code>maxlen</code> is ignored.
+ * @param key1 Key to be compared
+ * @param key2 Key being compared to
+ * @param maxlen Maximum length of the key to hash
+ * @return 0 if equal, negative if lower and positive if higher
+ * @see DBType#DB_UINT
+ * @see #DBComparator
+ * @see #db_default_cmp(DBType)
+ */
+static int32 db_uint_cmp(DBKey key1, DBKey key2, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_uint_cmp);
+	if (key1.ui < key2.ui) return -1;
+	if (key1.ui > key2.ui) return 1;
+	return 0;
+}
+
+/**
+ * Default comparator for DB_STRING databases.
+ * Compares key1 to key2.
+ * Return 0 if equal, negative if lower and positive if higher.
+ * @param key1 Key to be compared
+ * @param key2 Key being compared to
+ * @param maxlen Maximum length of the key to hash
+ * @return 0 if equal, negative if lower and positive if higher
+ * @see DBType#DB_STRING
+ * @see #DBComparator
+ * @see #db_default_cmp(DBType)
+ */
+static int32 db_string_cmp(DBKey key1, DBKey key2, uint16 maxlen)
+{
+	DB_COUNTSTAT(db_string_cmp);
+	return strncmp((const char *)key1.str, (const char *)key2.str, maxlen);
+}
+
+/**
+ * Default comparator for DB_ISTRING databases.
+ * Compares key1 to key2 case insensitively.
+ * Return 0 if equal, negative if lower and positive if higher.
+ * @param key1 Key to be compared
+ * @param key2 Key being compared to
+ * @param maxlen Maximum length of the key to hash
+ * @return 0 if equal, negative if lower and positive if higher
+ * @see DBType#DB_ISTRING
+ * @see #DBComparator
+ * @see #db_default_cmp(DBType)
+ */
+static int32 db_istring_cmp(DBKey key1, DBKey key2, uint16 maxlen)
+{
+	DB_COUNTSTAT(db_istring_cmp);
+	return strncasecmp((const char *)key1.str, (const char *)key2.str, maxlen);
+}
+
+/**
+ * Default comparator for DB_INT64 databases.
+ * Compares key1 to key2.
+ * Return 0 if equal, negative if lower and positive if higher.
+ * <code>maxlen</code> is ignored.
+ * @param key1 Key to be compared
+ * @param key2 Key being compared to
+ * @param maxlen Maximum length of the key to hash
+ * @return 0 if equal, negative if lower and positive if higher
+ * @see DBType#DB_INT64
+ * @see #DBComparator
+ * @see #db_default_cmp(DBType)
+ */
+static int32 db_int64_cmp(DBKey key1, DBKey key2, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_int64_cmp);
+	if (key1.i64 < key2.i64) return -1;
+	if (key1.i64 > key2.i64) return 1;
+	return 0;
+}
+
+/**
+ * Default comparator for DB_UINT64 databases.
+ * Compares key1 to key2.
+ * Return 0 if equal, negative if lower and positive if higher.
+ * <code>maxlen</code> is ignored.
+ * @param key1 Key to be compared
+ * @param key2 Key being compared to
+ * @param maxlen Maximum length of the key to hash
+ * @return 0 if equal, negative if lower and positive if higher
+ * @see DBType#DB_UINT64
+ * @see #DBComparator
+ * @see #db_default_cmp(DBType)
+ */
+static int32 db_uint64_cmp(DBKey key1, DBKey key2, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_uint64_cmp);
+	if (key1.ui64 < key2.ui64) return -1;
+	if (key1.ui64 > key2.ui64) return 1;
+	return 0;
+}
+
+
+/**
+ * Default hasher for DB_INT databases.
+ * Returns the value of the key as an uint64.
+ * <code>maxlen</code> is ignored.
+ * @param key Key to be hashed
+ * @param maxlen Maximum length of the key to hash
+ * @return hash of the key
+ * @see DBType#DB_INT
+ * @see #DBHasher
+ * @see #db_default_hash(DBType)
+ */
+static uint64 db_int_hash(DBKey key, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_int_hash);

@@ -1,0 +1,152 @@
+		VendingShop.addItemSub(list[i]);
+	}
+}
+
+/**
+ * Drop an item from storage to inventory
+ *
+ * @param {Event} event
+ */
+function onDrop(event) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+}
+
+/**
+ * Block the scroll to move 32px at each move
+ */
+function onScroll(event) {
+	let delta;
+
+	if (event.wheelDelta) {
+		delta = event.wheelDelta / 120;
+		if (window.opera) {
+			delta = -delta;
+		}
+	} else if (event.detail) {
+		delta = -event.detail;
+	} else if (event.deltaY) {
+		delta = -event.deltaY / 100;
+	}
+
+	event.currentTarget.scrollTop = Math.floor(event.currentTarget.scrollTop / 32) * 32 - delta * 32;
+	event.stopImmediatePropagation();
+	event.preventDefault();
+}
+
+/**
+ * Show item name when mouse is over
+ */
+function onItemOver(itemEl, root) {
+	const idx = parseInt(itemEl.getAttribute('data-index'), 10);
+	const item = VendingShop.getItemByIndex(idx);
+
+	if (!item) {
+		return;
+	}
+
+	const overlay = root.querySelector('.overlay');
+	if (!overlay) {
+		return;
+	}
+
+	overlay.style.display = '';
+	overlay.style.top = `${itemEl.offsetTop}px`;
+	overlay.style.left = `${itemEl.offsetLeft + 35}px`;
+	overlay.textContent = `${DB.getItemName(item)} ${prettyZeny(item.price, false)} ${DB.getMessage(2328)}`;
+
+	if (item.IsIdentified) {
+		overlay.classList.remove('grey');
+	} else if (_type === VendingShop.Type.VENDING_LIST) {
+		overlay.classList.add('grey');
+	}
+}
+
+/**
+ * Hide the item name
+ */
+function onItemOut(root) {
+	const overlay = root.querySelector('.overlay');
+	if (overlay) {
+		overlay.style.display = 'none';
+	}
+}
+
+/**
+ * Start dragging an item
+ */
+function onItemDragStart(_event) {
+	return;
+}
+
+/**
+ * Stop dragging an item
+ */
+function onItemDragEnd() {
+	delete window._OBJ_DRAG_;
+}
+
+/**
+ * Get item info (open description window)
+ */
+function onItemInfo(event, itemEl) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+
+	const index = parseInt(itemEl.getAttribute('data-index'), 10);
+	const item = VendingShop.getItemByIndex(index);
+
+	if (!item) {
+		return;
+	}
+
+	if (ItemInfo.uid === item.ITID) {
+		ItemInfo.remove();
+		return;
+	}
+
+	ItemInfo.append();
+	ItemInfo.uid = item.ITID;
+	ItemInfo.setItem(item);
+}
+
+/**
+ * Ask to use an item
+ */
+function onItemUsed(event, itemEl) {
+	const index = parseInt(itemEl.getAttribute('data-index'), 10);
+	const item = VendingShop.getItemByIndex(index);
+
+	if (item) {
+		VendingShop.useItem(item);
+		onItemOut(VendingShop.getRoot());
+	}
+
+	event.stopImmediatePropagation();
+	event.preventDefault();
+}
+
+/**
+ * Submit data to send items
+ */
+VendingShop.onSubmit = function onSubmit() {
+	let pkt;
+	if (_type === VendingShop.Type.VENDING_LIST) {
+		pkt = new PACKET.CZ.REQ_CLOSESTORE();
+	} else {
+		pkt = new PACKET.CZ.REQ_CLOSE_BUYING_STORE();
+	}
+	Network.sendPacket(pkt);
+	this.onRemove();
+
+	if (_type === VendingShop.Type.VENDING_LIST && PACKETVER.value >= 20141016) {
+		VendingReport.append();
+	}
+};
+
+VendingShop.mouseMode = GUIComponent.MouseMode.STOP;
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(VendingShop);

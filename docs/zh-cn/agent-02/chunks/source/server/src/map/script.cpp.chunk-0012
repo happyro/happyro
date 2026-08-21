@@ -1,0 +1,500 @@
+	ri->nargs        = j;                       // argument count
+	ri->defsp        = st->stack->defsp;        // default stack pointer
+	push_retinfo(st->stack, ri, ref);
+
+	st->pos = pos;
+	st->stack->defsp = st->stack->sp;
+	st->state = GOTO;
+	st->stack->scope.vars = i64db_alloc(DB_OPT_RELEASE_DATA);
+	st->stack->scope.arrays = idb_alloc(DB_OPT_BASE);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Retrieves an argument provided to callfunc/callsub.
+/// If the argument doesn't exist
+///
+/// getarg(<index>{,<default_value>}) -> <value>
+BUILDIN_FUNC(getarg)
+{
+	struct script_retinfo* ri;
+	int32 idx;
+
+	if( st->stack->defsp < 1 || st->stack->stack_data[st->stack->defsp - 1].type != C_RETINFO )
+	{
+		ShowError("buildin_getarg: No callfunc or callsub!\n");
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	ri = st->stack->stack_data[st->stack->defsp - 1].u.ri;
+
+	idx = script_getnum(st,2);
+
+	if( idx >= 0 && idx < ri->nargs )
+		push_copy(st->stack, st->stack->defsp - 1 - ri->nargs + idx);
+	else if( script_hasdata(st,3) )
+		script_pushcopy(st, 3);
+	else
+	{
+		ShowError("buildin_getarg: Index (idx=%d) out of range (nargs=%d) and no default value found\n", idx, ri->nargs);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns from the current function, optionaly returning a value from the functions.
+/// Don't use outside script functions.
+///
+/// return;
+/// return <value>;
+BUILDIN_FUNC(return)
+{
+	if( script_hasdata(st,2) )
+	{// return value
+		struct script_data* data;
+		script_pushcopy(st, 2);
+		data = script_getdatatop(st, -1);
+		if( data_isreference(data) ) {
+			const char* name = reference_getname(data);
+			if( name[0] == '.' && name[1] == '@' ) { // scope variable
+				if( !data->ref || data->ref->vars == st->stack->scope.vars )
+					get_val(st, data); // current scope, convert to value
+				if( data->ref && data->ref->vars == st->stack->stack_data[st->stack->defsp-1].u.ri->scope.vars )
+					data->ref = nullptr; // Reference to the parent scope, remove reference pointer
+			}
+		}
+	}
+	else
+	{// no return value
+		script_pushnil(st);
+	}
+	st->state = RETFUNC;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns a random number.
+/// rand(<range>) -> <int64> in the mathematical range [0, <range - 1>]
+/// rand(<min>,<max>) -> <int64> in the mathematical range [<min>, <max>]
+BUILDIN_FUNC(rand)
+{
+	int64 minimum;
+	int64 maximum;
+
+	// min,max
+	if( script_hasdata( st, 3 ) ){
+		minimum = script_getnum64( st, 2 );
+		maximum = script_getnum64( st, 3 );
+
+		if( minimum > maximum ){
+			ShowWarning( "buildin_rand: minimum (%" PRId64 ") is bigger than maximum (%" PRId64 ").\n", minimum, maximum );
+			// rnd_value already fixes this by swapping minimum and maximum automatically
+		}
+	// range
+	}else{
+		minimum = 0;
+		maximum = script_getnum64( st, 2 );
+
+		if( maximum < 0 ){
+			ShowError( "buildin_rand: range (%" PRId64 ") is negative.\n", maximum );
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		// The range version is exclusive maximum
+		maximum -= 1;
+
+		if( maximum < 1 ){
+			ShowError( "buildin_rand: range (%" PRId64 ") is too small. No randomness possible.\n", maximum );
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if( minimum == maximum ){
+		ShowError( "buildin_rand: minimum (%" PRId64 ") and maximum (%" PRId64 ") are equal. No randomness possible.\n", minimum, maximum );
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint64( st, rnd_value( minimum, maximum ) );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Warp sd to str,x,y or Random or SavePoint/Save
+ *------------------------------------------*/
+BUILDIN_FUNC(warp)
+{
+	int32 ret;
+	int32 x,y;
+	const char* str;
+	map_session_data* sd;
+
+	if(!script_charid2sd(5, sd))
+		return SCRIPT_CMD_SUCCESS;
+
+	str = script_getstr(st,2);
+	x = script_getnum(st,3);
+	y = script_getnum(st,4);
+
+	if(strcmp(str,"Random")==0)
+		ret = pc_randomwarp(sd,CLR_TELEPORT,true);
+	else if(strcmp(str,"SavePoint")==0 || strcmp(str,"Save")==0)
+		ret = pc_setpos( sd, mapindex_name2id( sd->status.save_point.map ), sd->status.save_point.x, sd->status.save_point.y, CLR_TELEPORT );
+	else
+		ret = pc_setpos(sd,mapindex_name2id(str),x,y,CLR_OUTSIGHT);
+
+	if( ret ) {
+		ShowError("buildin_warp: moving player '%s' to \"%s\",%d,%d failed.\n", sd->status.name, str, x, y);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ * Warp a specified area
+ *------------------------------------------*/
+static int32 buildin_areawarp_sub(block_list *bl,va_list ap)
+{
+	int32 x2,y2,x3,y3;
+
+	uint32 index = va_arg(ap,uint32);
+	x2 = va_arg(ap,int32);
+	y2 = va_arg(ap,int32);
+	x3 = va_arg(ap,int32);
+	y3 = va_arg(ap,int32);
+
+	if(index == 0)
+		pc_randomwarp((TBL_PC *)bl,CLR_TELEPORT,true);
+	else if(x3 && y3) {
+		int32 max, tx, ty, j = 0;
+		int16 m;
+
+		m = map_mapindex2mapid(index);
+
+		// choose a suitable max number of attempts
+		if( (max = (y3-y2+1)*(x3-x2+1)*3) > 1000 )
+			max = 1000;
+
+		// find a suitable map cell
+		do {
+			tx = rnd_value(x2, x3);
+			ty = rnd_value(y2, y3);
+			j++;
+		} while( map_getcell(m,tx,ty,CELL_CHKNOPASS) && j < max );
+
+		pc_setpos((TBL_PC *)bl,index,tx,ty,CLR_OUTSIGHT);
+	}
+	else
+		pc_setpos((TBL_PC *)bl,index,x2,y2,CLR_OUTSIGHT);
+	return 0;
+}
+
+BUILDIN_FUNC(areawarp)
+{
+	int16 m, x0,y0,x1,y1, x2,y2,x3=0,y3=0;
+	uint32 index;
+	const char *str;
+	const char *mapname;
+
+	mapname = script_getstr(st,2);
+	x0  = script_getnum(st,3);
+	y0  = script_getnum(st,4);
+	x1  = script_getnum(st,5);
+	y1  = script_getnum(st,6);
+	str = script_getstr(st,7);
+	x2  = script_getnum(st,8);
+	y2  = script_getnum(st,9);
+
+	if( script_hasdata(st,10) && script_hasdata(st,11) ) { // Warp area to area
+		if( (x3 = script_getnum(st,10)) < 0 || (y3 = script_getnum(st,11)) < 0 ){
+			x3 = 0;
+			y3 = 0;
+		} else if( x3 && y3 ) {
+			// normalize x3/y3 coordinates
+			if( x3 < x2 ) std::swap(x3,x2);
+			if( y3 < y2 ) std::swap(y3,y2);
+		}
+	}
+
+	if( (m = map_mapname2mapid(mapname)) < 0 )
+		return SCRIPT_CMD_FAILURE;
+
+	if( strcmp(str,"Random") == 0 )
+		index = 0;
+	else if( !(index=mapindex_name2id(str)) )
+		return SCRIPT_CMD_FAILURE;
+
+	map_foreachinallarea(buildin_areawarp_sub, m,x0,y0,x1,y1, BL_PC, index,x2,y2,x3,y3);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * areapercentheal <map>,<x1>,<y1>,<x2>,<y2>,<hp>,<sp>
+ *------------------------------------------*/
+static int32 buildin_areapercentheal_sub(block_list *bl,va_list ap)
+{
+	int32 hp, sp;
+	hp = va_arg(ap, int32);
+	sp = va_arg(ap, int32);
+	pc_percentheal((TBL_PC *)bl,hp,sp);
+	return 0;
+}
+
+BUILDIN_FUNC(areapercentheal)
+{
+	int32 hp,sp,m;
+	const char *mapname;
+	int32 x0,y0,x1,y1;
+
+	mapname=script_getstr(st,2);
+	x0=script_getnum(st,3);
+	y0=script_getnum(st,4);
+	x1=script_getnum(st,5);
+	y1=script_getnum(st,6);
+	hp=script_getnum(st,7);
+	sp=script_getnum(st,8);
+
+	if( (m=map_mapname2mapid(mapname))< 0)
+		return SCRIPT_CMD_FAILURE;
+
+	map_foreachinallarea(buildin_areapercentheal_sub,m,x0,y0,x1,y1,BL_PC,hp,sp);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+enum e_warpparty_target{
+	WARPPARTY_RANDOM = 0,
+	WARPPARTY_SAVEPOINTALL,
+	WARPPARTY_SAVEPOINT,
+	WARPPARTY_LEADER,
+	WARPPARTY_RANDOMALL,
+	WARPPARTY_RANDOMALLAREA
+};
+
+/*==========================================
+ * Warpparty - [Fredzilla] [Paradox924X]
+ * Syntax: warpparty "to_mapname",x,y,Party_ID,{<"from_mapname">,<range x>,<range y>};
+ * If 'from_mapname' is specified, only the party members on that map will be warped
+ *------------------------------------------*/
+BUILDIN_FUNC(warpparty)
+{
+	TBL_PC *sd = nullptr;
+	TBL_PC *pl_sd;
+	struct party_data* p;
+	int32 mapindex = 0, m = -1, i, rx = 0, ry = 0;
+
+	const char* str = script_getstr(st,2);
+	int32 x = script_getnum(st,3);
+	int32 y = script_getnum(st,4);
+	int32 p_id = script_getnum(st,5);
+	const char* str2 = nullptr;
+	if ( script_hasdata(st,6) )
+		str2 = script_getstr(st,6);
+	if (script_hasdata(st, 7))
+		rx = script_getnum(st, 7);
+	if (script_hasdata(st, 8))
+		ry = script_getnum(st, 8);
+
+	p = party_search(p_id);
+	if(!p)
+		return SCRIPT_CMD_SUCCESS;
+
+	enum e_warpparty_target type = ( strcmp(str,"Random")==0 ) ? WARPPARTY_RANDOM
+	     : ( strcmp(str,"SavePointAll")==0 ) ? WARPPARTY_SAVEPOINTALL
+		 : ( strcmp(str,"SavePoint")==0 ) ? WARPPARTY_SAVEPOINT
+		 : ( strcmp(str,"Leader")==0 ) ? WARPPARTY_LEADER
+		 : ( strcmp(str,"RandomAll")==0 ) ? WARPPARTY_RANDOMALL
+		 : WARPPARTY_RANDOMALLAREA;
+
+	switch (type)
+	{
+		case WARPPARTY_SAVEPOINT:
+			//"SavePoint" uses save point of the currently attached player
+			if ( !script_rid2sd(sd) )
+				return SCRIPT_CMD_FAILURE;
+			break;
+		case WARPPARTY_LEADER:
+			for(i = 0; i < MAX_PARTY && !p->party.member[i].leader; i++);
+			if (i == MAX_PARTY || !p->data[i].sd) //Leader not found / not online
+				return SCRIPT_CMD_FAILURE;
+			pl_sd = p->data[i].sd;
+			mapindex = pl_sd->mapindex;
+			m = map_mapindex2mapid(mapindex);
+			x = pl_sd->x;
+			y = pl_sd->y;
+			break;
+		case WARPPARTY_RANDOMALL: {
+			if ( !script_rid2sd(sd) )
+				return SCRIPT_CMD_FAILURE;
+
+			mapindex = sd->mapindex;
+			m = map_mapindex2mapid(mapindex);
+
+			struct map_data *mapdata = map_getmapdata(m);
+
+			if ( mapdata == nullptr || mapdata->getMapFlag(MF_NOWARP) || mapdata->getMapFlag(MF_NOTELEPORT) )
+				return SCRIPT_CMD_FAILURE;
+
+			i = 0;
+			do {
+				x = rnd_value(1, mapdata->xs - 1);
+				y = rnd_value(1, mapdata->ys - 1);
+			} while ((map_getcell(m,x,y,CELL_CHKNOPASS) || (!battle_config.teleport_on_portal && npc_check_areanpc(1,m,x,y,1))) && (i++) < 1000);
+
+			if (i >= 1000) {
+				ShowError("buildin_warpparty: moving player '%s' to \"%s\",%d,%d failed.\n", sd->status.name, str, x, y);
+				return SCRIPT_CMD_FAILURE;
+			}
+			} break;
+		case WARPPARTY_RANDOMALLAREA:
+			mapindex = mapindex_name2id(str);
+			if (!mapindex) {// Invalid map
+				return SCRIPT_CMD_FAILURE;
+			}
+			m = map_mapindex2mapid(mapindex);
+			break;
+	}
+
+	for (i = 0; i < MAX_PARTY; i++)
+	{
+		if( !(pl_sd = p->data[i].sd) || pl_sd->status.party_id != p_id )
+			continue;
+
+		map_data* mapdata = map_getmapdata(pl_sd->m);
+
+		if( str2 && strcmp(str2, mapdata->name) != 0 )
+			continue;
+
+		if( pc_isdead(pl_sd) )
+			continue;
+
+		e_setpos ret = SETPOS_OK;
+
+		switch( type )
+		{
+		case WARPPARTY_RANDOM:
+			if (!mapdata->getMapFlag(MF_NOWARP))
+				ret = (e_setpos)pc_randomwarp(pl_sd,CLR_TELEPORT);
+		break;
+		case WARPPARTY_SAVEPOINTALL:
+			if (!mapdata->getMapFlag(MF_NORETURN))
+				ret = pc_setpos( pl_sd, mapindex_name2id( pl_sd->status.save_point.map ), pl_sd->status.save_point.x, pl_sd->status.save_point.y, CLR_TELEPORT );
+		break;
+		case WARPPARTY_SAVEPOINT:
+			if (!mapdata->getMapFlag(MF_NORETURN))
+				ret = pc_setpos( pl_sd, mapindex_name2id( sd->status.save_point.map ),sd->status.save_point.x, sd->status.save_point.y, CLR_TELEPORT );
+		break;
+		case WARPPARTY_LEADER:
+			if (p->party.member[i].leader)
+				continue;
+			[[fallthrough]];
+		case WARPPARTY_RANDOMALL:
+			if (pl_sd == sd) {
+				ret = pc_setpos(pl_sd, mapindex, x, y, CLR_TELEPORT);
+				break;
+			}
+			[[fallthrough]];
+		case WARPPARTY_RANDOMALLAREA:
+			if(!mapdata->getMapFlag(MF_NORETURN) && !mapdata->getMapFlag(MF_NOWARP) && pc_job_can_entermap((enum e_job)pl_sd->status.class_, m, pc_get_group_level(pl_sd))){
+				int32 nx = x;
+				int32 ny = y;
+				if (rx || ry) {
+					uint8 attempts = 10;
+
+					do {
+						nx = x + rnd_value(-rx, rx);
+						ny = y + rnd_value(-ry, ry);
+					} while ((--attempts) > 0 && !map_getcell(m, nx, ny, CELL_CHKPASS));
+
+					if (attempts == 0) { //Keep the original coordinates if fails to find a valid cell within the range
+						nx = x;
+						ny = y;
+					}
+				}
+
+				ret = pc_setpos(pl_sd, mapindex, nx, ny, CLR_TELEPORT);
+			}
+			break;
+		}
+
+		if( ret != SETPOS_OK ) {
+			ShowError("buildin_warpparty: moving player '%s' to \"%s\",%d,%d failed.\n", pl_sd->status.name, str, x, y);
+			if ( ( type == WARPPARTY_RANDOMALL || type == WARPPARTY_RANDOMALLAREA ) && (rx || ry) )
+				continue;
+			else
+				return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Warpguild - [Fredzilla]
+ * Syntax: warpguild "mapname",x,y,Guild_ID;
+ *------------------------------------------*/
+BUILDIN_FUNC(warpguild)
+{
+	TBL_PC *sd = nullptr;
+	TBL_PC *pl_sd;
+	struct s_mapiterator* iter;
+	int32 type, mapindex = 0, m = -1;
+
+	const char* str = script_getstr(st,2);
+	int32 x           = script_getnum(st,3);
+	int32 y           = script_getnum(st,4);
+	int32 gid         = script_getnum(st,5);
+
+	auto g = guild_search(gid);
+	if( g == nullptr )
+		return SCRIPT_CMD_SUCCESS;
+
+	type = ( strcmp(str,"Random")==0 ) ? 0
+	     : ( strcmp(str,"SavePointAll")==0 ) ? 1
+		 : ( strcmp(str,"SavePoint")==0 ) ? 2
+		 : 3;
+
+	if( type == 2 && !script_rid2sd(sd) )
+	{// "SavePoint" uses save point of the currently attached player
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch (type) {
+		case 3:
+			mapindex = mapindex_name2id(str);
+			if (!mapindex)
+				return SCRIPT_CMD_FAILURE;
+			m = map_mapindex2mapid(mapindex);
+			break;
+	}
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if( pl_sd->status.guild_id != gid )
+			continue;
+
+		switch( type )
+		{
+		case 0: // Random
+			if(!map_getmapflag(pl_sd->m, MF_NOWARP))
+				pc_randomwarp(pl_sd,CLR_TELEPORT);
+		break;
+		case 1: // SavePointAll
+			if(!map_getmapflag(pl_sd->m, MF_NORETURN))
+				pc_setpos( pl_sd, mapindex_name2id( pl_sd->status.save_point.map ), pl_sd->status.save_point.x, pl_sd->status.save_point.y, CLR_TELEPORT );
+		break;
+		case 2: // SavePoint
+			if(!map_getmapflag(pl_sd->m, MF_NORETURN))
+				pc_setpos( pl_sd, mapindex_name2id( sd->status.save_point.map ),sd->status.save_point.x, sd->status.save_point.y, CLR_TELEPORT );
+		break;
+		case 3: // m,x,y
+			if(!map_getmapflag(pl_sd->m, MF_NORETURN) && !map_getmapflag(pl_sd->m, MF_NOWARP) && pc_job_can_entermap((enum e_job)pl_sd->status.class_, m, pc_get_group_level(pl_sd)))
+				pc_setpos(pl_sd,mapindex,x,y,CLR_TELEPORT);
+		break;
+		}
+	}
+	mapit_free(iter);
+

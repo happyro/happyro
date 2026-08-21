@@ -1,0 +1,500 @@
+		if (!script_rid2sd(sd))
+			return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	script_pushint(st, script_array_highest_key(st, sd, reference_getname(data), reference_getref(data)));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+int32 script_array_index_cmp(const void *a, const void *b) {
+	return ( *(uint32*)a - *(uint32*)b );
+}
+
+/// Deletes count or all the elements in an array, from the starting index.
+/// ex: deletearray arr[4],2;
+///
+/// deletearray <array variable>;
+/// deletearray <array variable>,<count>;
+BUILDIN_FUNC(deletearray)
+{
+	struct script_data* data;
+	const char* name;
+	uint32 start, end, i;
+	int32 id;
+	TBL_PC *sd = nullptr;
+	struct script_array *sa = nullptr;
+	struct reg_db *src = nullptr;
+
+	data = script_getdata(st, 2);
+	if( !data_isreference(data) ) {
+		ShowError("script:deletearray: not a variable\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	id = reference_getid(data);
+	start = reference_getindex(data);
+	name = reference_getname(data);
+
+	if( not_server_variable(*name) ) {
+		if( !script_rid2sd(sd) )
+			return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	if (!(src = script_array_src(st, sd, name, reference_getref(data)))) {
+		ShowError("script:deletearray: not a array\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	script_array_ensure_zero(st, nullptr, data->u.num, reference_getref(data));
+
+	if ( !(sa = static_cast<script_array *>(idb_get(src->arrays, id))) ) { // non-existent array, nothing to empty
+		return SCRIPT_CMD_SUCCESS;// not a variable
+	}
+
+	end = script_array_highest_key(st, sd, name, reference_getref(data));
+
+	if( start >= end )
+		return SCRIPT_CMD_SUCCESS;// nothing to free
+
+	if( script_hasdata(st,3) ) {
+		uint32 count = script_getnum(st, 3);
+		if( count > end - start )
+			count = end - start;
+		if( count <= 0 )
+			return SCRIPT_CMD_SUCCESS;// nothing to free
+
+		bool is_string = is_string_variable( name );
+
+		if( end - start < sa->size ) {
+			// Better to iterate directly on the array, no speed-up from using sa
+			for( ; start + count < end; ++start ) {
+				// Compact and overwrite
+				if( is_string ){
+					const char* value = get_val2_str( st, reference_uid( id, start + count ), reference_getref( data ) );
+					set_reg_str( st, sd, reference_uid( id, start ), name, value, reference_getref( data ) );
+					// Remove stack entry from get_val2_str
+					script_removetop( st, -1, 0 );
+				}else{
+					int64 value = get_val2_num( st, reference_uid( id, start + count ), reference_getref( data ) );
+					set_reg_num( st, sd, reference_uid( id, start ), name, value, reference_getref( data ) );
+				}
+			}
+			for( ; start < end; start++ ) {
+				// Clean up any leftovers that weren't overwritten
+				clear_reg( st, sd, reference_uid( id, start ), name, reference_getref( data ) );
+			}
+		} else {
+			// using sa to speed up
+			uint32 *list = nullptr, size = 0;
+			list = script_array_cpy_list(sa);
+			size = sa->size;
+			qsort(list, size, sizeof(uint32), script_array_index_cmp);
+			
+			ARR_FIND(0, size, i, list[i] >= start);
+			
+			for( ; i < size && list[i] < start + count; i++ ) {
+				// Clear any entries between start and start+count, if they exist
+				clear_reg( st, sd, reference_uid( id, list[i] ), name, reference_getref( data ) );
+			}
+			
+			for( ; i < size && list[i] < end; i++ ) {
+				// Move back count positions any entries between start+count to fill the gaps
+				if( is_string ){
+					const char* value = get_val2_str( st, reference_uid( id, list[i] ), reference_getref( data ) );
+					set_reg_str( st, sd, reference_uid( id, list[i] - count ), name, value, reference_getref( data ) );
+					// Remove stack entry from get_val2_str
+					script_removetop( st, -1, 0 );
+				}else{
+					int64 value = get_val2_num( st, reference_uid( id, list[i] ), reference_getref( data ) );
+					set_reg_num( st, sd, reference_uid( id, list[i] - count ), name, value, reference_getref( data ) );
+				}
+
+				// Clear their originals
+				clear_reg( st, sd, reference_uid( id, list[i] ), name, reference_getref( data ) );
+			}
+		}
+	} else {
+		uint32 *list = nullptr, size = 0;
+		list = script_array_cpy_list(sa);
+		size = sa->size;
+		
+		for(i = 0; i < size; i++) {
+			if( list[i] >= start ) // Less expensive than sorting it, most likely
+				clear_reg( st, sd, reference_uid( id, list[i] ), name, reference_getref( data ) );
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns a reference to the target index of the array variable.
+/// Equivalent to var[index].
+///
+/// getelementofarray(<array variable>,<index>) -> <variable reference>
+BUILDIN_FUNC(getelementofarray)
+{
+	struct script_data* data;
+	int32 id;
+	int64 i;
+
+	data = script_getdata(st, 2);
+	if( !data_isreference(data) )
+	{
+		ShowError("script:getelementofarray: not a variable\n");
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_SUCCESS;// not a variable
+	}
+
+	id = reference_getid(data);
+
+	i = script_getnum(st, 3);
+	if (i < 0 || i >= SCRIPT_MAX_ARRAYSIZE) {
+		ShowWarning("script:getelementofarray: index out of range (%" PRId64 ")\n", i);
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// out of range
+	}
+
+	push_val2(st->stack, C_NAME, reference_uid(id, i), reference_getref(data));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Return the index number of the first matching value in an array.
+/// ex: inarray arr,1;
+///
+/// inarray <array variable>,<value>;
+BUILDIN_FUNC(inarray)
+{
+	struct script_data *data;
+	const char* name;
+	int32 id;
+	map_session_data* sd = nullptr;
+	struct reg_db *ref = nullptr;
+	data = script_getdata(st, 2);
+
+	if (!data_isreference(data))
+	{
+		ShowError("buildin_inarray: not a variable\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	name = reference_getname(data);
+	ref = reference_getref(data);
+
+	if (not_server_variable(*name) && !script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE;
+
+	const uint32 array_size = script_array_highest_key(st, sd, name, ref);
+
+	if (array_size == 0)
+	{
+		script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (array_size >= SCRIPT_MAX_ARRAYSIZE)
+	{
+		ShowError("buildin_inarray: The array is too large.\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	id = reference_getid(data);
+
+	if( is_string_variable( name ) ){
+		const char* value = script_getstr( st, 3 );
+
+		for( uint32 i = 0; i < array_size; ++i ){
+			const char* temp = get_val2_str( st, reference_uid( id, i ), ref );
+
+			if( !strcmp( temp, value ) ){
+				// Remove stack entry from get_val2_str
+				script_removetop( st, -1, 0 );
+				script_pushint( st, i );
+				return SCRIPT_CMD_SUCCESS;
+			}
+
+			// Remove stack entry from get_val2_str
+			script_removetop( st, -1, 0 );
+		}
+	}else{
+		int64 value = script_getnum64( st, 3 );
+
+		for( uint32 i = 0; i < array_size; ++i ){
+			int64 temp = get_val2_num( st, reference_uid( id, i ), ref );
+
+			if( temp == value ){
+				script_pushint( st, i );
+				return SCRIPT_CMD_SUCCESS;
+			}	
+		}
+	}
+
+	script_pushint(st, -1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Return the number of matches in two arrays.
+/// ex: countinarray arr[0],arr1[0];
+///
+/// countinarray <array variable>,<array variable>;
+BUILDIN_FUNC(countinarray)
+{
+	struct script_data *data1 , *data2;
+	const char* name1;
+	const char* name2;
+	int32 id1, id2, case_count = 0;
+	map_session_data* sd = nullptr;
+	struct reg_db *ref1 = nullptr, *ref2 = nullptr;
+	data1 = script_getdata(st, 2);
+	data2 = script_getdata(st, 3);
+
+	if (!data_isreference(data1) || !data_isreference(data2))
+	{
+		ShowError("buildin_countinarray: not a variable\n");
+		script_reportdata(data1);
+		script_reportdata(data2);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	name1 = reference_getname(data1);
+	name2 = reference_getname(data2);
+	ref1 = reference_getref(data1);
+	ref2 = reference_getref(data2);
+
+	if (not_server_variable(*name1) && not_server_variable(*name2) && !script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE;
+
+	const uint32 array_size1 = script_array_highest_key(st, sd, name1, ref1);
+	const uint32 array_size2 = script_array_highest_key(st, sd, name2, ref2);
+
+	if (array_size1 == 0 || array_size2 == 0)
+	{
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (array_size1 >= SCRIPT_MAX_ARRAYSIZE || array_size2 >= SCRIPT_MAX_ARRAYSIZE)
+	{
+		ShowError("buildin_countinarray: The array is too large.\n");
+		script_reportdata(data1);
+		script_reportdata(data2);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	uint32 i = reference_getindex(data1);
+	uint32 j = reference_getindex(data2);
+	if (i > array_size1 - 1 || j > array_size2 - 1)
+	{	//To prevent unintended behavior
+		ShowError("buildin_countinarray: The given index of the array is higher than the array size.\n");
+		script_reportdata(data1);
+		script_reportdata(data2);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	id1 = reference_getid(data1);
+	id2 = reference_getid(data2);
+
+	if( is_string_variable( name1 ) && is_string_variable( name2 ) ){
+		for( ; i < array_size1; ++i ){
+			const char* temp1 = get_val2_str( st, reference_uid( id1, i ), ref1 );
+
+			for( j = reference_getindex( data2 ); j < array_size2; j++ ){
+				const char* temp2 = get_val2_str( st, reference_uid( id2, j ), ref2 );
+
+				if( !strcmp( temp1, temp2 ) ){
+					case_count++;
+				}
+
+				// Remove stack entry from get_val2_str
+				script_removetop( st, -1, 0 );
+			}
+
+			// Remove stack entry from get_val2_str
+			script_removetop( st, -1, 0 );
+		}
+	}else if( !is_string_variable( name1 ) && !is_string_variable( name2 ) ){
+		for( ; i < array_size1; ++i ){
+			int64 temp1 = get_val2_num( st, reference_uid( id1, i ), ref1 );
+
+			for( j = reference_getindex( data2 ); j < array_size2; j++ ){
+				int64 temp2 = get_val2_num( st, reference_uid( id2, j ), ref2 );
+
+				if( temp1 == temp2 ){
+					case_count++;
+				}
+			}
+		}
+	}else{
+		ShowError("buildin_countinarray: Arrays do not match , You can't compare an int32 array to a string array.\n");
+		script_reportdata(data1);
+		script_reportdata(data2);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st, case_count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/////////////////////////////////////////////////////////////////////
+/// ...
+///
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(setlook)
+{
+	// TODO: no checks at all... [Lemongrass]
+	int32 type,val;
+	TBL_PC* sd;
+
+	type = script_getnum(st,2);
+	val = script_getnum(st,3);
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_SUCCESS;
+
+	pc_changelook(sd,type,val);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// As setlook but only client side
+BUILDIN_FUNC(changelook){
+	map_session_data* sd;
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	int32 type = script_getnum( st, 2 );
+	int32 val = script_getnum( st, 3 );
+
+	switch( type ){
+		case LOOK_HAIR:
+			if( val < MIN_HAIR_STYLE ){
+				ShowError( "buildin_changelook: Invalid hair style. Minimum: %d\n", MIN_HAIR_STYLE );
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			if( val > MAX_HAIR_STYLE ){
+				ShowError( "buildin_changelook: Invalid hair style. Maximum: %d\n", MAX_HAIR_STYLE );
+				return SCRIPT_CMD_FAILURE;
+			}
+			break;
+
+		case LOOK_HAIR_COLOR:
+			if( val < MIN_HAIR_COLOR ){
+				ShowError( "buildin_changelook: Invalid hair color. Minimum: %d\n", MIN_HAIR_COLOR );
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			if( val > MAX_HAIR_COLOR ){
+				ShowError( "buildin_changelook: Invalid hair color. Maximum: %d\n", MAX_HAIR_COLOR );
+				return SCRIPT_CMD_FAILURE;
+			}
+			break;
+
+		case LOOK_CLOTHES_COLOR:
+			if( val < MIN_CLOTH_COLOR ){
+				ShowError( "buildin_changelook: Invalid cloth color. Minimum: %d\n", MIN_CLOTH_COLOR );
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			if( val > MAX_CLOTH_COLOR ){
+				ShowError( "buildin_changelook: Invalid cloth color. Maximum: %d\n", MAX_CLOTH_COLOR );
+				return SCRIPT_CMD_FAILURE;
+			}
+			break;
+
+		case LOOK_BODY2:
+			if( val < JOB_NOVICE ){
+				ShowError( "buildin_changelook: Invalid body style. Minimum: %d\n", JOB_NOVICE );
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			if( val >= JOB_MAX ){
+				ShowError( "buildin_changelook: Invalid body style. Maximum: %d\n", ( JOB_MAX - 1 ) );
+				return SCRIPT_CMD_FAILURE;
+			}
+			break;
+
+		case LOOK_BASE:
+		case LOOK_WEAPON:
+		case LOOK_HEAD_BOTTOM:
+		case LOOK_HEAD_TOP:
+		case LOOK_HEAD_MID:
+		case LOOK_SHIELD:
+		case LOOK_SHOES:
+		case LOOK_BODY:
+		case LOOK_RESET_COSTUMES:
+		case LOOK_ROBE:
+			// No value cap at the moment
+			break;
+
+		default:
+			ShowError( "buildin_changelook: Unknown look type %d\n", type );
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_changelook( sd, type, val );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(cutin)
+{
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	clif_cutin( *sd, script_getstr( st, 2 ), script_getnum( st, 3 ) );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(viewpoint)
+{
+	int32 type,x,y,id,color;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(7, sd)) {
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	type=script_getnum(st,2);
+	x=script_getnum(st,3);
+	y=script_getnum(st,4);
+	id=script_getnum(st,5);
+	color=script_getnum(st,6);
+
+	clif_viewpoint( *sd, st->oid, type, x, y, id, color );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+static int32 buildin_viewpointmap_sub(block_list *bl, va_list ap) {
+	int32 oid, type, x, y, id, color;
+

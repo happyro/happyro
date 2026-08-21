@@ -1,0 +1,500 @@
+	return 0;
+}
+
+/**
+ * Check cloaking condition
+ * @param bl
+ * @param sce
+ * @return True if near wall; False otherwise
+ */
+bool skill_check_cloaking(block_list *bl, struct status_change_entry *sce)
+{
+	bool wall = true;
+
+	if( (bl->type == BL_PC && battle_config.pc_cloak_check_type&1)
+	||	(bl->type != BL_PC && battle_config.monster_cloak_check_type&1) )
+	{	//Check for walls.
+		static int32 dx[] = { 0, 1, 0, -1, -1,  1, 1, -1};
+		static int32 dy[] = {-1, 0, 1,  0, -1, -1, 1,  1};
+		int32 i;
+		ARR_FIND( 0, 8, i, map_getcell(bl->m, bl->x+dx[i], bl->y+dy[i], CELL_CHKNOPASS) != 0 );
+		if( i == 8 )
+			wall = false;
+	}
+
+	if( sce ) {
+		if( !wall ) {
+			if( sce->val1 < 3 ) //End cloaking.
+				status_change_end(bl, SC_CLOAKING);
+			else if( sce->val4&1 ) { //Remove wall bonus
+				sce->val4&=~1;
+				status_calc_bl(bl, { SCB_SPEED });
+			}
+		} else {
+			if( !(sce->val4&1) ) { //Add wall speed bonus
+				sce->val4|=1;
+				status_calc_bl(bl, { SCB_SPEED });
+			}
+		}
+	}
+
+	return wall;
+}
+
+/** Check Shadow Form on the target
+ * @param bl: Target
+ * @param damage: Damage amount
+ * @param hit
+ * @return true - in Shadow Form state; false - otherwise
+ */
+bool skill_check_shadowform(block_list *bl, int64 damage, int32 hit)
+{
+	status_change *sc;
+
+	nullpo_retr(false,bl);
+
+	if (!damage)
+		return false;
+
+	sc = status_get_sc(bl);
+
+	if( sc && sc->getSCE(SC__SHADOWFORM) ) {
+		block_list *src = map_id2bl(sc->getSCE(SC__SHADOWFORM)->val2);
+
+		if( !src || src->m != bl->m ) { 
+			status_change_end(bl, SC__SHADOWFORM);
+			return false;
+		}
+
+		if( src && (status_isdead(*src) || !battle_check_target(bl,src,BCT_ENEMY)) ) {
+			if( src->type == BL_PC )
+				((TBL_PC*)src)->shadowform_id = 0;
+			status_change_end(bl, SC__SHADOWFORM);
+			return false;
+		}
+
+		clif_damage(*src, *src, gettick(), 500, 500, damage, hit, (hit > 1 ? DMG_MULTI_HIT : DMG_NORMAL), 0, false);
+		status_damage(bl, src, damage, 0, 500, 0, SC__SHADOWFORM);
+		if( sc && sc->getSCE(SC__SHADOWFORM) && (--sc->getSCE(SC__SHADOWFORM)->val3) <= 0 ) {
+			status_change_end(bl, SC__SHADOWFORM);
+			if( src->type == BL_PC )
+				((TBL_PC*)src)->shadowform_id = 0;
+		}
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Check camouflage condition
+ * @param bl
+ * @param sce
+ * @return True if near wall; False otherwise
+ * @TODO: Seems wrong
+ */
+bool skill_check_camouflage(block_list *bl, struct status_change_entry *sce)
+{
+	bool wall = true;
+
+	if( bl->type == BL_PC ) { //Check for walls.
+		static int32 dx[] = { 0, 1, 0, -1, -1,  1, 1, -1};
+		static int32 dy[] = {-1, 0, 1,  0, -1, -1, 1,  1};
+		int32 i;
+		ARR_FIND( 0, 8, i, map_getcell(bl->m, bl->x+dx[i], bl->y+dy[i], CELL_CHKNOPASS) != 0 );
+		if( i == 8 )
+			wall = false;
+	}
+
+	if( sce ) {
+		if( !wall && sce->val1 < 3 ) //End camouflage.
+			status_change_end(bl, SC_CAMOUFLAGE);
+		status_calc_bl(bl, { SCB_SPEED });
+	}
+
+	return wall;
+}
+
+/**
+ * Process skill unit visibilty for single BL in area
+ * @param bl
+ * @param ap
+ * @author [Cydh]
+ **/
+int32 skill_getareachar_skillunit_visibilty_sub(block_list *bl, va_list ap) {
+	skill_unit *su = nullptr;
+	block_list *src = nullptr;
+	bool visible = true;
+
+	nullpo_ret(bl);
+	nullpo_ret((su = va_arg(ap, skill_unit*)));
+	nullpo_ret((src = va_arg(ap, block_list*)));
+	uint32 party1 = va_arg(ap, uint32);
+
+	if (src != bl) {
+		uint32 party2 = status_get_party_id(bl);
+		if (!party1 || !party2 || party1 != party2)
+			visible = false;
+	}
+
+	clif_getareachar_skillunit(bl, su, SELF, visible);
+	return 1;
+}
+
+/**
+ * Check for skill unit visibilty in area on
+ * - skill first placement
+ * - skill moved (knocked back, moved dance)
+ * @param su Skill unit
+ * @param target Affected target for this visibility @see enum send_target
+ * @author [Cydh]
+ **/
+void skill_getareachar_skillunit_visibilty(skill_unit *su, enum send_target target) {
+	nullpo_retv(su);
+
+	if (!su->hidden) // It's not hidden, just do this!
+		clif_getareachar_skillunit(su, su, target, true);
+	else {
+		block_list *src = battle_get_master(su);
+		map_foreachinallarea(skill_getareachar_skillunit_visibilty_sub, su->m, su->x-AREA_SIZE, su->y-AREA_SIZE,
+			su->x+AREA_SIZE, su->y+AREA_SIZE, BL_PC, su, src, status_get_party_id(src));
+	}
+}
+
+/**
+ * Check for skill unit visibilty on single BL on insight/spawn action
+ * @param su Skill unit
+ * @param bl Block list
+ * @author [Cydh]
+ **/
+void skill_getareachar_skillunit_visibilty_single(skill_unit *su, block_list *bl) {
+	bool visible = true;
+	block_list *src = nullptr;
+
+	nullpo_retv(bl);
+	nullpo_retv(su);
+	nullpo_retv((src = battle_get_master(su)));
+
+	if (su->hidden && src != bl) {
+		uint32 party1 = status_get_party_id(src);
+		uint32 party2 = status_get_party_id(bl);
+		if (!party1 || !party2 || party1 != party2)
+			visible = false;
+	}
+
+	clif_getareachar_skillunit(bl, su, SELF, visible);
+}
+
+/**
+ * Initialize new skill unit for skill unit group.
+ * Overall, Skill Unit makes skill unit group which each group holds their cell datas (skill unit)
+ * @param group Skill unit group
+ * @param idx
+ * @param x
+ * @param y
+ * @param val1
+ * @param val2
+ * @param range Range of the unit (modern clients use this information for the display size of some units)
+ * @param limit Duration for which the unit stays
+ */
+skill_unit* skill_initunit(std::shared_ptr<s_skill_unit_group> group, int32 idx, int32 x, int32 y, int32 val1, int32 val2, bool hidden, int32 range, t_tick limit)
+{
+	if (group == nullptr || group->unit == nullptr)
+		return nullptr;
+
+	skill_unit *unit = &group->unit[idx];
+
+	if (unit == nullptr)
+		return nullptr;
+
+	if( map_getcell(map_id2bl(group->src_id)->m, x, y, CELL_CHKMAELSTROM) )
+		return unit;
+
+	if(!unit->alive)
+		group->alive_count++;
+
+	unit->id = map_get_new_object_id();
+	unit->type = BL_SKILL;
+	unit->m = group->map;
+	unit->x = x;
+	unit->y = y;
+	unit->group = group;
+	unit->alive = 1;
+	unit->val1 = val1;
+	unit->val2 = val2;
+	unit->hidden = hidden;
+	unit->range = range;
+	unit->limit = limit;
+
+	// Stores new skill unit
+	idb_put(skillunit_db, unit->id, unit);
+	map_addiddb(unit);
+	if(map_addblock(unit))
+		return nullptr;
+
+	// Perform oninit actions
+	switch (group->skill_id) {
+		case WZ_ICEWALL:
+			map_setgatcell(unit->m,unit->x,unit->y,5);
+			clif_changemapcell( unit->m, unit->x, unit->y, 5, AREA, unit );
+			skill_unitsetmapcell(unit,WZ_ICEWALL,group->skill_lv,CELL_ICEWALL,true);
+			break;
+		case SA_LANDPROTECTOR:
+			skill_unitsetmapcell(unit,SA_LANDPROTECTOR,group->skill_lv,CELL_LANDPROTECTOR,true);
+			break;
+#ifndef RENEWAL
+		case HP_BASILICA:
+			skill_unitsetmapcell(unit,HP_BASILICA,group->skill_lv,CELL_BASILICA,true);
+			break;
+#endif
+		case SC_MAELSTROM:
+			skill_unitsetmapcell(unit,SC_MAELSTROM,group->skill_lv,CELL_MAELSTROM,true);
+			break;
+		default:
+			if (group->state.song_dance&0x1) //Check for dissonance.
+				skill_dance_overlap(*unit, OVERLAP_SET);
+			break;
+	}
+
+	skill_getareachar_skillunit_visibilty(unit, AREA);
+	return unit;
+}
+
+/**
+ * Remove unit
+ * @param unit
+ */
+int32 skill_delunit(skill_unit* unit)
+{
+	nullpo_ret(unit);
+
+	if( !unit->alive )
+		return 0;
+
+	unit->alive = 0;
+
+	std::shared_ptr<s_skill_unit_group> group = unit->group;
+
+	if (group == nullptr)
+		return 0;
+
+	if( group->state.song_dance&0x1 ) //Cancel dissonance effect.
+		skill_dance_overlap(*unit, OVERLAP_REMOVE);
+
+	// invoke onout event
+	if( !unit->range )
+		map_foreachincell(skill_unit_effect,unit->m,unit->x,unit->y,group->bl_flag,unit,gettick(),4);
+
+	// perform ondelete actions
+	switch (group->skill_id) {
+		case HT_ANKLESNARE:
+		case SC_ESCAPE:
+			{
+				block_list* target = map_id2bl(group->val2);
+
+				if( target )
+					status_change_end(target, SC_ANKLE);
+			}
+			break;
+		case WZ_ICEWALL:
+			map_setgatcell(unit->m,unit->x,unit->y,unit->val2);
+			// Hack to avoid clientside cell bug
+			clif_changemapcell( unit->m, unit->x, unit->y, unit->val2, ALL_SAMEMAP, unit );
+			skill_unitsetmapcell(unit,WZ_ICEWALL,group->skill_lv,CELL_ICEWALL,false);
+			break;
+		case SA_LANDPROTECTOR:
+			skill_unitsetmapcell(unit,SA_LANDPROTECTOR,group->skill_lv,CELL_LANDPROTECTOR,false);
+			break;
+#ifndef RENEWAL
+		case HP_BASILICA:
+			skill_unitsetmapcell(unit,HP_BASILICA,group->skill_lv,CELL_BASILICA,false);
+			break;
+#endif
+		case RA_ELECTRICSHOCKER: {
+				block_list* target = map_id2bl(group->val2);
+
+				if( target )
+					status_change_end(target, SC_ELECTRICSHOCKER);
+			}
+			break;
+		case SC_MAELSTROM:
+			skill_unitsetmapcell(unit,SC_MAELSTROM,group->skill_lv,CELL_MAELSTROM,false);
+			break;
+		case SC_MANHOLE: // Note : Removing the unit don't remove the status (official info)
+			if( group->val2 ) { // Someone Traped
+				status_change *tsc = status_get_sc( map_id2bl(group->val2));
+				if( tsc && tsc->getSCE(SC__MANHOLE) )
+					tsc->getSCE(SC__MANHOLE)->val4 = 0; // Remove the Unit ID
+			}
+			break;
+	}
+
+	clif_skill_delunit( *unit );
+
+	unit->group=nullptr;
+	map_delblock(unit); // don't free yet
+	map_deliddb(unit);
+	idb_remove(skillunit_db, unit->id);
+	if(--group->alive_count==0)
+		skill_delunitgroup(group);
+
+	return 0;
+}
+
+
+static std::unordered_map<int32, std::shared_ptr<s_skill_unit_group>> skillunit_group_db; /// Skill unit group DB. Key int32 group_id -> struct s_skill_unit_group*
+
+/// Returns the target s_skill_unit_group or nullptr if not found.
+std::shared_ptr<s_skill_unit_group> skill_id2group(int32 group_id) {
+	return util::umap_find(skillunit_group_db, group_id);
+}
+
+static int32 skill_unit_group_newid = MAX_SKILL; /// Skill Unit Group ID
+
+/**
+ * Returns a new group_id that isn't being used in skillunit_group_db.
+ * Fatal error if nothing is available.
+ */
+static int32 skill_get_new_group_id(void)
+{
+	if( skill_unit_group_newid >= MAX_SKILL && skill_id2group(skill_unit_group_newid) == nullptr )
+		return skill_unit_group_newid++;// available
+	{// find next id
+		int32 base_id = skill_unit_group_newid;
+		while( base_id != ++skill_unit_group_newid )
+		{
+			if( skill_unit_group_newid < MAX_SKILL )
+				skill_unit_group_newid = MAX_SKILL;
+			if( skill_id2group(skill_unit_group_newid) == nullptr )
+				return skill_unit_group_newid++;// available
+		}
+		// full loop, nothing available
+		ShowFatalError("skill_get_new_group_id: All ids are taken. Exiting...");
+		exit(1);
+	}
+}
+
+/**
+ * Initialize skill unit group called while setting new unit (skill unit/ground skill) in skill_unitsetting()
+ * @param src Object that cast the skill
+ * @param count How many 'cells' used that needed. Related with skill layout
+ * @param skill_id ID of used skill
+ * @param skill_lv Skill level of used skill
+ * @param unit_id Unit ID (see skill.hpp::e_skill_unit_id)
+ * @param limit Lifetime for skill unit, uses skill_get_time(skill_id, skill_lv)
+ * @param interval Time interval
+ * @return s_skill_unit_group
+ */
+std::shared_ptr<s_skill_unit_group> skill_initunitgroup(block_list* src, int32 count, uint16 skill_id, uint16 skill_lv, int32 unit_id, t_tick limit, int32 interval)
+{
+	nullpo_retr(nullptr, src);
+
+	unit_data *ud = unit_bl2ud(src);
+
+	nullpo_retr(nullptr, ud);
+
+	if (skill_id == 0 || skill_lv == 0)
+		return 0;
+
+	auto group = std::make_shared<s_skill_unit_group>();
+
+	group->src_id     = src->id;
+	group->party_id   = status_get_party_id(src);
+	group->guild_id   = status_get_guild_id(src);
+	group->bg_id      = bg_team_get_id(src);
+	group->group_id   = skill_get_new_group_id();
+	group->link_group_id = 0;
+	group->unit       = (skill_unit *)aCalloc(count, sizeof(skill_unit));
+	group->unit_count = count;
+	group->alive_count = 0;
+	group->val1       = 0;
+	group->val2       = 0;
+	group->val3       = 0;
+	group->skill_id   = skill_id;
+	group->skill_lv   = skill_lv;
+	group->unit_id    = unit_id;
+	group->map        = src->m;
+	group->limit      = limit;
+	group->interval   = interval;
+	group->tick       = gettick();
+	group->valstr     = nullptr;
+
+	ud->skillunits.push_back(group);
+
+	// Stores this new group
+	skillunit_group_db.insert({ group->group_id, group });
+
+	return group;
+}
+
+/**
+ * Remove skill unit group
+ * @param group
+ * @param file
+ * @param line
+ * @param *func
+ */
+int32 skill_delunitgroup_(std::shared_ptr<s_skill_unit_group> group, const char* file, int32 line, const char* func)
+{
+	block_list* src;
+	struct unit_data *ud;
+	int16 i;
+	int32 link_group_id;
+
+	if( group == nullptr ) {
+		ShowDebug("skill_delunitgroup: group is nullptr (source=%s:%d, %s)! Please report this! (#3504)\n", file, line, func);
+		return 0;
+	}
+
+	src = map_id2bl(group->src_id);
+	ud = unit_bl2ud(src);
+	if (!src || !ud) {
+		ShowError("skill_delunitgroup: Group's source not found! (src_id: %d skill_id: %d)\n", group->src_id, group->skill_id);
+		return 0;
+	}
+
+	if( !status_isdead(*src) && ((TBL_PC*)src)->state.warping && !((TBL_PC*)src)->state.changemap ) {
+		switch( group->skill_id ) {
+			case BA_DISSONANCE:
+			case BA_POEMBRAGI:
+			case BA_WHISTLE:
+			case BA_ASSASSINCROSS:
+			case BA_APPLEIDUN:
+			case DC_UGLYDANCE:
+			case DC_HUMMING:
+			case DC_DONTFORGETME:
+			case DC_FORTUNEKISS:
+			case DC_SERVICEFORYOU:
+			case NC_NEUTRALBARRIER:
+			case NC_STEALTHFIELD:
+				skill_usave_add(((TBL_PC*)src), group->skill_id, group->skill_lv);
+				break;
+		}
+	}
+
+	if (skill_get_unit_flag_(group->skill_id, { UF_DANCE, UF_SONG, UF_ENSEMBLE })) {
+		status_change* sc = status_get_sc(src);
+		if (sc && sc->getSCE(SC_DANCING)) {
+			sc->getSCE(SC_DANCING)->val2 = 0 ; //This prevents status_change_end attempting to redelete the group. [Skotlex]
+			status_change_end(src, SC_DANCING);
+		}
+	}
+
+	// End SC from the master when the skill group is deleted
+	i = SC_NONE;
+	switch (group->unit_id) {
+		case UNT_GOSPEL:	i = SC_GOSPEL;		break;
+#ifndef RENEWAL
+		case UNT_BASILICA:	i = SC_BASILICA;	break;
+#endif
+	}
+	if (i != SC_NONE) {
+		status_change *sc = status_get_sc(src);
+		if (sc && sc->getSCE(i)) {
+			sc->getSCE(i)->val3 = 0; //Remove reference to this group. [Skotlex]
+			status_change_end(src, (sc_type)i);
+		}
+	}
+
+	switch( group->skill_id ) {
+		case PF_SPIDERWEB:
+		{

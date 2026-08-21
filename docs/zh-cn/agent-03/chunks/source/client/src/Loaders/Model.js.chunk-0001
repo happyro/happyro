@@ -1,0 +1,500 @@
+/**
+ * Loaders/Model.js
+ *
+ * Loaders for Gravity .rsm file (Resource Model)
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import BinaryReader from 'Utils/BinaryReader.js';
+import glMatrix from 'Utils/gl-matrix.js';
+
+/**
+ * Import
+ */
+const vec3 = glMatrix.vec3;
+const mat3 = glMatrix.mat3;
+const mat4 = glMatrix.mat4;
+
+class Box {
+	constructor() {
+		this.max = vec3.fromValues(-Infinity, -Infinity, -Infinity);
+		this.min = vec3.fromValues(Infinity, Infinity, Infinity);
+		this.offset = vec3.create();
+		this.range = vec3.create();
+		this.center = vec3.create();
+	}
+}
+
+class Node {
+	/**
+	 * Node Constructor
+	 *
+	 * @param {object} rsm
+	 * @param {object} fp BinaryReader
+	 * @param {boolean} only
+	 */
+	constructor(rsm, fp, only) {
+		let i, j, k, count;
+		const version = rsm.version;
+		let posKeyframes, scaleKeyFrames, textureKeyFrameGroup;
+		let textures = [];
+		// Read initialised
+		this.main = rsm;
+		this.is_only = only;
+
+		// Read name and parent name
+		if (version >= 2.2) {
+			this.name = fp.readBinaryString(fp.readLong());
+			this.parentname = fp.readBinaryString(fp.readLong());
+		} else {
+			this.name = fp.readBinaryString(40);
+			this.parentname = fp.readBinaryString(40);
+		}
+
+		// Read textures
+		count = fp.readLong();
+		textures = new Array(count);
+
+		for (i = 0; i < count; i++) {
+			textures[i] = version >= 2.3 ? fp.readBinaryString(fp.readLong()) : fp.readLong();
+		}
+
+		// Read options
+		this.mat3 = [
+			fp.readFloat(),
+			fp.readFloat(),
+			fp.readFloat(),
+			fp.readFloat(),
+			fp.readFloat(),
+			fp.readFloat(),
+			fp.readFloat(),
+			fp.readFloat(),
+			fp.readFloat()
+		];
+		this.offset = [fp.readFloat(), fp.readFloat(), fp.readFloat()];
+
+		// Read position, rotation angle, rotation axis, and scale
+		if (version >= 2.2) {
+			this.pos = [0, 0, 0];
+			this.rotangle = 0;
+			this.rotaxis = [0, 0, 0];
+			this.scale = [1, 1, 1];
+			this.flip = [1, -1, 1];
+		} else {
+			this.pos = [fp.readFloat(), fp.readFloat(), fp.readFloat()];
+			this.rotangle = fp.readFloat();
+			this.rotaxis = [fp.readFloat(), fp.readFloat(), fp.readFloat()];
+			this.scale = [fp.readFloat(), fp.readFloat(), fp.readFloat()];
+			this.flip = [1, 1, 1];
+		}
+
+		// Read vertices
+		count = fp.readLong();
+		const vertices = new Array(count);
+
+		for (i = 0; i < count; ++i) {
+			vertices[i] = [fp.readFloat(), fp.readFloat(), fp.readFloat()];
+		}
+
+		// Read texture vertices
+		count = fp.readLong();
+		const tvertices = new Float32Array(count * 6);
+
+		for (i = 0, j = 0; i < count; ++i, j += 6) {
+			if (version >= 1.2) {
+				tvertices[j + 0] = fp.readUByte() / 255;
+				tvertices[j + 1] = fp.readUByte() / 255;
+				tvertices[j + 2] = fp.readUByte() / 255;
+				tvertices[j + 3] = fp.readUByte() / 255;
+			}
+			tvertices[j + 4] = fp.readFloat() * 0.98 + 0.01;
+			tvertices[j + 5] = fp.readFloat() * 0.98 + 0.01;
+		}
+
+		// Read faces
+		count = fp.readLong();
+		const faces = new Array(count);
+
+		for (i = 0; i < count; ++i) {
+			let len = -1;
+			if (version >= 2.2) {
+				len = fp.readLong();
+			}
+			faces[i] = {
+				vertidx: [fp.readUShort(), fp.readUShort(), fp.readUShort()],
+				tvertidx: [fp.readUShort(), fp.readUShort(), fp.readUShort()],
+				texid: fp.readUShort(),
+				padding: fp.readUShort(),
+				twoSide: fp.readLong()
+			};
+
+			if (version >= 1.2) {
+				faces[i].smoothGroup = fp.readLong();
+				if (len > 24) {
+					faces[i].smoothGroup_1 = fp.readLong();
+				}
+				if (len > 28) {
+					faces[i].smoothGroup_2 = fp.readLong();
+				}
+				if (len > 32) {
+					fp.seek(len - 32, SEEK_CUR);
+				}
+			}
+		}
+
+		// Read scaleKeyFrame
+		if (version >= 1.6) {
+			count = fp.readLong();
+			scaleKeyFrames = new Array(count);
+
+			for (i = 0; i < count; i++) {
+				scaleKeyFrames[i] = {
+					Frame: fp.readLong(),
+					Scale: [fp.readFloat(), fp.readFloat(), fp.readFloat()],
+					Data: fp.readFloat()
+				};
+			}
+		}
+
+		// Read rotkeyframes
+		count = fp.readLong();
+		const rotKeyframes = new Array(count);
+
+		for (i = 0; i < count; ++i) {
+			rotKeyframes[i] = {
+				frame: fp.readLong(),
+				q: [fp.readFloat(), fp.readFloat(), fp.readFloat(), fp.readFloat()]
+			};
+		}
+
+		// Read poskeyframes
+		if (version >= 2.2) {
+			count = fp.readLong();
+			posKeyframes = new Array(count);
+
+			for (i = 0; i < count; ++i) {
+				posKeyframes[i] = {
+					frame: fp.readLong(),
+					px: fp.readFloat(),
+					py: fp.readFloat(),
+					pz: fp.readFloat(),
+					Data: fp.readLong()
+				};
+			}
+		}
+
+		// Additional version 2.3 changes
+		if (version >= 2.3) {
+			count = fp.readLong();
+			textureKeyFrameGroup = new Array(count);
+
+			for (i = 0; i < count; ++i) {
+				const textureId = fp.readLong();
+				const amountTextureAnimations = fp.readLong();
+
+				// Initialize textureKeyFrameGroup[i] if it doesn't exist
+				if (!textureKeyFrameGroup[i]) {
+					textureKeyFrameGroup[i] = [];
+				}
+
+				// Initialize textureKeyFrameGroup[i][textureId] if it doesn't exist
+				if (!textureKeyFrameGroup[i][textureId]) {
+					textureKeyFrameGroup[i][textureId] = [];
+				}
+
+				for (j = 0; j < amountTextureAnimations; ++j) {
+					const type = fp.readLong();
+					const amountFrames = fp.readLong();
+
+					// Initialize textureKeyFrameGroup[i][textureId][type] if it doesn't exist
+					if (!textureKeyFrameGroup[i][textureId][type]) {
+						textureKeyFrameGroup[i][textureId][type] = [];
+					}
+
+					for (k = 0; k < amountFrames; ++k) {
+						textureKeyFrameGroup[i][textureId][type].push({
+							frame: fp.readLong(),
+							offset: fp.readFloat()
+						});
+					}
+				}
+			}
+		}
+
+		this.box = new RSM.Box();
+		this.matrix = mat4.create();
+		this.textures = textures;
+		this.vertices = vertices;
+		this.tvertices = tvertices;
+		this.faces = faces;
+		this.rotKeyframes = rotKeyframes;
+		this.posKeyframes = posKeyframes;
+		this.scaleKeyFrames = scaleKeyFrames;
+		this.textureKeyFrameGroup = textureKeyFrameGroup;
+	}
+
+	/**
+	 * Calculate node bounding box
+	 *
+	 * @param {mat4} _matrix
+	 */
+	calcBoundingBox(_matrix) {
+		// Define variables
+		let i, j, count;
+		const v = vec3.create();
+		const box = this.box;
+		const nodes = this.main.nodes;
+		const matrix = mat4.create();
+		const vertices = this.vertices;
+		const max = Math.max,
+			min = Math.min;
+		let x, y, z;
+
+		// Find position
+		mat4.copy(this.matrix, _matrix);
+		mat4.translate(this.matrix, this.matrix, this.pos);
+
+		// Dynamic or static model
+		if (!this.rotKeyframes.length) {
+			mat4.rotate(this.matrix, this.matrix, this.rotangle, this.rotaxis);
+		} else {
+			mat4.rotateQuat(this.matrix, this.matrix, this.rotKeyframes[0].q);
+		}
+
+		mat4.scale(this.matrix, this.matrix, this.scale);
+
+		// Strat from here just modify a local matrix
+		mat4.copy(matrix, this.matrix);
+
+		if (!this.is_only) {
+			mat4.translate(matrix, matrix, this.offset);
+		}
+
+		mat4.multiply(matrix, matrix, mat3.toMat4(this.mat3));
+
+		for (i = 0, count = vertices.length; i < count; ++i) {
+			//mat4.multiplyVec3( matrix, matrix, vertices[i], v );
+			x = vertices[i][0];
+			y = vertices[i][1];
+			z = vertices[i][2];
+
+			v[0] = matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12];
+			v[1] = matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13];
+			v[2] = matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14];
+
+			for (j = 0; j < 3; j++) {
+				box.min[j] = min(v[j], box.min[j]);
+				box.max[j] = max(v[j], box.max[j]);
+			}
+		}
+
+		for (i = 0; i < 3; i++) {
+			box.offset[i] = (box.max[i] + box.min[i]) / 2.0;
+			box.range[i] = (box.max[i] - box.min[i]) / 2.0;
+			box.center[i] = box.min[i] + box.range[i];
+		}
+
+		for (i = 0, count = nodes.length; i < count; ++i) {
+			if (nodes[i].parentname === this.name && this.name !== this.parentname) {
+				nodes[i].calcBoundingBox(this.matrix);
+			}
+		}
+	}
+
+	/**
+	 * Compile Node
+	 *
+	 * @param {mat4} instance_matrix
+	 */
+	compile(instance_matrix) {
+		const modelViewMat = mat4.create();
+		const normalMat = mat4.create();
+
+		const textures = this.textures;
+		const faces = this.faces;
+		const vertices = this.vertices;
+
+		const mesh = {};
+		const mesh_size = [];
+
+		const shadeGroup = new Array(32);
+		const shadeGroupUsed = new Array(32);
+		let i, x, y, z, count;
+
+		// Calculate matrix
+		const matrix = mat4.create();
+		mat4.identity(matrix);
+		mat4.translate(matrix, matrix, [-this.main.box.center[0], -this.main.box.max[1], -this.main.box.center[2]]);
+		mat4.multiply(matrix, matrix, this.matrix);
+
+		if (!this.is_only) {
+			mat4.translate(matrix, matrix, this.offset);
+		}
+
+		mat4.multiply(matrix, matrix, mat3.toMat4(this.mat3));
+
+		// Multiply with instance matrix (position/rotation/...)
+		// Generate normal matrix
+		mat4.multiply(modelViewMat, instance_matrix, matrix);
+		mat4.extractRotation(normalMat, modelViewMat);
+
+		// Generate new vertices
+		count = vertices.length;
+		const vert = new Float32Array(count * 3);
+		for (i = 0; i < count; ++i) {
+			x = vertices[i][0];
+			y = vertices[i][1];
+			z = vertices[i][2];
+
+			//(vec3)vert = (mat4)modelViewMat * (vec3)vertices[i];
+			vert[i * 3 + 0] = modelViewMat[0] * x + modelViewMat[4] * y + modelViewMat[8] * z + modelViewMat[12];
+			vert[i * 3 + 1] = modelViewMat[1] * x + modelViewMat[5] * y + modelViewMat[9] * z + modelViewMat[13];
+			vert[i * 3 + 2] = modelViewMat[2] * x + modelViewMat[6] * y + modelViewMat[10] * z + modelViewMat[14];
+		}
+
+		// Generate face normals
+		const face_normal = new Float32Array(faces.length * 3);
+
+		// Setup mesh slot array
+		for (i = 0, count = textures.length; i < count; ++i) {
+			mesh_size[textures[i]] = 0;
+		}
+
+		// Find mesh max face
+		for (i = 0, count = faces.length; i < count; ++i) {
+			mesh_size[textures[faces[i].texid]]++;
+		}
+
+		// Initialize buffer
+		for (i = 0, count = textures.length; i < count; ++i) {
+			mesh[textures[i]] = new Float32Array(mesh_size[textures[i]] * 9 * 3);
+		}
+
+		switch (this.main.shadeType) {
+			default:
+
+			case RSM.SHADING.NONE:
+				this.calcNormal_NONE(face_normal);
+				this.generate_mesh_FLAT(vert, face_normal, mesh);
+				break;
+
+			case RSM.SHADING.FLAT:
+				this.calcNormal_FLAT(face_normal, normalMat, shadeGroupUsed);
+				this.generate_mesh_FLAT(vert, face_normal, mesh);
+				break;
+
+			case RSM.SHADING.SMOOTH:
+				this.calcNormal_FLAT(face_normal, normalMat, shadeGroupUsed);
+				this.calcNormal_SMOOTH(face_normal, shadeGroupUsed, shadeGroup);
+				this.generate_mesh_SMOOTH(vert, shadeGroup, mesh);
+				break;
+		}
+
+		return mesh;
+	}
+
+	/**
+	 * Compile Node at a specific animation frame
+	 *
+	 * @param {mat4} instance_matrix
+	 * @param {number} frame - Animation frame
+	 * @param {number} animLen - Total animation length
+	 */
+	compileAtFrame(instance_matrix, frame, animLen) {
+		const modelViewMat = mat4.create();
+		const normalMat = mat4.create();
+
+		const textures = this.textures;
+		const faces = this.faces;
+		const vertices = this.vertices;
+
+		const mesh = {};
+		const mesh_size = [];
+
+		const shadeGroup = new Array(32);
+		const shadeGroupUsed = new Array(32);
+		let i, x, y, z, count;
+
+		// Calculate animated matrix
+		const matrix = mat4.create();
+		mat4.identity(matrix);
+		mat4.translate(matrix, matrix, [-this.main.box.center[0], -this.main.box.max[1], -this.main.box.center[2]]);
+
+		// Calculate node transform matrix with animation
+		const nodeMatrix = mat4.create();
+		mat4.identity(nodeMatrix);
+
+		// Position animation
+		const animPos = getPositionAtFrame(this.posKeyframes, frame, animLen);
+		if (animPos) {
+			mat4.translate(nodeMatrix, nodeMatrix, animPos);
+		} else {
+			mat4.translate(nodeMatrix, nodeMatrix, this.pos);
+		}
+
+		// Rotation animation
+		const animRot = getRotationAtFrame(this.rotKeyframes, frame, animLen);
+		if (animRot) {
+			mat4.rotateQuat(nodeMatrix, nodeMatrix, animRot);
+		} else if (this.rotKeyframes && this.rotKeyframes.length > 0) {
+			mat4.rotateQuat(nodeMatrix, nodeMatrix, this.rotKeyframes[0].q);
+		} else {
+			mat4.rotate(nodeMatrix, nodeMatrix, this.rotangle, this.rotaxis);
+		}
+
+		// Scale animation
+		const animScale = getScaleAtFrame(this.scaleKeyFrames, frame, animLen);
+		if (animScale) {
+			mat4.scale(nodeMatrix, nodeMatrix, animScale);
+		} else {
+			mat4.scale(nodeMatrix, nodeMatrix, this.scale);
+		}
+
+		mat4.multiply(matrix, matrix, nodeMatrix);
+
+		if (!this.is_only) {
+			mat4.translate(matrix, matrix, this.offset);
+		}
+
+		mat4.multiply(matrix, matrix, mat3.toMat4(this.mat3));
+
+		// Multiply with instance matrix (position/rotation/...)
+		// Generate normal matrix
+		mat4.multiply(modelViewMat, instance_matrix, matrix);
+		mat4.extractRotation(normalMat, modelViewMat);
+
+		// Generate new vertices
+		count = vertices.length;
+		const vert = new Float32Array(count * 3);
+		for (i = 0; i < count; ++i) {
+			x = vertices[i][0];
+			y = vertices[i][1];
+			z = vertices[i][2];
+
+			//(vec3)vert = (mat4)modelViewMat * (vec3)vertices[i];
+			vert[i * 3 + 0] = modelViewMat[0] * x + modelViewMat[4] * y + modelViewMat[8] * z + modelViewMat[12];
+			vert[i * 3 + 1] = modelViewMat[1] * x + modelViewMat[5] * y + modelViewMat[9] * z + modelViewMat[13];
+			vert[i * 3 + 2] = modelViewMat[2] * x + modelViewMat[6] * y + modelViewMat[10] * z + modelViewMat[14];
+		}
+
+		// Generate face normals
+		const face_normal = new Float32Array(faces.length * 3);
+
+		// Setup mesh slot array
+		for (i = 0, count = textures.length; i < count; ++i) {
+			mesh_size[textures[i]] = 0;
+		}
+
+		// Find mesh max face
+		for (i = 0, count = faces.length; i < count; ++i) {
+			mesh_size[textures[faces[i].texid]]++;
+		}
+
+		// Initialize buffer
+		for (i = 0, count = textures.length; i < count; ++i) {
+			mesh[textures[i]] = new Float32Array(mesh_size[textures[i]] * 9 * 3);
+		}
+

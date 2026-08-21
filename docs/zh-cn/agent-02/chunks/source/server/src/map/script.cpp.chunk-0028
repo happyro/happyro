@@ -1,0 +1,500 @@
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Attach sd char id to script and detach current one if any
+ *------------------------------------------*/
+BUILDIN_FUNC(attachrid)
+{
+	int32 rid = script_getnum(st,2);
+	bool force;
+
+	if( script_hasdata(st,3) ){
+		force = script_getnum(st,3) != 0;
+	}else{
+		force = true;
+	}
+
+	map_session_data* sd = map_id2sd(rid);
+
+	if( sd != nullptr && ( !sd->npc_id || force ) ){
+		script_detach_rid(st);
+
+		st->rid = rid;
+		script_attach_state(st);
+		script_pushint(st,true);
+	}else{
+		script_pushint(st,false);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ * Detach script to rid
+ *------------------------------------------*/
+BUILDIN_FUNC(detachrid)
+{
+	script_detach_rid(st);
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ * Chk if account connected, (and charid from account if specified)
+ *------------------------------------------*/
+BUILDIN_FUNC(isloggedin)
+{
+	TBL_PC* sd = map_id2sd(script_getnum(st,2));
+	if (script_hasdata(st,3) && sd &&
+		sd->status.char_id != script_getnum(st,3))
+		sd = nullptr;
+	push_val(st->stack,C_INT,sd!=nullptr);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(setmapflagnosave)
+{
+	int16 m,x,y;
+	uint16 mapindex;
+	const char *str,*str2;
+	union u_mapflag_args args = {};
+
+	str=script_getstr(st,2);
+	str2=script_getstr(st,3);
+	x=script_getnum(st,4);
+	y=script_getnum(st,5);
+	m = map_mapname2mapid(str);
+	mapindex = mapindex_name2id(str2);
+
+	if(m < 0) {
+		ShowWarning("buildin_setmapflagnosave: Invalid map name %s.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	args.nosave.map = mapindex;
+	args.nosave.x = x;
+	args.nosave.y = y;
+
+	map_setmapflag_sub(m, MF_NOSAVE, true, &args);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getmapflag)
+{
+	int16 m;
+	int32 mf;
+	const char *str;
+
+	str=script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+	if (m < 0) {
+		ShowWarning("buildin_getmapflag: Invalid map name %s.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	mf = script_getnum(st, 3);
+
+	if( mf < MF_MIN || mf > MF_MAX ){
+		ShowError( "buildin_getmapflag: Unsupported mapflag '%d'.\n", mf );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	union u_mapflag_args args = {};
+
+	if (mf == MF_SKILL_DAMAGE && !script_hasdata(st, 4))
+		args.flag_val = SKILLDMG_MAX;
+	else
+		FETCH(4, args.flag_val);
+
+	script_pushint(st, map_getmapflag_sub(m, static_cast<e_mapflag>(mf), &args));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(setmapflag)
+{
+	int16 m;
+	int32 mf;
+	const char *str;
+
+	str = script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+	if (m < 0) {
+		ShowWarning("buildin_setmapflag: Invalid map name %s.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	mf = script_getnum(st, 3);
+
+	if( mf < MF_MIN || mf > MF_MAX ){
+		ShowError( "buildin_setmapflag: Unsupported mapflag '%d'.\n", mf );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	union u_mapflag_args args = {};
+
+	switch(mf) {
+		case MF_SKILL_DAMAGE:
+			if (script_hasdata(st, 4) && script_hasdata(st, 5))
+				args.skill_damage.rate[script_getnum(st, 5)] = script_getnum(st, 4);
+			else {
+				ShowWarning("buildin_setmapflag: Unable to set skill_damage mapflag as flag data is missing.\n");
+				return SCRIPT_CMD_FAILURE;
+			}
+			break;
+		case MF_SKILL_DURATION:
+			if (script_hasdata(st, 4) && script_hasdata(st, 5)) {
+				args.skill_duration.skill_id = script_getnum(st, 4);
+
+				if (!skill_get_index(args.skill_duration.skill_id)) {
+					ShowError("buildin_setmapflag: Invalid skill ID %d for skill_duration mapflag.\n", args.skill_duration.skill_id);
+					return SCRIPT_CMD_FAILURE;
+				}
+				args.skill_duration.per = script_getnum(st, 5);
+			} else {
+				ShowWarning("buildin_setmapflag: Unable to set skill_duration mapflag as flag data is missing.\n");
+				return SCRIPT_CMD_FAILURE;
+			}
+			break;
+		case MF_NOSAVE: // Assume setting "SavePoint"
+			args.nosave.map = 0;
+			args.nosave.x = -1;
+			args.nosave.y = -1;
+			break;
+		case MF_PVP_NIGHTMAREDROP: // Assume setting standard drops
+			args.nightmaredrop.drop_id = -1;
+			args.nightmaredrop.drop_per = 300;
+			args.nightmaredrop.drop_type = NMDT_EQUIP;
+			break;
+		default:
+			FETCH(4, args.flag_val);
+			break;
+	}
+
+	map_setmapflag_sub(m, static_cast<e_mapflag>(mf), true, &args);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(removemapflag)
+{
+	int16 m;
+	int32 mf;
+	const char *str;
+	union u_mapflag_args args = {};
+
+	str = script_getstr(st, 2);
+	m = map_mapname2mapid(str);
+
+	if (m < 0) {
+		ShowWarning("buildin_removemapflag: Invalid map name %s.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	mf = script_getnum(st, 3);
+
+	if( mf < MF_MIN || mf > MF_MAX ){
+		ShowError( "buildin_removemapflag: Unsupported mapflag '%d'.\n", mf );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	FETCH(4, args.flag_val);
+
+	map_setmapflag_sub(m, static_cast<e_mapflag>(mf), false, &args);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(pvpon)
+{
+	int16 m;
+	const char *str = script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+
+	if (m < 0) {
+		ShowWarning("buildin_pvpon: Unknown map '%s'.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (!map_getmapflag(m, MF_PVP))
+		map_setmapflag(m, MF_PVP, true);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(pvpoff)
+{
+	int16 m;
+	const char *str = script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+
+	if (m < 0) {
+		ShowWarning("buildin_pvpoff: Unknown map '%s'.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (map_getmapflag(m, MF_PVP))
+		map_setmapflag(m, MF_PVP, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(gvgon)
+{
+	int16 m;
+	const char *str = script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+
+	if (m < 0) {
+		ShowWarning("buildin_gvgon: Unknown map '%s'.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (!map_getmapflag(m, MF_GVG))
+		map_setmapflag(m, MF_GVG, true);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(gvgoff)
+{
+	int16 m;
+	const char *str = script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+
+	if (m < 0) {
+		ShowWarning("buildin_gvgoff: Unknown map '%s'.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (map_getmapflag(m, MF_GVG))
+		map_setmapflag(m, MF_GVG, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(gvgon3)
+{
+	int16 m;
+	const char *str = script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+
+	if (m < 0) {
+		ShowWarning("buildin_gvgon3: Unknown map '%s'.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (!map_getmapflag(m, MF_GVG_TE))
+		map_setmapflag(m, MF_GVG_TE, true);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(gvgoff3)
+{
+	int16 m;
+	const char *str = script_getstr(st,2);
+
+	m = map_mapname2mapid(str);
+
+	if (m < 0) {
+		ShowWarning("buildin_gvgoff3: Unknown map '%s'.\n", str);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (map_getmapflag(m, MF_GVG_TE))
+		map_setmapflag(m, MF_GVG_TE, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Shows an emotion on top of a NPC by default or the given GID
+ * emotion <emotion ID>{,<target ID>};
+ */
+BUILDIN_FUNC(emotion)
+{
+	block_list *bl = nullptr;
+	int32 type = script_getnum(st,2);
+
+	if (type < ET_SURPRISE || type >= ET_MAX) {
+		ShowWarning("buildin_emotion: Unknown emotion %d (min=%d, max=%d).\n", type, ET_SURPRISE, (ET_MAX-1));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st, 3) && !script_rid2bl(3, bl)) {
+		ShowWarning("buildin_emotion: Unknown game ID supplied %d.\n", script_getnum(st, 3));
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (!bl)
+		bl = map_id2bl(st->oid);
+
+	clif_emotion( *bl, static_cast<emotion_type>( type ) );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+static int32 buildin_maprespawnguildid_sub_pc(map_session_data* sd, va_list ap)
+{
+	int16 m=va_arg(ap,int32);
+	int32 g_id=va_arg(ap,int32);
+	int32 flag=va_arg(ap,int32);
+
+	if(!sd || sd->m != m)
+		return 0;
+	if(
+		(sd->status.guild_id == g_id && flag&1) || //Warp out owners
+		(sd->status.guild_id != g_id && flag&2) || //Warp out outsiders
+		(sd->status.guild_id == 0 && flag&2)	// Warp out players not in guild
+	)
+		pc_setpos( sd, mapindex_name2id( sd->status.save_point.map ), sd->status.save_point.x, sd->status.save_point.y, CLR_TELEPORT );
+	return 1;
+}
+
+static int32 buildin_maprespawnguildid_sub_mob(block_list *bl,va_list ap)
+{
+	mob_data *md=(mob_data *)bl;
+
+	if(!md->guardian_data && md->mob_id != MOBID_EMPERIUM && ( !mob_is_clone(md->mob_id) || battle_config.guild_maprespawn_clones ))
+		status_kill(bl);
+
+	return 1;
+}
+
+/*
+ * Function to kick guild members out of a map and to their save points.
+ * m : mapid
+ * g_id : owner guild id
+ * flag & 1 : Warp out owners
+ * flag & 2 : Warp out outsiders
+ * flag & 4 : reserved for mobs
+ * */
+BUILDIN_FUNC(maprespawnguildid)
+{
+	const char *mapname=script_getstr(st,2);
+	int32 g_id=script_getnum(st,3);
+	int32 flag=script_getnum(st,4);
+
+	int16 m=map_mapname2mapid(mapname);
+
+	if(m == -1)
+		return SCRIPT_CMD_SUCCESS;
+
+	//Catch ALL players (in case some are 'between maps' on execution time)
+	map_foreachpc(buildin_maprespawnguildid_sub_pc,m,g_id,flag);
+	if (flag&4) //Remove script mobs.
+		map_foreachinmap(buildin_maprespawnguildid_sub_mob,m,BL_MOB);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Siege commands
+
+/**
+ * Start WoE:FE
+ * agitstart();
+ */
+BUILDIN_FUNC(agitstart)
+{
+	guild_agit_start();
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * End WoE:FE
+ * agitend();
+ */
+BUILDIN_FUNC(agitend)
+{
+	guild_agit_end();
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Start WoE:SE
+ * agitstart2();
+ */
+BUILDIN_FUNC(agitstart2)
+{
+	guild_agit2_start();
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * End WoE:SE
+ * agitend();
+ */
+BUILDIN_FUNC(agitend2)
+{
+	guild_agit2_end();
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Start WoE:TE
+ * agitstart3();
+ */
+BUILDIN_FUNC(agitstart3)
+{
+	guild_agit3_start();
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * End WoE:TE
+ * agitend3();
+ */
+BUILDIN_FUNC(agitend3)
+{
+	guild_agit3_end();
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns whether WoE:FE is on or off.
+ * agitcheck();
+ */
+BUILDIN_FUNC(agitcheck)
+{
+	script_pushint(st, agit_flag);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns whether WoE:SE is on or off.
+ * agitcheck2();
+ */
+BUILDIN_FUNC(agitcheck2)
+{
+	script_pushint(st, agit2_flag);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Returns whether WoE:TE is on or off.
+ * agitcheck3();
+ */
+BUILDIN_FUNC(agitcheck3)
+{
+	script_pushint(st, agit3_flag);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets the guild_id of this npc.
+///
+/// flagemblem <guild_id>;
+BUILDIN_FUNC(flagemblem)
+{
+	TBL_NPC* nd;
+	int32 g_id = script_getnum(st,2);
+
+	if(g_id < 0)
+		return SCRIPT_CMD_SUCCESS;

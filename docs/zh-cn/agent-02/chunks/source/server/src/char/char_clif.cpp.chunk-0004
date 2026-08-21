@@ -1,0 +1,218 @@
+				sd.unban_time[i] = 0;
+				if( SQL_ERROR == Sql_Query( sql_handle, "UPDATE `%s` SET `unban_time`='0' WHERE `char_id`='%d' LIMIT 1", schema_config.char_db, sd.found_char[i] ) )
+					Sql_ShowDebug(sql_handle);
+			}
+		}
+	}
+
+	socket_send( fd, p );
+
+	size_t i;
+
+	ARR_FIND( 0, MAX_CHARS, i, sd.unban_time[i] > now ); //sd->charslot only have productible char
+	if(i < MAX_CHARS ){
+		sd.charblock_timer = add_timer(
+			gettick() + 10000,	// each 10s resend that list
+			charblock_timer, sd.account_id, 0);
+	}
+}
+
+// Sends the response to a rename request to the client.
+// 0290 <result>.W (HC_ACK_CHANGE_CHARNAME)
+// 08fd <result>.L (HC_ACK_CHANGE_CHARACTERNAME)
+// result:
+//		0: Successful
+//		1: This character's name has already been changed. You cannot change a character's name more than once.
+//		2: User information is not correct.
+//		3: You have failed to change this character's name.
+//		4: Another user is using this character name, so please select another one.
+//		5: In order to change the character name, you must leave the guild.
+//		6: In order to change the character name, you must leave the party.
+//		7: Length exceeds the maximum size of the character name you want to change.
+//		8: Name contains invalid characters. Character name change failed.
+//		9: The name change is prohibited. Character name change failed.
+//		10: Character name change failed, due an unknown error.
+void chclif_rename_response( int32 fd, int16 response ){
+	PACKET_HC_ACK_CHANGE_CHARNAME p = {};
+
+	p.packetType = HEADER_HC_ACK_CHANGE_CHARNAME;
+	p.result = response;
+
+	socket_send( fd, p );
+}
+
+// Request to change a character name
+// 028f <char_id>.L (CH_REQ_CHANGE_CHARNAME)
+// 08fc <char_id>.L <new name>.24B (CH_REQ_CHANGE_CHARACTERNAME)
+bool chclif_parse_ackrename( int32 fd, char_session_data& sd ){
+	const PACKET_CH_REQ_CHANGE_CHARNAME* p = reinterpret_cast<PACKET_CH_REQ_CHANGE_CHARNAME*>( RFIFOP( fd, 0 ) );
+
+	size_t i;
+	uint32 cid = p->CID;
+
+	ARR_FIND( 0, MAX_CHARS, i, sd.found_char[i] == cid );
+
+	if( i == MAX_CHARS ){
+		return true;
+	}
+
+#if PACKETVER >= 20111101
+	char name[NAME_LENGTH], esc_name[NAME_LENGTH * 2 + 1];
+
+	safestrncpy( name, p->new_name, NAME_LENGTH );
+
+	normalize_name( name, TRIM_CHARS );
+	Sql_EscapeStringLen( sql_handle, esc_name, name, strnlen( name, NAME_LENGTH ) );
+
+	safestrncpy( sd.new_name, name, NAME_LENGTH );
+#endif
+
+	// Start the renaming process
+	int16 result = char_rename_char_sql( &sd, cid );
+
+	chclif_rename_response( fd, result );
+
+#if PACKETVER >= 20111101
+	// If the renaming was successful, we need to resend the characters
+	if( result == 0 ){
+		chclif_mmo_char_send( fd, sd );
+	}
+#endif
+
+	return true;
+}
+
+// R 06C <ErrorCode>B HC_REFUSE_ENTER
+void chclif_reject(int32 fd, uint8 errCode){
+	PACKET_HC_REFUSE_ENTER p = {};
+
+	p.packetType = HEADER_HC_REFUSE_ENTER;
+	p.error = errCode;
+
+	socket_send( fd, p );
+}
+
+class CharPacketDatabase : public PacketDatabase<char_session_data>{
+public:
+	CharPacketDatabase(){
+		this->add( HEADER_CH_SELECT_CHAR, true, sizeof( PACKET_CH_SELECT_CHAR ), chclif_parse_charselect );
+		this->add( HEADER_CH_MAKE_CHAR, true, sizeof( PACKET_CH_MAKE_CHAR ), chclif_parse_createnewchar );
+		this->add( HEADER_CH_DELETE_CHAR, true, sizeof( PACKET_CH_DELETE_CHAR ), chclif_parse_delchar );
+		this->add( HEADER_CH_DELETE_CHAR3_CANCEL, true, sizeof( PACKET_CH_DELETE_CHAR3_CANCEL ), chclif_parse_char_delete2_cancel );
+		this->add( HEADER_CH_DELETE_CHAR3, true, sizeof( PACKET_CH_DELETE_CHAR3 ), chclif_parse_char_delete2_accept );
+		this->add( HEADER_CH_DELETE_CHAR3_RESERVED, true, sizeof( PACKET_CH_DELETE_CHAR3_RESERVED ), chclif_parse_char_delete2_req );
+		this->add( HEADER_PING, true, sizeof( PACKET_PING ), chclif_parse_keepalive );
+		this->add( HEADER_CH_REQ_IS_VALID_CHARNAME, true, sizeof( PACKET_CH_REQ_IS_VALID_CHARNAME ), chclif_parse_reqrename );
+		this->add( HEADER_CH_REQ_CHANGE_CHARNAME, true, sizeof( PACKET_CH_REQ_CHANGE_CHARNAME ), chclif_parse_ackrename );
+		this->add( HEADER_CH_REQ_CHANGE_CHARACTER_SLOT, true, sizeof( PACKET_CH_REQ_CHANGE_CHARACTER_SLOT ), chclif_parse_moveCharSlot );
+		this->add( HEADER_CH_CHARLIST_REQ, true, sizeof( PACKET_CH_CHARLIST_REQ ), chclif_parse_req_charlist );
+		this->add( HEADER_CH_SELECT_ACCESSIBLE_MAPNAME, true, sizeof( PACKET_CH_SELECT_ACCESSIBLE_MAPNAME ), chclif_parse_select_accessible_map );
+#if PACKETVER_SUPPORTS_PINCODE
+		this->add( HEADER_CH_SECOND_PASSWD_ACK, true, sizeof( PACKET_CH_SECOND_PASSWD_ACK ), chclif_parse_pincode_check );
+		this->add( HEADER_CH_AVAILABLE_SECOND_PASSWD, true, sizeof( PACKET_CH_AVAILABLE_SECOND_PASSWD ), chclif_parse_reqpincode_window );
+		this->add( HEADER_CH_EDIT_SECOND_PASSWD, true, sizeof( PACKET_CH_EDIT_SECOND_PASSWD ), chclif_parse_pincode_change );
+		this->add( HEADER_CH_MAKE_SECOND_PASSWD, true, sizeof( PACKET_CH_MAKE_SECOND_PASSWD ), chclif_parse_pincode_setnew );
+#endif
+	}
+} char_packet_db;
+
+/**
+ * Entry point from client to char-serv
+ * function that check incoming command then split it to correct handler.
+ * @param fd: file descriptor to parse, (link to client)
+ */
+int32 chclif_parse(int32 fd) {
+	struct char_session_data* sd = (struct char_session_data*)session[fd]->session_data;
+	uint32 ipl = session[fd]->client_addr;
+
+	// disconnect any player if no login-server.
+	if(login_fd < 0)
+		set_eof(fd);
+
+	if(session[fd]->flag.eof) {
+		if( sd != nullptr && sd->auth ) { // already authed client
+			std::shared_ptr<struct online_char_data> data = util::umap_find( char_get_onlinedb(), sd->account_id );
+
+			if( data != nullptr && data->fd == fd ){
+				data->fd = -1;
+			}
+
+			// If it is not in any server, send it offline. [Skotlex]
+			if( data == nullptr || data->server == -1 ){
+				char_set_char_offline(-1,sd->account_id);
+			}
+		}
+		do_close(fd);
+		return 0;
+	}
+
+	while( RFIFOREST(fd) >= 2 ) {
+		int32 next = 1;
+		uint16 cmd;
+
+		cmd = RFIFOW(fd,0);
+
+#if PACKETVER_SUPPORTS_PINCODE
+		// If the pincode system is enabled
+		if( charserv_config.pincode_config.pincode_enabled ){
+			switch( cmd ){
+				// Connect of player
+				case 0x65:
+				// Client keep-alive packet (every 12 seconds)
+				case HEADER_PING:
+				// Checks the entered pin
+				case HEADER_CH_SECOND_PASSWD_ACK:
+				// Request PIN change
+				case HEADER_CH_EDIT_SECOND_PASSWD:
+				// Request for PIN window
+				case HEADER_CH_AVAILABLE_SECOND_PASSWD:
+				// Request character list
+				case HEADER_CH_CHARLIST_REQ:
+				// Connect of map-server
+				case 0x2af8:
+					break;
+
+				// Before processing any other packets, do a few checks
+				default:
+					// To reach this block the client should have attained a session already
+					if( sd != nullptr ){
+						// If the pincode was entered correctly
+						if( sd->pincode_correct ){
+							break;
+						}
+
+						// If no pincode is set (yet)
+						if( strlen( sd->pincode ) <= 0 ){
+							break;
+						}
+
+						// The pincode was not entered correctly, yet the player (=bot) tried to send a different packet => Goodbye!
+						set_eof( fd );
+						return 0;
+					}else{
+						// Unknown packet received
+						ShowError( "chclif_parse: Received unknown packet " CL_WHITE "0x%x" CL_RESET " from ip '" CL_WHITE "%s" CL_RESET "'! Disconnecting!\n", cmd, ip2str( ipl, nullptr ) );
+						set_eof( fd );
+						return 0;
+					}
+			}
+		}
+#endif
+
+		switch( cmd ) {
+			case 0x65: next=chclif_parse_reqtoconnect(fd,sd,ipl); break;
+			// login as map-server
+			case 0x2af8: chclif_parse_maplogin(fd); return 0; // avoid processing of followup packets here
+			default:
+				if( !char_packet_db.handle( fd, *sd ) ){
+					return 0;
+				}
+				break;
+		}
+		if (next == 0)
+			return 0; // avoid processing of followup packets (prev was probably incomplete)
+	}
+
+	RFIFOFLUSH(fd);
+	return 0;
+}

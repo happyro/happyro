@@ -1,0 +1,161 @@
+			this->invalidWarning(node["ElementLevel"], "Invalid element level %hu, defaulting to 1.\n", level);
+			level = 1;
+		}
+
+		elemental->status.ele_lv = static_cast<uint8>(level);
+	}
+
+	if (this->nodeExists(node, "WalkSpeed")) {
+		uint16 speed;
+
+		if (!this->asUInt16(node, "WalkSpeed", speed))
+			return 0;
+
+		if (speed < MIN_WALK_SPEED || speed > MAX_WALK_SPEED) {
+			this->invalidWarning(node["WalkSpeed"], "Invalid walk speed %hu, capping...\n", speed);
+			speed = cap_value(speed, MIN_WALK_SPEED, MAX_WALK_SPEED);
+		}
+
+		elemental->status.speed = speed;
+	} else {
+		if (!exists)
+			elemental->status.speed = 200;
+	}
+
+	if (this->nodeExists(node, "AttackDelay")) {
+		uint16 speed;
+
+		if (!this->asUInt16(node, "AttackDelay", speed))
+			return 0;
+
+		elemental->status.adelay = cap_value(speed, MAX_ASPD_NOPC, MIN_ASPD);
+	} else {
+		if (!exists)
+			elemental->status.adelay = 504;
+	}
+
+	if (this->nodeExists(node, "AttackMotion")) {
+		uint16 speed;
+
+		if (!this->asUInt16(node, "AttackMotion", speed))
+			return 0;
+
+		// amotion is only capped to MAX_ASPD_NOPC when receiving buffs/debuffs
+		elemental->status.amotion = cap_value(speed, 1, MIN_ASPD/AMOTION_DIVIDER_NOPC);
+	} else {
+		if (!exists)
+			elemental->status.amotion = 1020;
+	}
+
+	if (this->nodeExists(node, "DamageMotion")) {
+		uint16 speed;
+
+		if (!this->asUInt16(node, "DamageMotion", speed))
+			return 0;
+
+		elemental->status.dmotion = speed;
+	} else {
+		if (!exists)
+			elemental->status.dmotion = 360;
+	}
+
+	if (this->nodeExists(node, "DamageTaken")) {
+		uint16 damage;
+
+		if (!this->asUInt16Rate(node, "DamageTaken", damage, 100))
+			return 0;
+
+		elemental->damagetaken = damage;
+	} else {
+		if (!exists)
+			elemental->damagetaken = 100;
+	}
+
+	elemental->status.aspd_rate = 1000;
+
+	if (this->nodeExists(node, "Mode")) {
+		const ryml::NodeRef& ModeNode = node["Mode"];
+
+		for (const auto &Modeit : ModeNode) {
+			std::string mode_name;
+			c4::from_chars(Modeit.key(), &mode_name);
+
+			std::string mode_constant = "EL_SKILLMODE_" + mode_name;
+			int64 constant;
+
+			if (!script_get_constant(mode_constant.c_str(), &constant) || constant < EL_SKILLMODE_PASSIVE || constant > EL_SKILLMODE_AGGRESSIVE) {
+				this->invalidWarning(node["Mode"], "Invalid mode %s, skipping.\n", mode_name.c_str());
+				continue;
+			}
+
+			e_elemental_skillmode mode = static_cast<e_elemental_skillmode>(constant);
+
+			std::shared_ptr<s_elemental_skill> entry = util::umap_find(elemental->skill, mode);
+			bool mode_exists = entry != nullptr;
+
+			if (!mode_exists)
+				entry = std::make_shared<s_elemental_skill>();
+
+			const ryml::NodeRef& SkillNode = ModeNode[Modeit.key()];
+			std::string skill_name;
+
+			if (!this->asString(SkillNode, "Skill", skill_name))
+				return 0;
+
+			uint16 skill_id = skill_name2id(skill_name.c_str());
+
+			if (skill_id == 0) {
+				this->invalidWarning(SkillNode["Skill"], "Skipping invalid skill %s for mode %s.\n", skill_name.c_str(), mode_name.c_str());
+				return 0;
+			}
+
+			if (!SKILL_CHK_ELEM(skill_id)) {
+				this->invalidWarning(SkillNode["Skill"], "Skill %s (%u) is out of the skill range [%u-%u], skipping.\n", skill_name.c_str(), skill_id, EL_SKILLBASE, EL_SKILLBASE + MAX_ELEMENTALSKILL - 1);
+				return 0;
+			}
+
+			entry->id = skill_id;
+
+			if (this->nodeExists(SkillNode, "Level")) {
+				uint16 level;
+
+				if (!this->asUInt16(SkillNode, "Level", level))
+					return 0;
+
+				if (level > skill_get_max(skill_id)) {
+					this->invalidWarning(SkillNode["Level"], "Skill %s's level %hu exceeds max level %hu.\n", skill_name.c_str(), level, skill_get_max(skill_id));
+					return 0;
+				}
+
+				entry->lv = level;
+			} else {
+				if (!mode_exists)
+					entry->lv = 1;
+			}
+
+			if (entry->lv == 0) {
+				elemental->skill.erase(mode);
+				return 0;
+			}
+
+			if (!mode_exists)
+				elemental->skill.insert({ mode, entry });
+		}
+	}
+
+	if (!exists)
+		this->put(id, elemental);
+
+	return 1;
+}
+
+void do_init_elemental(void) {
+	elemental_db.load();
+
+	add_timer_func_list(elemental_ai_timer,"elemental_ai_timer");
+	add_timer_interval(gettick()+MIN_ELETHINKTIME,elemental_ai_timer,0,0,MIN_ELETHINKTIME);
+}
+
+void do_final_elemental(void) {
+	elemental_db.clear();
+}

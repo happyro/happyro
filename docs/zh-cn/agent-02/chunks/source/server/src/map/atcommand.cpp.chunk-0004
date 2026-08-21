@@ -1,0 +1,500 @@
+		if( item == nullptr ){
+			item = item_db.find( strtoul( itemlist, nullptr, 10 ) );
+		}
+
+		if( item == nullptr ){
+			clif_displaymessage(fd, msg_txt(sd,19)); // Invalid item ID or name.
+			return -1;
+		}
+
+		items.push_back( item );
+		itemlist = strtok(nullptr, ":"); //next itemline
+	}
+
+	if (number <= 0)
+		number = 1;
+	int32 get_count = number;
+
+	// Produce items in list
+	for( const auto& item : items ){
+		t_itemid item_id = item->nameid;
+
+		//Check if it's stackable.
+		if( !itemdb_isstackable2( item.get() ) ){
+			get_count = 1;
+		}
+
+		for( int32 i = 0; i < number; i += get_count ){
+			// if not pet egg
+			if (!pet_create_egg(sd, item_id)) {
+				struct item item_tmp = {};
+
+				item_tmp.nameid = item_id;
+				item_tmp.identify = 1;
+				item_tmp.bound = bound;
+				if ((flag = pc_additem(sd, &item_tmp, get_count, LOG_TYPE_COMMAND)))
+					clif_additem(sd, 0, 0, flag);
+			}
+		}
+	}
+
+	if (flag == 0)
+		clif_displaymessage(fd, msg_txt(sd,18)); // Item created.
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(item2)
+{
+	char item_name[100];
+	int32 number = 0, bound = BOUND_NONE;
+	int32 identify = 0, refine = 0, attr = 0;
+	int32 c1 = 0, c2 = 0, c3 = 0, c4 = 0;
+	nullpo_retr(-1, sd);
+
+	memset(item_name, '\0', sizeof(item_name));
+
+	parent_cmd = atcommand_alias_db.checkAlias(command+1);
+
+	if (!strcmpi(parent_cmd+1,"itembound2")) {
+		if (!message || !*message || (
+			sscanf(message, "\"%99[^\"]\" %11d %11d %11d %11d %11d %11d %11d %11d %11d", item_name, &number, &identify, &refine, &attr, &c1, &c2, &c3, &c4, &bound) < 10 &&
+			sscanf(message, "%99s %11d %11d %11d %11d %11d %11d %11d %11d %11d", item_name, &number, &identify, &refine, &attr, &c1, &c2, &c3, &c4, &bound) < 10 ))
+		{
+			clif_displaymessage(fd, msg_txt(sd,296)); // Please enter all parameters (usage: @item2 <item name/ID> <quantity>
+			clif_displaymessage(fd, msg_txt(sd,297)); //   <identify_flag> <refine> <attribute> <card1> <card2> <card3> <card4> <bound_type>).
+			clif_displaymessage(fd, msg_txt(sd,298)); // Invalid bound type
+			return -1;
+		}
+		if( bound <= BOUND_NONE || bound >= BOUND_MAX ) {
+			clif_displaymessage(fd, msg_txt(sd,298)); // Invalid bound type
+			return -1;
+		}
+	} else if ( !message || !*message || (
+		sscanf(message, "\"%99[^\"]\" %11d %11d %11d %11d %11d %11d %11d %11d", item_name, &number, &identify, &refine, &attr, &c1, &c2, &c3, &c4) < 9 &&
+		sscanf(message, "%99s %11d %11d %11d %11d %11d %11d %11d %11d", item_name, &number, &identify, &refine, &attr, &c1, &c2, &c3, &c4) < 9
+		)) {
+		clif_displaymessage(fd, msg_txt(sd,984)); // Please enter all parameters (usage: @item2 <item name/ID> <quantity>
+		clif_displaymessage(fd, msg_txt(sd,985)); //   <identify_flag> <refine> <attribute> <card1> <card2> <card3> <card4>).
+		return -1;
+	}
+
+	if (number <= 0)
+		number = 1;
+
+	std::shared_ptr<item_data> item_data = item_db.searchname( item_name );
+
+	if( item_data == nullptr ){
+		item_data = item_db.find( strtoul( item_name, nullptr, 10 ) );
+	}
+
+	if( item_data != nullptr ){
+		int32 loop, get_count, i;
+		char flag = 0;
+
+		//Check if it's stackable.
+		if( !itemdb_isstackable2( item_data.get() ) ){
+			loop = number;
+			get_count = 1;
+		}else{
+			loop = 1;
+			get_count = number;
+		}
+
+		if( itemdb_isequip2( item_data.get() ) ){
+			refine = cap_value( refine, 0, MAX_REFINE );
+		}else{
+			// All other items cannot be refined and are always identified
+			identify = 1;
+			refine = attr = 0;
+		}
+
+		for (i = 0; i < loop; i++) {
+			// if not pet egg
+			if (!pet_create_egg(sd, item_data->nameid)) {
+				struct item item_tmp = {};
+
+				item_tmp.nameid = item_data->nameid;
+				item_tmp.identify = identify;
+				item_tmp.refine = refine;
+				item_tmp.attribute = attr;
+				item_tmp.card[0] = c1;
+				item_tmp.card[1] = c2;
+				item_tmp.card[2] = c3;
+				item_tmp.card[3] = c4;
+				item_tmp.bound = bound;
+				if ((flag = pc_additem(sd, &item_tmp, get_count, LOG_TYPE_COMMAND)))
+					clif_additem(sd, 0, 0, flag);
+			}
+		}
+
+		if (flag == 0)
+			clif_displaymessage(fd, msg_txt(sd,18)); // Item created.
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,19)); // Invalid item ID or name.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(itemreset)
+{
+	int32 i;
+	nullpo_retr(-1, sd);
+
+	for (i = 0; i < MAX_INVENTORY; i++) {
+		if (sd->inventory.u.items_inventory[i].amount && sd->inventory.u.items_inventory[i].equip == 0 && !itemdb_ishatched_egg(&sd->inventory.u.items_inventory[i])) {
+			pc_delitem(sd, i, sd->inventory.u.items_inventory[i].amount, 0, 0, LOG_TYPE_COMMAND);
+		}
+	}
+	clif_displaymessage(fd, msg_txt(sd,20)); // All of your items have been removed.
+
+	return 0;
+}
+
+/*==========================================
+ * Atcommand @lvlup
+ *------------------------------------------*/
+ACMD_FUNC(baselevelup)
+{
+	int32 level=0, i=0, status_point=0, trait_point=0;
+	nullpo_retr(-1, sd);
+	level = atoi(message);
+
+	if (!message || !*message || !level) {
+		clif_displaymessage(fd, msg_txt(sd,986)); // Please enter a level adjustment (usage: @lvup/@blevel/@baselvlup <number of levels>).
+		return -1;
+	}
+
+	if (level > 0) {
+		if (sd->status.base_level >= pc_maxbaselv(sd)) { // check for max level by Valaris
+			clif_displaymessage(fd, msg_txt(sd,47)); // Base level can't go any higher.
+			return -1;
+		} // End Addition
+		if ((uint32)level > pc_maxbaselv(sd) || (uint32)level > pc_maxbaselv(sd) - sd->status.base_level) // fix positive overflow
+			level = pc_maxbaselv(sd) - sd->status.base_level;
+		for (i = 0; i < level; i++)
+		{
+			status_point += statpoint_db.pc_gets_status_point(sd->status.base_level + i);
+			trait_point += statpoint_db.pc_gets_trait_point(sd->status.base_level + i);
+		}
+		sd->status.status_point += status_point;
+		sd->status.trait_point += trait_point;
+		sd->status.base_level += (uint32)level;
+		status_calc_pc(sd, SCO_FORCE);
+		status_percent_heal(sd, 100, 100);
+		clif_misceffect(*sd, NOTIFYEFFECT_BASE_LEVEL_UP);
+		for (uint32 j = sd->status.base_level - level; j <= sd->status.base_level; j++) {
+			achievement_update_objective(sd, AG_GOAL_LEVEL, 1, j);
+			achievement_update_objective(sd, AG_GOAL_STATUS, 2, j, sd->status.class_);
+		}
+		clif_displaymessage(fd, msg_txt(sd,21)); // Base level raised.
+	} else {
+		if (sd->status.base_level == 1) {
+			clif_displaymessage(fd, msg_txt(sd,158)); // Base level can't go any lower.
+			return -1;
+		}
+		level*=-1;
+		if ((uint32)level >= sd->status.base_level)
+			level = sd->status.base_level-1;
+		for (i = 0; i > -level; i--)
+		{
+			status_point += statpoint_db.pc_gets_status_point(sd->status.base_level + i - 1);
+			trait_point += statpoint_db.pc_gets_trait_point(sd->status.base_level + i - 1);
+		}
+		if (sd->status.status_point < status_point || sd->status.trait_point < trait_point)
+			pc_resetstate(sd);
+		if (sd->status.status_point < status_point)
+			sd->status.status_point = 0;
+		else
+			sd->status.status_point -= status_point;
+		if (sd->status.trait_point < trait_point)
+			sd->status.trait_point = 0;
+		else
+			sd->status.trait_point -= trait_point;
+		sd->status.base_level -= (uint32)level;
+		clif_displaymessage(fd, msg_txt(sd,22)); // Base level lowered.
+		status_calc_pc(sd, SCO_FORCE);
+		level*=-1;
+	}
+	sd->status.base_exp = 0;
+	clif_updatestatus(*sd, SP_STATUSPOINT);
+	clif_updatestatus(*sd, SP_TRAITPOINT);
+	clif_updatestatus(*sd, SP_BASELEVEL);
+	clif_updatestatus(*sd, SP_BASEEXP);
+	clif_updatestatus(*sd, SP_NEXTBASEEXP);
+	pc_baselevelchanged(sd);
+	if(sd->status.party_id)
+		party_send_levelup(sd);
+
+	if( level > 0 && battle_config.atcommand_levelup_events )
+		npc_script_event( *sd, NPCE_BASELVUP );
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(joblevelup)
+{
+	int32 level=0;
+	nullpo_retr(-1, sd);
+
+	level = atoi(message);
+
+	if (!message || !*message || !level) {
+		clif_displaymessage(fd, msg_txt(sd,987)); // Please enter a level adjustment (usage: @joblvup/@jlevel/@joblvlup <number of levels>).
+		return -1;
+	}
+	if (level > 0) {
+		if (sd->status.job_level >= pc_maxjoblv(sd)) {
+			clif_displaymessage(fd, msg_txt(sd,23)); // Job level can't go any higher.
+			return -1;
+		}
+		if ((uint32)level > pc_maxjoblv(sd) || (uint32)level > pc_maxjoblv(sd) - sd->status.job_level) // fix positive overflow
+			level = pc_maxjoblv(sd) - sd->status.job_level;
+		sd->status.job_level += (uint32)level;
+		sd->status.skill_point += level;
+		clif_misceffect(*sd, NOTIFYEFFECT_JOB_LEVEL_UP);
+		for (uint32 i = sd->status.job_level - level; i <= sd->status.job_level; i++)
+			achievement_update_objective(sd, AG_GOAL_LEVEL, 1, i);
+		clif_displaymessage(fd, msg_txt(sd,24)); // Job level raised.
+	} else {
+		if (sd->status.job_level == 1) {
+			clif_displaymessage(fd, msg_txt(sd,159)); // Job level can't go any lower.
+			return -1;
+		}
+		level *=-1;
+		if ((uint32)level >= sd->status.job_level) // fix negative overflow
+			level = sd->status.job_level-1;
+		sd->status.job_level -= (uint32)level;
+		if (sd->status.skill_point < level)
+			pc_resetskill(sd,0);	//Reset skills since we need to subtract more points.
+		if (sd->status.skill_point < level)
+			sd->status.skill_point = 0;
+		else
+			sd->status.skill_point -= level;
+		clif_displaymessage(fd, msg_txt(sd,25)); // Job level lowered.
+		level *=-1;
+	}
+	sd->status.job_exp = 0;
+	clif_updatestatus(*sd, SP_JOBLEVEL);
+	clif_updatestatus(*sd, SP_JOBEXP);
+	clif_updatestatus(*sd, SP_NEXTJOBEXP);
+	clif_updatestatus(*sd, SP_SKILLPOINT);
+	status_calc_pc(sd, SCO_FORCE);
+
+	if( level > 0 && battle_config.atcommand_levelup_events )
+		npc_script_event( *sd, NPCE_JOBLVUP );
+
+	return 0;
+}
+
+/*==========================================
+ * @help
+ *------------------------------------------*/
+ACMD_FUNC(help){
+	const char *command_name = nullptr;
+
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message) {
+		command_name = "help"; // If no command_name specified, display help for @help.
+	} else {
+		if (*message == atcommand_symbol || *message == charcommand_symbol)
+			++message;
+		command_name = atcommand_alias_db.checkAlias(message);
+	}
+
+	if (!pc_can_use_command(sd, command_name, COMMAND_ATCOMMAND)) {
+		sprintf(atcmd_output, msg_txt(sd,153), message); // "%s is Unknown Command"
+		clif_displaymessage(fd, atcmd_output);
+		atcommand_get_suggestions(sd, command_name, true);
+		return -1;
+	}
+
+	// attempt to find the first default help command
+	std::shared_ptr<s_atcommand_alias_info> info = atcommand_alias_db.find( command_name );
+
+	const char* text = info != nullptr ? info->help.c_str() : nullptr;
+
+	if( text == nullptr ){
+		sprintf(atcmd_output, msg_txt(sd,988), atcommand_symbol, command_name); // There is no help for %c%s.
+		clif_displaymessage(fd, atcmd_output);
+		atcommand_get_suggestions(sd, command_name, true);
+		return -1;
+	}
+
+	sprintf(atcmd_output, msg_txt(sd,989), atcommand_symbol, command_name); // Help for command %c%s:
+	clif_displaymessage(fd, atcmd_output);
+
+	{   // Display aliases
+		StringBuf buf;
+		bool has_aliases = false;
+
+		StringBuf_Init(&buf);
+		StringBuf_AppendStr(&buf, msg_txt(sd,990)); // Available aliases:
+
+		for( const std::string& alias : info->aliases ){
+			StringBuf_Printf( &buf, " %s", alias.c_str() );
+			has_aliases = true;
+		}
+
+		if (has_aliases)
+			clif_displaymessage(fd, StringBuf_Value(&buf));
+	}
+
+	// Display help contents
+	clif_displaymessage(fd, text);
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(pvpoff)
+{
+	nullpo_retr(-1, sd);
+
+	if (!map_getmapflag(sd->m, MF_PVP)) {
+		clif_displaymessage(fd, msg_txt(sd,160)); // PvP is already Off.
+		return -1;
+	}
+
+	map_setmapflag(sd->m, MF_PVP, false);
+
+	clif_displaymessage(fd, msg_txt(sd,31)); // PvP: Off.
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(pvpon)
+{
+	nullpo_retr(-1, sd);
+
+	if (map_getmapflag(sd->m, MF_PVP)) {
+		clif_displaymessage(fd, msg_txt(sd,161)); // PvP is already On.
+		return -1;
+	}
+
+	map_setmapflag(sd->m, MF_PVP, true);
+
+	clif_displaymessage(fd, msg_txt(sd,32)); // PvP: On.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(gvgoff)
+{
+	nullpo_retr(-1, sd);
+
+	if (!map_getmapflag(sd->m, MF_GVG)) {
+		clif_displaymessage(fd, msg_txt(sd,162)); // GvG is already Off.
+		return -1;
+	}
+
+	map_setmapflag(sd->m, MF_GVG, false);
+	clif_displaymessage(fd, msg_txt(sd,33)); // GvG: Off.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(gvgon)
+{
+	nullpo_retr(-1, sd);
+
+	if (map_getmapflag(sd->m, MF_GVG)) {
+		clif_displaymessage(fd, msg_txt(sd,163)); // GvG is already On.
+		return -1;
+	}
+
+	map_setmapflag(sd->m, MF_GVG, true);
+	clif_displaymessage(fd, msg_txt(sd,34)); // GvG: On.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(model)
+{
+	int32 hair_style = 0, hair_color = 0, cloth_color = 0;
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%11d %11d %11d", &hair_style, &hair_color, &cloth_color) < 1) {
+		sprintf(atcmd_output, msg_txt(sd,991), // Please enter at least one value (usage: @model <hair ID: %d-%d> <hair color: %d-%d> <clothes color: %d-%d>).
+		        MIN_HAIR_STYLE, MAX_HAIR_STYLE, MIN_HAIR_COLOR, MAX_HAIR_COLOR, MIN_CLOTH_COLOR, MAX_CLOTH_COLOR);
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (hair_style >= MIN_HAIR_STYLE && hair_style <= MAX_HAIR_STYLE &&
+		hair_color >= MIN_HAIR_COLOR && hair_color <= MAX_HAIR_COLOR &&
+		cloth_color >= MIN_CLOTH_COLOR && cloth_color <= MAX_CLOTH_COLOR) {
+			pc_changelook(sd, LOOK_HAIR, hair_style);
+			pc_changelook(sd, LOOK_HAIR_COLOR, hair_color);
+			pc_changelook(sd, LOOK_CLOTHES_COLOR, cloth_color);
+			clif_displaymessage(fd, msg_txt(sd,36)); // Appearance changed.
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,37)); // An invalid number was specified.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * @bodystyle
+ *------------------------------------------*/
+ACMD_FUNC(bodystyle){
+	nullpo_retr(-1, sd);
+
+	std::shared_ptr<s_job_info> job = job_db.find( sd->status.class_ );
+
+	if( job == nullptr || job->alternate_outfits.empty() ){
+		clif_displaymessage( fd, msg_txt( sd, 740 ) ); // This job has no alternate body styles.
+		return -1;
+	}
+
+	if( message == nullptr || !*message ){
+		if( const char* help = atcommand_help_string( command ); help != nullptr ){
+			clif_displaymessage( fd, help );
+		}
+
+		return -1;
+	}
+
+	// Handle the 'off' alias to revert to the default bodystyle
+	if (!strcasecmp(message, "off")) {
+		if (sd->vd.look[LOOK_BODY2] != sd->status.class_) {
+			pc_changelook(sd, LOOK_BODY2, sd->status.class_);
+			clif_displaymessage( fd, msg_txt( sd, 1539 ) ); // Appearance changed to default.
+		} else {
+			clif_displaymessage( fd, msg_txt( sd, 1540 ) ); // Appearance is already set to default.
+		}
+
+		return 0;
+	}
+
+	uint16 body_style = 0;
+
+	if( sscanf( message, "%hu", &body_style ) < 1 ){
+		if( const char* help = atcommand_help_string( command ); help != nullptr ){

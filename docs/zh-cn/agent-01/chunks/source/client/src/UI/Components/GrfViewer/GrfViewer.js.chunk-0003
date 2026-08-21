@@ -1,0 +1,221 @@
+			App._APP.postMessage(
+				{
+					type: type,
+					data: data
+				},
+				location.origin
+			);
+		});
+	}
+
+	function synchronise() {
+		if (!ready) {
+			App._APP.postMessage({ type: 'init' }, location.origin);
+			setTimeout(synchronise, 100);
+		}
+	}
+
+	return iconEl => {
+		if (!initApp()) return;
+		const root = Viewer.getRoot();
+		const path = iconEl.getAttribute('data-path').replace(/\\/g, '/');
+		const progress = root.querySelector('#progress');
+		const box = root.querySelector('#preview .box');
+		const preview = root.querySelector('#preview');
+
+		progress.style.display = 'block';
+		element.style.display = 'block';
+
+		box.style.top = `${(window.innerHeight - 480) * 0.5}px`;
+		preview.style.display = 'block';
+		progress.style.display = 'none';
+		document.body.style.overflow = 'hidden';
+
+		preview.addEventListener(
+			'click',
+			() => {
+				preview.style.display = 'none';
+				document.body.style.overflow = 'auto';
+				element.style.display = 'none';
+
+				App._APP.postMessage({ type: 'stop' }, location.origin);
+				window.removeEventListener('message', onMessage, false);
+			},
+			{ once: true }
+		);
+
+		window.addEventListener('message', onMessage, false);
+
+		if (!ready) {
+			box.appendChild(element);
+
+			App.start();
+			App.onReady = () => {
+				App._APP.frameElement.style.border = '1px solid grey';
+				App._APP.frameElement.style.backgroundColor = 'black';
+
+				threadRedirect('MAP_PROGRESS');
+				threadRedirect('MAP_WORLD');
+				threadRedirect('MAP_GROUND');
+				threadRedirect('MAP_ALTITUDE');
+				threadRedirect('MAP_MODELS');
+
+				synchronise();
+			};
+			App.onload = () => {
+				App._APP.postMessage({ type: 'load', data: path }, location.origin);
+			};
+		} else {
+			App._APP.postMessage({ type: 'load', data: path }, location.origin);
+		}
+	};
+})();
+
+/**
+ * User click on text, display it
+ */
+function onTextClick(iconEl) {
+	const root = Viewer.getRoot();
+	const path = iconEl.getAttribute('data-path');
+	const progress = root.querySelector('#progress');
+	const box = root.querySelector('#preview .box');
+	const preview = root.querySelector('#preview');
+
+	progress.style.display = 'block';
+
+	Client.loadFile(path, text => {
+		box.style.top = `${(window.innerHeight - 300) / 2}px`;
+		const pre = document.createElement('pre');
+		pre.textContent = text;
+		pre.addEventListener('click', e => e.stopPropagation());
+		Object.assign(pre.style, {
+			background: 'white',
+			width: '500px',
+			display: 'inline-block',
+			height: '300px',
+			overflow: 'scroll',
+			textAlign: 'left',
+			padding: '10px'
+		});
+		box.appendChild(pre);
+
+		progress.style.display = 'none';
+
+		preview.style.display = 'block';
+		preview.addEventListener(
+			'click',
+			() => {
+				preview.style.display = 'none';
+				box.querySelectorAll('pre').forEach(el => el.remove());
+			},
+			{ once: true }
+		);
+	});
+}
+
+/**
+ * User click on a Granny model, render it using GrannyModelViewer
+ */
+const onGrannyClick = (() => {
+	let ready = false;
+	let App = null;
+	const element = document.createElement('div');
+
+	function initApp() {
+		if (App) return true;
+		if (typeof ROBrowser === 'undefined') return false;
+		App = new ROBrowser({
+			target: element,
+			type: ROBrowser.TYPE.FRAME, // eslint-disable-line no-undef
+			application: ROBrowser.APP.GRANNYMODELVIEWER, // eslint-disable-line no-undef
+			development: Configs.get('development', false),
+			api: true,
+			width: 500,
+			height: 400,
+			version: Configs.get('version', '')
+		});
+		return true;
+	}
+
+	function onMessage(event) {
+		if (typeof event.data !== 'object') {
+			return;
+		}
+
+		switch (event.data.type) {
+			case 'SYNC':
+				ready = true;
+				App.onload();
+				break;
+
+			case 'SET_HOST':
+			case 'CLEAN_GRF':
+				return;
+
+			default:
+				Thread.send(event.data.type, event.data.data, function () {
+					App._APP.postMessage(
+						{
+							arguments: Array.prototype.slice.call(arguments, 0),
+							uid: event.data.uid
+						},
+						location.origin
+					);
+				});
+		}
+	}
+
+	function synchronise() {
+		if (!ready) {
+			App._APP.postMessage({ type: 'init' }, location.origin);
+			setTimeout(synchronise, 100);
+		}
+	}
+
+	return iconEl => {
+		if (!initApp()) return;
+		const root = Viewer.getRoot();
+		const path = iconEl.getAttribute('data-path').replace(/\\/g, '/');
+		const box = root.querySelector('#preview .box');
+		const preview = root.querySelector('#preview');
+
+		box.style.top = `${(window.innerHeight - 400) * 0.5}px`;
+		element.style.display = 'block';
+
+		preview.style.display = 'block';
+
+		preview.addEventListener(
+			'click',
+			() => {
+				preview.style.display = 'none';
+				element.style.display = 'none';
+				App._APP.postMessage({ type: 'stop' }, location.origin);
+				window.removeEventListener('message', onMessage, false);
+			},
+			{ once: true }
+		);
+
+		window.addEventListener('message', onMessage, false);
+
+		if (!ready) {
+			box.appendChild(element);
+
+			App.start();
+			App.onReady = () => {
+				App._APP.frameElement.style.border = '1px solid grey';
+				App._APP.frameElement.style.backgroundColor = '#45484d';
+				synchronise();
+			};
+			App.onload = () => {
+				App._APP.postMessage({ type: 'load', data: path }, location.origin);
+			};
+		} else {
+			App._APP.postMessage({ type: 'load', data: path }, location.origin);
+		}
+	};
+})();
+
+/**
+ * Stored component and return it
+ */
+export default Viewer;

@@ -1,0 +1,305 @@
+			});
+
+			const observer = new MutationObserver(mutations => {
+				for (const m of mutations) {
+					if (m.attributeName === 'class') {
+						const isActive = node.classList.contains('active');
+						if (state.active !== isActive) {
+							state.active = isActive;
+							updateBg();
+						}
+					}
+				}
+			});
+
+			observer.observe(node, { attributes: true, attributeFilter: ['class'] });
+
+			node.addEventListener('x_remove', () => observer.disconnect(), { once: true });
+			if (!node._roActiveObserver) {
+				node._roActiveObserver = observer;
+			}
+		}
+
+		// Hover background
+		if (hover) {
+			_Client?.loadFile(_DB.INTERFACE_PATH + hover, dataURI => {
+				hoverUri = dataURI;
+			});
+			node.addEventListener('mouseover', () => {
+				state.hover = true;
+				updateBg();
+			});
+			node.addEventListener('mouseout', () => {
+				state.hover = false;
+				updateBg();
+			});
+		}
+
+		// Down background
+		if (down) {
+			_Client?.loadFile(_DB.INTERFACE_PATH + down, dataURI => {
+				downUri = dataURI;
+			});
+			node.addEventListener('mousedown', () => {
+				state.down = true;
+				updateBg();
+			});
+			node.addEventListener('mouseup', () => {
+				state.down = false;
+				updateBg();
+			});
+			if (!hover) {
+				node.addEventListener('mouseout', () => {
+					state.down = false;
+					state.hover = false;
+					updateBg();
+				});
+			}
+		}
+
+		// Preload images
+		if (preload) {
+			const files = preload.split(';').map(f => _DB.INTERFACE_PATH + f.trim());
+			_Client?.loadFiles(files);
+		}
+	}
+
+	/**
+	 * Walk the shadow DOM and process all elements with data-* attributes.
+	 * Called once during prepare().
+	 */
+	_processAllDataAttrs() {
+		const root = this._shadow || this._host;
+		if (!root) return;
+
+		const selector = '[data-background],[data-hover],[data-down],[data-active],[data-text],[data-preload]';
+		const nodes = root.querySelectorAll(selector);
+		for (const node of nodes) {
+			GUIComponent.processDataAttrs(node);
+		}
+	}
+
+	/**
+	 * Compatibility shim for UIComponent.parseHTML.
+	 * When called via .call(element) or .each(parseHTML),
+	 * `this` is the DOM element.
+	 */
+	get parseHTML() {
+		return function () {
+			GUIComponent.processDataAttrs(this);
+		};
+	}
+
+	// ─── CSS hot-reload ────────────────────────────────────
+
+	reloadCSS(newCssText) {
+		if (this._shadow) {
+			const existing = this._shadow.querySelector('style[data-component]');
+			if (existing) {
+				existing.textContent = newCssText;
+			}
+		}
+	}
+
+	/**
+	 * Static version for external callers (e.g. HMR).
+	 */
+	static reloadCSS(name, newCssText) {
+		// Fallback for components not yet migrated
+		const id = 'hmr-' + name;
+		let hotStyle = document.getElementById(id);
+		if (!hotStyle) {
+			hotStyle = document.createElement('style');
+			hotStyle.id = id;
+			hotStyle.type = 'text/css';
+			document.head.appendChild(hotStyle);
+		}
+		hotStyle.textContent = newCssText;
+	}
+
+	// ─── Compatibility proxy ───────────────────────────────
+
+	/**
+	 * Create a minimal jQuery-like proxy for this.ui so that
+	 * UIManager and old UIComponent.focus() can interoperate
+	 * during the transition period.
+	 */
+	_createUIProxy() {
+		const host = this._host;
+		const component = this;
+		const proxy = {
+			0: host,
+			length: 1,
+
+			css(prop, value) {
+				// Setter: .css({ top: 100, left: 200 })
+				if (typeof prop === 'object') {
+					for (const [k, v] of Object.entries(prop)) {
+						host.style[k] = typeof v === 'number' && !CSS_NUMBER[k] ? v + 'px' : String(v);
+					}
+					return proxy;
+				}
+				if (value === undefined) {
+					// Getter: .css('top')
+					return (
+						window.getComputedStyle(host).getPropertyValue(prop.replace(/([A-Z])/g, '-$1').toLowerCase()) ||
+						host.style[prop]
+					);
+				}
+				// Setter: .css('top', 100)
+				host.style[prop] = typeof value === 'number' && !CSS_NUMBER[prop] ? value + 'px' : String(value);
+				return proxy;
+			},
+
+			offset() {
+				const rect = host.getBoundingClientRect();
+				return { left: rect.left + window.scrollX, top: rect.top + window.scrollY };
+			},
+
+			offsetParent() {
+				let el = host.offsetParent || document.documentElement;
+				while (el && el !== document.documentElement && window.getComputedStyle(el).position === 'static') {
+					el = el.offsetParent;
+				}
+				el = el || document.documentElement;
+				return {
+					length: el ? 1 : 0,
+					0: el
+				};
+			},
+
+			position() {
+				return {
+					left: host.offsetLeft,
+					top: host.offsetTop
+				};
+			},
+
+			width() {
+				return host.getBoundingClientRect().width;
+			},
+			height() {
+				return host.getBoundingClientRect().height;
+			},
+
+			is(selector) {
+				if (selector === ':visible') {
+					return host.style.display !== 'none' && host.offsetParent !== null;
+				}
+				return host.matches(selector);
+			},
+
+			show() {
+				host.style.display = '';
+				component._fixPositionOverflow();
+				return proxy;
+			},
+			hide() {
+				host.style.display = 'none';
+				return proxy;
+			},
+			toggle() {
+				if (host.style.display === 'none') {
+					host.style.display = '';
+					component._fixPositionOverflow();
+				} else {
+					host.style.display = 'none';
+				}
+				return proxy;
+			},
+
+			parent() {
+				return {
+					length: host.parentNode ? 1 : 0,
+					append(child) {
+						host.parentNode?.appendChild(child._host || child[0] || child);
+					}
+				};
+			},
+
+			detach() {
+				if (host.parentNode) host.parentNode.removeChild(host);
+				return proxy;
+			},
+
+			appendTo(target) {
+				const t = typeof target === 'string' ? document.querySelector(target) : target[0] || target;
+				if (t) t.appendChild(host);
+				return proxy;
+			},
+
+			trigger(eventName) {
+				host.dispatchEvent(new CustomEvent(eventName, { bubbles: true }));
+				return proxy;
+			},
+
+			find(selector) {
+				const root = host.shadowRoot || host;
+				const results = root.querySelectorAll(selector);
+				const wrapper = {
+					length: results.length,
+					0: results[0],
+					each(fn) {
+						results.forEach((el, i) => fn.call(el, i, el));
+						return wrapper;
+					},
+					click(fn) {
+						results.forEach(el => el.addEventListener('click', fn));
+						return wrapper;
+					},
+					text(val) {
+						if (val === undefined) return results[0]?.textContent || '';
+						results.forEach(el => {
+							el.textContent = val;
+						});
+						return wrapper;
+					},
+					show() {
+						results.forEach(el => {
+							el.style.display = '';
+						});
+						return wrapper;
+					},
+					hide() {
+						results.forEach(el => {
+							el.style.display = 'none';
+						});
+						return wrapper;
+					},
+					css(prop, value) {
+						if (typeof prop === 'object') {
+							results.forEach(el => {
+								for (const [k, v] of Object.entries(prop)) {
+									el.style[k] = typeof v === 'number' && !CSS_NUMBER[k] ? v + 'px' : String(v);
+								}
+							});
+							return wrapper;
+						}
+						if (value === undefined) {
+							return results[0]
+								? window
+										.getComputedStyle(results[0])
+										.getPropertyValue(prop.replace(/([A-Z])/g, '-$1').toLowerCase())
+								: '';
+						}
+						results.forEach(el => {
+							el.style[prop] =
+								typeof value === 'number' && !CSS_NUMBER[prop] ? value + 'px' : String(value);
+						});
+						return wrapper;
+					},
+					height() {
+						return results[0] ? results[0].getBoundingClientRect().height : 0;
+					},
+					width() {
+						return results[0] ? results[0].getBoundingClientRect().width : 0;
+					}
+				};
+				return wrapper;
+			}
+		};
+		this.ui = proxy;
+	}
+}
+
+export default GUIComponent;

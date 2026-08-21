@@ -1,0 +1,131 @@
+					this.splashes.splice(s, 1);
+					continue;
+				}
+
+				const sp = splashAge / splash.lifeMs;
+				const splashAlpha = SPLASH_ALPHA * (1 - sp);
+				const splashSize = splash.maxSizePx * (0.6 + sp * 0.8);
+
+				SpriteRenderer.image.palette = null;
+				SpriteRenderer.sprite = _splashFrame;
+				SpriteRenderer.image.texture = _splashFrame.texture;
+				SpriteRenderer.position[0] = splash.x;
+				SpriteRenderer.position[1] = splash.y;
+				SpriteRenderer.position[2] = splash.z;
+				SpriteRenderer.zIndex = 0;
+				SpriteRenderer.color[0] = 0.75;
+				SpriteRenderer.color[1] = 0.8;
+				SpriteRenderer.color[2] = 0.9;
+				SpriteRenderer.color[3] = splashAlpha;
+				SpriteRenderer.angle = splash.angle;
+				SpriteRenderer.size[0] = splashSize;
+				SpriteRenderer.size[1] = splashSize;
+				SpriteRenderer.offset[0] = 0;
+				SpriteRenderer.offset[1] = 0;
+				SpriteRenderer.render(false);
+			}
+		}
+	}
+
+	renderPuddles(gl, tick) {
+		if (_puddleFrame && this.puddles.length) {
+			const self = this;
+			SpriteRenderer.runWithDepth(true, false, false, () => {
+				const uniform = _puddleProgram.uniform;
+				const attribute = _puddleProgram.attribute;
+
+				gl.useProgram(_puddleProgram);
+				gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+				// Prepare common uniforms
+				gl.uniformMatrix4fv(uniform.uModelViewMat, false, Camera.modelView);
+				gl.uniformMatrix4fv(uniform.uProjectionMat, false, Camera.projection);
+
+				// Fog
+				const fog = MapRenderer.fog;
+				gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+				gl.uniform1f(uniform.uFogNear, fog.near);
+				gl.uniform1f(uniform.uFogFar, fog.far);
+				gl.uniform3fv(uniform.uFogColor, fog.color);
+
+				gl.activeTexture(gl.TEXTURE0);
+				gl.bindTexture(gl.TEXTURE_2D, _puddleFrame.texture);
+				gl.uniform1i(uniform.uDiffuse, 0);
+
+				// Pass time for procedural ripples
+				gl.uniform1f(uniform.uTime, tick * 0.001);
+
+				// Pass camera info for Fresnel reflections (Platinum look)
+				gl.uniform3fv(uniform.uCameraPos, Camera.position);
+
+				gl.bindBuffer(gl.ARRAY_BUFFER, _puddleBuffer);
+				gl.enableVertexAttribArray(attribute.aPosition);
+				gl.enableVertexAttribArray(attribute.aTextureCoord);
+				gl.vertexAttribPointer(attribute.aPosition, 3, gl.FLOAT, false, 5 * 4, 0);
+				gl.vertexAttribPointer(attribute.aTextureCoord, 2, gl.FLOAT, false, 5 * 4, 3 * 4);
+
+				for (let p = self.puddles.length - 1; p >= 0; p--) {
+					const puddle = self.puddles[p];
+					// Evaporate slowly if not hit by rain for a while
+					// Each drop adds 1.5s of life up to a hard cap of 10s.
+					if (tick > (puddle.nextDryTick || tick)) {
+						const dt = tick - (puddle._lastTick || tick);
+						// Larger puddles dry out slower but start shrinking sooner
+						const evaporationRate = PUDDLE_FADE_SPEED / (1.0 + puddle.size * 0.003);
+						const fade = evaporationRate * dt;
+
+						puddle.alpha -= fade;
+						// Shrink all the way to nothing (fadeout + encolher)
+						puddle.size -= fade * 8500.0;
+					}
+					puddle._lastTick = tick;
+
+					// Remove only when practically invisible or shrunk to nothing
+					if (puddle.size <= 0.1 || puddle.alpha <= 0.0001) {
+						self.puddles.splice(p, 1);
+						continue;
+					}
+
+					// Uniforms for this puddle
+					gl.uniform3f(uniform.uWorldPosition, puddle.x, puddle.y, puddle.z + 0.01);
+					gl.uniform2f(uniform.uSize, puddle.size, puddle.size);
+					gl.uniform1f(uniform.uAngle, puddle.angle);
+					gl.uniform4f(uniform.uColor, 1.0, 1.0, 1.0, puddle.alpha);
+					gl.uniform1f(uniform.uZIndex, 1);
+
+					gl.drawArrays(gl.TRIANGLES, 0, 6);
+				}
+
+				gl.disableVertexAttribArray(attribute.aPosition);
+				gl.disableVertexAttribArray(attribute.aTextureCoord);
+
+				// Restore blend mode for subsequent rendering
+				gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+			});
+		}
+	}
+
+	free() {
+		// Clean thunder audio
+		if (this.audioCtx) {
+			try {
+				if (this.rainNode) {
+					this.rainNode.stop();
+					this.rainNode = null;
+				}
+				this.audioCtx.close();
+				this.audioCtx = null;
+			} catch (e) {
+				console.log(e);
+			}
+		}
+		this.drops = [];
+		this.splashes = [];
+		this.puddles = [];
+		this.ready = false;
+	}
+}
+
+RainWeatherEffect.renderBeforeEntities = false;
+
+export default RainWeatherEffect;

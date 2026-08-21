@@ -1,0 +1,500 @@
+/// 00d6 <flag>.B (ZC_ACK_CREATE_CHATROOM)
+/// flag:
+///     0 = Room has been successfully created (opens chat room)
+///     1 = Room limit exceeded
+///     2 = Same room already exists
+void clif_createchat( const map_session_data& sd, e_create_chatroom flag ){
+	PACKET_ZC_ACK_CREATE_CHATROOM packet{};
+
+	packet.packetType = HEADER_ZC_ACK_CREATE_CHATROOM;
+	packet.flag = static_cast<decltype(packet.flag)>(flag);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Calculates the chat status
+/// type:
+///     0 = private (password protected)
+///     1 = public
+///     2 = arena (npc waiting room)
+///     3 = PK zone (non-clickable)
+static e_status_chatroom clif_chat_status( const chat_data &cd ){
+	if (cd.owner->type == BL_PC)
+		return (cd.pub) ? STATUSROOM_PUBLIC : STATUSROOM_PRIVATE;
+	else if (cd.owner->type == BL_NPC)
+		return (cd.limit) ? STATUSROOM_ARENA : STATUSROOM_PK_ZONE;
+	else
+		return STATUSROOM_PUBLIC;
+}
+
+/// Calculates the chat user count
+static uint16 clif_chat_usercount( const chat_data& cd ){
+	if( cd.owner->type == BL_NPC ){
+		return cd.users + 1;
+	}else{
+		return cd.users;
+	}
+}
+
+/// Display a chat above the owner.
+/// 00d7 <packet len>.W <owner id>.L <char id>.L <limit>.W <users>.W <type>.B <title>.?B (ZC_ROOM_NEWENTRY)
+void clif_dispchat( const chat_data& cd ){
+	if( cd.owner == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_ROOM_NEWENTRY* p = reinterpret_cast<PACKET_ZC_ROOM_NEWENTRY*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_ROOM_NEWENTRY;
+	p->packetSize = sizeof( *p );
+	p->owner = cd.owner->id;
+	p->id = cd.id;
+	p->limit = cd.limit;
+	p->users = clif_chat_usercount( cd );
+	p->type = clif_chat_status( cd );
+
+	// not zero-terminated
+	size_t max = safestrnlen( cd.title, CHATROOM_TITLE_SIZE );
+	strncpy( p->title, cd.title, max );
+	p->packetSize += static_cast<decltype(p->packetSize)>( max );
+
+	clif_send( p, p->packetSize, cd.owner, AREA_WOSC );
+}
+
+/// Chatroom properties adjustment.
+/// 00df <packet len>.W <owner id>.L <chat id>.L <limit>.W <users>.W <type>.B <title>.?B (ZC_CHANGE_CHATROOM)
+void clif_changechatstatus( const chat_data& cd ) {
+	if( cd.owner == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_CHANGE_CHATROOM* p = reinterpret_cast<PACKET_ZC_CHANGE_CHATROOM*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_CHANGE_CHATROOM;
+	p->packetSize = sizeof(*p);
+	p->ownerId = cd.owner->id;
+	p->chatId = cd.id;
+	p->limit = cd.limit;
+	p->users = clif_chat_usercount( cd );
+	p->flag = clif_chat_status( cd );
+
+	// not zero-terminated
+	size_t max = safestrnlen( cd.title, CHATROOM_TITLE_SIZE );
+	strncpy( p->title, cd.title, max );
+	p->packetSize += static_cast<decltype(p->packetSize)>( max );
+
+	clif_send(p,p->packetSize,cd.owner,CHAT);
+}
+
+
+/// Removes the chatroom
+/// 00d8 <chat id>.L (ZC_DESTROY_ROOM)
+void clif_clearchat( const chat_data& cd ){
+
+	PACKET_ZC_DESTROY_ROOM p{};
+
+	p.packetType = HEADER_ZC_DESTROY_ROOM;
+	p.chatId = cd.id;
+
+	clif_send(&p,sizeof(p),cd.owner,AREA_WOSC);
+}
+
+
+/// Displays messages regarding join chat failures.
+/// 00da <result>.B (ZC_REFUSE_ENTER_ROOM)
+/// result:
+///     0 = room full
+///     1 = wrong password
+///     2 = kicked
+///     3 = success (no message)
+///     4 = no enough zeny
+///     5 = too low level
+///     6 = too high level
+///     7 = unsuitable job class
+void clif_joinchatfail( map_session_data& sd, e_refuse_enter_room result ){
+	PACKET_ZC_REFUSE_ENTER_ROOM packet{};
+
+	packet.packetType = HEADER_ZC_REFUSE_ENTER_ROOM;
+	packet.result = static_cast<decltype(packet.result)>(result);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies the client about entering a chatroom (ZC_ENTER_ROOM).
+/// 00db <packet len>.W <chat id>.L { <role>.L <name>.24B }*
+/// role:
+///     0 = owner (menu)
+///     1 = normal
+void clif_joinchatok( const map_session_data& sd, const chat_data& cd ){
+	PACKET_ZC_ENTER_ROOM* p = reinterpret_cast<PACKET_ZC_ENTER_ROOM*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_ENTER_ROOM;
+	p->packetSize = sizeof(*p);
+	p->chatId = cd.id;
+	
+	if(cd.owner->type == BL_NPC){
+		PACKET_ZC_ENTER_ROOM_sub& owner = p->members[0];
+		owner.flag = 0;
+		safestrncpy(owner.name, reinterpret_cast<npc_data*>(cd.owner)->name, sizeof(owner.name));
+		p->packetSize += static_cast<decltype(p->packetSize)>( sizeof( owner ) );
+
+		for (size_t i = 0; i < cd.users; i++) {
+			PACKET_ZC_ENTER_ROOM_sub& member = p->members[i + 1];
+
+			member.flag = 1;
+			safestrncpy(member.name, cd.usersd[i]->status.name, sizeof(member.name));
+
+			p->packetSize += static_cast<decltype(p->packetSize)>( sizeof( member ) );
+		}
+	}else{
+		for (size_t i = 0; i < cd.users; i++) {
+			PACKET_ZC_ENTER_ROOM_sub& member = p->members[i];
+
+			member.flag = i > 0;
+			safestrncpy(member.name, cd.usersd[i]->status.name, sizeof(member.name));
+
+			p->packetSize += static_cast<decltype(p->packetSize)>( sizeof( member ) );
+		}
+	}
+
+	clif_send(p,p->packetSize,&sd,SELF);
+}
+
+
+/// Notifies clients in a chat about a new member.
+/// 00dc <users>.W <name>.24B (ZC_MEMBER_NEWENTRY)
+void clif_addchat( const chat_data& cd, const map_session_data& sd ){
+	PACKET_ZC_MEMBER_NEWENTRY p = {};
+
+	p.packetType = HEADER_ZC_MEMBER_NEWENTRY;
+	p.count = cd.users;
+	safestrncpy( p.name, sd.status.name, sizeof( p.name ) );
+
+	clif_send( &p, sizeof( p ), &sd, CHAT_WOS );
+}
+
+
+/// Announce the new owner.
+/// 00e1 <role>.L <nick>.24B (ZC_ROLE_CHANGE)
+/// role:
+///     0 = owner (menu)
+///     1 = normal
+void clif_chat_role( const chat_data& cd, const map_session_data& sd ){
+	PACKET_ZC_ROLE_CHANGE p = {};
+
+	p.packetType = HEADER_ZC_ROLE_CHANGE;
+	p.flag = cd.usersd[0] != &sd;
+	safestrncpy( p.name, sd.status.name, sizeof( p.name ) );
+
+	clif_send( &p, sizeof( p ), &sd, CHAT );
+}
+
+
+/// Notify about user leaving the chatroom.
+/// 00dd <users>.W <nick>.24B <flag>.B (ZC_MEMBER_EXIT)
+/// flag:
+///     0 = left
+///     1 = kicked
+void clif_chat_leave( const chat_data& cd, const map_session_data& sd, bool kicked ){
+	PACKET_ZC_MEMBER_EXIT p = {};
+
+	p.packetType = HEADER_ZC_MEMBER_EXIT;
+	p.count = cd.users - 1;
+	safestrncpy( p.name, sd.status.name, sizeof( p.name ) );
+	p.kicked = kicked;
+
+	clif_send( &p, sizeof( p ), &sd, CHAT );
+}
+
+
+/// Opens a trade request window from char 'name'.
+/// 00e5 <nick>.24B (ZC_REQ_EXCHANGE_ITEM)
+/// 01f4 <nick>.24B <targetid>.L <baselvl>.W (ZC_REQ_EXCHANGE_ITEM2)
+void clif_traderequest(map_session_data& sd, const char* name){
+
+	PACKET_ZC_REQ_EXCHANGE_ITEM p{};
+
+	p.packetType = HEADER_ZC_REQ_EXCHANGE_ITEM;
+	safestrncpy(p.requesterName, name, sizeof(p.requesterName));
+
+#if PACKETVER > 6
+	p.targetId = sd.trade_partner.id; // Client generates a random char[5] with this info
+	p.targetLv = sd.trade_partner.lv;
+#endif
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+
+}
+
+
+/// Reply to a trade-request.
+/// 00e7 <result>.B (ZC_ACK_EXCHANGE_ITEM)
+/// 01f5 <result>.B <targetid>.L <baselvl>.W (ZC_ACK_EXCHANGE_ITEM2)
+/// result:
+///     0 = Char is too far
+///     1 = Character does not exist
+///     2 = Trade failed
+///     3 = Accept
+///     4 = Cancel
+///     5 = Busy
+void clif_traderesponse( map_session_data& sd, e_ack_trade_response result ){
+
+	PACKET_ZC_ACK_EXCHANGE_ITEM p{};
+
+	p.packetType = HEADER_ZC_ACK_EXCHANGE_ITEM;
+	p.result = static_cast<decltype(p.result)>( result );
+
+#if PACKETVER > 6
+	p.targetId = sd.trade_partner.id; // Client generates a random char[5] with this info
+	p.targetLv = sd.trade_partner.lv;
+#endif
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Notifies the client about an item from other player in current trade.
+/// 00e9 <amount>.L <nameid>.W <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W (ZC_ADD_EXCHANGE_ITEM)
+/// 080f <nameid>.W <item type>.B <amount>.L <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W (ZC_ADD_EXCHANGE_ITEM2)
+/// 0a09 <nameid>.W <item type>.B <amount>.L <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W { <option id>.W <option value>.W <option param>.B }*5 (ZC_ADD_EXCHANGE_ITEM3)
+void clif_tradeadditem( map_session_data* sd, map_session_data* tsd, int32 index, int32 amount ){
+	nullpo_retv( sd );
+	nullpo_retv( tsd );
+
+	int32 fd = tsd->fd;
+
+	if( !session_isActive( fd ) ){
+		return;
+	}
+
+	PACKET_ZC_ADD_EXCHANGE_ITEM p = {};
+
+	if( index ){
+		index = server_index( index );
+
+		if( index >= MAX_INVENTORY || sd->inventory.u.items_inventory[index].nameid == 0 || sd->inventory_data[index] == nullptr ){
+			return;
+		}
+
+		p.itemId = client_nameid( sd->inventory.u.items_inventory[index].nameid );
+#if PACKETVER >= 20100223
+		p.itemType = sd->inventory_data[index]->type;
+#endif
+		p.identified = sd->inventory.u.items_inventory[index].identify;
+		p.damaged = sd->inventory.u.items_inventory[index].attribute;
+		p.refine = sd->inventory.u.items_inventory[index].refine;
+		clif_addcards( &p.slot, &sd->inventory.u.items_inventory[index] );
+#if PACKETVER >= 20150226
+		clif_add_random_options( p.option_data, sd->inventory.u.items_inventory[index] );
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+		p.location = pc_equippoint_sub( sd, sd->inventory_data[index] );
+		p.look = sd->inventory_data[index]->look;
+		p.grade = sd->inventory.u.items_inventory[index].enchantgrade;
+#endif
+#endif
+	}else{
+		p = {};
+	}
+
+	p.packetType = HEADER_ZC_ADD_EXCHANGE_ITEM;
+	p.amount = amount;
+
+	clif_send( &p, sizeof( p ), tsd, SELF );
+}
+
+
+/// Notifies the client about the result of request to add an item to the current trade (ZC_ACK_ADD_EXCHANGE_ITEM).
+/// 00ea <index>.W <result>.B
+/// result:
+///     0 = success
+///     1 = overweight
+///     2 = trade canceled
+///     3 = inventory full
+///     4 = stacked item amount exceeded
+void clif_tradeitemok(map_session_data& sd, int32 index, e_exitem_add_result result)
+{
+	PACKET_ZC_ACK_ADD_EXCHANGE_ITEM p = {};
+	p.packetType = HEADER_ZC_ACK_ADD_EXCHANGE_ITEM;
+	p.index = client_index(index);
+#if PACKETVER < 20110705
+	if (result > EXITEM_ADD_FAILED_CLOSED)
+		result = EXITEM_ADD_FAILED_OVERWEIGHT;
+#endif
+	p.result = static_cast<uint8>(result);
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+}
+
+
+/// Notifies the client about finishing one side of the current trade.
+/// 00ec <who>.B (ZC_CONCLUDE_EXCHANGE_ITEM)
+/// who:
+///     0 = self
+///     1 = other player
+void clif_tradedeal_lock( map_session_data& sd, bool who ){
+	PACKET_ZC_CONCLUDE_EXCHANGE_ITEM packet{};
+
+	packet.packetType = HEADER_ZC_CONCLUDE_EXCHANGE_ITEM;
+	packet.who = who;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies the client about the trade being canceled.
+/// 00ee (ZC_CANCEL_EXCHANGE_ITEM)
+void clif_tradecancelled( const map_session_data& sd ){
+	PACKET_ZC_CANCEL_EXCHANGE_ITEM packet{};
+
+	packet.packetType = HEADER_ZC_CANCEL_EXCHANGE_ITEM;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Result of a trade.
+/// 00f0 <result>.B (ZC_EXEC_EXCHANGE_ITEM)
+/// result:
+///     0 = success
+///     1 = failure
+void clif_tradecompleted( const map_session_data& sd ){
+	PACKET_ZC_EXEC_EXCHANGE_ITEM packet{};
+
+	packet.packetType = HEADER_ZC_EXEC_EXCHANGE_ITEM;
+	packet.result = 0;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Resets the trade window on the send side.
+/// 00f1 (ZC_EXCHANGEITEM_UNDO)
+/// NOTE: Unknown purpose. Items are not removed until the window is
+///       refreshed (ex. by putting another item in there).
+void clif_tradeundo( const map_session_data& sd ){
+	PACKET_ZC_EXCHANGEITEM_UNDO packet{};
+
+	packet.packetType = HEADER_ZC_EXCHANGEITEM_UNDO;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Updates storage total amount.
+/// 00f2 <current count>.W <max count>.W (ZC_NOTIFY_STOREITEM_COUNTINFO)
+void clif_updatestorageamount( const map_session_data& sd, uint16 amount, uint16 max_amount ){
+	PACKET_ZC_NOTIFY_STOREITEM_COUNTINFO packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_STOREITEM_COUNTINFO;
+	packet.amount = amount;
+	packet.max_amount = max_amount;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies the client of an item being added to the storage.
+/// 00f4 <index>.W <amount>.L <nameid>.W <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W (ZC_ADD_ITEM_TO_STORE)
+/// 01c4 <index>.W <amount>.L <nameid>.W <type>.B <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W (ZC_ADD_ITEM_TO_STORE2)
+/// 0a0a <index>.W <amount>.L <nameid>.W <type>.B <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W { <option id>.W <option value>.W <option param>.B }*5 (ZC_ADD_ITEM_TO_STORE3)
+void clif_storageitemadded( const map_session_data* sd, const item* i, int32 index, int32 amount ){
+	nullpo_retv( sd );
+	nullpo_retv( i );
+
+	int32 fd = sd->fd;
+
+	if( !session_isActive( fd ) ){
+		return;
+	}
+
+	PACKET_ZC_ADD_ITEM_TO_STORE p = {};
+
+	p.packetType = HEADER_ZC_ADD_ITEM_TO_STORE; // Storage item added
+	p.index = client_storage_index( index ); // index
+	p.amount = amount; // amount
+	p.itemId = client_nameid( i->nameid ); // id
+#if PACKETVER >= 5
+	p.itemType = itemtype( i->nameid ); //type
+#endif
+	p.identified = i->identify; //identify flag
+	p.damaged = i->attribute; // attribute
+	p.refine = i->refine; //refine
+	clif_addcards( &p.slot, i );
+#if PACKETVER_MAIN_NUM >= 20140813 || PACKETVER_RE_NUM >= 20140402 || defined(PACKETVER_ZERO)
+	clif_add_random_options( p.option_data, *i );
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200723 || PACKETVER_ZERO_NUM >= 20221024
+	p.grade = i->enchantgrade;
+#endif
+#endif
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+
+/// Notifies the client of an item being deleted from the storage.
+/// 00f6 <index>.W <amount>.L (ZC_DELETE_ITEM_FROM_STORE)
+void clif_storageitemremoved( const map_session_data& sd, uint16 index, uint32 amount ){
+	PACKET_ZC_DELETE_ITEM_FROM_STORE packet{};
+
+	packet.packetType = HEADER_ZC_DELETE_ITEM_FROM_STORE;
+	packet.index = client_storage_index(index);
+	packet.amount = amount;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Closes storage.
+/// 00f8 (ZC_CLOSE_STORE)
+void clif_storageclose( const map_session_data& sd ){
+	PACKET_ZC_CLOSE_STORE packet{};
+
+	packet.packetType = HEADER_ZC_CLOSE_STORE;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies clients in an area of a player's souls.
+/// 01d0 <id>.L <amount>.W (ZC_SPIRITS)
+/// 01e1 <id>.L <amount>.W (ZC_SPIRITS2)
+/// 0b73 <id>.L <amount>.W (ZC_SOULENERGY)
+void clif_soulball( const map_session_data* sd, const block_list* target, enum send_target send_target ){
+#if PACKETVER_MAIN_NUM >= 20200414 || PACKETVER_RE_NUM >= 20200723 || PACKETVER_ZERO_NUM >= 20200506
+	PACKET_ZC_SOULENERGY p = {};
+
+	p.PacketType = HEADER_ZC_SOULENERGY;
+#else
+	PACKET_ZC_SPIRITS p = {};
+
+	p.PacketType = HEADER_ZC_SPIRITS;
+#endif
+
+	p.AID = sd->id;
+	p.num = sd->soulball;
+
+	clif_send( &p, sizeof( p ), target == nullptr ? sd : target, send_target );
+}
+
+
+/*==========================================
+ * Server tells 'sd' player client the abouts of 'dstsd' player
+ *------------------------------------------*/
+static void clif_getareachar_pc(map_session_data* sd,map_session_data* dstsd)
+{
+	block_list *d_bl;
+	int32 i;
+
+	if( dstsd->chatID ) {
+		chat_data* cd = map_id2cd( dstsd->chatID );
+
+		if( cd != nullptr && cd->usersd[0] == dstsd ){
+			clif_dispchat(*cd);
+		}
+	} else if( dstsd->state.vending )
+		clif_showvendingboard( *dstsd, SELF, sd );
+	else if( dstsd->state.buyingstore )
+		clif_buyingstore_entry( *dstsd, sd );
+
+	if(dstsd->spiritball > 0)

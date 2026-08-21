@@ -1,0 +1,500 @@
+	// Get the target equip mask
+	int32 position = sd->inventory.u.items_inventory[index].equipSwitch;
+
+	// Get the currently equipped item
+	int16 equippedItem = pc_checkequip( sd, position, true );
+
+	// No item equipped at the target
+	if( equippedItem == -1 ){
+		// Remove it from the equip switch
+		pc_equipswitch_remove( sd, index );
+
+		pc_equipitem( sd, index, position );
+
+		return position;
+	}else{
+		std::map<int32, int32> unequipped;
+		int32 unequipped_position = 0;
+
+		// Unequip all items that interfere
+		for( int32 i = 0; i < EQI_MAX; i++ ){
+			int32 unequip_index = sd->equip_index[i];
+
+			if( unequip_index >= 0 && position & equip_bitmask[i] ){
+				struct item* unequip_item = &sd->inventory.u.items_inventory[unequip_index];
+
+				// Store the unequipped index and position mask for later
+				unequipped[unequip_index] = unequip_item->equip;
+
+				// Keep the position for later
+				unequipped_position |= unequip_item->equip;
+
+				// Unequip the item
+				pc_unequipitem( sd, unequip_index, 0 );
+			}
+		}
+
+		int32 all_position = position | unequipped_position;
+
+		// Equip everything that is hit by the mask
+		for( int32 i = 0; i < EQI_MAX; i++ ){
+			int32 exchange_index = sd->equip_switch_index[i];
+
+			if( exchange_index >= 0 && all_position & equip_bitmask[i] ){
+				struct item* exchange_item = &sd->inventory.u.items_inventory[exchange_index];
+
+				// Store the target position
+				int32 exchange_position = exchange_item->equipSwitch;
+
+				// Remove the item from equip switch
+				pc_equipswitch_remove( sd, exchange_index );
+
+				// Equip the item at the destinated position
+				pc_equipitem( sd, exchange_index, exchange_position );
+			}
+		}
+
+		// Place all unequipped items into the equip switch window
+		for( std::pair<int32, int32> pair : unequipped ){
+			int32 unequipped_index = pair.first;
+			int32 unequipped_position = pair.second;
+
+			// Rebuild the index cache
+			for( int32 i = 0; i < EQI_MAX; i++ ){
+				if( unequipped_position & equip_bitmask[i] ){
+					sd->equip_switch_index[i] = unequipped_index;
+				}
+			}
+
+			// Set the correct position mask
+			sd->inventory.u.items_inventory[unequipped_index].equipSwitch = unequipped_position;
+
+			// Notify the client
+			clif_equipswitch_add( sd, unequipped_index, unequipped_position, ITEM_EQUIP_ACK_OK );
+		}
+
+		return all_position;
+	}
+}
+
+void pc_equipswitch_remove( map_session_data* sd, int32 index ){
+	struct item* item = &sd->inventory.u.items_inventory[index];
+
+	if( !item->equipSwitch ){
+		return;
+	}
+
+	for( int32 i = 0; i < EQI_MAX; i++ ){
+		// If a match is found
+		if( sd->equip_switch_index[i] == index ){
+			// Remove it from the slot
+			sd->equip_switch_index[i] = -1;
+		}
+	}
+
+	// Send out one packet for all slots using the current item's mask
+	clif_equipswitch_remove( sd, index, item->equipSwitch, false );
+
+	item->equipSwitch = 0;
+}
+
+/*==========================================
+ * Checking if player (sd) has an invalid item
+ * and is unequiped on map load (item_noequip)
+ *------------------------------------------*/
+void pc_checkitem(map_session_data *sd) {
+	int32 i, calc_flag = 0;
+	struct item* it;
+
+	nullpo_retv(sd);
+
+	if( sd->state.vending ) //Avoid reorganizing items when we are vending, as that leads to exploits (pointed out by End of Exam)
+		return;
+
+	pc_check_available_item(sd, ITMCHK_NONE); // Check for invalid(ated) items.
+
+	for( i = 0; i < MAX_INVENTORY; i++ ) {
+		it = &sd->inventory.u.items_inventory[i];
+
+		if( it->nameid == 0 )
+			continue;
+		if( !it->equip )
+			continue;
+		if( it->equip&~pc_equippoint(sd,i) ) {
+			pc_unequipitem(sd, i, 2);
+			calc_flag = 1;
+			continue;
+		}
+
+		if( !pc_has_permission(sd, PC_PERM_USE_ALL_EQUIPMENT) && !battle_config.allow_equip_restricted_item && itemdb_isNoEquip(sd->inventory_data[i], sd->m) ) {
+			pc_unequipitem(sd, i, 2);
+			calc_flag = 1;
+			continue;
+		}
+	}
+
+	for( i = 0; i < MAX_INVENTORY; i++ ) {
+		it = &sd->inventory.u.items_inventory[i];
+
+		if( it->nameid == 0 )
+			continue;
+		if( !it->equipSwitch )
+			continue;
+		if( it->equipSwitch&~pc_equippoint(sd,i) ||
+			( !pc_has_permission(sd, PC_PERM_USE_ALL_EQUIPMENT) && !battle_config.allow_equip_restricted_item && itemdb_isNoEquip(sd->inventory_data[i], sd->m) ) ){
+			
+			for( int32 j = 0; j < EQI_MAX; j++ ){
+				if( sd->equip_switch_index[j] == i ){
+					sd->equip_switch_index[j] = -1;
+				}
+			}
+
+			sd->inventory.u.items_inventory[i].equipSwitch = 0;
+
+			continue;
+		}
+	}
+
+	if( calc_flag && sd->state.active ) {
+		pc_checkallowskill(sd);
+		status_calc_pc(sd,SCO_NONE);
+	}
+}
+
+/*==========================================
+ * Checks for unavailable items and removes them.
+ * @param sd: Player data
+ * @param type Forced check:
+ *   1 - Inventory
+ *   2 - Cart
+ *   4 - Storage
+ *------------------------------------------*/
+void pc_check_available_item(map_session_data *sd, uint8 type)
+{
+	int32 i;
+	t_itemid nameid;
+	char output[256];
+
+	nullpo_retv(sd);
+
+	if (battle_config.item_check&ITMCHK_INVENTORY && type&ITMCHK_INVENTORY) { // Check for invalid(ated) items in inventory.
+		for(i = 0; i < MAX_INVENTORY; i++) {
+			nameid = sd->inventory.u.items_inventory[i].nameid;
+
+			if (!nameid)
+				continue;
+			if (!itemdb_available(nameid)) {
+				sprintf(output, msg_txt(sd, 709), nameid); // Item %u has been removed from your inventory.
+				clif_displaymessage(sd->fd, output);
+				ShowWarning("Removed invalid/disabled item (ID: %u, amount: %d) from inventory (char_id: %d).\n", nameid, sd->inventory.u.items_inventory[i].amount, sd->status.char_id);
+				pc_delitem(sd, i, sd->inventory.u.items_inventory[i].amount, 4, 0, LOG_TYPE_OTHER);
+				continue;
+			}
+			if (!sd->inventory.u.items_inventory[i].unique_id && !itemdb_isstackable(nameid))
+				sd->inventory.u.items_inventory[i].unique_id = pc_generate_unique_id(sd);
+		}
+	}
+
+	if (battle_config.item_check&ITMCHK_CART && type&ITMCHK_CART) { // Check for invalid(ated) items in cart.
+		for(i = 0; i < MAX_CART; i++) {
+			nameid = sd->cart.u.items_cart[i].nameid;
+
+			if (!nameid)
+				continue;
+			if (!itemdb_available(nameid)) {
+				sprintf(output, msg_txt(sd, 710), nameid); // Item %u has been removed from your cart.
+				clif_displaymessage(sd->fd, output);
+				ShowWarning("Removed invalid/disabled item (ID: %u, amount: %d) from cart (char_id: %d).\n", nameid, sd->cart.u.items_cart[i].amount, sd->status.char_id);
+				pc_cart_delitem(sd, i, sd->cart.u.items_cart[i].amount, 0, LOG_TYPE_OTHER);
+				continue;
+			}
+			if (!sd->cart.u.items_cart[i].unique_id && !itemdb_isstackable(nameid))
+				sd->cart.u.items_cart[i].unique_id = pc_generate_unique_id(sd);
+		}
+	}
+
+	if (battle_config.item_check&ITMCHK_STORAGE && type&ITMCHK_STORAGE) { // Check for invalid(ated) items in storage.
+		for(i = 0; i < sd->storage.max_amount; i++) {
+			nameid = sd->storage.u.items_storage[i].nameid;
+
+			if (!nameid)
+				continue;
+			if (!itemdb_available(nameid)) {
+				sprintf(output, msg_txt(sd, 711), nameid); // Item %u has been removed from your storage.
+				clif_displaymessage(sd->fd, output);
+				ShowWarning("Removed invalid/disabled item (ID: %u, amount: %d) from storage (char_id: %d).\n", nameid, sd->storage.u.items_storage[i].amount, sd->status.char_id);
+				storage_delitem(sd, &sd->storage, i, sd->storage.u.items_storage[i].amount);
+				continue;
+			}
+			if (!sd->storage.u.items_storage[i].unique_id && !itemdb_isstackable(nameid))
+				sd->storage.u.items_storage[i].unique_id = pc_generate_unique_id(sd);
+ 		}
+	}
+}
+
+/*==========================================
+ * Update PVP rank for sd1 in cmp to sd2
+ *------------------------------------------*/
+static int32 pc_calc_pvprank_sub(block_list *bl,va_list ap)
+{
+	map_session_data *sd1,*sd2;
+
+	sd1=(map_session_data *)bl;
+	sd2=va_arg(ap,map_session_data *);
+
+	if( pc_isinvisible(sd1) || pc_isinvisible(sd2) )
+	{// cannot register pvp rank for hidden GMs
+		return 0;
+	}
+
+	if( sd1->pvp_point > sd2->pvp_point )
+		sd2->pvp_rank++;
+	return 0;
+}
+/*==========================================
+ * Calculate new rank beetween all present players (map_foreachinallarea)
+ * and display result
+ *------------------------------------------*/
+int32 pc_calc_pvprank(map_session_data *sd)
+{
+	int32 old = sd->pvp_rank;
+	struct map_data *mapdata = map_getmapdata(sd->m);
+
+	sd->pvp_rank=1;
+	map_foreachinmap(pc_calc_pvprank_sub,sd->m,BL_PC,sd);
+	if(old!=sd->pvp_rank || sd->pvp_lastusers!=mapdata->users_pvp)
+		clif_pvpset(sd,sd->pvp_rank,sd->pvp_lastusers=mapdata->users_pvp,0);
+	return sd->pvp_rank;
+}
+/*==========================================
+ * Calculate next sd ranking calculation from config
+ *------------------------------------------*/
+TIMER_FUNC(pc_calc_pvprank_timer){
+	map_session_data *sd;
+
+	sd=map_id2sd(id);
+	if(sd==nullptr)
+		return 0;
+	sd->pvp_timer = INVALID_TIMER;
+
+	if( pc_isinvisible(sd) )
+	{// do not calculate the pvp rank for a hidden GM
+		return 0;
+	}
+
+	if( pc_calc_pvprank(sd) > 0 )
+		sd->pvp_timer = add_timer(gettick()+PVP_CALCRANK_INTERVAL,pc_calc_pvprank_timer,id,data);
+	return 0;
+}
+
+/*==========================================
+ * Checking if sd is married
+ * Return:
+ *	partner_id = yes
+ *	0 = no
+ *------------------------------------------*/
+int32 pc_ismarried( const map_session_data* sd )
+{
+	if(sd == nullptr)
+		return -1;
+	if(sd->status.partner_id > 0)
+		return sd->status.partner_id;
+	else
+		return 0;
+}
+/*==========================================
+ * Marry player sd to player dstsd
+ * Return:
+ *	false = fail
+ *	true = success
+ *------------------------------------------*/
+bool pc_marriage(map_session_data *sd,map_session_data *dstsd)
+{
+	if(sd == nullptr || dstsd == nullptr ||
+		sd->status.partner_id > 0 || dstsd->status.partner_id > 0 ||
+		(sd->class_&JOBL_BABY) || (dstsd->class_&JOBL_BABY))
+		return false;
+	sd->status.partner_id = dstsd->status.char_id;
+	dstsd->status.partner_id = sd->status.char_id;
+
+	achievement_update_objective(sd, AG_MARRY, 1, 1);
+	achievement_update_objective(dstsd, AG_MARRY, 1, 1);
+
+	return true;
+}
+
+/*==========================================
+ * Divorce sd from its partner
+ * Return:
+ *	false = fail
+ *	true  = success
+ *------------------------------------------*/
+bool pc_divorce(map_session_data *sd)
+{
+	map_session_data *p_sd;
+	int32 i;
+
+	if( sd == nullptr || !pc_ismarried(sd) )
+		return false;
+
+	if( !sd->status.partner_id )
+		return false; // Char is not married
+
+	if( (p_sd = map_charid2sd(sd->status.partner_id)) == nullptr )
+	{ // Lets char server do the divorce
+		if( chrif_divorce(sd->status.char_id, sd->status.partner_id) )
+			return false; // No char server connected
+
+		return true;
+	}
+
+	// Both players online, lets do the divorce manually
+	sd->status.partner_id = 0;
+	p_sd->status.partner_id = 0;
+	for( i = 0; i < MAX_INVENTORY; i++ )
+	{
+		if( sd->inventory.u.items_inventory[i].nameid == WEDDING_RING_M || sd->inventory.u.items_inventory[i].nameid == WEDDING_RING_F )
+			pc_delitem(sd, i, 1, 0, 0, LOG_TYPE_OTHER);
+		if( p_sd->inventory.u.items_inventory[i].nameid == WEDDING_RING_M || p_sd->inventory.u.items_inventory[i].nameid == WEDDING_RING_F )
+			pc_delitem(p_sd, i, 1, 0, 0, LOG_TYPE_OTHER);
+	}
+
+	clif_divorced( *sd, p_sd->status.name );
+	clif_divorced( *p_sd, sd->status.name );
+
+	return true;
+}
+
+/**
+ * Get the partner map_session_data of a player
+ * @param sd : the husband|wife session
+ * @return partner session or nullptr
+ */
+map_session_data* pc_get_partner(const map_session_data* sd ){
+	if (!sd || !pc_ismarried(sd))
+		return nullptr;
+	return map_charid2sd(sd->status.partner_id);
+}
+
+/**
+ * Get the father map_session_data of a player
+ * @param sd : the baby session
+ * @return father session or nullptr
+ */
+map_session_data* pc_get_father( const map_session_data* sd ){
+	if (!sd || !(sd->class_&JOBL_BABY) || !sd->status.father)
+		return nullptr;
+	return map_charid2sd(sd->status.father);
+}
+
+/**
+ * Get the mother map_session_data of a player
+ * @param sd : the baby session
+ * @return mother session or nullptr
+ */
+map_session_data* pc_get_mother( const map_session_data* sd ){
+	if (!sd || !(sd->class_&JOBL_BABY) || !sd->status.mother)
+		return nullptr;
+	return map_charid2sd(sd->status.mother);
+}
+
+/*==========================================
+ * Get sd children charid. (Need to be married)
+ *------------------------------------------*/
+map_session_data* pc_get_child(const map_session_data* sd )
+{
+	if (!sd || !pc_ismarried(sd) || !sd->status.child)
+		// charid2sd returns nullptr if not found
+		return nullptr;
+	return map_charid2sd(sd->status.child);
+}
+
+/*==========================================
+ * Set player sd to bleed. (losing hp and/or sp each diff_tick)
+ *------------------------------------------*/
+void pc_bleeding (map_session_data& sd, t_tick diff_tick)
+{
+	int32 hp = 0, sp = 0;
+
+	if( pc_isdead(&sd) )
+		return;
+
+	for (auto &it : sd.hp_loss) {
+		it.tick += diff_tick;
+		while (it.tick >= it.rate) {
+			hp += it.value;
+			it.tick -= it.rate;
+		}
+		if (hp >= sd.battle_status.hp)
+			hp = sd.battle_status.hp-1; //Script drains cannot kill you.
+	}
+
+	for (auto &it : sd.sp_loss) {
+		it.tick += diff_tick;
+		while (it.tick >= it.rate) {
+			sp += it.value;
+			it.tick -= it.rate;
+		}
+	}
+
+	if (hp > 0 || sp > 0)
+		status_zap(&sd, hp, sp);
+}
+
+//Character regen. Flag is used to know which types of regen can take place.
+//&1: HP regen
+//&2: SP regen
+void pc_regen (map_session_data& sd, t_tick diff_tick)
+{
+	int32 hp = 0, sp = 0;
+
+	for (auto &it : sd.hp_regen) {
+		it.tick += diff_tick;
+		while (it.tick >= it.rate) {
+			hp += it.value;
+			it.tick -= it.rate;
+		}
+	}
+
+	for (auto &it : sd.sp_regen) {
+		it.tick += diff_tick;
+		while (it.tick >= it.rate) {
+			sp += it.value;
+			it.tick -= it.rate;
+		}
+	}
+
+	for (auto &it : sd.percent_hp_regen) {
+		it.tick += diff_tick;
+		while (it.tick >= it.rate) {
+			hp += sd.status.max_hp * it.value / 100;
+			it.tick -= it.rate;
+		}
+	}
+
+	for (auto &it : sd.percent_sp_regen) {
+		it.tick += diff_tick;
+		while (it.tick >= it.rate) {
+			sp += sd.status.max_sp * it.value / 100;
+			it.tick -= it.rate;
+		}
+	}
+
+	if (hp > 0 || sp > 0)
+		status_heal(&sd, hp, sp, 0);
+}
+
+/*==========================================
+ * Memo player sd savepoint. (map,x,y)
+ *------------------------------------------*/
+void pc_setsavepoint(map_session_data *sd, int16 mapindex,int32 x,int32 y)
+{
+	nullpo_retv(sd);
+
+	safestrncpy( sd->status.save_point.map, mapindex_id2name( mapindex ), sizeof( sd->status.save_point.map ) );
+	sd->status.save_point.x = x;
+	sd->status.save_point.y = y;
+}
+
+/*==========================================
+ * Save 1 player data at autosave interval

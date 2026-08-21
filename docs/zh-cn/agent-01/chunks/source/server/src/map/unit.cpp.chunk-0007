@@ -1,0 +1,500 @@
+
+	ud = unit_bl2ud(bl);
+	nullpo_ret(ud);
+
+	ud->attackabletime = gettick() + status_get_amotion(bl);
+
+	if (ud->attacktimer == INVALID_TIMER)
+		return 1; // Nothing more to do.
+
+	delete_timer(ud->attacktimer, unit_attack_timer);
+	ud->attacktimer=add_timer(ud->attackabletime,unit_attack_timer,bl->id,0);
+
+	return 1;
+}
+
+/**
+ * Does a path_search to check if a position can be reached
+ * @param bl: Object to check path
+ * @param x: X coordinate that will be path searched
+ * @param y: Y coordinate that will be path searched
+ * @param easy: Easy(1) or Hard(0) path check (hard attempts to go around obstacles)
+ * @return true or false
+ */
+bool unit_can_reach_pos( const block_list* bl, int32 x, int32 y, int32 easy )
+{
+	nullpo_retr(false, bl);
+
+	if (bl->x == x && bl->y == y) // Same place
+		return true;
+
+	return path_search(nullptr,bl->m,bl->x,bl->y,x,y,easy,CELL_CHKNOREACH);
+}
+
+/**
+ * Does a path_search to check if a unit can be reached
+ * @param bl: Object to check path
+ * @param tbl: Target to be checked for available path
+ * @param range: The number of cells away from bl that the path should be checked
+ * @param easy: Easy(1) or Hard(0) path check (hard attempts to go around obstacles)
+ * @param x: Pointer storing a valid X coordinate around tbl that can be reached
+ * @param y: Pointer storing a valid Y coordinate around tbl that can be reached
+ * @return true or false
+ */
+bool unit_can_reach_bl( const block_list* bl, const block_list* tbl, int32 range, int32 easy, int16* x, int16* y )
+{
+	struct walkpath_data wpd;
+	int16 dx, dy;
+
+	nullpo_retr(false, bl);
+	nullpo_retr(false, tbl);
+
+	if( bl->m != tbl->m)
+		return false;
+
+	if( bl->x == tbl->x && bl->y == tbl->y )
+		return true;
+
+	if(range > 0 && !check_distance_bl(bl, tbl, range))
+		return false;
+
+	// It judges whether it can adjoin or not.
+	dx = tbl->x - bl->x;
+	dy = tbl->y - bl->y;
+	dx = (dx > 0) ? 1 : ((dx < 0) ? -1 : 0);
+	dy = (dy > 0) ? 1 : ((dy < 0) ? -1 : 0);
+
+	if (map_getcell(tbl->m,tbl->x-dx,tbl->y-dy,CELL_CHKNOPASS)) { // Look for a suitable cell to place in.
+		int32 i;
+
+		for(i = 0; i < 8 && map_getcell(tbl->m,tbl->x-dirx[i],tbl->y-diry[i],CELL_CHKNOPASS); i++);
+
+		if (i == 8)
+			return false; // No valid cells.
+
+		dx = dirx[i];
+		dy = diry[i];
+	}
+
+	if (x)
+		*x = tbl->x-dx;
+
+	if (y)
+		*y = tbl->y-dy;
+
+	if (!path_search(&wpd,bl->m,bl->x,bl->y,tbl->x-dx,tbl->y-dy,easy,CELL_CHKNOREACH))
+		return false;
+
+#ifdef OFFICIAL_WALKPATH
+	if( bl->type != BL_NPC // If type is a NPC, please disregard.
+		&& wpd.path_len > 14 // Official number of walkable cells is 14 if and only if there is an obstacle between. [malufett]
+		&& !path_search_long(nullptr, bl->m, bl->x, bl->y, tbl->x-dx, tbl->y-dy, CELL_CHKNOPASS) ) // Check if there is an obstacle between
+			return false;
+#endif
+
+	return true;
+}
+
+/**
+ * Calculates position of Pet/Mercenary/Homunculus/Elemental
+ * @param bl: Object to calculate position
+ * @param tx: X coordinate to go to
+ * @param ty: Y coordinate to go to
+ * @param dir: Direction which to be 2 cells from master's position
+ * @return Success(0); Fail(1);
+ */
+int32 unit_calc_pos(block_list *bl, int32 tx, int32 ty, uint8 dir)
+{
+	int32 dx, dy, x, y;
+	struct unit_data *ud = unit_bl2ud(bl);
+
+	nullpo_ret(ud);
+
+	if(dir >= DIR_MAX || dir <= DIR_CENTER)
+		return 1;
+
+	ud->to_x = tx;
+	ud->to_y = ty;
+
+	// 2 cells from Master Position
+	dx = -dirx[dir] * 2;
+	dy = -diry[dir] * 2;
+	x = tx + dx;
+	y = ty + dy;
+
+	if( !unit_can_reach_pos(bl, x, y, 0) ) {
+		if( dx > 0 )
+			x--;
+		else if( dx < 0 )
+			x++;
+
+		if( dy > 0 )
+			y--;
+		else if( dy < 0 )
+			y++;
+
+		if( !unit_can_reach_pos(bl, x, y, 0) ) {
+			int32 i;
+
+			for( i = 0; i < 12; i++ ) {
+				int32 k = rnd_value<int32>(DIR_NORTH, DIR_NORTHEAST); // Pick a Random Dir
+
+				dx = -dirx[k] * 2;
+				dy = -diry[k] * 2;
+				x = tx + dx;
+				y = ty + dy;
+
+				if( unit_can_reach_pos(bl, x, y, 0) )
+					break;
+				else {
+					if( dx > 0 )
+						x--;
+					else if( dx < 0 )
+						x++;
+
+					if( dy > 0 )
+						y--;
+					else if( dy < 0 )
+						y++;
+
+					if( unit_can_reach_pos(bl, x, y, 0) )
+						break;
+				}
+			}
+
+			if( i == 12 ) {
+				x = tx; y = tx; // Exactly Master Position
+
+				if( !unit_can_reach_pos(bl, x, y, 0) )
+					return 1;
+			}
+		}
+	}
+
+	ud->to_x = x;
+	ud->to_y = y;
+
+	return 0;
+}
+
+/**
+ * Function timer to continuously attack
+ * @param src: Object to continuously attack
+ * @param tid: Timer ID
+ * @param tick: Current tick
+ * @return Attackable(1); Unattackable(0);
+ */
+static int32 unit_attack_timer_sub(block_list* src, int32 tid, t_tick tick)
+{
+	block_list *target;
+	struct unit_data *ud;
+	map_session_data *sd = nullptr;
+	mob_data *md = nullptr;
+	int32 range;
+
+	if( (ud = unit_bl2ud(src)) == nullptr )
+		return 0;
+
+	if( ud->attacktimer != tid ) {
+		ShowError("unit_attack_timer %d != %d\n",ud->attacktimer,tid);
+		return 0;
+	}
+
+	sd = BL_CAST(BL_PC, src);
+	md = BL_CAST(BL_MOB, src);
+
+	// Make sure attacktimer is removed before doing anything else
+	ud->attacktimer = INVALID_TIMER;
+
+	// Note: Officially there is no such thing as an attack timer. All actions are driven by the client or the AI.
+	// We use the continuous attack timers to have accurate attack timings that don't depend on the AI interval.
+	// However, for a clean implementation we still should channel through the whole AI code so the same rules
+	// apply as usual and we don't need to code extra rules. Currently we resolved this only for monsters.
+	// We don't want this to trigger on direct calls of the timer function as that should just execute the attack.
+	if (md != nullptr && tid != INVALID_TIMER)
+		return mob_ai_sub_hard_attacktimer(*md, tick);
+
+	target = map_id2bl(ud->target);
+
+	if( src == nullptr || src->prev == nullptr || target==nullptr || target->prev == nullptr )
+		return 0;
+
+	if( status_isdead(*src) || status_isdead(*target) ||
+			battle_check_target(src,target,BCT_ENEMY) <= 0 || !status_check_skilluse(src, target, 0, 0)
+#ifdef OFFICIAL_WALKPATH
+	   || !path_search_long(nullptr, src->m, src->x, src->y, target->x, target->y, CELL_CHKWALL)
+#endif
+	   || !unit_can_attack(src, target->id) )
+		return 0; // Can't attack under these conditions
+
+	if( ud->skilltimer != INVALID_TIMER && !(sd && pc_checkskill(sd,SA_FREECAST) > 0) )
+		return 0; // Can't attack while casting
+
+	if( !battle_config.sdelay_attack_enable && DIFF_TICK(ud->canact_tick,tick) > 0 && !(sd && pc_checkskill(sd,SA_FREECAST) > 0) ) {
+		// Attacking when under cast delay has restrictions:
+		if( tid == INVALID_TIMER ) { // Requested attack.
+			if(sd)
+				clif_skill_fail( *sd, 1, USESKILL_FAIL_SKILLINTERVAL );
+
+			return 0;
+		}
+
+		// Otherwise, we are in a combo-attack, delay this until your canact time is over. [Skotlex]
+		if( ud->state.attack_continue ) {
+			if( DIFF_TICK(ud->canact_tick, ud->attackabletime) > 0 )
+				ud->attackabletime = ud->canact_tick;
+
+			ud->attacktimer=add_timer(ud->attackabletime,unit_attack_timer,src->id,0);
+		}
+
+		return 1;
+	}
+
+	status_data* sstatus = status_get_status_data(*src);
+	range = sstatus->rhw.range;
+
+	if( (unit_is_walking(target) || ud->state.step_attack)
+		&& (target->type == BL_PC || !map_getcell(target->m,target->x,target->y,CELL_CHKICEWALL)) )
+		range++; // Extra range when chasing (does not apply to mobs locked in an icewall)
+
+	if(sd && !check_distance_client_bl(src,target,range)) {
+		// Player tries to attack but target is too far, notify client
+		clif_movetoattack( *sd, *target );
+		return 1;
+	} else if(md && !check_distance_bl(src,target,range)) {
+		// Monster: Chase if required
+		unit_walktobl(src,target,ud->chaserange,ud->state.walk_easy|2);
+		return 1;
+	}
+
+	if( !battle_check_range(src,target,range) ) {
+		// Within range, but no direct line of attack
+		// This code can usually only be reached if OFFICIAL_WALKPATH is disabled
+		if (ud->state.attack_continue && ud->chaserange > 1) {
+			ud->chaserange = std::max(1, ud->chaserange - 2);
+
+			// Walk closer / around the obstacle and start attacking once you are in range
+			return unit_walktobl(src,target,ud->chaserange,ud->state.walk_easy|2);
+		}
+		// Can't attack even though next to the target? Giving up here.
+		return 0;
+	}
+
+	// Sync packet only for players.
+	// Non-players use the sync packet on the walk timer. [Skotlex]
+	if (tid == INVALID_TIMER && sd)
+		clif_fixpos( *src );
+
+	FreeBlockLock freeLock;
+
+	if( DIFF_TICK(ud->attackabletime,tick) <= 0 ) {
+		if (battle_config.attack_direction_change && (src->type&battle_config.attack_direction_change))
+			unit_setdir(src, map_calc_dir(src, target->x, target->y), false);
+
+		if(ud->walktimer != INVALID_TIMER)
+			unit_stop_walking( src, USW_FIXPOS );
+
+		if(md) {
+			if (status_has_mode(sstatus,MD_ASSIST) && DIFF_TICK(tick, md->last_linktime) >= MIN_MOBLINKTIME) { 
+				// Link monsters nearby [Skotlex]
+				md->last_linktime = tick;
+				map_foreachinshootrange(mob_linksearch, src, battle_config.assist_range, BL_MOB, md->mob_id, target->id, tick);
+			}
+		}
+
+		if (src->type == BL_PET && pet_attackskill((TBL_PET*)src, target->id)) {
+			return 1;
+		}
+
+		ud->attacktarget_lv = battle_weapon_attack(src,target,tick,0);
+
+		if(sd && sd->status.pet_id > 0 && sd->pd && battle_config.pet_attack_support)
+			pet_target_check(sd->pd,target,0);
+
+		/**
+		 * Applied when you're unable to attack (e.g. out of ammo)
+		 * We should stop here otherwise timer keeps on and this happens endlessly
+		 */
+		if (ud->attacktarget_lv == ATK_NONE) {
+			return 1;
+		}
+
+		unit_set_attackdelay(*src, tick, DELAY_EVENT_ATTACK);
+
+		// Only reset skill_id here if no skilltimer is currently ongoing
+		if (ud->skilltimer == INVALID_TIMER)
+			ud->skill_id = 0;
+
+		// You can't move during your attack motion
+		if (src->type&battle_config.attack_walk_delay)
+			unit_set_walkdelay(src, tick, sstatus->amotion, 1);
+	}
+
+	if (ud->state.attack_continue && !status_isdead(*src)) {
+		if (src->type == BL_PC && battle_config.idletime_option&IDLE_ATTACK)
+			((TBL_PC*)src)->idletime = last_tick;
+
+		ud->attacktimer = add_timer(ud->attackabletime,unit_attack_timer,src->id,0);
+	}
+
+	if( sd && battle_config.prevent_logout_trigger&PLT_ATTACK )
+		sd->canlog_tick = gettick();
+
+	return 1;
+}
+
+/**
+ * Timer function to cancel attacking if unit has become unattackable
+ * @param tid: Timer ID
+ * @param tick: Current tick
+ * @param id: Object to cancel attack if applicable
+ * @param data: Data passed from timer call
+ * @return 0
+ */
+static TIMER_FUNC(unit_attack_timer){
+	block_list *bl;
+
+	bl = map_id2bl(id);
+
+	if (bl != nullptr) {
+		// Execute attack
+		if (unit_attack_timer_sub(bl, tid, tick) == 0)
+			unit_unattackable(bl);
+	}
+
+	return 0;
+}
+
+/**
+ * Determines whether a player can attack based on status changes
+ *  Why not use status_check_skilluse?
+ *  "src MAY be null to indicate we shouldn't check it, this is a ground-based skill attack."
+ *  Even ground-based attacks should be blocked by these statuses
+ * Called from unit_attack and unit_attack_timer_sub
+ * @retval true Can attack
+ **/
+bool unit_can_attack( const block_list* bl, int32 target_id ) {
+	nullpo_retr(false, bl);
+
+	if (bl->type == BL_PC) {
+		const map_session_data* sd = static_cast<const map_session_data*>(bl);
+
+		if (sd && ((sd->state.block_action & PCBLOCK_ATTACK) || pc_isridingwug(sd)))
+			return false;
+	}
+
+	const status_change *sc;
+
+	if (!(sc = status_get_sc(bl)))
+		return true;
+
+	if (sc->cant.attack || (sc->getSCE(SC_VOICEOFSIREN) && sc->getSCE(SC_VOICEOFSIREN)->val2 == target_id))
+		return false;
+
+	if (bl->type != BL_PC && sc->hasSCE(SC_WINKCHARM) && sc->getSCE(SC_WINKCHARM)->val2 == target_id)
+		return false;
+
+	return true;
+}
+
+/**
+ * Cancels a skill's cast
+ * @param bl: Object to cancel cast
+ * @param type: Cancel check flag
+ *	&1: Cancel skill stored in sd->skill_id_old instead
+ *	&2: Cancel only if skill is cancellable
+ * @return Success(1); Fail(0);
+ */
+int32 unit_skillcastcancel(block_list *bl, char type)
+{
+	map_session_data *sd = nullptr;
+	struct unit_data *ud = unit_bl2ud( bl);
+	t_tick tick = gettick();
+	int32 ret = 0, skill_id;
+
+	nullpo_ret(bl);
+
+	if (!ud || ud->skilltimer == INVALID_TIMER)
+		return 0; // Nothing to cancel.
+
+	sd = BL_CAST(BL_PC, bl);
+
+	if (type&2) { // See if it can be cancelled.
+		if (!ud->state.skillcastcancel)
+			return 0;
+
+		if (sd && (sd->special_state.no_castcancel2 ||
+			((sd->sc.getSCE(SC_UNLIMITEDHUMMINGVOICE) || sd->special_state.no_castcancel) && !map_flag_gvg2(bl->m) && !map_getmapflag(bl->m, MF_BATTLEGROUND)))) // fixed flags being read the wrong way around [blackhole89]
+			return 0;
+	}
+
+	ud->canact_tick = tick;
+
+	if(type&1 && sd)
+		skill_id = sd->skill_id_old;
+	else
+		skill_id = ud->skill_id;
+
+	if (skill_get_inf(skill_id) & INF_GROUND_SKILL)
+		ret=delete_timer( ud->skilltimer, skill_castend_pos );
+	else
+		ret=delete_timer( ud->skilltimer, skill_castend_id );
+
+	if(ret < 0)
+		ShowError("delete timer error : skill_id : %d\n",ret);
+
+	ud->skilltimer = INVALID_TIMER;
+
+	if( sd && (pc_checkskill(sd,SA_FREECAST) > 0 || skill_id == LG_EXEEDBREAK) )
+		status_calc_bl(sd, { SCB_SPEED, SCB_ASPD });
+
+	if( sd ) {
+		switch( skill_id ) {
+			case CG_ARROWVULCAN:
+				sd->canequip_tick = tick;
+				break;
+		}
+	}
+
+	unit_set_attackdelay(*bl, tick, DELAY_EVENT_CASTCANCEL);
+
+	if (bl->type == BL_MOB) {
+		mob_data& md = reinterpret_cast<mob_data&>(*bl);
+		md.skill_idx = -1;
+	}
+
+	clif_skillcastcancel( *bl );
+
+	return 1;
+}
+
+/**
+ * Initialized data on a unit
+ * @param bl: Object to initialize data on
+ */
+void unit_dataset(block_list *bl)
+{
+	struct unit_data *ud;
+
+	nullpo_retv(ud = unit_bl2ud(bl));
+
+	memset( ud, 0, sizeof( struct unit_data) );
+	ud->bl             = bl;
+	ud->walktimer      = INVALID_TIMER;
+	ud->skilltimer     = INVALID_TIMER;
+	ud->attacktimer    = INVALID_TIMER;
+	ud->steptimer      = INVALID_TIMER;
+	t_tick tick = gettick();
+	ud->attackabletime = tick;
+	ud->canact_tick = tick;
+	ud->canmove_tick = tick;
+	ud->endure_tick = tick;
+	ud->dmg_tick = 0;
+	ud->sx = 8;
+	ud->sy = 8;
+	ud->hatEffects = {};
+}
+
+/**
+ * Returns the remaining max amount of skill units per object for a specific skill
+ * @param ud: Unit data

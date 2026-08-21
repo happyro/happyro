@@ -1,0 +1,500 @@
+			break;
+
+		case NpcStore.Type.SELL: {
+			const InventoryVersion = UIManager.getComponent('Inventory').name;
+			for (i = 0, count = items.length; i < count; ++i) {
+				it = Inventory.getUI().getItemByIndex(items[i].index);
+
+				const condition =
+					InventoryVersion !== 'InventoryV0'
+						? it && (!Inventory.getUI().npcsalelock || it.PlaceETCTab < 1)
+						: it;
+
+				if (condition) {
+					item = Object.assign({}, it);
+					item.price = items[i].price;
+					item.overchargeprice = items[i].overchargeprice;
+					item.count = 'count' in item ? item.count : 1;
+
+					out = Object.assign({}, item);
+					out.count = 0;
+
+					addItem(content, item);
+
+					_input[item.index] = item;
+					_output[item.index] = out;
+				}
+			}
+			break;
+		}
+	}
+};
+
+NpcStore.setPriceLimit = function setPriceLimit(price) {
+	const prettyPrice = prettyZeny(price);
+	const text = DB.getMessage(1735);
+	const result = text.replace('%s', prettyPrice);
+	const root = NpcStore.getRoot();
+	const priceLimit = root.querySelector('.priceLimit');
+	if (priceLimit) {
+		priceLimit.textContent = result;
+	}
+};
+
+/**
+ * Submit data to send items
+ */
+NpcStore.submit = function submit() {
+	const output = [];
+	const count = _output.length;
+
+	for (let i = 0; i < count; ++i) {
+		if (_output[i] && _output[i].count) {
+			output.push(_output[i]);
+		}
+	}
+
+	NpcStore.onSubmit(output);
+
+	const root = NpcStore.getRoot();
+	const outputContent = root.querySelector('.OutputWindow .content');
+	if (outputContent) {
+		outputContent.innerHTML = '';
+	}
+	const resultP = root.querySelector('.totalP .resultP');
+	if (resultP) {
+		resultP.textContent = '0';
+	}
+
+	for (let i = 0; i < count; ++i) {
+		if (_output[i] && _output[i].count) {
+			_output[i].count = 0;
+		}
+	}
+};
+
+/**
+ * Calculate the cost of all items in the output box
+ *
+ * @return {number}
+ */
+NpcStore.calculateCost = function calculateCost() {
+	let i, total;
+
+	total = 0;
+	const count = _output.length;
+
+	for (i = 0; i < count; ++i) {
+		if (_output[i]) {
+			total += (_output[i].discountprice || _output[i].overchargeprice || _output[i].price) * _output[i].count;
+		}
+	}
+
+	const root = NpcStore.getRoot();
+	root.querySelectorAll('.total .result').forEach(r => {
+		r.textContent = prettyZeny(total);
+	});
+	root.querySelectorAll('.totalP .resultP').forEach(r => {
+		r.textContent = prettyZeny(total);
+	});
+
+	if (_type === NpcStore.Type.BARTER_MARKET) {
+		_hideAll(root, '.total');
+	}
+
+	return total;
+};
+
+/**
+ * Calculate the total weight of all items in the output box
+ *
+ * @return {number}
+ */
+NpcStore.calculateWeight = function calculateWeight() {
+	let totalWeight = 0;
+
+	_output.forEach(item => {
+		if (item && item.count > 0 && item.total_weight) {
+			totalWeight += item.total_weight;
+		}
+	});
+
+	return totalWeight;
+};
+
+/**
+ * Prettify zeny : 1000000 -> 1,000,000
+ *
+ * @param {number} zeny
+ * @param {boolean} use color
+ * @return {string}
+ */
+function prettyZeny(val, useStyle) {
+	const list = val.toString().split('');
+	let i;
+	const count = list.length;
+	let str = '';
+
+	for (i = 0; i < count; i++) {
+		str = list[count - i - 1] + (i && i % 3 === 0 ? ',' : '') + str;
+	}
+
+	if (useStyle) {
+		const style = [
+			'color:#000000; text-shadow:1px 0px #00ffff;',
+			'color:#0000ff; text-shadow:1px 0px #ce00ce;',
+			'color:#0000ff; text-shadow:1px 0px #00ffff;',
+			'color:#ff0000; text-shadow:1px 0px #ffff00;',
+			'color:#ff18ff;',
+			'color:#0000ff;',
+			'color:#000000; text-shadow:1px 0px #00ff00;',
+			'color:#ff0000;',
+			'color:#000000; text-shadow:1px 0px #cece63;',
+			'color:#ff0000; text-shadow:1px 0px #ff007b;'
+		];
+		str = `<span style="${style[count - 1]}">${str}</span>`;
+	}
+
+	return str;
+}
+
+/**
+ * Add item to the list
+ *
+ * @param {Element} content element
+ * @param {Item} item info
+ */
+function addItem(content, item) {
+	const it = DB.getItemInfo(item.ITID);
+	const currencyit = DB.getItemInfo(item.currencyITID);
+	const element = content.querySelector(`.item[data-index="${item.index}"]`);
+	let price;
+	let amountText;
+
+	let currency_item;
+	if (_type === NpcStore.Type.BARTER_MARKET) {
+		currency_item = { ...item };
+		currency_item.ITID = item.currencyITID;
+	}
+
+	if (item.count === 0) {
+		if (element) {
+			element.remove();
+		}
+		return;
+	}
+
+	if (element) {
+		amountText =
+			_type === NpcStore.Type.BUYING_STORE && !content.classList.contains('contentAvailable') ? ' ea.' : '';
+		const amountEl = element.querySelector('.amount');
+		if (amountEl) {
+			amountEl.textContent = isFinite(item.count) ? item.count + amountText : '';
+		}
+		return;
+	}
+
+	if (
+		!content.classList.contains('contentAvailable') &&
+		_type !== NpcStore.Type.BARTER_MARKET &&
+		_type !== NpcStore.Type.BARTER_MARKET_EXTENDED
+	) {
+		price = prettyZeny(item.price, _type === NpcStore.Type.VENDING_STORE || _type === NpcStore.Type.BUYING_STORE);
+
+		if ('discountprice' in item && item.price !== item.discountprice) {
+			price += ' -> ' + prettyZeny(item.discountprice);
+		} else if ('overchargeprice' in item && item.price !== item.overchargeprice) {
+			price += ' -> ' + prettyZeny(item.overchargeprice);
+		}
+
+		const buyingClass = _type === NpcStore.Type.BUYING_STORE ? ' amountBuying' : '';
+		amountText = _type === NpcStore.Type.BUYING_STORE ? ' ea.' : '';
+		const html =
+			`<div class="item" draggable="true" data-index="${item.index}">` +
+			`<div class="icon"></div>` +
+			`<div class="amount${buyingClass}">` +
+			(isFinite(item.count) ? item.count : _type === NpcStore.Type.BUYING_STORE ? 0 : '') +
+			amountText +
+			`</div>` +
+			`<div class="name">${_escapeHTML(DB.getItemName(item))}</div>` +
+			`<div class="price">${price}</div>` +
+			`<div class="unity">Z</div>` +
+			`</div>`;
+		content.insertAdjacentHTML('beforeend', html);
+	} else if (_type === NpcStore.Type.BARTER_MARKET) {
+		const html =
+			`<div class="item" draggable="true" data-index="${item.index}"` +
+			` data-weight="${item.weight}"` +
+			` data-location="${item.location}"` +
+			` data-viewSprite="${item.viewSprite}">` +
+			`<div class="icon"></div>` +
+			`<div class="amount">${isFinite(item.count) ? item.count : ''}</div>` +
+			`<div class="name">${_escapeHTML(DB.getItemName(item))}</div>` +
+			`<div class="currency_icon" data-item="${item.currencyITID}"></div>` +
+			`<div class="currency_amount">${item.currencyamount}</div>` +
+			`<div class="currency_nameOverlay">${_escapeHTML(DB.getItemName(currency_item))} ${item.currencyamount} ea</div>` +
+			`</div>`;
+		content.insertAdjacentHTML('beforeend', html);
+	} else if (_type === NpcStore.Type.BARTER_MARKET_EXTENDED) {
+		let currencySlotsHTML = '';
+		let currencyOverlay = '';
+		if (item.currencyList && item.currencyList.length > 0) {
+			for (let i = 0; i < item.currencyList.length; i++) {
+				const currency = item.currencyList[i];
+				const currencyItem = DB.getItemInfo(currency.ITID);
+
+				currencySlotsHTML +=
+					`<div class="currency_slot" data-item="${currency.ITID}">` +
+					`<div class="expanded_currency_holder">` +
+					`<div class="expanded_currency_icon"></div>` +
+					`</div>` +
+					`<div class="expanded_currency_amount">${currency.amount}</div>` +
+					(currency.refine_level > 0
+						? `<div class="expanded_currency_refinelvl">+${currency.refine_level}</div>`
+						: '') +
+					`</div>`;
+
+				currencyOverlay += `${_escapeHTML(currencyItem.identifiedDisplayName)} ${currency.amount} ea<br>`;
+			}
+		}
+		const html =
+			`<div class="item expanded-barter" draggable="true" data-index="${item.index}"` +
+			` data-weight="${item.weight}"` +
+			` data-location="${item.location}"` +
+			` data-viewSprite="${item.viewSprite}">` +
+			`<div class="expanded_currency_holder">` +
+			`<div class="icon"></div>` +
+			`</div>` +
+			`<div class="amount">${isFinite(item.count) ? item.count : ''}</div>` +
+			`<div class="name">${_escapeHTML(DB.getItemName(item))}</div>` +
+			`<div class="currency_section">${currencySlotsHTML}</div>` +
+			`<div class="expanded_price">${item.price}z</div>` +
+			`<div class="expanded_currency_nameOverlay">${currencyOverlay}</div>` +
+			`</div>`;
+		content.insertAdjacentHTML('beforeend', html);
+
+		if (item.currencyList && item.currencyList.length > 0) {
+			for (let i = 0; i < item.currencyList.length; i++) {
+				const currency = item.currencyList[i];
+				const currencyItem = DB.getItemInfo(currency.ITID);
+
+				Client.loadFile(
+					DB.INTERFACE_PATH + 'item/' + currencyItem.identifiedResourceName + '.bmp',
+					function (data) {
+						const icons = content.querySelectorAll(
+							`.currency_slot[data-item="${currency.ITID}"] .expanded_currency_icon`
+						);
+						icons.forEach(icon => {
+							icon.style.backgroundImage = `url(${data})`;
+						});
+					}
+				);
+			}
+		}
+	} else {
+		const html =
+			`<div class="item itemAvailable" draggable="true" data-index="${item.index}">` +
+			`<div class="icon"></div>` +
+			`<div class="amount">${isFinite(item.count) ? item.count : ''}</div>` +
+			`<div class="nameOverlay">${_escapeHTML(DB.getItemName(item))}</div>` +
+			`</div>`;
+		content.insertAdjacentHTML('beforeend', html);
+	}
+
+	Client.loadFile(
+		DB.INTERFACE_PATH +
+			'item/' +
+			(item.IsIdentified ? it.identifiedResourceName : it.unidentifiedResourceName) +
+			'.bmp',
+		function (data) {
+			const icons = content.querySelectorAll(`.item[data-index="${item.index}"] .icon`);
+			icons.forEach(icon => {
+				icon.style.backgroundImage = `url(${data})`;
+			});
+		}
+	);
+
+	Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/itemwin_mid.bmp', function (data) {
+		content.querySelectorAll('.expanded_currency_holder').forEach(holder => {
+			holder.style.backgroundImage = `url(${data})`;
+		});
+	});
+
+	Client.loadFile(
+		DB.INTERFACE_PATH +
+			'item/' +
+			(item.IsIdentified ? currencyit.identifiedResourceName : currencyit.unidentifiedResourceName) +
+			'.bmp',
+		function (data) {
+			const icons = content.querySelectorAll(`.item[data-index="${item.index}"] .currency_icon`);
+			icons.forEach(icon => {
+				icon.style.backgroundImage = `url(${data})`;
+			});
+		}
+	);
+}
+
+/**
+ * Resize the content
+ *
+ * @param {Element} content
+ * @param {number} height
+ */
+function resize(content, height) {
+	height = Math.min(Math.max(height, 2), 9);
+	content.style.height = `${height * 32}px`;
+}
+
+/**
+ * Resizing window
+ *
+ * @param {Element} ui element
+ */
+function onResize(ui) {
+	const top = ui.offsetTop;
+	const content = ui.querySelector('.content');
+	let lastHeight = 0;
+
+	function resizing() {
+		const extraY = 31 + 19 - 30;
+		let h = Math.floor((Mouse.screen.y - top - extraY) / 32);
+
+		h = Math.min(Math.max(h, 2), 9);
+		if (h === lastHeight) {
+			return;
+		}
+
+		resize(content, h);
+		lastHeight = h;
+	}
+
+	const interval = setInterval(resizing, 30);
+
+	function onMouseUp(event) {
+		if (event.which === 1) {
+			clearInterval(interval);
+			window.removeEventListener('mouseup', onMouseUp);
+		}
+	}
+
+	window.addEventListener('mouseup', onMouseUp);
+}
+
+/**
+ * Transfer item from input to output (or the inverse)
+ */
+const transferItem = (function () {
+	const tmpItem = {
+		ITID: 0,
+		count: 0,
+		price: 0,
+		index: 0
+	};
+
+	const updateTmpItem = (inputItem, outputItem) => {
+		tmpItem.ITID = inputItem.ITID;
+		tmpItem.count = inputItem.count - outputItem.count;
+		tmpItem.price = inputItem.price;
+		tmpItem.index = inputItem.index;
+	};
+
+	return function (fromContent, toContent, isAdding, index, count) {
+		const inputItem = _input[index];
+		const outputItem = _output[index];
+		const root = NpcStore.getRoot();
+
+		if (isAdding) {
+			if (
+				(_type === NpcStore.Type.BUY ||
+					_type === NpcStore.Type.VENDING_STORE ||
+					_type === NpcStore.Type.MARKETSHOP) &&
+				NpcStore.calculateCost() + (inputItem.discountprice || inputItem.price) * count > Session.zeny
+			) {
+				ChatBox.addText(DB.getMessage(55), ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+				return;
+			}
+
+			const originalCount = outputItem.count;
+			outputItem.count = Math.min(outputItem.count + count, inputItem.count);
+
+			if (_type === NpcStore.Type.BARTER_MARKET) {
+				const inputCurrency = root.querySelector(`.InputWindow .item[data-index="${index}"]`);
+				const inputCurrencyDiv = root.querySelector(
+					`.InputWindow .item[data-index="${index}"] .currency_amount`
+				);
+				const currencyItemWeight = parseInt(inputCurrency.getAttribute('data-weight'), 10);
+				const currencyAmount = parseInt(inputCurrencyDiv.textContent, 10);
+				const additionalWeight = currencyItemWeight * (outputItem.count - originalCount);
+				const expectedWeight = Session.Entity.weight + NpcStore.calculateWeight() + additionalWeight;
+
+				if (expectedWeight > Session.Entity.max_weight) {
+					ChatBox.addText(DB.getMessage(56), ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+					outputItem.count -= count;
+					return;
+				}
+
+				outputItem.total_weight = currencyItemWeight * outputItem.count;
+
+				updateTmpItem(inputItem, outputItem);
+				addItem(fromContent, tmpItem);
+				addItem(toContent, outputItem);
+
+				const outputCurrencyDiv = root.querySelector(
+					`.OutputWindow .item[data-index="${index}"] .currency_amount`
+				);
+				const currencyItemDiv = root.querySelector(`.OutputWindow .item[data-index="${index}"] .currency_icon`);
+				const currencyItem = parseInt(currencyItemDiv.getAttribute('data-item'), 10);
+				const currencyTotal = currencyAmount * outputItem.count;
+
+				outputCurrencyDiv.textContent = currencyTotal;
+				outputItem.shopIndex = index;
+				outputItem.matcurrency = currencyItem;
+				outputItem.matcurrencyamount = currencyTotal;
+			} else {
+				updateTmpItem(inputItem, outputItem);
+				addItem(fromContent, tmpItem);
+				addItem(toContent, outputItem);
+			}
+
+			if (typeof outputItem.maxCount !== 'undefined' && outputItem.count > outputItem.maxCount) {
+				const text = DB.getMessage(1739).replace('%d', outputItem.maxCount);
+				ChatBox.addText(text, ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+			}
+		} else {
+			count = Math.min(count, outputItem.count);
+			if (!count) {
+				return;
+			}
+
+			outputItem.count -= count;
+
+			if (_type === NpcStore.Type.BARTER_MARKET) {
+				const inputCurrency = root.querySelector(`.InputWindow .item[data-index="${index}"]`);
+				const currencyItemWeight = parseInt(inputCurrency.getAttribute('data-weight'), 10);
+				outputItem.total_weight = currencyItemWeight * outputItem.count;
+
+				const inputCurrencyDiv = root.querySelector(
+					`.InputWindow .item[data-index="${index}"] .currency_amount`
+				);
+				const outputCurrencyDiv = root.querySelector(
+					`.OutputWindow .item[data-index="${index}"] .currency_amount`
+				);
+				const currencyAmount = parseInt(inputCurrencyDiv.textContent, 10);
+				const currencyTotal = currencyAmount * outputItem.count;
+
+				outputCurrencyDiv.textContent = currencyTotal;
+				outputItem.matcurrencyamount = currencyTotal;
+			}
+
+			updateTmpItem(inputItem, outputItem);
+			addItem(fromContent, outputItem);
+			addItem(toContent, tmpItem);
+		}
+
+		NpcStore.calculateCost();
+		NpcStore.calculateWeight();
+	};
+})();
+
+/**
+ * Request move item from box to another

@@ -1,0 +1,500 @@
+	}
+	bl->next = nullptr;
+	bl->prev = nullptr;
+
+	return 0;
+}
+
+/**
+ * Moves a block a x/y target position. [Skotlex]
+ * Pass flag as 1 to prevent doing skill_unit_move checks
+ * (which are executed by default on BL_CHAR types)
+ * @param bl : block(object) to move
+ * @param x1 : new x position
+ * @param y1 : new y position
+ * @param tick : when this was scheduled
+ * @return 0:success, 1:fail
+ */
+int32 map_moveblock(block_list *bl, int32 x1, int32 y1, t_tick tick)
+{
+	nullpo_ret(bl);
+
+	int32 x0 = bl->x, y0 = bl->y;
+	status_change *sc = nullptr;
+	int32 moveblock = ( x0/BLOCK_SIZE != x1/BLOCK_SIZE || y0/BLOCK_SIZE != y1/BLOCK_SIZE);
+
+	if (!bl->prev) {
+		//Block not in map, just update coordinates, but do naught else.
+		bl->x = x1;
+		bl->y = y1;
+		return 0;
+	}
+
+	//TODO: Perhaps some outs of bounds checking should be placed here?
+	if (bl->type&BL_CHAR) {
+		sc = status_get_sc(bl);
+
+		skill_unit_move(bl,tick,2);
+		if ( sc != nullptr && !sc->empty() ) //at least one to cancel
+		{
+			status_change_end(bl, SC_CLOSECONFINE);
+			status_change_end(bl, SC_CLOSECONFINE2);
+			status_change_end(bl, SC_TINDER_BREAKER);
+			status_change_end(bl, SC_TINDER_BREAKER2);
+	//		status_change_end(bl, SC_BLADESTOP); //Won't stop when you are knocked away, go figure...
+			status_change_end(bl, SC_TATAMIGAESHI);
+			status_change_end(bl, SC_MAGICROD);
+			status_change_end(bl, SC_SU_STOOP);
+			if (sc->getSCE(SC_PROPERTYWALK) &&
+				sc->getSCE(SC_PROPERTYWALK)->val3 >= skill_get_maxcount(sc->getSCE(SC_PROPERTYWALK)->val1,sc->getSCE(SC_PROPERTYWALK)->val2) )
+				status_change_end(bl,SC_PROPERTYWALK);
+		}
+	} else
+	if (bl->type == BL_NPC)
+		npc_unsetcells((TBL_NPC*)bl);
+
+	if (moveblock) map_delblock(bl);
+#ifdef CELL_NOSTACK
+	else map_delblcell(bl);
+#endif
+	bl->x = x1;
+	bl->y = y1;
+	if (moveblock) {
+		if(map_addblock(bl))
+			return 1;
+	}
+#ifdef CELL_NOSTACK
+	else map_addblcell(bl);
+#endif
+
+	if (bl->type&BL_CHAR) {
+
+		skill_unit_move(bl,tick,3);
+
+		if( bl->type == BL_PC && ((TBL_PC*)bl)->shadowform_id ) {//Shadow Form Target Moving
+			block_list *d_bl;
+			if( (d_bl = map_id2bl(((TBL_PC*)bl)->shadowform_id)) == nullptr || !check_distance_bl(bl,d_bl,10) ) {
+				if( d_bl )
+					status_change_end(d_bl,SC__SHADOWFORM);
+				((TBL_PC*)bl)->shadowform_id = 0;
+			}
+		}
+
+		if (sc != nullptr && !sc->empty()) {
+			if (sc->getSCE(SC_DANCING))
+				skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_DANCING)->val2), bl->m, x1-x0, y1-y0);
+			else {
+				if (sc->getSCE(SC_CLOAKING) && sc->getSCE(SC_CLOAKING)->val1 < 3 && !skill_check_cloaking(bl, nullptr))
+					status_change_end(bl, SC_CLOAKING);
+				if (sc->getSCE(SC_WARM))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_WARM)->val4), bl->m, x1-x0, y1-y0);
+				if (sc->getSCE(SC_BANDING))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_BANDING)->val4), bl->m, x1-x0, y1-y0);
+
+				if (sc->getSCE(SC_NEUTRALBARRIER_MASTER))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_NEUTRALBARRIER_MASTER)->val2), bl->m, x1-x0, y1-y0);
+				else if (sc->getSCE(SC_STEALTHFIELD_MASTER))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_STEALTHFIELD_MASTER)->val2), bl->m, x1-x0, y1-y0);
+
+				if( sc->getSCE(SC__SHADOWFORM) ) {//Shadow Form Caster Moving
+					block_list *d_bl;
+					if( (d_bl = map_id2bl(sc->getSCE(SC__SHADOWFORM)->val2)) == nullptr || !check_distance_bl(bl,d_bl,10) )
+						status_change_end(bl,SC__SHADOWFORM);
+				}
+
+				if (sc->getSCE(SC_PROPERTYWALK)
+					&& sc->getSCE(SC_PROPERTYWALK)->val3 < skill_get_maxcount(sc->getSCE(SC_PROPERTYWALK)->val1,sc->getSCE(SC_PROPERTYWALK)->val2)
+					&& map_find_skill_unit_oncell(bl,bl->x,bl->y,SO_ELECTRICWALK,nullptr,0) == nullptr
+					&& map_find_skill_unit_oncell(bl,bl->x,bl->y,NPC_ELECTRICWALK,nullptr,0) == nullptr
+					&& map_find_skill_unit_oncell(bl,bl->x,bl->y,SO_FIREWALK,nullptr,0) == nullptr
+					&& map_find_skill_unit_oncell(bl,bl->x,bl->y,NPC_FIREWALK,nullptr,0) == nullptr
+					&& skill_unitsetting(bl,sc->getSCE(SC_PROPERTYWALK)->val1,sc->getSCE(SC_PROPERTYWALK)->val2,x0, y0,0)) {
+						sc->getSCE(SC_PROPERTYWALK)->val3++;
+				}
+
+
+			}
+			/* Guild Aura Moving */
+			if( bl->type == BL_PC && ((TBL_PC*)bl)->state.gmaster_flag ) {
+				if (sc->getSCE(SC_LEADERSHIP))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_LEADERSHIP)->val4), bl->m, x1-x0, y1-y0);
+				if (sc->getSCE(SC_GLORYWOUNDS))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_GLORYWOUNDS)->val4), bl->m, x1-x0, y1-y0);
+				if (sc->getSCE(SC_SOULCOLD))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_SOULCOLD)->val4), bl->m, x1-x0, y1-y0);
+				if (sc->getSCE(SC_HAWKEYES))
+					skill_unit_move_unit_group(skill_id2group(sc->getSCE(SC_HAWKEYES)->val4), bl->m, x1-x0, y1-y0);
+			}
+		}
+	} else
+	if (bl->type == BL_NPC)
+		npc_setcells((TBL_NPC*)bl);
+
+	return 0;
+}
+
+/*==========================================
+ * Counts specified number of objects on given cell.
+ * flag:
+ *		0x1 - only count standing units
+ *------------------------------------------*/
+int32 map_count_oncell(int16 m, int16 x, int16 y, int32 type, int32 flag)
+{
+	int32 bx,by;
+	block_list *bl;
+	int32 count = 0;
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if (x < 0 || y < 0 || (x >= mapdata->xs) || (y >= mapdata->ys))
+		return 0;
+
+	bx = x/BLOCK_SIZE;
+	by = y/BLOCK_SIZE;
+
+	if (type&~BL_MOB)
+		for( bl = mapdata->block[bx+by*mapdata->bxs] ; bl != nullptr ; bl = bl->next )
+			if(bl->x == x && bl->y == y && bl->type&type) {
+				if (bl->type == BL_NPC) {	// Don't count hidden or invisible npc. Cloaked npc are counted
+					npc_data *nd = BL_CAST(BL_NPC, bl);
+					if (nd->m < 0 || nd->sc.option&OPTION_HIDE || nd->dynamicnpc.owner_char_id != 0)
+						continue;
+				}
+				if(flag&1) {
+					struct unit_data *ud = unit_bl2ud(bl);
+					if(!ud || ud->walktimer == INVALID_TIMER)
+						count++;
+				} else {
+					count++;
+				}
+			}
+
+	if (type&BL_MOB)
+		for( bl = mapdata->block_mob[bx+by*mapdata->bxs] ; bl != nullptr ; bl = bl->next )
+			if(bl->x == x && bl->y == y) {
+				if(flag&1) {
+					struct unit_data *ud = unit_bl2ud(bl);
+					if(!ud || ud->walktimer == INVALID_TIMER)
+						count++;
+				} else {
+					count++;
+				}
+			}
+
+	return count;
+}
+
+/*
+ * Looks for a skill unit on a given cell
+ * flag&1: runs battle_check_target check based on unit->group->target_flag
+ */
+skill_unit* map_find_skill_unit_oncell(block_list* target,int16 x,int16 y,uint16 skill_id,skill_unit* out_unit, int32 flag) {
+	int16 bx,by;
+	block_list *bl;
+	skill_unit *unit;
+	struct map_data *mapdata = map_getmapdata(target->m);
+
+	if (x < 0 || y < 0 || (x >= mapdata->xs) || (y >= mapdata->ys))
+		return nullptr;
+
+	bx = x/BLOCK_SIZE;
+	by = y/BLOCK_SIZE;
+
+	for( bl = mapdata->block[bx+by*mapdata->bxs] ; bl != nullptr ; bl = bl->next )
+	{
+		if (bl->x != x || bl->y != y || bl->type != BL_SKILL)
+			continue;
+
+		unit = (skill_unit *) bl;
+		if( unit == out_unit || !unit->alive || !unit->group || unit->group->skill_id != skill_id )
+			continue;
+		if( !(flag&1) || battle_check_target(unit,target,unit->group->target_flag) > 0 )
+			return unit;
+	}
+	return nullptr;
+}
+
+/*==========================================
+ * Adapted from foreachinarea for an easier invocation. [Skotlex]
+ *------------------------------------------*/
+int32 map_foreachinrangeV(int32 (*func)(block_list*,va_list),const block_list* center, int16 range, int32 type, va_list ap, bool wall_check)
+{
+	int32 bx, by, m;
+	int32 returnCount = 0;	//total sum of returned values of func() [Skotlex]
+	block_list *bl;
+	int32 blockcount = bl_list_count, i;
+	int32 x0, x1, y0, y1;
+	va_list ap_copy;
+
+	m = center->m;
+	if( m < 0 )
+		return 0;
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if( mapdata == nullptr || mapdata->block == nullptr ){
+		return 0;
+	}
+
+	x0 = i16max(center->x - range, 0);
+	y0 = i16max(center->y - range, 0);
+	x1 = i16min(center->x + range, mapdata->xs - 1);
+	y1 = i16min(center->y + range, mapdata->ys - 1);
+
+	if ( type&~BL_MOB ) {
+		for( by = y0 / BLOCK_SIZE; by <= y1 / BLOCK_SIZE; by++ ) {
+			for( bx = x0 / BLOCK_SIZE; bx <= x1 / BLOCK_SIZE; bx++ ) {
+				for(bl = mapdata->block[ bx + by * mapdata->bxs ]; bl != nullptr; bl = bl->next ) {
+					if( bl->type&type
+						&& bl->x >= x0 && bl->x <= x1 && bl->y >= y0 && bl->y <= y1
+#ifdef CIRCULAR_AREA
+						&& check_distance_bl(center, bl, range)
+#endif
+						&& ( !wall_check || path_search_long(nullptr, center->m, center->x, center->y, bl->x, bl->y, CELL_CHKWALL) )
+					  	&& bl_list_count < BL_LIST_MAX )
+						bl_list[ bl_list_count++ ] = bl;
+				}
+			}
+		}
+	}
+
+	if ( type&BL_MOB ) {
+		for( by = y0 / BLOCK_SIZE; by <= y1 / BLOCK_SIZE; by++ ) {
+			for( bx = x0 / BLOCK_SIZE; bx <= x1 / BLOCK_SIZE; bx++ ) {
+				for(bl = mapdata->block_mob[ bx + by * mapdata->bxs ]; bl != nullptr; bl = bl->next ) {
+					if( bl->x >= x0 && bl->x <= x1 && bl->y >= y0 && bl->y <= y1
+#ifdef CIRCULAR_AREA
+						&& check_distance_bl(center, bl, range)
+#endif
+						&& ( !wall_check || path_search_long(nullptr, center->m, center->x, center->y, bl->x, bl->y, CELL_CHKWALL) )
+					  	&& bl_list_count < BL_LIST_MAX )
+						bl_list[ bl_list_count++ ] = bl;
+				}
+			}
+		}
+	}
+
+	if( bl_list_count >= BL_LIST_MAX )
+		ShowWarning("map_foreachinrange: block count too many!\n");
+
+	FreeBlockLock freeLock;
+
+	for( i = blockcount; i < bl_list_count; i++ ) {
+		if( bl_list[ i ]->prev ) { //func() may delete this bl_list[] slot, checking for prev ensures it wasn't queued for deletion.
+			va_copy(ap_copy, ap);
+			returnCount += func(bl_list[i], ap_copy);
+			va_end(ap_copy);
+		}
+	}
+
+	bl_list_count = blockcount;
+	return returnCount;	//[Skotlex]
+}
+
+int32 map_foreachinrange(int32 (*func)(block_list*,va_list), const block_list* center, int16 range, int32 type, ...)
+{
+	int32 returnCount = 0;
+	va_list ap;
+ 	va_start(ap,type);
+	returnCount = map_foreachinrangeV(func,center,range,type,ap,battle_config.skill_wall_check>0);
+ 	va_end(ap);
+	return returnCount;
+}
+
+int32 map_foreachinallrange(int32 (*func)(block_list*,va_list), const block_list* center, int16 range, int32 type, ...)
+{
+	int32 returnCount = 0;
+	va_list ap;
+ 	va_start(ap,type);
+	returnCount = map_foreachinrangeV(func,center,range,type,ap,false);
+ 	va_end(ap);
+	return returnCount;
+}
+
+/*==========================================
+ * Same as foreachinrange, but there must be a shoot-able range between center and target to be counted in. [Skotlex]
+ *------------------------------------------*/
+int32 map_foreachinshootrange(int32 (*func)(block_list*,va_list), const block_list* center, int16 range, int32 type,...)
+{
+	int32 returnCount = 0;
+	va_list ap;
+ 	va_start(ap,type);
+	returnCount = map_foreachinrangeV(func,center,range,type,ap,true);
+ 	va_end(ap);
+	return returnCount;
+}
+
+
+/*========================================== [Playtester]
+ * range = map m (x0,y0)-(x1,y1)
+ * Apply *func with ... arguments for the range.
+ * @param m: ID of map
+ * @param x0: West end of area
+ * @param y0: South end of area
+ * @param x1: East end of area
+ * @param y1: North end of area
+ * @param type: Type of bl to search for
+*------------------------------------------*/
+int32 map_foreachinareaV(int32 (*func)(block_list*, va_list), int16 m, int16 x0, int16 y0, int16 x1, int16 y1, int32 type, va_list ap, bool wall_check)
+{
+	int32 bx, by, cx, cy;
+	int32 returnCount = 0;	//total sum of returned values of func()
+	block_list *bl;
+	int32 blockcount = bl_list_count, i;
+	va_list ap_copy;
+
+	if (m < 0)
+		return 0;
+
+	if (x1 < x0)
+		std::swap(x0, x1);
+	if (y1 < y0)
+		std::swap(y0, y1);
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if( mapdata == nullptr || mapdata->block == nullptr ){
+		return 0;
+	}
+
+	x0 = i16max(x0, 0);
+	y0 = i16max(y0, 0);
+	x1 = i16min(x1, mapdata->xs - 1);
+	y1 = i16min(y1, mapdata->ys - 1);
+
+	if( wall_check ) {
+		cx = x0 + (x1 - x0) / 2;
+		cy = y0 + (y1 - y0) / 2;
+	}
+
+	if( type&~BL_MOB ) {
+		for (by = y0 / BLOCK_SIZE; by <= y1 / BLOCK_SIZE; by++) {
+			for (bx = x0 / BLOCK_SIZE; bx <= x1 / BLOCK_SIZE; bx++) {
+				for(bl = mapdata->block[bx + by * mapdata->bxs]; bl != nullptr; bl = bl->next) {
+					if ( bl->type&type
+						&& bl->x >= x0 && bl->x <= x1 && bl->y >= y0 && bl->y <= y1
+						&& ( !wall_check || path_search_long(nullptr, m, cx, cy, bl->x, bl->y, CELL_CHKWALL) )
+						&& bl_list_count < BL_LIST_MAX )
+						bl_list[bl_list_count++] = bl;
+				}
+			}
+		}
+	}
+
+	if( type&BL_MOB ) {
+		for (by = y0 / BLOCK_SIZE; by <= y1 / BLOCK_SIZE; by++) {
+			for (bx = x0 / BLOCK_SIZE; bx <= x1 / BLOCK_SIZE; bx++) {
+				for(bl = mapdata->block_mob[bx + by * mapdata->bxs]; bl != nullptr; bl = bl->next) {
+					if ( bl->x >= x0 && bl->x <= x1 && bl->y >= y0 && bl->y <= y1
+						&& ( !wall_check || path_search_long(nullptr, m, cx, cy, bl->x, bl->y, CELL_CHKWALL) )
+						&& bl_list_count < BL_LIST_MAX )
+						bl_list[bl_list_count++] = bl;
+				}
+			}
+		}
+	}
+
+	if (bl_list_count >= BL_LIST_MAX)
+		ShowWarning("map_foreachinarea: block count too many!\n");
+
+	FreeBlockLock freeLock;
+
+	for (i = blockcount; i < bl_list_count; i++) {
+		if (bl_list[i]->prev) { //func() may delete this bl_list[] slot, checking for prev ensures it wasn't queued for deletion.
+			va_copy(ap_copy, ap);
+			returnCount += func(bl_list[i], ap_copy);
+			va_end(ap_copy);
+		}
+	}
+
+	bl_list_count = blockcount;
+	return returnCount;
+}
+
+int32 map_foreachinallarea(int32 (*func)(block_list*,va_list), int16 m, int16 x0, int16 y0, int16 x1, int16 y1, int32 type, ...)
+{
+	int32 returnCount = 0;
+	va_list ap;
+ 	va_start(ap,type);
+	returnCount = map_foreachinareaV(func,m,x0,y0,x1,y1,type,ap,false);
+ 	va_end(ap);
+	return returnCount;
+}
+
+int32 map_foreachinshootarea(int32 (*func)(block_list*, va_list), int16 m, int16 x0, int16 y0, int16 x1, int16 y1, int32 type, ...)
+{
+	int32 returnCount = 0;
+	va_list ap;
+ 	va_start(ap,type);
+	returnCount = map_foreachinareaV(func,m,x0,y0,x1,y1,type,ap,true);
+ 	va_end(ap);
+	return returnCount;
+}
+int32 map_foreachinarea(int32 (*func)(block_list*, va_list), int16 m, int16 x0, int16 y0, int16 x1, int16 y1, int32 type, ...)
+{
+	int32 returnCount = 0;
+	va_list ap;
+ 	va_start(ap,type);
+	returnCount = map_foreachinareaV(func,m,x0,y0,x1,y1,type,ap,battle_config.skill_wall_check>0);
+ 	va_end(ap);
+	return returnCount;
+}
+
+/*==========================================
+ * Adapted from forcountinarea for an easier invocation. [pakpil]
+ *------------------------------------------*/
+int32 map_forcountinrange(int32 (*func)(block_list*,va_list), const block_list* center, int16 range, int32 count, int32 type, ...)
+{
+	int32 bx, by, m;
+	int32 returnCount = 0;	//total sum of returned values of func() [Skotlex]
+	block_list *bl;
+	int32 blockcount = bl_list_count, i;
+	int32 x0, x1, y0, y1;
+	struct map_data *mapdata;
+	va_list ap;
+
+	m = center->m;
+	mapdata = map_getmapdata(m);
+
+	if( mapdata == nullptr || mapdata->block == nullptr ){
+		return 0;
+	}
+
+	x0 = i16max(center->x - range, 0);
+	y0 = i16max(center->y - range, 0);
+	x1 = i16min(center->x + range, mapdata->xs - 1);
+	y1 = i16min(center->y + range, mapdata->ys - 1);
+
+	if ( type&~BL_MOB )
+		for ( by = y0 / BLOCK_SIZE; by <= y1 / BLOCK_SIZE; by++ ) {
+			for( bx = x0 / BLOCK_SIZE; bx <= x1 / BLOCK_SIZE; bx++ ) {
+				for( bl = mapdata->block[ bx + by * mapdata->bxs ]; bl != nullptr; bl = bl->next ) {
+					if( bl->type&type
+						&& bl->x >= x0 && bl->x <= x1 && bl->y >= y0 && bl->y <= y1
+#ifdef CIRCULAR_AREA
+						&& check_distance_bl(center, bl, range)
+#endif
+					  	&& bl_list_count < BL_LIST_MAX )
+						bl_list[ bl_list_count++ ] = bl;
+				}
+			}
+		}
+	if( type&BL_MOB )
+		for( by = y0 / BLOCK_SIZE; by <= y1 / BLOCK_SIZE; by++ ) {
+			for( bx = x0 / BLOCK_SIZE; bx <= x1 / BLOCK_SIZE; bx++ ){
+				for( bl = mapdata->block_mob[ bx + by * mapdata->bxs ]; bl != nullptr; bl = bl->next ) {
+					if( bl->x >= x0 && bl->x <= x1 && bl->y >= y0 && bl->y <= y1
+#ifdef CIRCULAR_AREA
+						&& check_distance_bl(center, bl, range)
+#endif
+						&& bl_list_count < BL_LIST_MAX )
+						bl_list[ bl_list_count++ ] = bl;
+				}
+			}
+		}
+
+	if( bl_list_count >= BL_LIST_MAX )
+		ShowWarning("map_forcountinrange: block count too many!\n");
+
+	FreeBlockLock freeLock;
+
+	for( i = blockcount; i < bl_list_count; i++ ) {

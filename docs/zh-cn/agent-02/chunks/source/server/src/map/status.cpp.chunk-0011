@@ -1,0 +1,500 @@
+	// Store the return value of the original function
+	int32 ret = status_calc_pc_sub( sd, opt );
+
+	// If an old script is present
+	if( previous_st ){
+		// Reattach the player to it, so that the limitations of that script kick back in
+		script_attach_state( previous_st );
+	}
+
+	// Return the original return value
+	return ret;
+}
+
+/**
+ * Calculates Mercenary data
+ * @param md: Mercenary object
+ * @param opt: Whether it is first calc or not (0 on level up or status)
+ * @return 0
+ */
+int32 status_calc_mercenary_(s_mercenary_data *md, uint8 opt)
+{
+	struct status_data *status = &md->base_status;
+	s_mercenary *merc = &md->mercenary;
+
+	if (opt&SCO_FIRST) {
+		memcpy(status, &md->db->status, sizeof(struct status_data));
+		status->class_ = CLASS_NORMAL;
+		status->mode = static_cast<e_mode>(MD_CANMOVE|MD_CANATTACK);
+		status->hp = status->max_hp;
+		status->sp = status->max_sp;
+		md->battle_status.hp = merc->hp;
+		md->battle_status.sp = merc->sp;
+		if (md->master)
+			status->speed = status_get_speed(md->master);
+	}
+
+	status_calc_misc(md, status, md->db->lv);
+	status_cpy(&md->battle_status, status);
+
+	return 0;
+}
+
+/**
+ * Calculates Homunculus data
+ * @param hd: Homunculus object
+ * @param opt: Whether it is first calc or not (0 on level up or status)
+ * @return 1
+ */
+int32 status_calc_homunculus_(homun_data *hd, uint8 opt)
+{
+	struct status_data *status = &hd->base_status;
+	struct s_homunculus &hom = hd->homunculus;
+	int32 skill_lv;
+	int32 amotion;
+
+	status->str = hom.str / 10;
+	status->agi = hom.agi / 10;
+	status->vit = hom.vit / 10;
+	status->dex = hom.dex / 10;
+	status->int_ = hom.int_ / 10;
+	status->luk = hom.luk / 10;
+
+	APPLY_HOMUN_LEVEL_STATWEIGHT();
+
+	if (opt&SCO_FIRST) {
+		const std::shared_ptr<s_homunculus_db> db = hd->homunculusDB;
+
+		status->def_ele = db->element;
+		status->ele_lv = 1;
+		status->race = db->race;
+		status->class_ = CLASS_NORMAL;
+		status->size = (hom.class_ == db->evo_class) ? db->evo_size : db->base_size;
+		status->rhw.range = 1 + status->size;
+		status->mode = static_cast<e_mode>(MD_CANMOVE|MD_CANATTACK);
+		status->speed = DEFAULT_WALK_SPEED;
+		if (battle_config.hom_setting&HOMSET_COPY_SPEED && hd->master)
+			status->speed = status_get_speed(hd->master);
+
+		status->hp = 1;
+		status->sp = 1;
+	}
+
+	status->aspd_rate = 1000;
+
+#ifdef RENEWAL
+	amotion = hd->homunculusDB->baseASPD;
+	amotion = amotion - amotion * (status->dex + hom.dex_value) / 1000 - (status->agi + hom.agi_value) * amotion / 250;
+	status->def = status->mdef = 0;
+#else
+	skill_lv = hom.level / 10 + status->vit / 5;
+	status->def = cap_value(skill_lv, 0, 99);
+
+	skill_lv = hom.level / 10 + status->int_ / 5;
+	status->mdef = cap_value(skill_lv, 0, 99);
+
+	amotion = (1000 - 4 * status->agi - status->dex) * hd->homunculusDB->baseASPD / 1000;
+#endif
+
+	status->amotion = cap_value(amotion, MAX_ASPD_NOPC/AMOTION_DIVIDER_NOPC, MIN_ASPD/AMOTION_DIVIDER_NOPC);
+	status->adelay = AMOTION_DIVIDER_NOPC * status->amotion; //It seems adelay = amotion for Homunculus.
+
+	status->max_hp = hom.max_hp;
+	status->max_sp = hom.max_sp;
+
+	hom_calc_skilltree(hd);
+
+	if((skill_lv = hom_checkskill(hd, HAMI_SKIN)) > 0)
+		status->def += skill_lv * 4;
+
+	if((skill_lv = hom_checkskill(hd, HVAN_INSTRUCT)) > 0) {
+		static const uint8 bonus_int[] = { 1, 2, 2, 4, 5 };
+		static const uint8 bonus_str[] = { 1, 1, 3, 4, 4 };
+		status->int_ += bonus_int[skill_lv - 1];
+		status->str += bonus_str[skill_lv - 1];
+	}
+
+	if((skill_lv = hom_checkskill(hd, HAMI_SKIN)) > 0)
+		status->max_hp += skill_lv * 2 * status->max_hp / 100;
+
+	if((skill_lv = hom_checkskill(hd, HLIF_BRAIN)) > 0)
+		status->max_sp += skill_lv * status->max_sp / 100;
+
+	if((skill_lv = hom_checkskill(hd, MH_CLASSY_FLUTTER)) > 0) {
+		status->matk_min += 100 + 60* skill_lv;
+		status->matk_max += 100 + 60* skill_lv;
+	}
+
+	if((skill_lv = hom_checkskill(hd, MH_BRUSHUP_CLAW)) > 0) {
+		status->batk += 100 + 60* skill_lv;
+	}
+
+	if((skill_lv = hom_checkskill(hd, MH_POLISHING_NEEDLE)) > 0) {
+		status->matk_min += 50 + 20* skill_lv;
+		status->matk_max += 50 + 20* skill_lv;
+		status->batk += 100 + 40* skill_lv;
+	}
+
+	if((skill_lv = hom_checkskill(hd, MH_LICHT_GEHORN)) > 0) {
+		status->matk_min += 100 + 30* skill_lv;
+		status->matk_max += 100 + 30* skill_lv;
+		status->batk += 100 + 30* skill_lv;
+	}
+
+	if((skill_lv = hom_checkskill(hd, MH_BLAZING_LAVA)) > 0) {
+		status->batk += 100 + 60* skill_lv;
+	}
+
+	if (opt&SCO_FIRST) {
+		hd->battle_status.hp = hom.hp;
+		hd->battle_status.sp = hom.sp;
+		if(hom.class_ == 6052) // Eleanor
+			sc_start(hd, hd, SC_STYLE_CHANGE, 100, MH_MD_FIGHTING, INFINITE_TICK);
+	}
+
+#ifndef RENEWAL
+	status->rhw.atk = status->dex;
+	status->rhw.atk2 = status->str + hom.level;
+#endif
+
+	status_calc_misc(hd, status, hom.level);
+
+	status_cpy(&hd->battle_status, status);
+	return 1;
+}
+
+/**
+ * Calculates Elemental data
+ * @param ed: Elemental object
+ * @param opt: Whether it is first calc or not (0 on status change)
+ * @return 0
+ */
+int32 status_calc_elemental_(s_elemental_data *ed, uint8 opt)
+{
+	struct status_data *status = &ed->base_status;
+	s_elemental *ele = &ed->elemental;
+	map_session_data *sd = ed->master;
+
+	if( !sd )
+		return 0;
+
+	if (opt&SCO_FIRST) {
+		memcpy(status, &ed->db->status, sizeof(struct status_data));
+		if( !ele->mode )
+			status->mode = EL_MODE_PASSIVE;
+		else
+			status->mode = ele->mode;
+
+		status->class_ = CLASS_NORMAL;
+		status_calc_misc(ed, status, 0);
+
+		status->max_hp = ele->max_hp;
+		status->max_sp = ele->max_sp;
+		status->hp = ele->hp;
+		status->sp = ele->sp;
+		status->rhw.atk = ele->atk;
+		status->rhw.atk2 = ele->atk2;
+		status->matk_min += ele->matk;
+		status->def += ele->def;
+		status->mdef += ele->mdef;
+		status->flee = ele->flee;
+		status->hit = ele->hit;
+
+		if (ed->master)
+			status->speed = status_get_speed(ed->master);
+
+		memcpy(&ed->battle_status,status,sizeof(struct status_data));
+	} else {
+		status_calc_misc(ed, status, 0);
+		status_cpy(&ed->battle_status, status);
+	}
+
+	return 0;
+}
+
+/**
+ * Calculates NPC data
+ * @param nd: NPC object
+ * @param opt: Whether it is first calc or not (what?)
+ * @return 0
+ */
+int32 status_calc_npc_(npc_data *nd, uint8 opt)
+{
+	struct status_data *status = &nd->status;
+
+	if (!nd)
+		return 0;
+
+	if (opt&SCO_FIRST) {
+		status->hp = 1;
+		status->sp = 1;
+		status->max_hp = 1;
+		status->max_sp = 1;
+
+		status->def_ele = ELE_NEUTRAL;
+		status->ele_lv = 1;
+		status->race = RC_DEMIHUMAN;
+		status->class_ = CLASS_NORMAL;
+		status->size = nd->size;
+		status->rhw.range = 1 + status->size;
+		status->mode = static_cast<e_mode>(MD_CANMOVE|MD_CANATTACK);
+		status->speed = nd->speed;
+	}
+
+	status->str = nd->stat_point + nd->params.str;
+	status->agi = nd->stat_point + nd->params.agi;
+	status->vit = nd->stat_point + nd->params.vit;
+	status->int_= nd->stat_point + nd->params.int_;
+	status->dex = nd->stat_point + nd->params.dex;
+	status->luk = nd->stat_point + nd->params.luk;
+
+	status_calc_misc(nd, status, nd->level);
+	status_cpy(&nd->status, status);
+
+	return 0;
+}
+
+/**
+ * Calculates regeneration values
+ * Applies passive skill regeneration additions
+ * @param bl: Object to calculate regen for [PC|HOM|MER|ELEM]
+ * @param status: Object's status
+ * @param regen: Object's base regeneration data
+ */
+void status_calc_regen(block_list *bl, struct status_data *status, struct regen_data *regen)
+{
+	map_session_data *sd;
+	status_change *sc;
+	int32 val, skill, reg_flag;
+
+	if( !(bl->type&BL_REGEN) || !regen )
+		return;
+
+	sd = BL_CAST(BL_PC,bl);
+	sc = status_get_sc(bl);
+
+	val = (status->vit/5) + max(1, status->max_hp/200);
+
+	if( sd && sd->hprecov_rate != 100 )
+		val = val*sd->hprecov_rate/100;
+
+	reg_flag = bl->type == BL_PC ? 0 : 1;
+
+	regen->hp = cap_value(val, reg_flag, SHRT_MAX);
+
+	val = 1 + (status->int_/6) + (status->max_sp/100);
+	if( status->int_ >= 120 )
+		val += ((status->int_-120) / 2) + 4;
+
+	if( sd && sd->sprecov_rate != 100 )
+		val = val*sd->sprecov_rate/100;
+
+	regen->sp = cap_value(val, reg_flag, SHRT_MAX);
+
+	if( sd ) {
+		struct regen_data_sub *sregen;
+		if( (skill=pc_checkskill(sd,HP_MEDITATIO)) > 0 ) {
+			val = regen->sp*(100+3*skill)/100;
+			regen->sp = cap_value(val, 1, SHRT_MAX);
+		}
+		// Only players have skill/sitting skill regen for now.
+		sregen = regen->sregen;
+
+		val = 0;
+		if( (skill=pc_checkskill(sd,SM_RECOVERY)) > 0 )
+			val += skill*5 + skill*status->max_hp/500;
+
+		sregen->hp = cap_value(val, 0, SHRT_MAX);
+
+		val = 0;
+		if( (skill=pc_checkskill(sd,MG_SRECOVERY)) > 0 )
+			val += skill*3 + skill*status->max_sp/500;
+		if( (skill=pc_checkskill(sd,NJ_NINPOU)) > 0 )
+			val += skill*3 + skill*status->max_sp/500;
+		if( (skill=pc_checkskill(sd,WM_LESSON)) > 0 )
+			val += 3 + 3 * skill;
+
+		if (sc != nullptr && !sc->empty()) {
+			if (sc->getSCE(SC_ANCILLA))
+				val += sc->getSCE(SC_ANCILLA)->val2 / 100;
+		}
+
+		sregen->sp = cap_value(val, 0, SHRT_MAX);
+
+		// Skill-related recovery (only when sit)
+		sregen = regen->ssregen;
+
+		val = 0;
+		if( (skill=pc_checkskill(sd,MO_SPIRITSRECOVERY)) > 0 )
+			val += skill*4 + skill*status->max_hp/500;
+
+		if( (skill=pc_checkskill(sd,TK_HPTIME)) > 0 && sd->state.rest )
+			val += skill*30 + skill*status->max_hp/500;
+		sregen->hp = cap_value(val, 0, SHRT_MAX);
+
+		val = 0;
+		if( (skill=pc_checkskill(sd,TK_SPTIME)) > 0 && sd->state.rest ) {
+			val += skill*3 + skill*status->max_sp/500;
+			if ((skill=pc_checkskill(sd,SL_KAINA)) > 0) // Power up Enjoyable Rest
+				val += (30+10*skill)*val/100;
+		}
+		if( (skill=pc_checkskill(sd,MO_SPIRITSRECOVERY)) > 0 )
+			val += skill*2 + skill*status->max_sp/500;
+		sregen->sp = cap_value(val, 0, SHRT_MAX);
+	}
+
+	if( bl->type == BL_HOM ) {
+		homun_data *hd = (TBL_HOM*)bl;
+		if( (skill = hom_checkskill(hd,HAMI_SKIN)) > 0 ) {
+			val = regen->hp*(100+5*skill)/100;
+			regen->hp = cap_value(val, 1, SHRT_MAX);
+		}
+		if( (skill = hom_checkskill(hd,HLIF_BRAIN)) > 0 ) {
+			val = regen->sp*(100+3*skill)/100;
+			regen->sp = cap_value(val, 1, SHRT_MAX);
+		}
+	} else if( bl->type == BL_MER ) {
+		val = static_cast<decltype(val)>((status->max_hp * status->vit / 10000.0 + 1.0) * 6.0);
+		regen->hp = cap_value(val, 1, SHRT_MAX);
+
+		val = static_cast<decltype(val)>((status->max_sp * (status->int_ + 10.0) / 750.0) + 1.0);
+		regen->sp = cap_value(val, 1, SHRT_MAX);
+	} else if( bl->type == BL_ELEM ) {
+		val = static_cast<decltype(val)>((status->max_hp * status->vit / 10000.0 + 1.0) * 6.0);
+		regen->hp = cap_value(val, 1, SHRT_MAX);
+
+		val = static_cast<decltype(val)>((status->max_sp * (status->int_ + 10.0) / 750.0) + 1.0);
+		regen->sp = cap_value(val, 1, SHRT_MAX);
+	}
+}
+
+/**
+ * Calculates SC (Status Changes) regeneration values
+ * @param bl: Object to calculate regen for [PC|HOM|MER|ELEM]
+ * @param regen: Object's base regeneration data
+ * @param sc: Object's status change data
+ */
+void status_calc_regen_rate(block_list *bl, struct regen_data *regen, status_change *sc)
+{
+	if (!(bl->type&BL_REGEN) || !regen)
+		return;
+
+	regen->flag = RGN_HP|RGN_SP;
+	if(regen->sregen) {
+		if (regen->sregen->hp)
+			regen->flag |= RGN_SHP;
+
+		if (regen->sregen->sp)
+			regen->flag |= RGN_SSP;
+		regen->sregen->rate.hp = regen->sregen->rate.sp = 100;
+	}
+	if (regen->ssregen) {
+		if (regen->ssregen->hp)
+			regen->flag |= RGN_SHP;
+
+		if (regen->ssregen->sp)
+			regen->flag |= RGN_SSP;
+		regen->ssregen->rate.hp = regen->ssregen->rate.sp = 100;
+	}
+	regen->rate.hp = regen->rate.sp = 100;
+
+	if (sc == nullptr || sc->empty())
+		return;
+
+	// No HP or SP regen
+	if ((sc->getSCE(SC_POISON) && !sc->getSCE(SC_SLOWPOISON))
+		|| (sc->getSCE(SC_DPOISON) && !sc->getSCE(SC_SLOWPOISON))
+		|| sc->getSCE(SC_BERSERK)
+		|| sc->getSCE(SC_TRICKDEAD)
+		|| sc->getSCE(SC_BLEEDING)
+		|| (sc->getSCE(SC_MAGICMUSHROOM) && sc->getSCE(SC_MAGICMUSHROOM)->val3 == 1)
+		|| sc->getSCE(SC_SATURDAYNIGHTFEVER)
+		|| sc->getSCE(SC_REBOUND)
+		|| sc->getSCE(SC_NORECOVER_STATE))
+		regen->flag = RGN_NONE;
+
+	// No natural SP regen
+	if (sc->getSCE(SC_DANCING) ||
+		sc->getSCE(SC_MAXIMIZEPOWER) ||
+#ifndef RENEWAL
+		(bl->type == BL_PC && (((TBL_PC*)bl)->class_&MAPID_SECONDMASK) == MAPID_MONK &&
+		(sc->getSCE(SC_EXTREMITYFIST) || sc->getSCE(SC_EXPLOSIONSPIRITS)) && (!sc->getSCE(SC_SPIRIT) || sc->getSCE(SC_SPIRIT)->val2 != SL_MONK)) ||
+#else
+		(bl->type == BL_PC && (((TBL_PC*)bl)->class_&MAPID_SECONDMASK) == MAPID_MONK &&
+		sc->getSCE(SC_EXTREMITYFIST) && (!sc->getSCE(SC_SPIRIT) || sc->getSCE(SC_SPIRIT)->val2 != SL_MONK)) ||
+#endif
+		(sc->getSCE(SC_OBLIVIONCURSE) && sc->getSCE(SC_OBLIVIONCURSE)->val3 == 1))
+		regen->flag &= ~RGN_SP;
+
+	if (sc->getSCE(SC_TENSIONRELAX)) {
+		if (regen->state.overweight)
+			regen->state.overweight = false; // 1x HP regen
+		else {
+			regen->rate.hp += 200;
+			if (regen->sregen)
+				regen->sregen->rate.hp += 200;
+		}
+	}
+
+	if (sc->getSCE(SC_MAGNIFICAT))
+		regen->rate.sp += 100;
+
+	if (sc->getSCE(SC_REGENERATION)) {
+		const struct status_change_entry *sce = sc->getSCE(SC_REGENERATION);
+		if (!sce->val4) {
+			regen->rate.hp += (sce->val2*100);
+			regen->rate.sp += (sce->val3*100);
+		} else
+			regen->flag &= ~sce->val4; // Remove regen as specified by val4
+	}
+	if(sc->getSCE(SC_GT_REVITALIZE)) {
+		regen->hp += cap_value(regen->hp * sc->getSCE(SC_GT_REVITALIZE)->val3/100, 1, SHRT_MAX);
+		regen->state.walk = 1;
+	}
+	if (bl->type == BL_ELEM) { // Recovery bonus only applies to the Elementals.
+		int32 ele_class = status_get_class(bl);
+
+		switch (ele_class) {
+		case ELEMENTALID_AGNI_S:
+		case ELEMENTALID_AGNI_M:
+		case ELEMENTALID_AGNI_L:
+		case ELEMENTALID_ARDOR:
+			if (sc->getSCE(SC_FIRE_INSIGNIA) && sc->getSCE(SC_FIRE_INSIGNIA)->val1 == 1)
+				regen->rate.hp += 100;
+			break;
+		case ELEMENTALID_AQUA_S:
+		case ELEMENTALID_AQUA_M:
+		case ELEMENTALID_AQUA_L:
+		case ELEMENTALID_DILUVIO:
+			if (sc->getSCE(SC_WATER_INSIGNIA) && sc->getSCE(SC_WATER_INSIGNIA)->val1 == 1)
+				regen->rate.hp += 100;
+			break;
+		case ELEMENTALID_VENTUS_S:
+		case ELEMENTALID_VENTUS_M:
+		case ELEMENTALID_VENTUS_L:
+		case ELEMENTALID_PROCELLA:
+			if (sc->getSCE(SC_WIND_INSIGNIA) && sc->getSCE(SC_WIND_INSIGNIA)->val1 == 1)
+				regen->rate.hp += 100;
+			break;
+		case ELEMENTALID_TERA_S:
+		case ELEMENTALID_TERA_M:
+		case ELEMENTALID_TERA_L:
+		case ELEMENTALID_TERREMOTUS:
+		case ELEMENTALID_SERPENS:
+			if (sc->getSCE(SC_EARTH_INSIGNIA) && sc->getSCE(SC_EARTH_INSIGNIA)->val1 == 1)
+				regen->rate.hp += 100;
+			break;
+		}
+	}
+
+	if (sc->getSCE(SC_CATNIPPOWDER)) {
+		regen->rate.hp *= 2;
+		regen->rate.sp *= 2;
+	}
+	if (sc->getSCE(SC_SHRIMPBLESSING))
+		regen->rate.sp += 50;
+#ifdef RENEWAL
+	if (sc->getSCE(SC_NIBELUNGEN)) {
+		if (sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_HPREGEN)
+			regen->rate.hp += 100;
+		else if (sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_SPREGEN)

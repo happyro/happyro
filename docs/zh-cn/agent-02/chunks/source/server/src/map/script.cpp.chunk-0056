@@ -1,0 +1,500 @@
+		return SCRIPT_CMD_FAILURE;
+
+	if (!pc_addfame(*sd, script_getnum(st, 2)))
+		return SCRIPT_CMD_FAILURE;
+	
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+BUILDIN_FUNC(getfame) {
+	map_session_data *sd;
+
+	if (!script_charid2sd(2, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	script_pushint(st, sd->status.fame);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getfamerank) {
+	map_session_data *sd;
+
+	if (!script_charid2sd(2, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	script_pushint(st, pc_famerank(sd->status.char_id, sd->class_ & MAPID_SECONDMASK));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(isdead) {
+	map_session_data *sd;
+
+	if (!script_mapid2sd(2, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	script_pushint(st, pc_isdead(sd));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(macro_detector) {
+	map_session_data *sd;
+
+	if (script_hasdata(st, 2) && script_isstring(st, 2)) { // Character Name
+		if (!script_nick2sd(2, sd)) {
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else { // Account ID
+		if (!script_accid2sd(2, sd)) {
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	// Reporter Account ID as -1 for server.
+	pc_macro_reporter_process(*sd);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// ===================================
+// *has_autoloot({<char_id>});
+// This command checks whether a player configured autoloot.
+// Returns current autoloot value on success.
+// ===================================
+BUILDIN_FUNC(has_autoloot) {
+	map_session_data *sd;
+
+	if (!script_charid2sd(2, sd)) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st, sd->state.autoloot);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// ===================================
+// *autoloot({<rate>{, <char_id>}});
+// This command sets the rate of autoloot.
+// If no rate is provided and the user has autoloot disabled it will default to 10000 = 100% (enabled) or
+// if the user has autoloot enabled it will default to 0 = 0% (disabled).
+// Returns true on success and false on failure.
+// ===================================
+BUILDIN_FUNC(autoloot) {
+	map_session_data *sd = nullptr;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 rate;
+
+	if (script_hasdata(st, 2)) {
+		rate = script_getnum(st, 2);
+
+		if (rate < 0 || rate > 10000) {
+			ShowWarning("buildin_autoloot: Invalid rate value %d, should be between 0 ~ 10000.\n", rate);		
+			script_pushint(st, false);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		rate = (sd->state.autoloot > 0 ? 0 : 10000);
+	}
+
+	sd->state.autoloot = rate;
+	script_pushint(st, true);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(opentips){
+#if PACKETVER < 20171122
+	ShowError( "buildin_opentips: This command requires PACKETVER 20171122 or newer.\n" );
+	return SCRIPT_CMD_FAILURE;
+#else
+	map_session_data* sd;
+
+	if (!script_charid2sd(3, sd)) {
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_ui_open( *sd, OUT_UI_TIP, script_getnum(st, 2) );
+	return SCRIPT_CMD_SUCCESS;
+#endif
+}
+
+/**
+ * Displays a special popup.
+ * specialpopup(<popup id>);
+ */
+BUILDIN_FUNC(specialpopup) {
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	int32 id = script_getnum(st,2);
+	clif_specialpopup(*sd, id);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(setdialogalign){
+	map_session_data *sd;
+
+	if ( !script_rid2sd(sd) ) {
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 align = script_getnum( st, 2 );
+	
+	if( align < DIALOG_ALIGN_LEFT || align > DIALOG_ALIGN_BOTTOM ){
+		ShowError( "buildin_setdialogalign: Unknown align value %d\n", align );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_set_dialog_align( *sd, st->oid, static_cast<e_say_dialog_align>( align ) );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(setdialogsize){
+	map_session_data *sd;
+
+	if ( !script_rid2sd(sd) ) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 x = script_getnum( st, 2 );
+	
+	if( x < 0 || x > INT16_MAX ){
+		ShowError( "buildin_setdialogsize: x size %d is out of range [0,%d]\n", x, INT16_MAX );
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	int32 y = script_getnum( st, 3 );
+	
+	if( y < 0 || y > INT16_MAX ){
+		ShowError( "buildin_setdialogsize: y size %d is out of range [0,%d]\n", y, INT16_MAX );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_set_npc_window_size( *sd, x, y );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(setdialogpos){
+	map_session_data *sd;
+
+	if ( !script_rid2sd(sd) ) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 x = script_getnum( st, 2 );
+	
+	if( x < 0 || x > INT16_MAX ){
+		ShowError( "buildin_setdialogpos: x position %d is out of range [0,%d]\n", x, INT16_MAX );
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	int32 y = script_getnum( st, 3 );
+	
+	if( y < 0 || y > INT16_MAX ){
+		ShowError( "buildin_setdialogpos: y position %d is out of range [0,%d]\n", y, INT16_MAX );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_set_npc_window_pos( *sd, x, y );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(setdialogpospercent){
+	map_session_data *sd;
+
+	if ( !script_rid2sd(sd) ) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 x = script_getnum( st, 2 );
+	
+	if( x < 0 || x > 100 ){
+		ShowError( "buildin_setdialogpospercent: x rate %d is out of range [0,100]\n", x );
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	int32 y = script_getnum( st, 3 );
+	
+	if( y < 0 || y > 100 ){
+		ShowError( "buildin_setdialogpospercent: y rate %d is out of range [0,100]\n", y );
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	clif_set_npc_window_pos_percent( *sd, x, y );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Checks if the character has that permission.
+ * permission_check(<permission>{,<char_id>}) -> <bool>
+ */
+BUILDIN_FUNC(permission_check)
+{
+	map_session_data* sd = nullptr;
+
+	if (!script_charid2sd(3, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	int32 permission = script_getnum(st, 2);
+
+	if (permission < PC_PERM_TRADE || permission >= PC_PERM_MAX) {
+		ShowError("buildin_permission_check: Invalid permission %d\n", permission);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st, pc_has_permission(sd, static_cast<e_pc_permission>(permission)));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Adds or removes a permission from the character
+ * permission_add(<permission>{,<char_id>})
+ * permission_remove(<permission>{,<char_id>})
+ */
+BUILDIN_FUNC(permission_add)
+{
+	map_session_data* sd = nullptr;
+
+	if (!script_charid2sd(3, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	int32 permission = script_getnum(st, 2);
+
+	if (permission < PC_PERM_TRADE || permission >= PC_PERM_MAX) {
+		ShowError("buildin_permission_check: Invalid permission %d\n", permission);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (strcmp(script_getfuncname(st), "permission_add") == 0)
+		sd->permissions.set(static_cast<e_pc_permission>(permission)); // Adds permission
+	else
+		sd->permissions.reset(static_cast<e_pc_permission>(permission)); // Removes permission
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mesitemicon){
+	std::shared_ptr<item_data> data;
+
+	if( script_isstring( st, 2 ) ){
+		const char* item_name = script_getstr( st, 2 );
+
+		data = item_db.searchname( item_name );
+
+		if( data == nullptr ){
+			ShowError( "buildin_mesitemicon: Item \"%s\" does not exist.\n", item_name );
+			script_pushconststr( st, "" );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else{
+		t_itemid nameid = script_getnum( st, 2 );
+
+		data = item_db.find( nameid );
+
+		if( data == nullptr ){
+			ShowError( "buildin_mesitemicon: Item ID %u does not exist.\n", nameid );
+			script_pushconststr( st, "" );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	const char* name = nullptr;
+
+	if( script_hasdata( st, 3 ) ){
+		name = script_getstr( st, 3 );
+	}
+
+	// Create the link, depending on configuration
+	std::string itemlstr = item_db.create_item_icon_for_mes( data, name );
+
+	// Push it to the script engine for further usage
+	script_pushstrcopy( st, itemlstr.c_str() );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Creates a clickable hyperlink string for NPC dialogue.
+ * meshyperlink(<display_text>", "<url>)
+ **/
+BUILDIN_FUNC(meshyperlink) {  
+	const char* display = script_getstr(st, 2);
+	const char* url = script_getstr(st, 3);
+
+	std::string result = "<URL>";
+	result += display;
+	result += "<INFO>";
+	result += url;
+	result += "</INFO></URL>";
+
+	script_pushstrcopy(st, result.c_str());
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mesemotion){
+#if PACKETVER >= 20230302
+	int32 id = script_getnum(st, 2);
+
+	// Validates emotion range
+	if (id < ET_SURPRISE || id >= ET_MAX) {
+		ShowError("buildin_mesemotion: Emotion ID %d is invalid.\n", id);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	char buf[32];
+	std::snprintf(buf, sizeof(buf), "^e[%d]", id);
+	script_pushstrcopy(st, buf);
+
+	return SCRIPT_CMD_SUCCESS;
+#else
+	ShowError( "buildin_mesemotion: This command requires PACKETVER 2023-03-02 or newer.\n" );
+	st->state = END;
+	return SCRIPT_CMD_FAILURE;
+#endif
+}
+
+#include <custom/script.inc>
+
+// declarations that were supposed to be exported from npc_chat.cpp
+#ifdef PCRE_SUPPORT
+BUILDIN_FUNC(defpattern);
+BUILDIN_FUNC(activatepset);
+BUILDIN_FUNC(deactivatepset);
+BUILDIN_FUNC(deletepset);
+#endif
+
+/** Regular expression matching
+ * preg_match(<pattern>,<string>{,<offset>})
+ */
+BUILDIN_FUNC(preg_match) {
+#ifdef PCRE_SUPPORT
+	pcre *re;
+	pcre_extra *pcreExtra;
+	const char *error;
+	int32 erroffset, r, offset = 0;
+	int32 subStrVec[30];
+
+	const char* pattern = script_getstr(st,2);
+	const char* subject = script_getstr(st,3);
+	if (script_hasdata(st,4))
+		offset = script_getnum(st,4);
+
+	re = pcre_compile(pattern, 0, &error, &erroffset, nullptr);
+	pcreExtra = pcre_study(re, 0, &error);
+
+	r = pcre_exec(re, pcreExtra, subject, (int32)strlen(subject), offset, 0, subStrVec, 30);
+
+	pcre_free(re);
+	if (pcreExtra != nullptr)
+		pcre_free(pcreExtra);
+
+	if (r < 0)
+		script_pushint(st,0);
+	else
+		script_pushint(st,(r > 0) ? r : 30 / 3);
+
+	return SCRIPT_CMD_SUCCESS;
+#else
+	ShowDebug("script:preg_match: cannot run without PCRE library enabled.\n");
+	script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+#endif
+}
+
+/// script command definitions
+/// for an explanation on args, see add_buildin_func
+struct script_function buildin_func[] = {
+	// NPC interaction
+	BUILDIN_DEF(mes,"v*"),
+	BUILDIN_DEF(next,""),
+	BUILDIN_DEF(clear,""),
+	BUILDIN_DEF(close,""),
+	BUILDIN_DEF(close2,""),
+	BUILDIN_DEF2(close, "close3", ""),
+	BUILDIN_DEF(menu,"sl*"),
+	BUILDIN_DEF(select,"s*"), //for future jA script compatibility
+	BUILDIN_DEF(prompt,"s*"),
+	//
+	BUILDIN_DEF(goto,"l"),
+	BUILDIN_DEF(callsub,"l*"),
+	BUILDIN_DEF(callfunc,"s*"),
+	BUILDIN_DEF(return,"?"),
+	BUILDIN_DEF(getarg,"i?"),
+	BUILDIN_DEF(jobchange,"i??"),
+	BUILDIN_DEF(jobname,"i"),
+	BUILDIN_DEF(input,"r??"),
+	BUILDIN_DEF(warp,"sii?"),
+	BUILDIN_DEF2(warp, "warpchar", "sii?"),
+	BUILDIN_DEF(areawarp,"siiiisii??"),
+	BUILDIN_DEF(warpparty,"siii???"), // [Fredzilla] [Paradox924X]
+	BUILDIN_DEF(warpguild,"siii"), // [Fredzilla]
+	BUILDIN_DEF(setlook,"ii?"),
+	BUILDIN_DEF(changelook,"ii?"), // Simulates but don't Store it
+	BUILDIN_DEF2(setr,"set","rv?"),
+	BUILDIN_DEF(setr,"rv??"), // Not meant to be used directly, required for var++/var--
+	BUILDIN_DEF(setarray,"rv*"),
+	BUILDIN_DEF(cleararray,"rvi"),
+	BUILDIN_DEF(copyarray,"rri"),
+	BUILDIN_DEF(getarraysize,"r"),
+	BUILDIN_DEF(deletearray,"r?"),
+	BUILDIN_DEF(getelementofarray,"ri"),
+	BUILDIN_DEF(inarray,"rv"),
+	BUILDIN_DEF(countinarray,"rr"),
+	BUILDIN_DEF(getitem,"vi?"),
+	BUILDIN_DEF(rentitem,"vi?"),
+	BUILDIN_DEF(rentitem2,"viiiiiiii?"),
+	BUILDIN_DEF(getitem2,"viiiiiiii?"),
+	BUILDIN_DEF(getnameditem,"vv"),
+	BUILDIN_DEF2(grouprandomitem,"groupranditem","i?"),
+	BUILDIN_DEF(makeitem,"visii?"),
+	BUILDIN_DEF(makeitem2,"visiiiiiiiii?"),
+	BUILDIN_DEF(delitem,"vi?"),
+	BUILDIN_DEF2(delitem,"storagedelitem","vi?"),
+	BUILDIN_DEF2(delitem,"guildstoragedelitem","vi?"),
+	BUILDIN_DEF2(delitem,"cartdelitem","vi?"),
+	BUILDIN_DEF(delitem2,"viiiiiiii?"),
+	BUILDIN_DEF2(delitem2,"storagedelitem2","viiiiiiii?"),
+	BUILDIN_DEF2(delitem2,"guildstoragedelitem2","viiiiiiii?"),
+	BUILDIN_DEF2(delitem2,"cartdelitem2","viiiiiiii?"),
+	BUILDIN_DEF(delitemidx,"i??"),
+	BUILDIN_DEF2(enableitemuse,"enable_items",""),
+	BUILDIN_DEF2(disableitemuse,"disable_items",""),
+	BUILDIN_DEF(cutin,"si"),
+	BUILDIN_DEF(viewpoint,"iiiii?"),
+	BUILDIN_DEF(viewpointmap, "siiiii"),
+	BUILDIN_DEF(heal,"ii?"),
+	BUILDIN_DEF(healap,"i?"),
+	BUILDIN_DEF(itemheal,"ii?"),
+	BUILDIN_DEF(percentheal,"ii?"),
+	BUILDIN_DEF(rand,"i?"),
+	BUILDIN_DEF(countitem,"v?"),
+	BUILDIN_DEF(storagecountitem,"v?"),
+	BUILDIN_DEF(guildstoragecountitem,"v?"),
+	BUILDIN_DEF(cartcountitem,"v?"),
+	BUILDIN_DEF2(countitem,"countitem2","viiiiiii?"),
+	BUILDIN_DEF2(storagecountitem,"storagecountitem2","viiiiiii?"),
+	BUILDIN_DEF2(guildstoragecountitem,"guildstoragecountitem2","viiiiiii?"),
+	BUILDIN_DEF2(cartcountitem,"cartcountitem2","viiiiiii?"),
+	BUILDIN_DEF(checkweight,"vi*"),

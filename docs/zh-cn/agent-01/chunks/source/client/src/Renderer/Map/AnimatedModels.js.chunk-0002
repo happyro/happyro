@@ -1,0 +1,272 @@
+		m13 = m[13],
+		m14 = m[14];
+	const n0 = n[0],
+		n1 = n[1],
+		n2 = n[2],
+		n4 = n[4],
+		n5 = n[5],
+		n6 = n[6],
+		n8 = n[8],
+		n9 = n[9],
+		n10 = n[10];
+
+	const faces = node.faces;
+	const vertices = node.vertices;
+	const tvertices = node.tvertices;
+	const textures = node.textures;
+	const output = buffer;
+	let o = offset;
+
+	// Iterate faces, process only those matching textureId
+	for (let f = 0; f < faces.length; f++) {
+		const face = faces[f];
+		if (textures[face.texid] !== textureId) {
+			continue;
+		}
+
+		// Compute Face Normal (using Original Vertices)
+		const v0 = vertices[face.vertidx[0]];
+		const v1 = vertices[face.vertidx[1]];
+		const v2 = vertices[face.vertidx[2]];
+
+		const ax = v1[0] - v0[0],
+			ay = v1[1] - v0[1],
+			az = v1[2] - v0[2];
+		const bx = v2[0] - v0[0],
+			by = v2[1] - v0[1],
+			bz = v2[2] - v0[2];
+
+		let nx = ay * bz - az * by;
+		let ny = az * bx - ax * bz;
+		let nz = ax * by - ay * bx;
+
+		// Normalize
+		let len = nx * nx + ny * ny + nz * nz;
+		if (len > 0) {
+			len = 1.0 / Math.sqrt(len);
+			nx *= len;
+			ny *= len;
+			nz *= len;
+		}
+
+		// Transform Normal
+		const tnx = n0 * nx + n4 * ny + n8 * nz;
+		const tny = n1 * nx + n5 * ny + n9 * nz;
+		const tnz = n2 * nx + n6 * ny + n10 * nz;
+
+		// Process 3 Vertices
+		for (let vi = 0; vi < 3; vi++) {
+			const vIdx = face.vertidx[vi];
+			const tIdx = face.tvertidx[vi];
+
+			const vx = vertices[vIdx][0];
+			const vy = vertices[vIdx][1];
+			const vz = vertices[vIdx][2];
+
+			// Position (Transformed)
+			output[o++] = m0 * vx + m4 * vy + m8 * vz + m12;
+			output[o++] = m1 * vx + m5 * vy + m9 * vz + m13;
+			output[o++] = m2 * vx + m6 * vy + m10 * vz + m14;
+
+			// Normal (Transformed)
+			output[o++] = tnx;
+			output[o++] = tny;
+			output[o++] = tnz;
+
+			// UV
+			output[o++] = tvertices[tIdx * 6 + 4];
+			output[o++] = tvertices[tIdx * 6 + 5];
+
+			// Alpha
+			output[o++] = alpha;
+		}
+	}
+}
+
+/**
+ * Update model buffer at frame
+ */
+function updateModelBuffer(gl, model, frame, force) {
+	const frameDuration = 1000 / (model.fps / (GraphicsSettings.performanceMode ? 2 : 1.14));
+	const currentAnimFrame = Math.floor(frame / frameDuration);
+
+	if (!force && model.lastAnimFrame === currentAnimFrame && !model.staticModel) {
+		return;
+	}
+
+	if (model.staticModel && model.lastAnimFrame !== -1 && !force) {
+		return;
+	}
+
+	model.lastAnimFrame = currentAnimFrame;
+	model.lastFrame = frame;
+
+	const box = model.box;
+	const nodeMap = model._nodeMap;
+	const globalMatrices = model._globalMatrices;
+
+	// 1. Update Matrix Hierarchy
+	for (let n = 0; n < model.nodes.length; n++) {
+		const node = model.nodes[n];
+		const globalMatrix = globalMatrices[n];
+
+		// Parent Transform
+		if (node.parentname && nodeMap[node.parentname] && node.parentname !== node.name) {
+			const parentIdx = nodeMap[node.parentname]._index;
+			mat4.copy(globalMatrix, globalMatrices[parentIdx]);
+		} else {
+			mat4.identity(globalMatrix);
+		}
+
+		// Local Transform
+		if (node._isStatic) {
+			// Optimization: Use precalculated local matrix
+			mat4.multiply(globalMatrix, globalMatrix, node._staticLocalMatrix);
+		} else {
+			const animPos = getPositionAtFrame(node.posKeyframes, frame, _tempVec3);
+			mat4.translate(globalMatrix, globalMatrix, animPos || node.pos);
+
+			const animRot = getRotationAtFrame(node.rotKeyframes, frame, _tempQuat);
+			if (animRot) {
+				mat4.fromQuat(_tempMat4, animRot);
+				mat4.multiply(globalMatrix, globalMatrix, _tempMat4);
+			} else {
+				mat4.rotate(globalMatrix, globalMatrix, node.rotangle, node.rotaxis);
+			}
+
+			const animScale = getScaleAtFrame(node.scaleKeyFrames, frame, _tempVec3Scale);
+			mat4.scale(globalMatrix, globalMatrix, animScale || node.scale);
+		}
+
+		// Final Node Matrix (Center correction + Offset)
+		const finalNodeMatrix = node._cache.final;
+		mat4.identity(finalNodeMatrix);
+		mat4.translate(finalNodeMatrix, finalNodeMatrix, [-box.center[0], -box.max[1], -box.center[2]]);
+		mat4.multiply(finalNodeMatrix, finalNodeMatrix, globalMatrix); // Apply hierarchy
+
+		if (!node.is_only) {
+			mat4.translate(finalNodeMatrix, finalNodeMatrix, node.offset);
+		}
+		mat4.multiply(finalNodeMatrix, finalNodeMatrix, mat3.toMat4(node.mat3));
+
+		// Cache for step 2
+		node.finalMatrix = finalNodeMatrix;
+	}
+
+	// 2. Pre-calculate Instance Matrices
+	// We do this to avoid recalculating Node * Instance for every texture group
+	for (let n = 0; n < model.nodes.length; n++) {
+		const node = model.nodes[n];
+		for (let i = 0; i < model.instances.length; i++) {
+			// Instance Final = InstanceWorld * NodeFinal
+			mat4.multiply(node._cache.instances[i], model.instances[i], node.finalMatrix);
+		}
+	}
+
+	// 3. Write Geometry to Buffer (Using WritePlan)
+	// This ensures the buffer is ordered by Texture, maximizing batching
+	const buffer = model._gpuBuffer;
+	const writePlans = model.writePlans;
+
+	for (const tid in writePlans) {
+		const group = writePlans[tid];
+		const plans = group.writePlan;
+		const textureId = parseInt(tid);
+
+		for (let p = 0; p < plans.length; p++) {
+			const plan = plans[p];
+			const node = model.nodes[plan.nodeIndex];
+			const finalInstanceMatrix = node._cache.instances[plan.instanceIndex];
+
+			transformAndWrite(node, finalInstanceMatrix, textureId, plan.targetOffset, buffer, model.alpha);
+		}
+	}
+
+	// 4. Upload to GPU
+	// Use bufferSubData to avoid reallocation
+	gl.bindBuffer(gl.ARRAY_BUFFER, model.buffer);
+	gl.bufferSubData(gl.ARRAY_BUFFER, 0, buffer);
+}
+
+/**
+ * Render animated models
+ */
+function render(gl, modelView, projection, normalMat, fog, light, tick) {
+	if (_animatedModels.length === 0) {
+		return;
+	}
+
+	if (!_program) {
+		init(gl);
+	}
+
+	const uniform = _program.uniform;
+
+	gl.useProgram(_program);
+
+	// Bind matrices
+	gl.uniformMatrix4fv(uniform.uModelViewMat, false, modelView);
+	gl.uniformMatrix4fv(uniform.uProjectionMat, false, projection);
+	gl.uniformMatrix3fv(uniform.uNormalMat, false, normalMat);
+
+	// Bind light
+	gl.uniform3fv(uniform.uLightDirection, light.direction);
+	gl.uniform1f(uniform.uLightOpacity, light.opacity);
+	gl.uniform3fv(uniform.uLightAmbient, light.ambient);
+	gl.uniform3fv(uniform.uLightDiffuse, light.diffuse);
+	gl.uniform3fv(uniform.uLightEnv, light.env);
+
+	// Fog settings
+	gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+	gl.uniform1f(uniform.uFogNear, fog.near);
+	gl.uniform1f(uniform.uFogFar, fog.far);
+	gl.uniform3fv(uniform.uFogColor, fog.color);
+
+	gl.activeTexture(gl.TEXTURE0);
+	gl.uniform1i(uniform.uDiffuse, 0);
+	SpriteRenderer.runWithDepth(true, true, true, function () {
+		// Render each animated model
+		for (let m = 0; m < _animatedModels.length; m++) {
+			const model = _animatedModels[m];
+			const frame = tick % (model.animLen || 1);
+
+			updateModelBuffer(gl, model, frame, false);
+
+			if (!model.buffer || model.meshInfos.length === 0) {
+				continue;
+			}
+
+			gl.bindVertexArray(model.vao);
+
+			for (let i = 0; i < model.meshInfos.length; i++) {
+				const info = model.meshInfos[i];
+				const texture = model.textureObjects[info.textureIdx];
+
+				if (texture) {
+					gl.bindTexture(gl.TEXTURE_2D, texture);
+					gl.drawArrays(gl.TRIANGLES, info.vertOffset, info.vertCount);
+				}
+			}
+		}
+	});
+	// Disable attributes
+	gl.bindVertexArray(null);
+}
+
+/**
+ * Check if there are animated models
+ */
+function hasAnimatedModels() {
+	return _animatedModels.length > 0;
+}
+
+/**
+ * Export
+ */
+export default {
+	init: init,
+	free: free,
+	add: add,
+	render: render,
+	hasAnimatedModels: hasAnimatedModels
+};

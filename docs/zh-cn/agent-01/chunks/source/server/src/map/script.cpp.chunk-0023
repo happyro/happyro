@@ -1,0 +1,500 @@
+	map_session_data* sd;
+
+	if( !script_charid2sd( 3, sd ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 permission = script_getnum(st,2);
+
+	if( permission == 0 ){
+		ShowError( "buildin_guild_has_permission: No permission given.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( ( permission & GUILD_PERM_ALL ) == 0 ){
+		ShowError( "buildin_guild_has_permission: Invalid permission '%d'.\n", permission );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !sd->guild ){
+		script_pushint( st, false );
+
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	int32 position = guild_getposition(*sd);
+	
+	if( position < 0 || ( sd->guild->guild.position[position].mode&permission ) != permission ){
+		script_pushint( st, false );
+
+		return SCRIPT_CMD_SUCCESS;
+	}
+	
+	script_pushint( st, true );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Make player use a skill trought item usage
+ *------------------------------------------*/
+/// itemskill <skill id>,<level>
+/// itemskill "<skill name>",<level>
+BUILDIN_FUNC(itemskill)
+{
+	int32 id;
+	int32 lv;
+	bool keep_requirement;
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) || sd->ud.skilltimer != INVALID_TIMER )
+		return SCRIPT_CMD_SUCCESS;
+
+	if (script_isstring(st, 2)) {
+		const char *name = script_getstr(st, 2);
+
+		if (!(id = skill_name2id(name))) {
+			ShowError("buildin_itemskill: Invalid skill name %s passed to item bonus. Skipping.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		id = script_getnum(st, 2);
+
+		if (!skill_get_index(id)) {
+			ShowError("buildin_itemskill: Invalid skill ID %d passed to item bonus. Skipping.\n", id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	lv = script_getnum(st,3);
+	if (script_hasdata(st, 4)) {
+		keep_requirement = (script_getnum(st, 4) != 0);
+	} else {
+		keep_requirement = false;
+	}
+
+	sd->skillitem=id;
+	sd->skillitemlv=lv;
+	sd->skillitem_keep_requirement = keep_requirement;
+	clif_item_skill(sd,id,lv);
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ * Attempt to create an item
+ *------------------------------------------*/
+BUILDIN_FUNC(produce)
+{
+	int32 trigger;
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	trigger=script_getnum(st,2);
+	clif_skill_produce_mix_list( *sd, -1, trigger );
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(cooking)
+{
+	int32 trigger;
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	trigger=script_getnum(st,2);
+	clif_cooking_list( *sd, trigger, AM_PHARMACY, 1, 1 );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Create a pet
+ *------------------------------------------*/
+BUILDIN_FUNC(makepet)
+{
+	map_session_data* sd;
+	uint16 mob_id;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	mob_id = script_getnum(st,2);
+	std::shared_ptr<s_pet_db> pet = pet_db.find(mob_id);
+
+	if( !pet ){
+		ShowError( "buildin_makepet: failed to create a pet with mob id %hu\n", mob_id);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	std::shared_ptr<s_mob_db> mdb = mob_db.find(pet->class_);
+
+	intif_create_pet( sd->status.account_id, sd->status.char_id, pet->class_, mdb->lv, pet->EggID, 0, pet->intimate, 100, 0, 1, mdb->jname.c_str() );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Give player exp base,job * quest_exp_rate/100
+ * getexp <base xp>,<job xp>{,<char_id>};
+ **/
+BUILDIN_FUNC(getexp){
+	map_session_data* sd;
+
+	if( !script_charid2sd( 4, sd ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int64 base = script_getnum64( st, 2 );
+
+	if( base < 0 ){
+		ShowError( "buildin_getexp: Called with negative base exp.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	int64 job = script_getnum64( st, 3 );
+
+	if( job < 0 ){
+		ShowError( "buildin_getexp: Called with negative job exp.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( base == 0 && job == 0 ){
+		ShowError( "buildin_getexp: Called with base and job exp 0.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	// bonus for npc-given exp
+	double bonus = battle_config.quest_exp_rate / 100.;
+
+	if (base)
+		base = (int64) cap_value(base * bonus, 0, MAX_EXP);
+	if (job)
+		job = (int64) cap_value(job * bonus, 0, MAX_EXP);
+
+	pc_gainexp(sd, nullptr, base, job, 1);
+#ifdef RENEWAL
+	if (base && sd->hd)
+		hom_gainexp(sd->hd, base * battle_config.homunculus_exp_gain / 100); // Homunculus only receive 10% of EXP
+#endif
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Gain guild exp [Celest]
+ *------------------------------------------*/
+BUILDIN_FUNC(guildgetexp){
+	map_session_data* sd;
+
+	if( !script_rid2sd( sd ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int64 exp = script_getnum64( st, 2 );
+
+	if( exp <= 0 ){
+		ShowError( "buildin_guildgetexp: Called with exp <= 0.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( sd->status.guild_id <= 0 ){
+		ShowError( "buildin_guildgetexp: Called for player %s (AID: %u, CID: %u) without a guild.\n", sd->status.name, sd->status.account_id, sd->status.char_id );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	guild_getexp( sd, exp );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Changes the guild master of a guild [Skotlex]
+ *------------------------------------------*/
+BUILDIN_FUNC(guildchangegm)
+{
+	TBL_PC *sd;
+	int32 guild_id;
+	const char *name;
+
+	guild_id = script_getnum(st,2);
+	name = script_getstr(st,3);
+	sd=map_nick2sd(name,false);
+
+	if (!sd)
+		script_pushint(st,0);
+	else
+		script_pushint(st,guild_gm_change(guild_id, sd->status.char_id));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Spawn a monster:
+ * *monster "<map name>",<x>,<y>,"<name to show>",<mob id>,<amount>{,"<event label>",<size>,<ai>};
+ * *monster "<map name>",<x>,<y>,"<name to show>","<mob name>",<amount>{,"<event label>",<size>,<ai>};
+ *------------------------------------------*/
+BUILDIN_FUNC(monster)
+{
+	const char* mapn	= script_getstr(st,2);
+	int32 x				= script_getnum(st,3);
+	int32 y				= script_getnum(st,4);
+	const char* str		= script_getstr(st,5);
+	int32 class_;
+	int32 amount			= script_getnum(st,7);
+	const char* event	= "";
+	uint32 size	= SZ_SMALL;
+	enum mob_ai ai		= AI_NONE;
+
+	map_session_data* sd;
+	int16 m;
+	int32 i;
+
+	if( script_isstring( st, 6 ) ){
+		const char* name = script_getstr( st, 6 );
+
+		std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname( name );
+
+		if( mob == nullptr ){
+			ShowWarning( "buildin_monster: Attempted to spawn non-existing monster \"%s\"\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		class_ = mob->id;
+	}else{
+		class_ = script_getnum( st, 6 );
+
+		if( class_ >= 0 && !mobdb_checkid( class_ ) ){
+			ShowWarning( "buildin_monster: Attempted to spawn non-existing monster class %d\n", class_ );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (script_hasdata(st, 8)) {
+		event = script_getstr(st, 8);
+		check_event(st, event);
+	}
+
+	if (script_hasdata(st, 9)) {
+		size = script_getnum(st, 9);
+		if (size > SZ_BIG) {
+			ShowWarning("buildin_monster: Attempted to spawn non-existing size %d for monster class %d\n", size, class_);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (script_hasdata(st, 10)) {
+		ai = static_cast<enum mob_ai>(script_getnum(st, 10));
+		if (ai >= AI_MAX) {
+			ShowWarning("buildin_monster: Attempted to spawn non-existing ai %d for monster class %d\n", ai, class_);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	sd = map_id2sd(st->rid);
+
+	if (sd && strcmp(mapn, "this") == 0)
+		m = sd->m;
+	else
+		m = map_mapname2mapid(mapn);
+
+	TBL_MOB* md;
+
+	for(i = 0; i < amount; i++) { //not optimised
+		int32 mobid = mob_once_spawn(sd, m, x, y, str, class_, 1, event, size, ai);
+
+		if (mobid > 0) {
+			md = map_id2md(mobid);
+			if (md)
+				md->next_walktime = INVALID_TIMER;
+
+			mapreg_setreg(reference_uid(add_str("$@mobid"), i), mobid);
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Request List of Monster Drops
+ *------------------------------------------*/
+BUILDIN_FUNC(getmobdrops)
+{
+	int32 class_ = script_getnum(st,2);
+	int32 j = 0;
+
+	if( !mobdb_checkid(class_) )
+	{
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	std::shared_ptr<s_mob_db> mob = mob_db.find(class_);
+
+	for( const std::shared_ptr<s_mob_drop>& entry : mob->dropitem ){
+		if( entry->nameid == 0 )
+			continue;
+		if( !item_db.exists(entry->nameid) )
+			continue;
+
+		mapreg_setreg(reference_uid(add_str("$@MobDrop_item"), j), entry->nameid);
+		mapreg_setreg(reference_uid(add_str("$@MobDrop_rate"), j), entry->rate);
+		mapreg_setreg(reference_uid(add_str("$@MobDrop_nosteal"), j), entry->steal_protected);
+		mapreg_setreg(reference_uid(add_str("$@MobDrop_randomopt"), j), entry->randomopt_group);
+
+		j++;
+	}
+
+	mapreg_setreg(add_str("$@MobDrop_count"), j);
+	script_pushint(st, 1);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Spawn a monster in a random location
+ * in x0,x1,y0,y1 area.
+ *------------------------------------------*/
+BUILDIN_FUNC(areamonster)
+{
+	const char* mapn	= script_getstr(st,2);
+	int32 x0				= script_getnum(st,3);
+	int32 y0				= script_getnum(st,4);
+	int32 x1				= script_getnum(st,5);
+	int32 y1				= script_getnum(st,6);
+	const char* str		= script_getstr(st,7);
+	int32 class_;
+	int32 amount			= script_getnum(st,9);
+	const char* event	= "";
+	uint32 size	= SZ_SMALL;
+	enum mob_ai ai		= AI_NONE;
+
+	map_session_data* sd;
+	int16 m;
+	int32 i;
+
+	if( script_isstring( st, 8 ) ){
+		const char* name = script_getstr( st, 8 );
+
+		std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname( name );
+
+		if( mob == nullptr ){
+			ShowWarning( "buildin_areamonster: Attempted to spawn non-existing monster \"%s\"\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		class_ = mob->id;
+	}else{
+		class_ = script_getnum( st, 8 );
+
+		if( class_ >= 0 && !mobdb_checkid( class_ ) ){
+			ShowWarning( "buildin_areamonster: Attempted to spawn non-existing monster class %d\n", class_ );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (script_hasdata(st,10)) {
+		event = script_getstr(st, 10);
+		check_event(st, event);
+	}
+
+	if (script_hasdata(st, 11)) {
+		size = script_getnum(st, 11);
+		if (size > 3) {
+			ShowWarning( "buildin_areamonster: Attempted to spawn non-existing size %d for monster class %d\n", size, class_ );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (script_hasdata(st, 12)) {
+		ai = static_cast<enum mob_ai>(script_getnum(st, 12));
+		if (ai >= AI_MAX) {
+			ShowWarning( "buildin_areamonster: Attempted to spawn non-existing ai %d for monster class %d\n", ai, class_ );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	sd = map_id2sd(st->rid);
+
+	if (sd && strcmp(mapn, "this") == 0)
+		m = sd->m;
+	else
+		m = map_mapname2mapid(mapn);
+
+	TBL_MOB* md;
+
+	for(i = 0; i < amount; i++) { //not optimised
+		int32 mobid = mob_once_spawn_area(sd, m, x0, y0, x1, y1, str, class_, 1, event, size, ai);
+
+		if (mobid > 0) {
+			md = map_id2md(mobid);
+			if (md)
+				md->next_walktime = INVALID_TIMER;
+
+			mapreg_setreg(reference_uid(add_str("$@mobid"), i), mobid);
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * KillMonster subcheck, verify if mob to kill ain't got an even to handle, could be force kill by allflag
+ *------------------------------------------*/
+ static int32 buildin_killmonster_sub_strip(block_list *bl,va_list ap)
+{ //same fix but with killmonster instead - stripping events from mobs.
+	TBL_MOB* md = (TBL_MOB*)bl;
+	char *event=va_arg(ap,char *);
+	int32 allflag=va_arg(ap,int32);
+
+	md->state.npc_killmonster = 1;
+
+	if(!allflag){
+		if(strcmp(event,md->npc_event)==0)
+			status_kill(bl);
+	}else{
+		if(!md->spawn)
+			status_kill(bl);
+	}
+	md->state.npc_killmonster = 0;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+static int32 buildin_killmonster_sub(block_list *bl,va_list ap)
+{
+	TBL_MOB* md = (TBL_MOB*)bl;
+	char *event=va_arg(ap,char *);
+	int32 allflag=va_arg(ap,int32);
+
+	if(!allflag){
+		if(strcmp(event,md->npc_event)==0)
+			status_kill(bl);
+	}else{
+		if(!md->spawn)
+			status_kill(bl);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(killmonster)
+{
+	const char *mapname,*event;
+	int16 m,allflag=0;
+	mapname=script_getstr(st,2);
+	event=script_getstr(st,3);
+	if(strcmp(event,"All")==0)
+		allflag = 1;
+	else
+		check_event(st, event);
+
+	if( (m=map_mapname2mapid(mapname))<0 )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( script_hasdata(st,4) ) {
+		if ( script_getnum(st,4) == 1 ) {
+			map_foreachinmap(buildin_killmonster_sub, m, BL_MOB, event ,allflag);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+

@@ -1,0 +1,500 @@
+		WFIFOL(fd, i*104+16) = static_cast<uint32>(sd->quest_log[i].time);
+		WFIFOW(fd, i*104+20) = static_cast<uint16>(qi->objectives.size());
+
+		for (int32 j = 0 ; j < qi->objectives.size(); j++) {
+			const std::shared_ptr<const s_mob_db> mob = mob_db.find(qi->objectives[j]->mob_id);
+
+			WFIFOL(fd, i*104+22+j*30) = (mob ? qi->objectives[j]->mob_id : MOBID_PORING);
+			WFIFOW(fd, i*104+26+j*30) = sd->quest_log[i].count[j];
+			if (mob && qi->objectives[j]->mob_id > 0)
+				safestrncpy(WFIFOCP(fd, i*104+28+j*30), mob->jname.c_str(), NAME_LENGTH);
+			else
+				safestrncpy(WFIFOCP(fd, i*104+28+j*30), clif_quest_string(qi->objectives[j]).c_str(), NAME_LENGTH);
+		}
+	}
+
+	WFIFOSET(fd, len);
+}
+
+
+/// Notification about a new quest
+/// 02b3 <quest id>.L <active>.B <start time>.L <expire time>.L <mobs>.W { <mob id>.L <mob count>.W <mob name>.24B }*3 (ZC_ADD_QUEST)
+/// 08fe <packet len>.W  { <quest id>.L <mob id>.L <total count>.W <current count>.W }*3 (ZC_HUNTING_QUEST_INFO)
+/// 09f9 <quest id>.L <active>.B <start time>.L <expire time>.L <mobs>.W { <hunt identification>.L <mob type>.L <mob id>.L <min level>.W <max level>.W <mob count>.W <mob name>.24B }*3 (ZC_ADD_QUEST_EX)
+void clif_quest_add ( const map_session_data* sd, const quest *qd )
+{
+	nullpo_retv(sd);
+	nullpo_retv(qd);
+
+	int32 fd = sd->fd;
+	const std::shared_ptr<const s_quest_db> qi = quest_search(qd->quest_id);
+	if (!qi)
+		return;
+#if PACKETVER >= 20150513
+	int32 cmd = 0x9f9;
+#else
+	int32 cmd = 0x2b3;
+#endif
+
+	WFIFOHEAD(fd, packet_len(cmd));
+	WFIFOW(fd, 0) = cmd;
+	WFIFOL(fd, 2) = qd->quest_id;
+	WFIFOB(fd, 6) = qd->state;
+	WFIFOB(fd, 7) = static_cast<uint8>(qd->time - qi->time);
+	WFIFOL(fd, 11) = static_cast<uint32>(qd->time);
+	WFIFOW(fd, 15) = static_cast<uint16>(qi->objectives.size());
+
+	for (int32 i = 0, offset = 17; i < qi->objectives.size(); i++) {
+		const std::shared_ptr<const s_mob_db> mob = mob_db.find(qi->objectives[i]->mob_id);
+		e_race race = qi->objectives[i]->race;
+		e_size size = qi->objectives[i]->size;
+		e_element element = qi->objectives[i]->element;
+
+#if PACKETVER >= 20150513
+		WFIFOL(fd, offset) = qd->quest_id * 1000 + i;
+		offset += 4;
+		WFIFOL(fd, offset) = (race ? race : (size ? size : (element ? element : 0)));	// effect ?
+		offset += 4;
+#endif
+		WFIFOL(fd, offset) = ((mob && qi->objectives[i]->mob_id > 0) ? qi->objectives[i]->mob_id : MOBID_PORING);	// 0 can't be used as it displays "Novice" job regardless of the clif_mobtype_name
+		offset += 4;
+#if PACKETVER >= 20150513
+		WFIFOW(fd, offset) = qi->objectives[i]->min_level;
+		offset += 2;
+		WFIFOW(fd, offset) = qi->objectives[i]->max_level;
+		offset += 2;
+#endif
+		WFIFOW(fd, offset) = qd->count[i];
+		offset += 2;
+		if (mob && qi->objectives[i]->mob_id > 0)
+			safestrncpy(WFIFOCP(fd,offset), mob->jname.c_str(), NAME_LENGTH);
+		else
+			safestrncpy(WFIFOCP(fd,offset), clif_quest_string(qi->objectives[i]).c_str(), NAME_LENGTH);
+		offset += NAME_LENGTH;
+	}
+
+	WFIFOSET(fd, packet_len(cmd));
+
+#if PACKETVER >= 20150513
+	int16 len;
+
+	len = static_cast<decltype(len)>( 4 + qi->objectives.size() * 12 );
+
+	WFIFOHEAD(fd, len);
+	WFIFOW(fd, 0) = 0x8fe;
+	WFIFOW(fd, 2) = len;
+
+	for (int32 i = 0, offset = 4; i < qi->objectives.size(); i++, offset += 12) {
+		WFIFOL(fd, offset) = qd->quest_id * 1000 + i;
+		WFIFOL(fd, offset + 4) = qi->objectives[i]->mob_id;
+		WFIFOW(fd, offset + 8) = qi->objectives[i]->count;
+		WFIFOW(fd, offset + 10) = qd->count[i];
+	}
+
+	WFIFOSET(fd, len);
+
+#endif
+}
+
+
+/// Notification about a quest being removed (ZC_DEL_QUEST).
+/// 02b4 <quest id>.L
+void clif_quest_delete( const map_session_data* sd, int32 quest_id )
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x2b4));
+	WFIFOW(fd, 0) = 0x2b4;
+	WFIFOL(fd, 2) = quest_id;
+	WFIFOSET(fd, packet_len(0x2b4));
+}
+
+
+/// Notification of an update to the hunting mission counter
+/// 02b5 <packet len>.W <mobs>.W { <quest id>.L <mob id>.L <total count>.W <current count>.W }*3 (ZC_UPDATE_MISSION_HUNT)
+/// 09fa <packet len>.W <mobs>.W { <quest id>.L <hunt identification>.L <total count>.W <current count>.W }*3 (ZC_UPDATE_MISSION_HUNT_EX)
+void clif_quest_update_objective( const map_session_data* sd, const quest* qd )
+{
+	int32 fd = sd->fd;
+	int32 offset = 6;
+	const std::shared_ptr<const s_quest_db> qi = quest_search(qd->quest_id);
+	int16 len;
+	len = static_cast<decltype(len)>( qi->objectives.size() * 12 + 6 );
+#if PACKETVER >= 20150513
+	int32 cmd = 0x9fa;
+#else
+	int32 cmd = 0x2b5;
+#endif
+
+	WFIFOHEAD(fd, len);
+	WFIFOW(fd, 0) = cmd;
+	WFIFOW(fd, 4) = static_cast<uint16>(qi->objectives.size());
+
+	for (int32 i = 0; i < qi->objectives.size(); i++) {
+		WFIFOL(fd, offset) = qd->quest_id;
+		offset += 4;
+#if PACKETVER >= 20150513
+		WFIFOL(fd, offset) = qd->quest_id * 1000 + i;
+		offset += 4;
+#else
+		WFIFOL(fd, offset) = qi->objectives[i]->mob_id;
+		offset += 4;
+#endif
+		WFIFOW(fd, offset) = qi->objectives[i]->count;
+		offset += 2;
+		WFIFOW(fd, offset) = qd->count[i];
+		offset += 2;
+	}
+
+	WFIFOW(fd, 2) = offset;
+	WFIFOSET(fd, offset);
+}
+
+
+/// Request to change the state of a quest.
+/// 02b6 <quest id>.L <active>.B (CZ_ACTIVE_QUEST)
+void clif_parse_questStateAck( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20070622
+	const PACKET_CZ_ACTIVE_QUEST* p = reinterpret_cast<PACKET_CZ_ACTIVE_QUEST*>( RFIFOP( fd, 0 ) );
+
+	quest_update_status( sd, p->quest_id, ( p->active != 0 ) ? Q_ACTIVE : Q_INACTIVE );
+#endif
+}
+
+
+/// Notification about the change of a quest state (ZC_ACTIVE_QUEST).
+/// 02b7 <quest id>.L <active>.B
+void clif_quest_update_status( const map_session_data* sd, int32 quest_id, bool active )
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x2b7));
+	WFIFOW(fd, 0) = 0x2b7;
+	WFIFOL(fd, 2) = quest_id;
+	WFIFOB(fd, 6) = active;
+	WFIFOSET(fd, packet_len(0x2b7));
+}
+
+
+/// Notification about an NPC's quest state (ZC_QUEST_NOTIFY_EFFECT).
+/// 0446 <npc id>.L <x>.W <y>.W <effect>.W <color>.W
+/// effect:
+///     0 = none
+///     1 = exclamation mark icon
+///     2 = question mark icon
+/// color:
+///     0 = yellow
+///     1 = orange
+///     2 = green
+///     3 = purple
+void clif_quest_show_event( const map_session_data* sd, const block_list* bl, e_questinfo_types effect, e_questinfo_markcolor color)
+{
+#if PACKETVER >= 20090218
+	nullpo_retv(sd);
+	nullpo_retv(bl);
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x446));
+	WFIFOW(fd, 0) = 0x446;
+	WFIFOL(fd, 2) = bl->id;
+	WFIFOW(fd, 6) = bl->x;
+	WFIFOW(fd, 8) = bl->y;
+	WFIFOW(fd, 10) = effect;
+	WFIFOW(fd, 12) = color;
+	WFIFOSET(fd, packet_len(0x446));
+#endif
+}
+
+
+/// Mercenary System
+///
+
+/// Notification about a mercenary status parameter change (ZC_MER_PAR_CHANGE).
+/// 02a2 <var id>.W <value>.L
+void clif_mercenary_updatestatus(map_session_data *sd, int32 type)
+{
+	s_mercenary_data *md;
+	struct status_data *status;
+	int32 fd;
+	if( !clif_session_isValid(sd) || (md = sd->md) == nullptr )
+		return;
+
+	fd = sd->fd;
+	status = &md->battle_status;
+	WFIFOHEAD(fd,packet_len(0x2a2));
+	WFIFOW(fd,0) = 0x2a2;
+	WFIFOW(fd,2) = type;
+	switch( type ) {
+		case SP_ATK1:
+			{
+				int32 atk = rnd()%(status->rhw.atk2 - status->rhw.atk + 1) + status->batk + status->rhw.atk;
+				WFIFOL(fd,4) = cap_value(atk, 0, INT16_MAX);
+			}
+			break;
+		case SP_MATK1:
+			WFIFOL(fd,4) = min(status->matk_max, UINT16_MAX);
+			break;
+		case SP_HIT:
+			WFIFOL(fd,4) = status->hit;
+			break;
+		case SP_CRITICAL:
+			WFIFOL(fd,4) = status->cri/10;
+			break;
+		case SP_DEF1:
+			WFIFOL(fd,4) = status->def;
+			break;
+		case SP_MDEF1:
+			WFIFOL(fd,4) = status->mdef;
+			break;
+		case SP_MERCFLEE:
+			WFIFOL(fd,4) = status->flee;
+			break;
+		case SP_ASPD:
+			WFIFOL(fd,4) = status->amotion;
+			break;
+		case SP_HP:
+			WFIFOL(fd,4) = status->hp;
+			break;
+		case SP_MAXHP:
+			WFIFOL(fd,4) = status->max_hp;
+			break;
+		case SP_SP:
+			WFIFOL(fd,4) = status->sp;
+			break;
+		case SP_MAXSP:
+			WFIFOL(fd,4) = status->max_sp;
+			break;
+		case SP_MERCKILLS:
+			WFIFOL(fd,4) = md->mercenary.kill_count;
+			break;
+		case SP_MERCFAITH:
+			WFIFOL(fd,4) = mercenary_get_faith(md);
+			break;
+	}
+	WFIFOSET(fd,packet_len(0x2a2));
+}
+
+
+/// Mercenary base status data (ZC_MER_INIT).
+/// 029b <id>.L <atk>.W <matk>.W <hit>.W <crit>.W <def>.W <mdef>.W <flee>.W <aspd>.W
+///     <name>.24B <level>.W <hp>.L <maxhp>.L <sp>.L <maxsp>.L <expire time>.L <faith>.W
+///     <calls>.L <kills>.L <atk range>.W
+void clif_mercenary_info(map_session_data *sd)
+{
+	int32 fd;
+	s_mercenary_data *md;
+	struct status_data *status;
+	int32 atk;
+
+	if( !clif_session_isValid(sd) || (md = sd->md) == nullptr )
+		return;
+
+	fd = sd->fd;
+	status = &md->battle_status;
+
+	WFIFOHEAD(fd,packet_len(0x29b));
+	WFIFOW(fd,0) = 0x29b;
+	WFIFOL(fd,2) = md->id;
+
+	// Mercenary shows ATK as a random value between ATK ~ ATK2
+	atk = rnd()%(status->rhw.atk2 - status->rhw.atk + 1) + status->batk + status->rhw.atk;
+	WFIFOW(fd,6) = cap_value(atk, 0, INT16_MAX);
+	WFIFOW(fd,8) = min(status->matk_max, UINT16_MAX);
+	WFIFOW(fd,10) = status->hit;
+	WFIFOW(fd,12) = status->cri/10;
+	WFIFOW(fd,14) = status->def;
+	WFIFOW(fd,16) = status->mdef;
+	WFIFOW(fd,18) = status->flee;
+	WFIFOW(fd,20) = status->amotion;
+	safestrncpy(WFIFOCP(fd,22), md->db->name.c_str(), NAME_LENGTH);
+	WFIFOW(fd,46) = md->db->lv;
+	WFIFOL(fd,48) = status->hp;
+	WFIFOL(fd,52) = status->max_hp;
+	WFIFOL(fd,56) = status->sp;
+	WFIFOL(fd,60) = status->max_sp;
+	WFIFOL(fd,64) = client_tick(time(nullptr) + (mercenary_get_lifetime(md) / 1000));
+	WFIFOW(fd,68) = mercenary_get_faith(md);
+	WFIFOL(fd,70) = mercenary_get_calls(md);
+	WFIFOL(fd,74) = md->mercenary.kill_count;
+	WFIFOW(fd,78) = md->battle_status.rhw.range;
+	WFIFOSET(fd,packet_len(0x29b));
+}
+
+
+/// Mercenary skill tree (ZC_MER_SKILLINFO_LIST).
+/// 029d <packet len>.W { <skill id>.W <type>.L <level>.W <sp cost>.W <attack range>.W <skill name>.24B <upgradable>.B }*
+void clif_mercenary_skillblock(map_session_data *sd)
+{
+	s_mercenary_data *md;
+	int32 fd, len = 4;
+
+	if( sd == nullptr || (md = sd->md) == nullptr )
+		return;
+
+	fd = sd->fd;
+	WFIFOHEAD(fd,4+37*MAX_MERCSKILL);
+	WFIFOW(fd,0) = 0x29d;
+	for (const auto &it : md->db->skill) {
+		uint16 id = it.first;
+
+		if (!SKILL_CHK_MERC(id))
+			continue;
+
+		uint16 lv = it.second;
+
+		WFIFOW(fd,len) = id;
+		WFIFOL(fd,len+2) = skill_get_inf(id);
+		WFIFOW(fd,len+6) = lv;
+		WFIFOW(fd,len+8) = skill_get_sp(id, lv);
+		WFIFOW(fd,len+10) = skill_get_range2(md, id, lv, false);
+		safestrncpy(WFIFOCP(fd,len+12), skill_get_name(id), NAME_LENGTH);
+		WFIFOB(fd,len+36) = 0; // Skillable for Mercenary?
+		len += 37;
+	}
+
+	WFIFOW(fd,2) = len;
+	WFIFOSET(fd,len);
+}
+
+
+/// Request to invoke a mercenary menu action (CZ_MER_COMMAND).
+/// 029f <command>.B
+///     1 = mercenary information
+///     2 = delete
+void clif_parse_mercenary_action(int32 fd, map_session_data* sd)
+{
+	int32 option = RFIFOB(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	if( sd->md == nullptr )
+		return;
+
+	if( option == 2 ) mercenary_delete(sd->md, 2);
+}
+
+
+/// Notification about the remaining time of a rental item.
+/// 0298 <name id>.W <seconds>.L (ZC_CASH_TIME_COUNTER)
+void clif_rental_time( const map_session_data* sd, t_itemid nameid, int32 seconds ){
+	// '<ItemName>' item will disappear in <seconds/60> minutes.
+	PACKET_ZC_CASH_TIME_COUNTER p = {};
+
+	p.packetType = HEADER_ZC_CASH_TIME_COUNTER;
+	p.itemId = client_nameid( nameid );
+	p.seconds = seconds;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+
+/// Deletes a rental item from client's inventory.
+/// 0299 <index>.W <name id>.W (ZC_CASH_ITEM_DELETE)
+void clif_rental_expired( const map_session_data* sd, int32 index, t_itemid nameid ){
+	// '<ItemName>' item has been deleted from the Inventory
+	PACKET_ZC_CASH_ITEM_DELETE p = {};
+
+	p.packetType = HEADER_ZC_CASH_ITEM_DELETE;
+	p.index = client_index( index );
+	p.itemId = client_nameid( nameid );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+
+/// Book Reading (ZC_READ_BOOK).
+/// 0294 <book id>.L <page>.L
+void clif_readbook(int32 fd, int32 book_id, int32 page)
+{
+	WFIFOHEAD(fd,packet_len(0x294));
+	WFIFOW(fd,0) = 0x294;
+	WFIFOL(fd,2) = book_id;
+	WFIFOL(fd,6) = page;
+	WFIFOSET(fd,packet_len(0x294));
+}
+
+
+/// Battlegrounds
+///
+
+/// Updates HP bar of a camp member.
+/// 02e0 <account id>.L <name>.24B <hp>.W <max hp>.W (ZC_BATTLEFIELD_NOTIFY_HP)
+/// 0a0e <account id>.L <hp>.L <max hp>.L (ZC_BATTLEFIELD_NOTIFY_HP2)
+void clif_bg_hp( const map_session_data* sd ) {
+#if PACKETVER < 20140613
+	unsigned char buf[34];
+	const int32 cmd = 0x2e0;
+#else
+	unsigned char buf[14];
+	const int32 cmd = 0xa0e;
+#endif
+	nullpo_retv(sd);
+
+	WBUFW(buf,0) = cmd;
+	WBUFL(buf,2) = sd->status.account_id;
+#if PACKETVER < 20140613
+    safestrncpy(WBUFCP(buf,6), sd->status.name, NAME_LENGTH);
+    if( sd->battle_status.max_hp > INT16_MAX ) { // To correctly display the %hp bar. [Skotlex]
+		WBUFW(buf,30) = sd->battle_status.hp/(sd->battle_status.max_hp/100);
+        WBUFW(buf,32) = 100;
+    } else {
+		WBUFW(buf,30) = sd->battle_status.hp;
+		WBUFW(buf,32) = sd->battle_status.max_hp;
+    }
+#else
+    if( sd->battle_status.max_hp > INT32_MAX ) {
+		WBUFL(buf,6) = sd->battle_status.hp/(sd->battle_status.max_hp/100);
+		WBUFL(buf,10) = 100;
+    } else {
+		WBUFL(buf,6) = sd->battle_status.hp;
+		WBUFL(buf,10) = sd->battle_status.max_hp;
+    }
+#endif
+	clif_send(buf, packet_len(cmd), sd, BG_AREA_WOS);
+}
+
+
+/// Updates the position of a camp member on the minimap (ZC_BATTLEFIELD_NOTIFY_POSITION).
+/// 02df <account id>.L <name>.24B <class>.W <x>.W <y>.W
+void clif_bg_xy( const map_session_data* sd )
+{
+	unsigned char buf[36];
+	nullpo_retv(sd);
+
+	WBUFW(buf,0)=0x2df;
+	WBUFL(buf,2)=sd->status.account_id;
+	safestrncpy(WBUFCP(buf,6), sd->status.name, NAME_LENGTH);
+	WBUFW(buf,30)=sd->status.class_;
+	WBUFW(buf,32)=sd->x;
+	WBUFW(buf,34)=sd->y;
+
+	clif_send(buf, packet_len(0x2df), sd, BG_SAMEMAP_WOS);
+}
+
+void clif_bg_xy_remove( const map_session_data* sd )
+{
+	unsigned char buf[36];
+	nullpo_retv(sd);
+
+	WBUFW(buf,0)=0x2df;
+	WBUFL(buf,2)=sd->status.account_id;
+	memset(WBUFP(buf,6), 0, NAME_LENGTH);
+	WBUFW(buf,30)=0;
+	WBUFW(buf,32)=-1;
+	WBUFW(buf,34)=-1;
+
+	clif_send(buf, packet_len(0x2df), sd, BG_SAMEMAP_WOS);
+}
+
+/// Notifies clients of a battleground message.
+/// 02DC <packet len>.W <account id>.L <name>.24B <message>.?B (ZC_BATTLEFIELD_CHAT)
+void clif_bg_message( const s_battleground_data* bg, int32 src_id, const char *name, const char *mes, size_t len ){
+	const map_session_data* sd = bg_getavailablesd( bg );
+
+	if( sd == nullptr ){
+		return;
+	}
+
+	// limit length
+	len = zmin( len + 1, CHAT_SIZE_MAX );
+
+	unsigned char buf[8 + NAME_LENGTH + CHAT_SIZE_MAX];
+

@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "battleground.hpp"
+
+#include <unordered_map>
+
+#include <common/cbasetypes.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+
+#include "battle.hpp"
+#include "clif.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "mapreg.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "pc.hpp"
+#include "pet.hpp"
+
+using namespace rathena;
+
+BattlegroundDatabase battleground_db;
+std::unordered_map<int32, std::shared_ptr<s_battleground_data>> bg_team_db;
+std::vector<std::shared_ptr<s_battleground_queue>> bg_queues;
+int32 bg_queue_count = 1;
+
+const std::string BattlegroundDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/battleground_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the battleground_db
+ * @param node: The YAML node containing the entry
+ * @return count of successfully parsed rows
+ */
+uint64 BattlegroundDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	uint32 id;
+
+	if (!this->asUInt32(node, "Id", id))
+		return 0;
+
+	std::shared_ptr<s_battleground_type> bg = this->find(id);
+	bool exists = bg != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Name", "Locations" }))
+			return 0;
+
+		bg = std::make_shared<s_battleground_type>();
+		bg->id = id;
+	}
+
+	if (this->nodeExists(node, "Name")) {
+		std::string name;
+
+		if (!this->asString(node, "Name", name))
+			return 0;
+
+		name.resize(NAME_LENGTH);
+		bg->name = name;
+	}
+
+	if (this->nodeExists(node, "MinPlayers")) {
+		int32 min;
+
+		if (!this->asInt32(node, "MinPlayers", min))
+			return 0;
+
+		if (min < 1) {
+			this->invalidWarning(node["MinPlayers"], "Minimum players %d cannot be less than 1, capping to 1.\n", min);
+			min = 1;
+		}
+
+		if (min * 2 > MAX_BG_MEMBERS) {
+			this->invalidWarning(node["MinPlayers"], "Minimum players %d exceeds MAX_BG_MEMBERS, capping to %d.\n", min, MAX_BG_MEMBERS / 2);
+			min = MAX_BG_MEMBERS / 2;
+		}
+
+		bg->required_players = min;
+	} else {
+		if (!exists)
+			bg->required_players = 1;
+	}
+
+	if (this->nodeExists(node, "MaxPlayers")) {
+		int32 max;
+
+		if (!this->asInt32(node, "MaxPlayers", max))
+			return 0;
+
+		if (max < 1) {
+			this->invalidWarning(node["MaxPlayers"], "Maximum players %d cannot be less than 1, capping to 1.\n", max);
+			max = 1;
+		}
+
+		if (max * 2 > MAX_BG_MEMBERS) {
+			this->invalidWarning(node["MaxPlayers"], "Maximum players %d exceeds MAX_BG_MEMBERS, capping to %d.\n", max, MAX_BG_MEMBERS / 2);
+			max = MAX_BG_MEMBERS / 2;
+		}
+
+		bg->max_players = max;
+	} else {
+		if (!exists)
+			bg->max_players = MAX_BG_MEMBERS / 2;
+	}
+
+	if (this->nodeExists(node, "MinLevel")) {
+		int32 min;
+
+		if (!this->asInt32(node, "MinLevel", min))
+			return 0;
+
+		if (min > MAX_LEVEL) {
+			this->invalidWarning(node["MinLevel"], "Minimum level %d exceeds MAX_LEVEL, capping to %d.\n", min, MAX_LEVEL);
+			min = MAX_LEVEL;
+		}
+
+		bg->min_lvl = min;
+	} else {
+		if (!exists)
+			bg->min_lvl = 1;
+	}
+
+	if (this->nodeExists(node, "MaxLevel")) {
+		int32 max;
+
+		if (!this->asInt32(node, "MaxLevel", max))
+			return 0;
+
+		if (max > MAX_LEVEL) {
+			this->invalidWarning(node["MaxLevel"], "Maximum level %d exceeds MAX_LEVEL, capping to %d.\n", max, MAX_LEVEL);
+			max = MAX_LEVEL;
+		}
+
+		bg->max_lvl = max;
+	} else {
+		if (!exists)
+			bg->max_lvl = MAX_LEVEL;
+	}
+
+	if (this->nodeExists(node, "Deserter")) {
+		uint32 deserter;
+
+		if (!this->asUInt32(node, "Deserter", deserter))
+			return 0;
+
+		bg->deserter_time = deserter;
+	} else {
+		if (!exists)
+			bg->deserter_time = 600;
+	}
+
+	if (this->nodeExists(node, "StartDelay")) {
+		uint32 delay;
+
+		if (!this->asUInt32(node, "StartDelay", delay))
+			return 0;
+
+		bg->start_delay = delay;
+	} else {
+		if (!exists)
+			bg->start_delay = 0;
+	}
+
+	if (this->nodeExists(node, "Join")) {
+		const auto& joinNode = node["Join"];
+
+		if (this->nodeExists(joinNode, "Solo")) {
+			bool active;
+
+			if (!this->asBool(joinNode, "Solo", active))
+				return 0;
+
+			bg->solo = active;
+		} else {
+			if (!exists)
+				bg->solo = true;
+		}
+
+		if (this->nodeExists(joinNode, "Party")) {
+			bool active;
+
+			if (!this->asBool(joinNode, "Party", active))
+				return 0;
+
+			bg->party = active;
+		} else {
+			if (!exists)
+				bg->party = true;
+		}
+
+		if (this->nodeExists(joinNode, "Guild")) {
+			bool active;
+
+			if (!this->asBool(joinNode, "Guild", active))
+				return 0;
+
+			bg->guild = active;
+		} else {
+			if (!exists)
+				bg->guild = true;
+		}
+	} else {
+		if (!exists) {
+			bg->solo = true;
+			bg->party = true;
+			bg->guild = true;
+		}
+	}
+
+	if (this->nodeExists(node, "JobRestrictions")) {
+		const auto& jobsNode = node["JobRestrictions"];
+
+		for (const auto& jobit : jobsNode) {
+			std::string job_name;
+			c4::from_chars(jobit.key(), &job_name);
+			std::string job_name_constant = "JOB_" + job_name;
+			int64 constant;
+
+			if (!script_get_constant(job_name_constant.c_str(), &constant)) {
+				this->invalidWarning(node["JobRestrictions"], "Job %s does not exist.\n", job_name.c_str());
+				continue;
+			}
+
+			bool active;
+
+			if (!this->asBool(jobsNode, job_name, active))
+				return 0;
+
+			if (active)
+				bg->job_restrictions.push_back(static_cast<int32>(constant));
+			else
+				util::vector_erase_if_exists(bg->job_restrictions, static_cast<int32>(constant));
+		}
+	}
+
+	if (this->nodeExists(node, "Locations")) {
+		int32 count = 0;
+
+		for (const auto& location : node["Locations"]) {
+			s_battleground_map map_entry;
+
+			if (this->nodeExists(location, "Map")) {
+				std::string map_name;
+
+				if (!this->asString(location, "Map", map_name))
+					return 0;
+
+				map_entry.mapindex = mapindex_name2id(map_name.c_str());
+
+				if (map_entry.mapindex == 0) {
+					this->invalidWarning(location["Map"], "Invalid battleground map name %s, skipping.\n", map_name.c_str());
+					return 0;
+				}
+
+				if( map_mapindex2mapid( map_entry.mapindex ) < 0 ){
+					// Ignore silently, the map is on another mapserver
+					return 0;
+				}
+			}
+
+			if (this->nodeExists(location, "StartEvent")) {
+				if (!this->asString(location, "StartEvent", map_entry.bgcallscript))
+					return 0;
+
+				if (map_entry.bgcallscript.length() > EVENT_NAME_LENGTH) {
+					this->invalidWarning(location["StartEvent"], "StartEvent \"%s\" exceeds maximum of %d characters, capping...\n", map_entry.bgcallscript.c_str(), EVENT_NAME_LENGTH - 1);
+				}
+
+				map_entry.bgcallscript.resize(EVENT_NAME_LENGTH);
+
+				if (map_entry.bgcallscript.find("::On") == std::string::npos) {
+					this->invalidWarning(location["StartEvent"], "Battleground StartEvent label %s should begin with '::On', skipping.\n", map_entry.bgcallscript.c_str());
+					return 0;
+				}
+			}
+
+			std::vector<std::string> team_list = { "TeamA", "TeamB" };
+
+			for (const auto &it : team_list) {
+				c4::csubstr team_name = c4::to_csubstr(it);
+				const ryml::NodeRef& team = location;
+
+				if (this->nodeExists(team, it)) {
+					s_battleground_team *team_ptr;
+
+					if (it.find("TeamA") != std::string::npos)
+						team_ptr = &map_entry.team1;
+					else if (it.find("TeamB") != std::string::npos)
+						team_ptr = &map_entry.team2;
+					else {
+						this->invalidWarning(team[team_name], "An invalid Team is defined.\n");
+						return 0;
+					}
+
+					if (this->nodeExists(team[team_name], "RespawnX")) {
+						uint16 warp_x;
+
+						if (!this->asUInt16(team[team_name], "RespawnX", warp_x))
+							return 0;
+
+						if (warp_x == 0) {
+							this->invalidWarning(node["RespawnX"], "RespawnX has to be greater than zero.\n");
+							return 0;
+						}
+
+						map_data *md = map_getmapdata(map_mapindex2mapid(map_entry.mapindex));
+
+						if (warp_x >= md->xs) {
+							this->invalidWarning(node["RespawnX"], "RespawnX has to be smaller than %hu.\n", md->xs);
+							return 0;
+						}
+
+						team_ptr->warp_x = warp_x;
+					}
+
+					if (this->nodeExists(team[team_name], "RespawnY")) {
+						uint16 warp_y;
+
+						if (!this->asUInt16(team[team_name], "RespawnY", warp_y))
+							return 0;
+
+						if (warp_y == 0) {
+							this->invalidWarning(node["RespawnY"], "RespawnY has to be greater than zero.\n");
+							return 0;
+						}
+
+						map_data *md = map_getmapdata(map_mapindex2mapid(map_entry.mapindex));
+
+						if (warp_y >= md->ys) {
+							this->invalidWarning(node["RespawnY"], "RespawnY has to be smaller than %hu.\n", md->ys);
+							return 0;
+						}
+
+						team_ptr->warp_y = warp_y;
+					}
+
+					if (this->nodeExists(team[team_name], "DeathEvent")) {
+						if (!this->asString(team[team_name], "DeathEvent", team_ptr->death_event))
+							return 0;
+
+						team_ptr->death_event.resize(EVENT_NAME_LENGTH);
+
+						if (team_ptr->death_event.find("::On") == std::string::npos) {
+							this->invalidWarning(team["DeathEvent"], "Battleground DeathEvent label %s should begin with '::On', skipping.\n", team_ptr->death_event.c_str());
+							return 0;
+						}
+					}
+
+					if (this->nodeExists(team[team_name], "QuitEvent")) {
+						if (!this->asString(team[team_name], "QuitEvent", team_ptr->quit_event))
+							return 0;
+
+						team_ptr->quit_event.resize(EVENT_NAME_LENGTH);
+
+						if (team_ptr->quit_event.find("::On") == std::string::npos) {
+							this->invalidWarning(team["QuitEvent"], "Battleground QuitEvent label %s should begin with '::On', skipping.\n", team_ptr->quit_event.c_str());
+							return 0;
+						}
+					}
+
+					if (this->nodeExists(team[team_name], "ActiveEvent")) {
+						if (!this->asString(team[team_name], "ActiveEvent", team_ptr->active_event))
+							return 0;
+
+						team_ptr->active_event.resize(EVENT_NAME_LENGTH);
+
+						if (team_ptr->active_event.find("::On") == std::string::npos) {
+							this->invalidWarning(team["ActiveEvent"], "Battleground ActiveEvent label %s should begin with '::On', skipping.\n", team_ptr->active_event.c_str());
+							return 0;
+						}
+					}
+
+					if (this->nodeExists(team[team_name], "Variable")) {
+						if (!this->asString(team[team_name], "Variable", team_ptr->bg_id_var))
+							return 0;
+
+						team_ptr->bg_id_var.resize(NAME_LENGTH);
+					}
+
+					map_entry.id = count++;
+					map_entry.isReserved = false;
+				}
+			}
+
+			bg->maps.push_back(map_entry);
+		}
+	}
+
+	if (!exists)
+		this->put(id, bg);
+
+	return 1;
+}
+
+/**
+ * Search for a battleground based on the given name
+ * @param name: Battleground name
+ * @return s_battleground_type on success or nullptr on failure
+ */
+std::shared_ptr<s_battleground_type> bg_search_name(const char *name)
+{
+	for (const auto &entry : battleground_db) {
+		auto bg = entry.second;
+
+		if (!stricmp(bg->name.c_str(), name))
+			return bg;
+	}
+
+	return nullptr;
+}
+
+/**
+ * Search for a Battleground queue based on the given queue ID
+ * @param queue_id: Queue ID
+ * @return s_battleground_queue on success or nullptr on failure
+ */
+std::shared_ptr<s_battleground_queue> bg_search_queue(int32 queue_id)
+{
+	for (const auto &queue : bg_queues) {
+		if (queue_id == queue->queue_id)
+			return queue;
+	}
+
+	return nullptr;
+}
+
+/**
+ * Search for an available player in Battleground
+ * @param bg: Battleground data
+ * @return map_session_data
+ */
+map_session_data* bg_getavailablesd(s_battleground_data *bg)
+{
+	nullpo_retr(nullptr, bg);
+
+	for (const auto &member : bg->members) {
+		if (member.sd != nullptr)
+			return member.sd;
+	}
+
+	return nullptr;
+}
+
+const map_session_data* bg_getavailablesd( const s_battleground_data* bg ){
+	return bg_getavailablesd(const_cast<s_battleground_data*>(bg));
+}
+
+/**
+ * Delete a Battleground team from the db
+ * @param bg_id: Battleground ID
+ * @return True on success or false otherwise
+ */
+bool bg_team_delete(int32 bg_id)
+{
+	std::shared_ptr<s_battleground_data> bgteam = util::umap_find(bg_team_db, bg_id);
+
+	if (bgteam) {
+		for (const auto &pl_sd : bgteam->members) {
+			bg_send_dot_remove(pl_sd.sd);
+			pl_sd.sd->bg_id = 0;
+		}
+
+		bg_team_db.erase(bg_id);
+
+		return true;
+	}
+	
+	return false;
+}
+
+/**
+ * Warps a Battleground team
+ * @param bg_id: Battleground ID
+ * @param mapindex: Map Index
+ * @param x: X coordinate
+ * @param y: Y coordinate
+ * @return True on success or false otherwise
+ */
+bool bg_team_warp(int32 bg_id, uint16 mapindex, int16 x, int16 y)
+{
+	std::shared_ptr<s_battleground_data> bgteam = util::umap_find(bg_team_db, bg_id);
+
+	if (bgteam) {
+		for (const auto &pl_sd : bgteam->members)
+			pc_setpos(pl_sd.sd, mapindex, x, y, CLR_TELEPORT);
+
+		return true;
+	}
+
+	return false;

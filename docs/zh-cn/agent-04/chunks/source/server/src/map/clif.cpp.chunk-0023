@@ -1,0 +1,500 @@
+		clif_updatestatus(*sd,SP_SPL);
+		clif_updatestatus(*sd,SP_CON);
+		clif_updatestatus(*sd,SP_CRT);
+#endif
+
+		// abort currently running script
+		sd->state.using_fake_npc = 0;
+		sd->state.menu_or_input = 0;
+		sd->npc_menu = 0;
+
+		if(sd->npc_id)
+			npc_event_dequeue(sd);
+	}
+
+	if( sd->state.changemap ) {// restore information that gets lost on map-change
+		clif_partyinvitationstate( *sd );
+#if PACKETVER >= 20070918
+		clif_equipcheckbox( *sd );
+#endif
+		clif_pet_autofeed_status(sd,false);
+		clif_configuration( sd, CONFIG_CALL, sd->status.disable_call );
+#if PACKETVER >= 20170920
+		if( battle_config.homunculus_autofeed_always ){
+			// Always send ON or OFF
+			if( sd->hd && battle_config.feature_homunculus_autofeed ){
+				clif_configuration( sd, CONFIG_HOMUNCULUS_AUTOFEED, sd->hd->homunculus.autofeed );
+			}else{
+				clif_configuration( sd, CONFIG_HOMUNCULUS_AUTOFEED, false );
+			}
+		}else{
+			// Only send when enabled
+			if( sd->hd && battle_config.feature_homunculus_autofeed && sd->hd->homunculus.autofeed ){
+				clif_configuration( sd, CONFIG_HOMUNCULUS_AUTOFEED, true );
+			}
+		}
+#endif
+
+#if PACKETVER >= 20230419
+		clif_configuration( sd, CONFIG_DISABLE_SHOWCOSTUMES, sd->status.disable_showcostumes );
+#endif
+
+		clif_reputation_list( *sd );
+
+		if (sd->guild && battle_config.guild_notice_changemap == 1){
+			// Displays after VIP
+			clif_guild_notice( *sd );
+			guild_notice = false; // Do not display it twice
+		}
+
+		if (battle_config.bg_flee_penalty != 100 || battle_config.gvg_flee_penalty != 100) {
+			struct map_data *pmap = map_getmapdata(sd->state.pmap);
+
+			if ((pmap != nullptr && (mapdata_flag_gvg(pmap) || pmap->getMapFlag(MF_BATTLEGROUND))) || (mapdata != nullptr && (mapdata_flag_gvg(mapdata) || mapdata->getMapFlag(MF_BATTLEGROUND))))
+				status_calc_bl(sd, { SCB_FLEE }); //Refresh flee penalty
+		}
+
+		if( night_flag && mapdata->getMapFlag(MF_NIGHTENABLED) )
+		{	//Display night.
+			if( !sd->state.night )
+			{
+				sd->state.night = 1;
+				clif_status_load(sd, EFST_SKE, 1);
+			}
+		}
+		else if( sd->state.night )
+		{ //Clear night display.
+			sd->state.night = 0;
+			clif_status_load(sd, EFST_SKE, 0);
+		}
+
+		if( mapdata->getMapFlag(MF_BATTLEGROUND) )
+		{
+			clif_map_type( *sd, MAPTYPE_BATTLEFIELD ); // Battleground Mode
+			if( map_getmapflag(sd->m, MF_BATTLEGROUND) == 2 )
+				clif_bg_updatescore_single(sd);
+		}
+
+		if( mapdata->getMapFlag(MF_ALLOWKS) && !mapdata_flag_ks(mapdata) )
+		{
+			char output[128];
+			sprintf(output, "[ Kill Steal Protection Disable. KS is allowed in this map ]");
+			clif_broadcast(sd, output, strlen(output) + 1, BC_BLUE, SELF);
+		}
+
+		if( pc_has_permission(sd,PC_PERM_VIEW_HPMETER) ) {
+			mapdata->hpmeter_visible++;
+			sd->state.hpmeter_visible = 1;
+		}
+
+		status_change_clear_onChangeMap(sd, &sd->sc);
+		map_iwall_get(sd); // Updates Walls Info on this Map to Client
+		status_calc_pc(sd, sd->state.autotrade ? SCO_FIRST : SCO_NONE); // Some conditions are map-dependent so we must recalculate
+
+#ifdef VIP_ENABLE
+		if (!sd->state.connect_new &&
+			!sd->vip.disableshowrate &&
+			sd->state.pmap != sd->m &&
+			map_getmapflag(sd->state.pmap, MF_BEXP) != mapdata->getMapFlag(MF_BEXP)
+			)
+		{
+			clif_display_pinfo( *sd );
+		}
+#endif
+
+		// Instances do not need their own channels
+		if( channel_config.map_tmpl.name[0] && (channel_config.map_tmpl.opt&CHAN_OPT_AUTOJOIN) && !mapdata->instance_id && !mapdata->getMapFlag(MF_NOMAPCHANNELAUTOJOIN) )
+			channel_mjoin(sd); //join new map
+
+		clif_pk_mode_message(sd);
+	}
+	
+	if( sd->guild && ( battle_config.guild_notice_changemap == 2 || guild_notice ) ){
+		// Displays at end
+		clif_guild_notice( *sd );
+	}
+
+	mail_clear(sd);
+
+	/* Guild Aura Init */
+	if( sd->guild && sd->state.gmaster_flag ) {
+		guild_guildaura_refresh(sd,GD_LEADERSHIP,guild_checkskill(sd->guild->guild,GD_LEADERSHIP));
+		guild_guildaura_refresh(sd,GD_GLORYWOUNDS,guild_checkskill(sd->guild->guild,GD_GLORYWOUNDS));
+		guild_guildaura_refresh(sd,GD_SOULCOLD,guild_checkskill(sd->guild->guild,GD_SOULCOLD));
+		guild_guildaura_refresh(sd,GD_HAWKEYES,guild_checkskill(sd->guild->guild,GD_HAWKEYES));
+	}
+
+	if( sd->state.vending ) { /* show we have a vending */
+		clif_openvending( *sd );
+		clif_showvendingboard( *sd );
+	}
+
+	// Don't trigger NPC event or opening vending/buyingstore will be failed
+	if(!sd->state.autotrade && mapdata->getMapFlag(MF_LOADEVENT)) // Lance
+		npc_script_event( *sd, NPCE_LOADMAP );
+
+	if (pc_checkskill(sd, SG_DEVIL) && ((sd->class_&MAPID_THIRDMASK) == MAPID_STAR_EMPEROR || pc_is_maxjoblv(sd)))
+		clif_status_load(sd, EFST_DEVIL1, 1);  //blindness [Komurka]
+
+	if (sd->sc.opt2) //Client loses these on warp.
+		clif_changeoption(sd);
+
+	if ((sd->sc.getSCE(SC_MONSTER_TRANSFORM) || sd->sc.getSCE(SC_ACTIVE_MONSTER_TRANSFORM)) && battle_config.mon_trans_disable_in_gvg && mapdata_flag_gvg2(mapdata)) {
+		status_change_end(sd, SC_MONSTER_TRANSFORM);
+		status_change_end(sd, SC_ACTIVE_MONSTER_TRANSFORM);
+		clif_displaymessage(sd->fd, msg_txt(sd,731)); // Transforming into monster is not allowed in Guild Wars.
+	}
+
+	clif_weather_check(sd);
+
+	// For automatic triggering of NPCs after map loading (so you don't need to walk 1 step first)
+	if (map_getcell(sd->m,sd->x,sd->y,CELL_CHKNPC))
+		npc_touch_area_allnpc(sd,sd->m,sd->x,sd->y);
+	else
+		sd->areanpc.clear();
+
+	/* it broke at some point (e.g. during a crash), so we make it visibly dead again. */
+	if( !sd->status.hp && !pc_isdead(sd) && status_isdead(*sd) )
+		pc_setdead(sd);
+
+	// If player is dead, and is spawned (such as @refresh) send death packet. [Valaris]
+	if(pc_isdead(sd))
+		clif_clearunit_area( *sd, CLR_DEAD );
+	else {
+		skill_usave_trigger(sd);
+		if (battle_config.spawn_direction)
+			clif_changed_dir(*sd, SELF);
+	}
+
+	// Trigger skill effects if you appear standing on them
+	if(sd->invincible_timer == INVALID_TIMER)
+		skill_unit_move(sd,gettick(),1);
+
+	pc_show_questinfo_reinit(sd);
+	pc_show_questinfo(sd);
+
+#if PACKETVER >= 20150513
+	if( sd->mail.inbox.unread ){
+		clif_Mail_new(sd, 0, nullptr, nullptr);
+	}
+#endif
+
+	sd->state.connect_new = 0;
+	sd->state.changemap = false;
+}
+
+
+/// Server's tick.
+/// 007f <time>.L (ZC_NOTIFY_TIME)
+void clif_notify_time( map_session_data& sd, t_tick time ){
+	PACKET_ZC_NOTIFY_TIME p{};
+
+	p.packetType = HEADER_ZC_NOTIFY_TIME;
+	p.time = client_tick(time);
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Request for server's tick.
+/// 007e <client tick>.L (CZ_REQUEST_TIME)
+/// 0360 <client tick>.L (CZ_REQUEST_TIME2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_TickSend(int32 fd, map_session_data *sd)
+{
+	// TODO: shuffle packet
+	sd->client_tick = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+
+	clif_notify_time( *sd, gettick() );
+}
+
+
+/// Sends hotkey bar.
+/// 02b9 { <is skill>.B <id>.L <count>.W }*27 (ZC_SHORTCUT_KEY_LIST)
+/// 07d9 { <is skill>.B <id>.L <count>.W }*36 (ZC_SHORTCUT_KEY_LIST_V2, PACKETVER >= 20090603)
+/// 07d9 { <is skill>.B <id>.L <count>.W }*38 (ZC_SHORTCUT_KEY_LIST_V2, PACKETVER >= 20090617)
+/// 0a00 <rotate>.B { <is skill>.B <id>.L <count>.W }*38 (ZC_SHORTCUT_KEY_LIST_V3, PACKETVER >= 20141022)
+void clif_hotkeys_send( const map_session_data* sd, int32 tab ){
+#if defined(HOTKEY_SAVING) && ( PACKETVER_MAIN_NUM >= 20070711 || PACKETVER_RE_NUM >= 20080827 || PACKETVER_AD_NUM >= 20070711 || PACKETVER_SAK_NUM >= 20070628 )
+	nullpo_retv( sd );
+
+	PACKET_ZC_SHORTCUT_KEY_LIST p = {};
+
+	p.packetType = HEADER_ZC_SHORTCUT_KEY_LIST;
+
+#if PACKETVER_MAIN_NUM >= 20141022 || PACKETVER_RE_NUM >= 20141015 || defined(PACKETVER_ZERO)
+	if( tab == 0 ){
+		p.rotate = sd->status.hotkey_rowshift;
+	}else{
+		p.rotate = sd->status.hotkey_rowshift2;
+	}
+
+#if PACKETVER_MAIN_NUM >= 20190522 || PACKETVER_RE_NUM >= 20190508 || PACKETVER_ZERO_NUM >= 20190605
+	p.tab = tab;
+#endif
+#endif
+
+	for( int32 i = 0, offset = tab * MAX_HOTKEYS; i < MAX_HOTKEYS_PACKET; i++ ){
+		p.hotkey[i].isSkill = sd->status.hotkeys[i + offset].type;
+		p.hotkey[i].id = sd->status.hotkeys[i + offset].id;
+		p.hotkey[i].count = sd->status.hotkeys[i + offset].lv;
+	}
+
+	clif_send( &p, sizeof(PACKET_ZC_SHORTCUT_KEY_LIST), sd, SELF );
+#endif
+}
+
+/// Request to update a position on the hotkey row bar
+void clif_parse_HotkeyRowShift( int32 fd, map_session_data *sd ){
+#if PACKETVER_MAIN_NUM >= 20190522 || PACKETVER_RE_NUM >= 20190508 || PACKETVER_ZERO_NUM >= 20190605
+	const PACKET_CZ_SHORTCUTKEYBAR_ROTATE2* p = reinterpret_cast<PACKET_CZ_SHORTCUTKEYBAR_ROTATE2*>( RFIFOP( fd, 0 ) );
+
+	if( p->tab == 0 ){
+		sd->status.hotkey_rowshift = p->rowshift;
+	}else{
+		sd->status.hotkey_rowshift2 = p->rowshift;
+	}
+#elif PACKETVER_MAIN_NUM >= 20140129 || PACKETVER_RE_NUM >= 20140129 || defined(PACKETVER_ZERO)
+	const PACKET_CZ_SHORTCUTKEYBAR_ROTATE1* p = reinterpret_cast<PACKET_CZ_SHORTCUTKEYBAR_ROTATE1*>( RFIFOP( fd, 0 ) );
+
+	sd->status.hotkey_rowshift = p->rowshift;
+#endif
+}
+
+/// Request to update a position on the hotkey bar.
+/// 02ba <index>.W <is skill>.B <id>.L <count>.W (CZ_SHORTCUT_KEY_CHANGE)
+void clif_parse_Hotkey(int32 fd, map_session_data *sd) {
+#ifdef HOTKEY_SAVING
+#if PACKETVER_MAIN_NUM >= 20190522 || PACKETVER_RE_NUM >= 20190508 || PACKETVER_ZERO_NUM >= 20190605
+	const PACKET_CZ_SHORTCUT_KEY_CHANGE2* p = reinterpret_cast<PACKET_CZ_SHORTCUT_KEY_CHANGE2*>( RFIFOP( fd, 0 ) );
+	const uint16 idx = p->index + p->tab * MAX_HOTKEYS;
+
+	if( idx >= MAX_HOTKEYS_DB ){
+		return;
+	}
+
+	sd->status.hotkeys[idx].type = p->hotkey.isSkill;
+	sd->status.hotkeys[idx].id = p->hotkey.id;
+	sd->status.hotkeys[idx].lv = p->hotkey.count;
+#elif PACKETVER_MAIN_NUM >= 20070618 || defined(PACKETVER_RE) || defined(PACKETVER_ZERO) || PACKETVER_AD_NUM >= 20070618 || PACKETVER_SAK_NUM >= 20070618
+	const PACKET_CZ_SHORTCUT_KEY_CHANGE1* p = reinterpret_cast<PACKET_CZ_SHORTCUT_KEY_CHANGE1*>( RFIFOP( fd, 0 ) );
+	const uint16 idx = p->index;
+
+	if( idx >= MAX_HOTKEYS_DB ){
+		return;
+	}
+
+	sd->status.hotkeys[idx].type = p->hotkey.isSkill;
+	sd->status.hotkeys[idx].id = p->hotkey.id;
+	sd->status.hotkeys[idx].lv = p->hotkey.count;
+#endif
+#endif
+}
+
+
+/// Displays cast-like progress bar (ZC_PROGRESS).
+/// 02f0 <color>.L <time>.L
+void clif_progressbar( const map_session_data* sd, unsigned long color, uint32 second )
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0x2f0));
+	WFIFOW(fd,0) = 0x2f0;
+	WFIFOL(fd,2) = color;
+	WFIFOL(fd,6) = second;
+	WFIFOSET(fd,packet_len(0x2f0));
+}
+
+
+/// Removes an ongoing progress bar (ZC_PROGRESS_CANCEL).
+/// 02f2
+void clif_progressbar_abort( const map_session_data* sd )
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0x2f2));
+	WFIFOW(fd,0) = 0x2f2;
+	WFIFOSET(fd,packet_len(0x2f2));
+}
+
+
+/// Notification from the client, that the progress bar has reached 100%.
+/// 02f1 (CZ_PROGRESS)
+void clif_parse_progressbar(int32 fd, map_session_data * sd){
+	// No progressbar active, ignore it
+	if( !sd->progressbar.npc_id ){
+		return;
+	}
+
+	int32 npc_id = sd->progressbar.npc_id;
+	bool closing = false;
+
+	// Check if the progress was canceled
+	if( gettick() < sd->progressbar.timeout && sd->st ){
+		closing = true;
+		sd->st->state = CLOSE; // will result in END in npc_scriptcont
+
+		// If a message window was open, offer a close button to the user
+		if( sd->st->mes_active ){
+			clif_scriptclose( *sd, npc_id );
+		}
+	}
+
+	sd->progressbar.npc_id = 0;
+	sd->progressbar.timeout = 0;
+	sd->state.workinprogress = WIP_DISABLE_NONE;
+
+	if( battle_config.idletime_option&IDLE_NPC_PROGRESS ){
+		sd->idletime = last_tick;
+	}
+
+	npc_scriptcont(sd, npc_id, closing);
+}
+
+/// Displays cast-like progress bar on a NPC
+/// 09d1 <id>.L <color>.L <time>.L (ZC_PROGRESS_ACTOR)
+void clif_progressbar_npc( const npc_data *nd, const map_session_data* sd ){
+#if PACKETVER >= 20130821
+	unsigned char buf[14];
+
+	if( nd->progressbar.timeout > 0 ){
+		WBUFW(buf,0) = 0x9d1;
+		WBUFL(buf,2) = nd->id;
+		WBUFL(buf,6) = nd->progressbar.color;
+		WBUFL(buf,10) = client_tick( ( nd->progressbar.timeout - gettick() ) / 1000 );
+
+		if( sd ){
+			clif_send(buf, packet_len(0x9d1), sd, SELF);
+		}else{
+			clif_send(buf, packet_len(0x9d1), nd, AREA);
+		}
+	}
+#endif
+}
+
+/// Request to walk to a certain position on the current map.
+/// 0085 <dest>.3B (CZ_REQUEST_MOVE)
+/// 035f <dest>.3B (CZ_REQUEST_MOVE2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_WalkToXY(int32 fd, map_session_data *sd)
+{
+	int16 x, y;
+
+	if (pc_isdead(sd)) {
+		clif_clearunit_area( *sd, CLR_DEAD );
+		return;
+	}
+
+	if (sd->sc.opt1 && ( sd->sc.opt1 == OPT1_STONEWAIT || sd->sc.opt1 == OPT1_BURNING ))
+		; //You CAN walk on this OPT1 value.
+	else if (sd->progressbar.npc_id) {
+		clif_progressbar_abort(sd);
+		return; // First walk attempt cancels the progress bar
+	} else if (pc_cant_act(sd))
+		return;
+
+	if(sd->sc.getSCE(SC_RUN) || sd->sc.getSCE(SC_WUGDASH))
+		return;
+
+	// TODO: shuffle packet
+	RFIFOPOS(fd, packet_db[RFIFOW(fd,0)].pos[0], &x, &y, nullptr);
+
+	//A move command one cell west is only valid if the target cell is free
+	if(battle_config.official_cell_stack_limit > 0
+		&& sd->x == x+1 && sd->y == y && map_count_oncell(sd->m, x, y, BL_CHAR|BL_NPC, 1))
+		return;
+
+	// Cloaking wall check is actually updated when you click to process next movement
+	// not when you move each cell.  This is official behaviour.
+	if (sd->sc.getSCE(SC_CLOAKING))
+		skill_check_cloaking(sd, sd->sc.getSCE(SC_CLOAKING));
+	status_change_end(sd, SC_ROLLINGCUTTER); // If you move, you lose your counters. [malufett]
+	status_change_end(sd, SC_CRESCIVEBOLT);
+	status_change_end(sd, SC_KI_SUL_RAMPAGE);
+
+	pc_delinvincibletimer(sd);
+
+	//Set last idle time... [Skotlex]
+	if (battle_config.idletime_option&IDLE_WALK)
+		sd->idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_WALK)
+		sd->idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_WALK)
+		sd->idletime_mer = last_tick;
+
+	unit_walktoxy(sd, x, y, 4);
+}
+
+
+/// Notification about the result of a disconnect request (ZC_ACK_REQ_DISCONNECT).
+/// 018b <result>.W
+/// result:
+///     0 = disconnect (quit)
+///     1 = cannot disconnect (wait 10 seconds)
+///     ? = ignored
+void clif_disconnect_ack(map_session_data* sd, int16 result)
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0x18b));
+	WFIFOW(fd,0) = 0x18b;
+	WFIFOW(fd,2) = result;
+	WFIFOSET(fd,packet_len(0x18b));
+}
+
+
+/// Request to disconnect from server (CZ_REQ_DISCONNECT).
+/// 018a <type>.W
+/// type:
+///     0 = quit
+void clif_parse_QuitGame(int32 fd, map_session_data *sd)
+{
+	/*	Rovert's prevent logout option fixed [Valaris]	*/
+	if( !sd->sc.getSCE(SC_CLOAKING) && !sd->sc.getSCE(SC_HIDING) && !sd->sc.getSCE(SC_CHASEWALK) && !sd->sc.getSCE(SC_CLOAKINGEXCEED) && !sd->sc.getSCE(SC_SUHIDE) && !sd->sc.getSCE(SC_NEWMOON) &&
+		(!battle_config.prevent_logout || sd->canlog_tick == 0 || DIFF_TICK(gettick(), sd->canlog_tick) > battle_config.prevent_logout) )
+	{
+		clif_disconnect_ack(sd, 0);
+		flush_fifo( fd );
+		if( battle_config.drop_connection_on_quit ){
+			set_eof( fd );
+		}
+	} else {
+		clif_disconnect_ack(sd, 1);
+	}
+}
+
+
+/// Requesting unit's name.
+/// 0094 <id>.L (CZ_REQNAME)
+/// 0368 <id>.L (CZ_REQNAME2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_GetCharNameRequest(int32 fd, map_session_data *sd)
+{
+	// TODO: shuffle packet
+	int32 id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	block_list* bl;
+	//status_change *sc;
+
+	if( id < 0 && -id == sd->id ) // for disguises [Valaris]
+		id = sd->id;
+
+	bl = map_id2bl(id);
+	if( bl == nullptr )
+		return;	// Lagged clients could request names of already gone mobs/players. [Skotlex]
+
+	if( sd->m != bl->m || !check_distance_bl(sd, bl, AREA_SIZE) )
+		return; // Block namerequests past view range
+
+	// 'see people in GM hide' cheat detection
+	/* disabled due to false positives (network lag + request name of char that's about to hide = race condition)
+	sc = status_get_sc(bl);
+	if (sc && sc->option&OPTION_INVISIBLE && !disguised(bl) &&
+		bl->type != BL_NPC && //Skip hidden NPCs which can be seen using Maya Purple
+		pc_get_group_level(sd) < battle_config.hack_info_GM_level
+	) {
+		char gm_msg[256];
+		sprintf(gm_msg, "Hack on NameRequest: character '%s' (account: %d) requested the name of an invisible target (id: %d).\n", sd->status.name, sd->status.account_id, id);
+		ShowWarning(gm_msg);
+		// information is sent to all online GMs
+		intif_wis_message_to_gm(wisp_server_name, battle_config.hack_info_GM_level, gm_msg);
+		return;

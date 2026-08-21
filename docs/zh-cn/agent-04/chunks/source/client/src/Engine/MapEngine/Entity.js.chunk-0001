@@ -1,0 +1,500 @@
+/**
+ * Engine/MapEngine/Entity.js
+ *
+ * Manage Entity based on received packets from server
+ *
+ * @author Vincent Thibault
+ */
+
+/**
+ * Load dependencies
+ */
+import DB from 'DB/DBManager.js';
+import SkillId from 'DB/Skills/SkillConst.js';
+import SkillInfo from 'DB/Skills/SkillInfo.js';
+import StatusConst from 'DB/Status/StatusConst.js';
+import StatusState from 'DB/Status/StatusState.js';
+import Emotions from 'DB/Emotions.js';
+import SkillEffect from 'DB/Skills/SkillEffect.js';
+import SkillActionTable from 'DB/Skills/SkillAction.js';
+import EffectConst from 'DB/Effects/EffectConst.js';
+import PetMessageConst from 'DB/Pets/PetMessageConst.js';
+import JobId from 'DB/Jobs/JobConst.js';
+import AttackEffect from 'DB/Monsters/AttackEffectTable.js';
+import Sound from 'Audio/SoundManager.js';
+import Events from 'Core/Events.js';
+import Guild from 'Engine/MapEngine/Guild.js';
+import Session from 'Engine/SessionStorage.js';
+import Network from 'Network/NetworkManager.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import Renderer from 'Renderer/Renderer.js';
+import EntityManager from 'Renderer/EntityManager.js';
+import Entity from 'Renderer/Entity/Entity.js';
+import EffectManager from 'Renderer/EffectManager.js';
+import Damage from 'Renderer/Effects/Damage.js';
+import MagicTarget from 'Renderer/Effects/MagicTarget.js';
+import LockOnTarget from 'Renderer/Effects/LockOnTarget.js';
+import MagicRing from 'Renderer/Effects/MagicRing.js';
+import BasicInfo from 'UI/Components/BasicInfo/BasicInfo.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import ChatRoom from 'UI/Components/ChatRoom/ChatRoom.js';
+import Escape from 'UI/Components/Escape/Escape.js';
+import HomunInformations from 'UI/Components/HomunInformations/HomunInformations.js';
+import MercenaryInformations from 'UI/Components/MercenaryInformations/MercenaryInformations.js';
+import Inventory from 'UI/Components/Inventory/Inventory.js';
+import ShortCut from 'UI/Components/ShortCut/ShortCut.js';
+import StatusIcons from 'UI/Components/StatusIcons/StatusIcons.js';
+import MiniMap from 'UI/Components/MiniMap/MiniMap.js';
+import PartyFriends from 'UI/Components/PartyFriends/PartyFriends.js';
+import Equipment from 'UI/Components/Equipment/Equipment.js';
+import ScreenEffectManager from 'Renderer/ScreenEffectManager.js';
+
+// Excludes for skill name display
+const SkillNameDisplayExclude = [
+	//Hiding skills
+	SkillId.TF_HIDING,
+	SkillId.AS_CLOAKING,
+	SkillId.ST_CHASEWALK,
+	SkillId.GC_CLOAKINGEXCEED,
+	SkillId.RA_CAMOUFLAGE,
+	SkillId.NC_STEALTHFIELD,
+	SkillId.SC_SHADOWFORM,
+	SkillId.SC_INVISIBILITY,
+	SkillId.KO_YAMIKUMO,
+
+	//Talking
+	SkillId.BA_FROSTJOKE,
+	SkillId.DC_SCREAM,
+
+	//3rd job extra skills
+	SkillId.LG_OVERBRAND_BRANDISH,
+	SkillId.LG_OVERBRAND_PLUSATK,
+	SkillId.WM_REVERBERATION_MELEE,
+	SkillId.WM_REVERBERATION_MAGIC,
+	SkillId.WL_TETRAVORTEX_FIRE,
+	SkillId.WL_TETRAVORTEX_WATER,
+	SkillId.WL_TETRAVORTEX_WIND,
+	SkillId.WL_TETRAVORTEX_GROUND,
+	SkillId.WL_SUMMON_ATK_FIRE,
+	SkillId.WL_SUMMON_ATK_WIND,
+	SkillId.WL_SUMMON_ATK_WATER,
+	SkillId.WL_SUMMON_ATK_GROUND
+];
+
+// Skills that display blue crit like combo damage
+const SkillBlueCombo = [
+	SkillId.TK_STORMKICK,
+	SkillId.TK_DOWNKICK,
+	SkillId.TK_TURNKICK,
+	SkillId.TK_COUNTER,
+	SkillId.TK_JUMPKICK,
+	SkillId.SR_RAMPAGEBLASTER
+];
+
+const C_MULTIHIT_DELAY = 200; // PLUSATTACKED_MOTIONTIME
+const AVG_ATTACK_SPEED = 432;
+//const AVG_ATTACKED_SPEED = 288; // UNUSED
+const MAX_ATTACKMT = AVG_ATTACK_SPEED * 2;
+
+/**
+ * List of players and the respective clan emblem
+ */
+const clanEmblems = {};
+
+/**
+ * Spam an entity on the map
+ * Generic packet handler
+ */
+function onEntitySpam(pkt) {
+	let entity = EntityManager.get(pkt.GID);
+
+	if (entity) {
+		entity.set(pkt);
+	} else {
+		entity = new Entity();
+		entity.set(pkt);
+		if (pkt.job == 45) {
+			const EF_Init_Par = {
+				ownerAID: entity.GID,
+				position: entity.position
+			};
+
+			if (PACKETVER.value < 20030715) {
+				EF_Init_Par.effectId = EffectConst.EF_WARPZONE;
+				EffectManager.spam(EF_Init_Par);
+			} else {
+				EF_Init_Par.effectId = EffectConst.EF_WARPZONE2;
+				EffectManager.spam(EF_Init_Par);
+			}
+		}
+		EntityManager.add(entity);
+		const cachedLife = EntityManager.getLife(entity.GID);
+		if (cachedLife && entity.life.hp <= -1) {
+			if (cachedLife.hp !== undefined) entity.life.hp = cachedLife.hp;
+			if (cachedLife.hp_max !== undefined) entity.life.hp_max = cachedLife.hp_max;
+			if (cachedLife.sp !== undefined) entity.life.sp = cachedLife.sp;
+			if (cachedLife.sp_max !== undefined) entity.life.sp_max = cachedLife.sp_max;
+			if (cachedLife.hunger !== undefined) entity.life.hunger = cachedLife.hunger;
+			if (cachedLife.hunger_max !== undefined) entity.life.hunger_max = cachedLife.hunger_max;
+			if (entity.life.hp > -1 && entity.life.hp_max > -1) {
+				entity.life.update();
+				entity.life.display = true;
+			}
+		}
+	}
+
+	if (pkt.effectState & StatusState.EffectState.FALCON && DB.isHunter(pkt.job)) {
+		if (!entity.falcon) {
+			entity.falcon = new Entity();
+		}
+
+		entity.falcon.set({
+			objecttype: entity.falcon.constructor.TYPE_FALCON,
+			GID: entity.GID + '_FALCON',
+			PosDir: [entity.position[0], entity.position[1], 0],
+			job: entity._job + '_FALCON',
+			speed: Math.max(entity.walk.speed - 50, 1),
+			name: '',
+			hp: -1,
+			maxhp: -1,
+			hideShadow: true
+		});
+		EntityManager.add(entity.falcon);
+	}
+	if (pkt.effectState & StatusState.EffectState.WUG) {
+		if (!entity.wug) {
+			entity.wug = new Entity();
+		}
+
+		entity.wug.set({
+			objecttype: entity.wug.constructor.TYPE_WUG,
+			GID: entity.GID + '_WUG',
+			PosDir: [entity.position[0], entity.position[1], 0],
+			job: entity._job + '_WUG',
+			speed: Math.max(entity.walk.speed - 50, 1),
+			name: '',
+			hp: -1,
+			maxhp: -1
+		});
+		EntityManager.add(entity.wug);
+	}
+
+	if (entity.objecttype === Entity.TYPE_PC) {
+		// don't know why switch from katar to sword, knife server put it on the left hand instead of right hand first.
+		// so we have to swap it. maybe have a better solution.
+		if (pkt.weapon == 0 && pkt.shield != 0 && !DB.isShield(pkt.shield)) {
+			pkt.weapon = pkt.shield;
+			pkt.shield = 0;
+		}
+
+		const weaponType = DB.getWeaponType(pkt.weapon, true);
+		const viewId = DB.getWeaponViewID(pkt.weapon);
+		if (DB.isAssassin(entity.job) && pkt.shield !== 0 && !DB.isShield(pkt.shield) && pkt.weapon !== 0) {
+			const secondaryWeaponType = DB.getWeaponType(pkt.shield, true);
+			entity.weapon = DB.mountWeapon(weaponType, secondaryWeaponType);
+			entity.shield = 0;
+		} else if (DB.isKatar(weaponType)) {
+			entity.weapon = viewId;
+			entity.shield = viewId;
+		} else {
+			entity.weapon = viewId;
+			entity.shield = pkt.shield;
+		}
+		if (PACKETVER.value > 20150513) {
+			if (entity.body !== pkt.body) {
+				entity.body = pkt.body;
+			}
+		}
+	}
+
+	if (
+		entity.objecttype === Entity.TYPE_PC &&
+		!(entity._effectState & StatusState.EffectState.INVISIBLE) &&
+		(pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY2 ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY3 ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY4 ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY5 ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY6 ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY7 ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY10 ||
+			pkt instanceof PACKET.ZC.NOTIFY_NEWENTRY11)
+	) {
+		const EF_Init_Par = {
+			ownerAID: entity.GID,
+			position: entity.position
+		};
+
+		if (PACKETVER.value < 20090922) {
+			EF_Init_Par.effectId = EffectConst.EF_ENTRY;
+			EffectManager.spam(EF_Init_Par);
+		} else {
+			EF_Init_Par.effectId = EffectConst.EF_ENTRY2;
+			EffectManager.spam(EF_Init_Par);
+		}
+	}
+
+	if (entity.objecttype === Entity.TYPE_HOM && pkt.GID === Session.homunId) {
+		HomunInformations.startAI();
+	}
+
+	if (entity.objecttype === Entity.TYPE_MERC && pkt.GID === Session.mercId) {
+		MercenaryInformations.startAI();
+	}
+
+	if (entity.objecttype === Entity.TYPE_MOB && pkt.isBoss) {
+		entity.mobtype = pkt.isBoss;
+	}
+
+	// if it is listed in clanEmblems set emblem
+	if (entity.GID in clanEmblems) {
+		const clanId = clanEmblems[entity.GID];
+		DB.loadClanEmblem(clanId, image => {
+			entity.clanId = clanId;
+			entity.setEntityGuildEmblem(image);
+			updateEntityStyle(entity);
+		});
+
+		// remove from clanEmblems
+		delete clanEmblems[entity.GID];
+	}
+
+	if (entity.GUID) {
+		Guild.requestGuildEmblem(entity.GUID, entity.GEmblemVer, (image, gif) => {
+			entity.setEntityGuildEmblem(image, gif);
+			if (Session.mapState.isSiege && entity.GUID !== Session.Entity.GUID) {
+				entity.emblem.display = true;
+			}
+		});
+	}
+
+	// load others aura
+	entity.aura.load(EffectManager);
+}
+
+/**
+ * Remove an entity from the map
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_VANISH
+ */
+function onEntityVanish(pkt) {
+	const entity = EntityManager.get(pkt.GID);
+	if (entity) {
+		if (entity.objecttype === Entity.TYPE_PC && pkt.GID === Session.Entity.GID) {
+			//death animation only for myself
+			const EF_Init_Par = {
+				effectId: EffectConst.EF_DEVIL,
+				ownerAID: entity.GID
+			};
+
+			EffectManager.spam(EF_Init_Par);
+		}
+
+		if (entity.objecttype === Entity.TYPE_HOM && pkt.GID === Session.homunId) {
+			HomunInformations.stopAI();
+		}
+
+		if (entity.objecttype === Entity.TYPE_MERC && pkt.GID === Session.mercId) {
+			MercenaryInformations.stopAI();
+		}
+
+		EffectManager.remove(null, pkt.GID, [
+			EffectConst.EF_CHOOKGI,
+			EffectConst.EF_CHOOKGI2,
+			EffectConst.EF_CHOOKGI3,
+			EffectConst.EF_CHOOKGI_N
+		]); // Spirit spheres
+		EffectManager.remove(null, pkt.GID, [
+			EffectConst.EF_CHOOKGI_FIRE,
+			EffectConst.EF_CHOOKGI_WIND,
+			EffectConst.EF_CHOOKGI_WATER,
+			EffectConst.EF_CHOOKGI_GROUND,
+			'temporary_warlock_sphere'
+		]); // Elemental spheres (Warlock)
+
+		switch (pkt.type) {
+			case Entity.VT.EXIT:
+			case Entity.VT.TELEPORT:
+				if (!(entity._effectState & StatusState.EffectState.INVISIBLE)) {
+					const EF_Init_Par = { position: entity.position };
+
+					if (PACKETVER.value < 20030715) {
+						EF_Init_Par.effectId = EffectConst.EF_TELEPORTATION;
+					} else {
+						EF_Init_Par.effectId = EffectConst.EF_TELEPORTATION2;
+					}
+					EffectManager.spam(EF_Init_Par);
+				}
+				if (entity.falcon) {
+					entity.falcon.remove(pkt.type);
+					entity.falcon = null;
+				}
+				if (entity.wug) {
+					entity.wug.remove(pkt.type);
+					entity.wug = null;
+				}
+
+			case Entity.VT.OUTOFSIGHT:
+				EffectManager.remove(null, pkt.GID, null);
+				if (entity.falcon) {
+					entity.falcon.remove(pkt.type);
+					entity.falcon = null;
+				}
+				if (entity.wug) {
+					entity.wug.remove(pkt.type);
+					entity.wug = null;
+				}
+
+			case Entity.VT.DEAD:
+				// remove aura on non-PC death
+				if (entity.objecttype !== Entity.TYPE_PC) {
+					entity.aura.remove(EffectManager);
+				}
+				if (pkt.type === Entity.VT.DEAD) {
+					EntityManager.removeLife(pkt.GID);
+				}
+		}
+
+		entity.remove(pkt.type);
+		EntityManager.removeGID(pkt.GID);
+	}
+
+	// Show escape menu
+	if (pkt.GID === Session.Entity.GID && pkt.type === 1) {
+		Escape.showDeathMenu(haveSiegfriedItem());
+	}
+}
+
+/**
+ * An entity start walking
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_MOVE
+ */
+function onEntityMove(pkt) {
+	const entity = EntityManager.get(pkt.GID);
+	if (entity) {
+		//entity.position[0] = pkt.MoveData[0];
+		//entity.position[1] = pkt.MoveData[1];
+		//entity.position[2] = Altitude.getCellHeight(  pkt.MoveData[0],  pkt.MoveData[1] );
+		entity.walkTo(pkt.MoveData[0], pkt.MoveData[1], pkt.MoveData[2], pkt.MoveData[3], undefined, pkt.moveStartTime);
+	}
+}
+
+/**
+ * Entity stop walking
+ *
+ * @param {object} pkt - PACKET.ZC.STOPMOVE
+ */
+function onEntityStopMove(pkt) {
+	const entity = EntityManager.get(pkt.AID);
+	if (entity) {
+		if (entity.action === entity.ACTION.WALK) {
+			entity.setAction({
+				action: entity.ACTION.IDLE,
+				frame: 0,
+				repeat: true,
+				play: true
+			});
+		}
+
+		entity.resetRoute();
+		entity.position[0] = pkt.xPos;
+		entity.position[1] = pkt.yPos;
+		entity.position[2] = Altitude.getCellHeight(pkt.xPos, pkt.yPos);
+	}
+}
+
+/**
+ * Move entity to a point
+ *
+ * @param {object} pkt - PACKET_ZC_HIGHJUMP
+ */
+function onEntityJump(pkt) {
+	const entity = EntityManager.get(pkt.AID);
+	if (entity) {
+		entity.position[0] = pkt.xPos;
+		entity.position[1] = pkt.yPos;
+		entity.position[2] = Altitude.getCellHeight(pkt.xPos, pkt.yPos);
+	}
+}
+
+/**
+ * Body relocation packet support
+ *
+ * @param {object} pkt - PACKET.ZC.FASTMOVE
+ */
+function onEntityFastMove(pkt) {
+	const entity = EntityManager.get(pkt.AID);
+	if (entity) {
+		entity.walkTo(entity.position[0], entity.position[1], pkt.targetXpos, pkt.targetYpos);
+
+		if (entity.walk.path.length) {
+			const speed = entity.walk.speed;
+			entity.walk.speed = 10;
+			entity.walk.onEnd = function onWalkEnd() {
+				entity.walk.speed = speed;
+			};
+		}
+	}
+}
+
+/**
+ * Display entity's emotion
+ *
+ * @param {object} pkt - PACKET.ZC.EMOTION
+ */
+function onEntityEmotion(pkt) {
+	const entity = EntityManager.get(pkt.GID);
+	if (entity && pkt.type in Emotions.indexes) {
+		entity.attachments.add({
+			frame: Emotions.indexes[pkt.type],
+			file: 'emotion',
+			play: true,
+			head: true,
+			depth: 5.0
+		});
+	}
+}
+
+/**
+ * Resurect an entity
+ *
+ * @param {object} pkt - PACKET_ZC_RESURRECTION
+ */
+function onEntityResurect(pkt) {
+	const entity = EntityManager.get(pkt.AID);
+
+	if (!entity) {
+		return;
+	}
+
+	// There is always a packet to use the skill "Resurection"
+	// on yourself after, but what if this packet isn't here ?
+	// The entity will stay die ? So update the action just in case
+	entity.setAction({
+		action: entity.ACTION.IDLE,
+		frame: 0,
+		repeat: true,
+		play: true
+	});
+
+	if (entity.wug) {
+		entity.wug.setAction({
+			action: entity.ACTION.IDLE,
+			frame: 0,
+			repeat: true,
+			play: true
+		});
+	}
+
+	// If it's our main character update Escape ui
+	if (entity === Session.Entity) {
+		Escape.resetMenu();
+	}
+}
+
+/**
+ * Perform Entity Action
+ *

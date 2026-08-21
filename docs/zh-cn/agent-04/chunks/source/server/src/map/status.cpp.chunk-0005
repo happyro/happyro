@@ -1,0 +1,500 @@
+
+	if(sp > status->max_sp - status->sp)
+		sp = status->max_sp - status->sp;
+	else if (per_sp && !sp)
+		sp = 1;
+
+	if (ap > status->max_ap - status->ap)
+		ap = status->max_ap - status->ap;
+	else if (per_ap && !ap)
+		ap = 1;
+
+	status->hp += hp;
+	status->sp += sp;
+	status->ap += ap;
+
+	if (bl->prev) // Animation only if character is already on a map.
+		clif_resurrection( *bl );
+	switch (bl->type) {
+		case BL_PC:  pc_revive((TBL_PC*)bl, hp, sp, ap); break;
+		case BL_MOB: mob_revive((TBL_MOB*)bl, hp); break;
+		case BL_HOM: hom_revive((TBL_HOM*)bl, hp, sp); break;
+	}
+	return 1;
+}
+
+/**
+ * Checks whether the src can use the skill on the target,
+ * taking into account status/option of both source/target
+ * @param src:	Object using skill on target [PC|MOB|PET|HOM|MER|ELEM]
+		src MAY be nullptr to indicate we shouldn't check it, this is a ground-based skill attack
+ * @param target: Object being targeted by src [PC|MOB|HOM|MER|ELEM]
+		 target MAY be nullptr, which checks if src can cast skill_id on the ground
+ * @param skill_id: Skill ID being used on target
+ * @param flag:	0 - Trying to use skill on target
+ *		1 - Cast bar is done
+ *		2 - Skill already pulled off, check is due to ground-based skills or splash-damage ones
+ * @return src can use skill (1) or cannot use skill (0)
+ * @author [Skotlex]
+ */
+bool status_check_skilluse(const block_list* src, const block_list* target, uint16 skill_id, int32 flag) {
+	const status_data* status;
+	int32 hide_flag;
+
+	if (src) {
+		if (src->type != BL_PC && status_isdead(*src))
+			return false;
+		status = status_get_status_data(*src);
+	}else{
+		status = &dummy_status;
+	}
+
+	const status_change *sc = status_get_sc(src);
+	const status_change *tsc = status_get_sc(target);
+
+	if (!skill_id) { // Normal attack checks.
+		if (sc && sc->cant.attack)
+			return false;
+		// This mode is only needed for melee attacking.
+		if (!status_has_mode(status,MD_CANATTACK))
+			return false;
+		// Dead state is not checked for skills as some skills can be used
+		// on dead characters, said checks are left to skill.cpp [Skotlex]
+		if (target && status_isdead(*target))
+			return false;
+	}
+
+	switch( skill_id ) {
+#ifndef RENEWAL
+		case PA_PRESSURE:
+			if( flag && tsc && tsc->option&OPTION_HIDE)
+				return false; // Gloria Avoids pretty much everything....
+			break;
+#endif
+		case GN_WALLOFTHORN:
+			if( target && status_isdead(*target) )
+				return false;
+			break;
+		case AL_TELEPORT:
+		case ALL_ODINS_POWER:
+			// Should fail when used on top of Land Protector [Skotlex]
+			if (src && map_getcell(src->m, src->x, src->y, CELL_CHKLANDPROTECTOR)
+				&& !status_has_mode(status,MD_STATUSIMMUNE)
+				&& (src->type != BL_PC || ((TBL_PC*)src)->skillitem != skill_id))
+				return false;
+			break;
+		case SC_MANHOLE:
+			// Skill is disabled against special racial grouped monsters(GvG and Battleground)
+			if (target && ( util::vector_exists(status_get_race2(target), RC2_GVG) || util::vector_exists(status_get_race2(target), RC2_BATTLEFIELD) ) )
+				return false;
+		default:
+			break;
+	}
+
+	if( sc != nullptr && !sc->empty() ) {
+		if (sc->getSCE(SC_ALL_RIDING))
+			return false; //You can't use skills while in the new mounts (The client doesn't let you, this is to make cheat-safe)
+
+		if (flag == 1 && !status_has_mode(status,MD_STATUSIMMUNE) && ( // Applies to after cast completion only and doesn't apply to Boss monsters.
+			(sc->getSCE(SC_ASH) && rnd()%2) || // Volcanic Ash has a 50% chance of causing skills to fail.
+			(sc->getSCE(SC_KYOMU) && rnd()%100 < 25) // Kyomu has a 25% chance of causing skills fail.
+		)) {
+			if (src->type == BL_PC)
+				clif_skill_fail( *((map_session_data*)src), skill_id );
+			return false;
+		}
+
+		if (skill_id > 0 && sc->opt1 && sc->opt1 != OPT1_STONEWAIT && sc->opt1 != OPT1_BURNING && skill_id != RK_REFRESH && skill_id != SU_GROOMING && skill_id != SR_GENTLETOUCH_CURE) { // Stuned/Frozen/etc
+			if (flag != 1) // Can't cast, casted stuff can't damage.
+				return false;
+			if (skill_get_casttype(skill_id) == CAST_DAMAGE)
+				return false; // Damage spells stop casting.
+		}
+
+		if (
+			(sc->getSCE(SC_TRICKDEAD) && skill_id != NV_TRICKDEAD)
+			|| (sc->getSCE(SC_AUTOCOUNTER) && !flag && skill_id)
+			|| (sc->getSCE(SC_GOSPEL) && sc->getSCE(SC_GOSPEL)->val4 == BCT_SELF && skill_id != PA_GOSPEL)
+			|| (sc->getSCE(SC_SUHIDE) && skill_id != SU_HIDE)
+		)
+			return false;
+
+		if (sc->getSCE(SC_BLADESTOP)) {
+			switch (sc->getSCE(SC_BLADESTOP)->val1) {
+				case 5:
+					if (skill_id == MO_EXTREMITYFIST)
+						break;
+					[[fallthrough]];
+				case 4:
+					if (skill_id == MO_CHAINCOMBO)
+						break;
+					[[fallthrough]];
+				case 3:
+					if (skill_id == MO_INVESTIGATE)
+						break;
+					[[fallthrough]];
+				case 2:
+					if (skill_id == MO_FINGEROFFENSIVE)
+						break;
+					[[fallthrough]];
+				default:
+					return false;
+			}
+		}
+
+		// Only do skill specific checks here, normal attacks should have been checked already (additionally the skill db lookup would fail)
+		if( sc->getSCE( SC_DANCING ) != nullptr && flag != 2 && skill_id != 0 ){
+			std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+
+			if (!skill)
+				return false;
+
+			if (src->type == BL_PC && ((skill_id >= WA_SWING_DANCE && skill_id <= WM_UNLIMITED_HUMMING_VOICE ) ||
+				skill_id == WM_FRIGG_SONG))
+			{ // Lvl 5 Lesson or higher allow you use 3rd job skills while dancing.
+				if( pc_checkskill((TBL_PC*)src,WM_LESSON) < 5 )
+					return false;
+#ifndef RENEWAL
+			} else if(sc->getSCE(SC_LONGING)) { // Allow everything except dancing/re-dancing. [Skotlex]
+				if (skill_id == BD_ENCORE || skill->inf2[INF2_ISSONG] || skill->inf2[INF2_ISENSEMBLE])
+					return false;
+#endif
+			} else if(!skill->inf2[INF2_ALLOWWHENPERFORMING]) // Skills that can be used in dancing state
+				return false;
+#ifndef RENEWAL
+			if ((sc->getSCE(SC_DANCING)->val1&0xFFFF) == CG_HERMODE && skill_id == BD_ADAPTATION)
+				return false; // Can't amp out of Wand of Hermode :/ [Skotlex]
+#endif
+		}
+
+		if (skill_id && // Do not block item-casted skills.
+			(src->type != BL_PC || ((TBL_PC*)src)->skillitem != skill_id)
+		) {	// Skills blocked through status changes...
+			if (!flag && ( // Blocked only from using the skill (stuff like autospell may still go through
+				( sc->cant.cast && skill_id != RK_REFRESH && skill_id != SU_GROOMING && skill_id != SR_GENTLETOUCH_CURE ) ||
+#ifndef RENEWAL
+				(sc->getSCE(SC_BASILICA) && (sc->getSCE(SC_BASILICA)->val4 != src->id || skill_id != HP_BASILICA)) || // Only Basilica caster that can cast, and only Basilica to cancel it
+#endif
+				(sc->getSCE(SC_MARIONETTE) && skill_id != CG_MARIONETTE) || // Only skill you can use is marionette again to cancel it
+				(sc->getSCE(SC_MARIONETTE2) && skill_id == CG_MARIONETTE) || // Cannot use marionette if you are being buffed by another
+				(sc->getSCE(SC_ANKLE) && skill_block_check(src, SC_ANKLE, skill_id)) ||
+				(sc->getSCE(SC_STASIS) && skill_block_check(src, SC_STASIS, skill_id)) ||
+				(sc->getSCE(SC_BITE) && skill_block_check(src, SC_BITE, skill_id)) ||
+				(sc->getSCE(SC_NOVAEXPLOSING) && skill_block_check(src, SC_NOVAEXPLOSING, skill_id)) ||
+				(sc->getSCE(SC_GRAVITYCONTROL) && skill_block_check(src, SC_GRAVITYCONTROL, skill_id)) ||
+				(sc->getSCE(SC_KAGEHUMI) && skill_block_check(src, SC_KAGEHUMI, skill_id))
+#ifdef RENEWAL
+				|| (sc->getSCE(SC_ENSEMBLEFATIGUE) && skill_id != CG_SPECIALSINGER)
+#endif
+			))
+				return false;
+
+			// Skill blocking.
+			if (
+				(sc->getSCE(SC_VOLCANO) && skill_id == WZ_ICEWALL) ||
+#ifndef RENEWAL
+				(sc->getSCE(SC_ROKISWEIL) && skill_id != BD_ADAPTATION) ||
+#endif
+				(sc->getSCE(SC_HERMODE) && skill_get_inf(skill_id) & INF_SUPPORT_SKILL) ||
+				(sc->getSCE(SC_NOCHAT) && sc->getSCE(SC_NOCHAT)->val1&MANNER_NOSKILL)
+			)
+				return false;
+		}
+
+		if (sc->option) {
+			// We do not check it for non-players here as hide will not stop monsters from scanning for new targets and use skills
+			// The logic that normal attacks will not actually be executed when hidden needs to be put in the AI code instead
+			if ((sc->option&OPTION_HIDE) && src->type == BL_PC && (skill_id == 0 || !skill_get_inf2(skill_id, INF2_ALLOWWHENHIDDEN))) {
+				return false;
+			}
+			if (sc->option&OPTION_CHASEWALK && skill_id != ST_CHASEWALK)
+				return false;
+		}
+	}
+
+	if (target == nullptr || target == src) // No further checking needed.
+		return true;
+
+	if (tsc != nullptr && !tsc->empty()) {
+		if(!skill_id && tsc->getSCE(SC_TRICKDEAD))
+			return false;
+		if((skill_id == WZ_STORMGUST || skill_id == WZ_FROSTNOVA || skill_id == NJ_HYOUSYOURAKU || skill_id == NPC_STORMGUST2)
+			&& tsc->getSCE(SC_FREEZE))
+			return false;
+		if(skill_id == PR_LEXAETERNA && (tsc->getSCE(SC_FREEZE) || tsc->getSCE(SC_STONE)))
+			return false;
+		if (tsc->getSCE(SC__MANHOLE) && !skill_get_inf2(skill_id, INF2_TARGETMANHOLE))
+			return false;
+	}
+
+	// If targetting, cloak+hide protect you, otherwise only hiding does.
+	hide_flag = flag?OPTION_HIDE:(OPTION_HIDE|OPTION_CLOAK|OPTION_CHASEWALK);
+
+ 	// Skill that can hit hidden target
+	if( skill_get_inf2(skill_id, INF2_TARGETHIDDEN) )
+		hide_flag &= ~OPTION_HIDE;
+
+	switch( target->type ) {
+		case BL_PC: {
+				map_session_data *tsd = (TBL_PC*)target;
+				bool is_boss = (src && status_get_class_(src) == CLASS_BOSS);
+				bool is_detect = status_has_mode(status,MD_DETECTOR);
+
+				if (pc_isinvisible(tsd))
+					return false;
+				if (tsc) {
+					if ((tsc->option&hide_flag) && !is_boss && (tsd->special_state.perfect_hiding || !is_detect))
+						return false;
+					if ((tsc->getSCE(SC_CLOAKINGEXCEED) || tsc->getSCE(SC_NEWMOON)) && !is_boss && (tsd->special_state.perfect_hiding || is_detect))
+						return false; // Works against insect and demon but not against bosses
+					if (tsc->getSCE(SC__FEINTBOMB) && (is_boss || is_detect))
+						return false; // Works against all
+					if ((tsc->getSCE(SC_CAMOUFLAGE) || tsc->getSCE(SC_STEALTHFIELD) || tsc->getSCE(SC_SUHIDE)) && !(is_boss || is_detect) && (!skill_id || (!flag && src)))
+						return false; // Insect, demon, and boss can detect
+				}
+			}
+			break;
+		case BL_ITEM: // Allow targetting of items to pick'em up (or in the case of mobs, to loot them).
+			// !TODO: Would be nice if this could be used to judge whether the player can or not pick up the item it targets. [Skotlex]
+			if (status_has_mode(status,MD_LOOTER))
+				return true;
+			return false;
+		case BL_HOM:
+		case BL_MER:
+		case BL_ELEM:
+			if( target->type == BL_HOM && skill_id && battle_config.hom_setting&HOMSET_NO_SUPPORT_SKILL && skill_get_inf(skill_id)&INF_SUPPORT_SKILL && battle_get_master(target) != src )
+				return false; // Can't use support skills on Homunculus (only Master/Self)
+			if( target->type == BL_MER && (skill_id == PR_ASPERSIO || (skill_id >= SA_FLAMELAUNCHER && skill_id <= SA_SEISMICWEAPON)) && battle_get_master(target) != src )
+				return false; // Can't use Weapon endow skills on Mercenary (only Master)
+			if( skill_id == AM_POTIONPITCHER && ( target->type == BL_MER || target->type == BL_ELEM) )
+				return false; // Can't use Potion Pitcher on Mercenaries
+			if (tsc && tsc->getSCE(SC_ELEMENTAL_VEIL) && !(src && status_get_class_(src) == CLASS_BOSS) && !status_has_mode(status, MD_DETECTOR))
+				return false;
+			[[fallthrough]];
+		default:
+			// Check for chase-walk/hiding/cloaking opponents.
+			if( tsc ) {
+				if( tsc->option&hide_flag && !status_has_mode(status,MD_DETECTOR))
+					return false;
+			}
+	}
+	return true;
+}
+
+/**
+ * Checks whether the src can see the target
+ * @param src:	Object using skill on target [PC|MOB|PET|HOM|MER|ELEM]
+ * @param target: Object being targeted by src [PC|MOB|HOM|MER|ELEM]
+ * @param checkblind: Whether blind condition should be considered (sets view range to 1)
+ * @return src can see (true) or target is invisible (false)
+ * @author [Skotlex]
+ */
+bool status_check_visibility(const block_list* src, const block_list* target, bool checkblind)
+{
+	int32 view_range;
+	const status_change* tsc = status_get_sc(target);
+	switch (src->type) {
+		case BL_MOB:
+			view_range = static_cast<const mob_data*>(src)->db->range3;
+			break;
+		case BL_PET:
+			view_range = static_cast<const pet_data*>(src)->db->range2;
+			break;
+		default:
+			view_range = AREA_SIZE;
+	}
+
+	if (checkblind) {
+		const status_change* sc = status_get_sc(src);
+		if (sc != nullptr && sc->getSCE(SC_BLIND) != nullptr)
+			view_range = 1;
+	}
+
+	if (src->m != target->m || !check_distance_bl(src, target, view_range))
+		return false;
+
+	if ( src->type == BL_NPC) // NPCs don't care for the rest
+		return true;
+
+	if (tsc) {
+		bool is_boss = (status_get_class_(src) == CLASS_BOSS);
+		bool is_detector = status_bl_has_mode(src,MD_DETECTOR);
+
+		switch (target->type) {	// Check for chase-walk/hiding/cloaking opponents.
+			case BL_PC: {
+					const map_session_data* tsd = static_cast<const map_session_data*>(target);
+
+					if (((tsc->option&(OPTION_HIDE|OPTION_CLOAK|OPTION_CHASEWALK)) || tsc->getSCE(SC_CAMOUFLAGE) || tsc->getSCE(SC_STEALTHFIELD) || tsc->getSCE(SC_SUHIDE)) && !is_boss && (tsd->special_state.perfect_hiding || !is_detector))
+						return false;
+					if ((tsc->getSCE(SC_CLOAKINGEXCEED) || tsc->getSCE(SC_NEWMOON)) && !is_boss && ((tsd && tsd->special_state.perfect_hiding) || is_detector))
+						return false;
+					if (tsc->getSCE(SC__FEINTBOMB) && !is_boss && !is_detector)
+						return false;
+				}
+				break;
+			case BL_ELEM:
+				if (tsc->getSCE(SC_ELEMENTAL_VEIL) && !is_boss && !is_detector)
+					return false;
+				break;
+			default:
+				if (((tsc->option&(OPTION_HIDE|OPTION_CLOAK|OPTION_CHASEWALK)) || tsc->getSCE(SC_CAMOUFLAGE) || tsc->getSCE(SC_STEALTHFIELD) || tsc->getSCE(SC_SUHIDE)) && !is_boss && !is_detector)
+					return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Base ASPD value taken from the job tables
+ * @param sd: Player object
+ * @param status: Player status
+ * @return base aspd after single/dual weapon and shield adjustments, passive bonuses and status changes [RENEWAL]
+ *	  base amotion after single/dual weapon and stats adjustments [PRE-RENEWAL]
+ */
+int32 status_base_amotion_pc(map_session_data* sd, struct status_data* status)
+{
+	std::shared_ptr<s_job_info> job = job_db.find(sd->status.class_);
+
+#ifdef RENEWAL_ASPD
+	if (job == nullptr)
+		return 0;
+
+	int16 skill_lv, val = 0;
+	float temp_aspd = 0;
+
+	int32 aspd = job->aspd_base[sd->weapontype1]; // Single weapon
+	if (sd->status.shield)
+		aspd += job->aspd_base[MAX_WEAPON_TYPE];
+	else if (sd->weapontype2 != W_FIST && sd->equip_index[EQI_HAND_R] != sd->equip_index[EQI_HAND_L])
+		aspd += job->aspd_base[sd->weapontype2] / 4; // Dual-wield
+
+	switch(sd->status.weapon) {
+		case W_BOW:
+		case W_MUSICAL:
+		case W_WHIP:
+		case W_REVOLVER:
+		case W_RIFLE:
+		case W_GATLING:
+		case W_SHOTGUN:
+		case W_GRENADE:
+			temp_aspd = status->dex * status->dex / 7.0f + status->agi * status->agi * 0.5f;
+			break;
+		default:
+			temp_aspd = status->dex * status->dex / 5.0f + status->agi * status->agi * 0.5f;
+			break;
+	}
+	temp_aspd = (float)(sqrt(temp_aspd) * 0.25f) + 196;
+	if ((skill_lv = pc_checkskill(sd,SA_ADVANCEDBOOK)) > 0 && sd->status.weapon == W_BOOK)
+		val += (skill_lv - 1) / 2 + 1;
+	if ((skill_lv = pc_checkskill(sd, SG_DEVIL)) > 0 && ((sd->class_&MAPID_THIRDMASK) == MAPID_STAR_EMPEROR || pc_is_maxjoblv(sd)))
+		val += 1 + skill_lv;
+	if ((skill_lv = pc_checkskill(sd,GS_SINGLEACTION)) > 0 && (sd->status.weapon >= W_REVOLVER && sd->status.weapon <= W_GRENADE))
+		val += ((skill_lv + 1) / 2);
+	if (pc_isriding(sd))
+		val -= 50 - 10 * pc_checkskill(sd, KN_CAVALIERMASTERY);
+	else if (pc_isridingdragon(sd))
+		val -= 25 - 5 * pc_checkskill(sd, RK_DRAGONTRAINING);
+	aspd = ((int32)(temp_aspd + ((float)(status_calc_aspd(sd, &sd->sc, true) + val) * status->agi / 200)) - min(aspd, 200));
+	return aspd;
+#else
+	if (job == nullptr)
+		return AMOTION_ZERO_ASPD;
+
+	// Base weapon delay
+	int32 amotion = (sd->status.weapon < MAX_WEAPON_TYPE)
+	 ? (job->aspd_base[sd->status.weapon]) // Single weapon
+	 : (job->aspd_base[sd->weapontype1] + job->aspd_base[sd->weapontype2]) * 7 / 10; // Dual-wield
+
+	// Percentual delay reduction from stats
+	amotion -= amotion * (4 * status->agi + status->dex) / 1000;
+
+	// Raw delay adjustment from bAspd bonus
+	amotion += sd->bonus.aspd_add;
+	return amotion;
+#endif
+}
+
+/**
+ * Base attack value calculated for units
+ * @param bl: Object to get attack for [BL_CHAR|BL_NPC]
+ * @param status: Object status
+ * @return base attack
+ */
+uint16 status_base_atk(const block_list *bl, const struct status_data *status, int32 level)
+{
+	int32 flag = 0, str, dex, dstr;
+
+#ifdef RENEWAL
+	if (!(bl->type&battle_config.enable_baseatk_renewal))
+		return 0;
+#else
+	if (!(bl->type&battle_config.enable_baseatk))
+		return 0;
+#endif
+
+	if (bl->type == BL_PC)
+	switch(((TBL_PC*)bl)->status.weapon) {
+		case W_BOW:
+		case W_MUSICAL:
+		case W_WHIP:
+		case W_REVOLVER:
+		case W_RIFLE:
+		case W_GATLING:
+		case W_SHOTGUN:
+		case W_GRENADE:
+			flag = 1;
+	}
+	if (flag) {
+#ifdef RENEWAL
+		dstr =
+#endif
+		str = status->dex;
+		dex = status->str;
+	} else {
+#ifdef RENEWAL
+		dstr =
+#endif
+		str = status->str;
+		dex = status->dex;
+	}
+
+	/** [Skotlex]
+	* Normally only players have base-atk, but homunc have a different batk
+	* equation, hinting that perhaps non-players should use this for batk.
+	**/
+	switch (bl->type) {
+		case BL_HOM:
+#ifdef RENEWAL
+			str = 2 * level + status_get_homstr(bl);
+#else
+			dstr = str / 10;
+			str += dstr*dstr;
+#endif
+			break;
+		case BL_PC:
+#ifdef RENEWAL
+			str = (dstr * 10 + dex * 10 / 5 + status->luk * 10 / 3 + level * 10 / 4) / 10 + 5 * status->pow;
+#else
+			dstr = str / 10;
+			str += dstr*dstr;
+			str += dex / 5 + status->luk / 5;
+#endif
+			break;
+		default:// Others
+#ifdef RENEWAL
+			str = dstr + level;
+#else
+			dstr = str / 10;
+			str += dstr*dstr;
+			str += dex / 5 + status->luk / 5;
+#endif
+			break;
+	}
+
+	return cap_value(str, 0, USHRT_MAX);
+}
+
+#ifdef RENEWAL
+/**
+ * Weapon attack value calculated for Players

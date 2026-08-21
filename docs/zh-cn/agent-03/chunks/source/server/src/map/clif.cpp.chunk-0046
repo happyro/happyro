@@ -1,0 +1,500 @@
+
+	if( !session_isActive( fd ) ){
+		return 0;
+	}
+
+	t_tick tick = va_arg( ap, t_tick );
+
+	if( session[fd]->wdata_tick + battle_config.ping_time < tick ){
+		clif_ping( sd );
+	}
+
+	return 0;
+}
+
+TIMER_FUNC( clif_ping_timer ){
+	map_foreachpc( clif_ping_timer_sub, gettick() );
+
+	return 0;
+}
+
+/**
+ * Opens the refine UI on the designated client.
+ * 0aa0
+ */
+void clif_refineui_open( map_session_data* sd ){
+#if PACKETVER >= 20161012
+	nullpo_retv( sd );
+
+	PACKET_ZC_OPEN_REFINING_UI p = {};
+
+	p.packetType = HEADER_ZC_OPEN_REFINING_UI;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+
+	sd->state.refineui_open = true;
+#endif
+}
+
+/**
+ * Parses cancel/close of the refine UI on client side.
+ * 0aa4
+ */
+void clif_parse_refineui_close( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20161012
+	sd->state.refineui_open = false;
+#endif
+}
+
+/**
+ * Adds the selected item into the refine UI and sends the possible materials
+ * to the client.
+ * 0aa2 <length>.W <index>.W <catalyst count>.B { <material>.W <chance>.B <price>.L }*
+ */
+void clif_refineui_info( map_session_data* sd, uint16 index ){
+#if PACKETVER >= 20161012
+	int32 fd = sd->fd;
+
+	// Get the item db reference
+	struct item_data* id = sd->inventory_data[index];
+
+	// No item data was found
+	if( id == nullptr ){
+		return;
+	}
+
+	// Check the inventory
+	struct item* item = &sd->inventory.u.items_inventory[index];
+
+	// No item was found at the given index
+	if( item == nullptr ){
+		return;
+	}
+
+	// Check if the item is identified
+	if( !item->identify ){
+		return;
+	}
+
+	// Check if the item is broken
+	if( item->attribute ){
+		return;
+	}
+
+	PACKET_ZC_REFINING_MATERIAL_LIST* p = reinterpret_cast<PACKET_ZC_REFINING_MATERIAL_LIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_REFINING_MATERIAL_LIST;
+	p->packetLength = sizeof( *p );
+	p->itemIndex = client_index( index );
+
+	std::shared_ptr<s_refine_level_info> info = refine_db.findLevelInfo( *id, *item );
+
+	// No possibilities were found
+	if( info == nullptr ){
+		p->blacksmithBlessing = 0;
+	}else{
+		p->blacksmithBlessing = static_cast<decltype(p->blacksmithBlessing)>( info->blessing_amount );
+
+		for( uint16 i = REFINE_COST_NORMAL, count = 0; i < REFINE_COST_MAX; i++ ){
+			std::shared_ptr<s_refine_cost> cost = util::umap_find( info->costs, i );
+
+			if( cost == nullptr ){
+				continue;
+			}
+
+			PACKET_ZC_REFINING_MATERIAL_LIST_SUB& entry = p->req[count];
+
+			entry.itemId = client_nameid( cost->nameid );
+			entry.chance = static_cast<decltype(entry.chance)>( cost->chance / 100 );
+			entry.zeny = cost->zeny;
+
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( entry ) );
+			count++;
+		}
+	}
+
+	clif_send( p, p->packetLength, sd, SELF );
+#endif
+}
+
+/**
+ * Client request to add an item to the refine UI.
+ * 0aa1 <index>.W
+ */
+void clif_parse_refineui_add( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20161012
+	const PACKET_CZ_REFINING_SELECT_ITEM* p = reinterpret_cast<PACKET_CZ_REFINING_SELECT_ITEM*>( RFIFOP( fd, 0 ) );
+
+	uint16 index = server_index( p->index );
+
+	// Check if the refine UI is open
+	if( !sd->state.refineui_open ){
+		return;
+	}
+
+	// Check if the index is valid
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	// Send out the requirements for the refine process
+	clif_refineui_info( sd, index );
+#endif
+}
+
+/**
+ * Client requests to try to refine an item.
+ * 0aa3 <index>.W <material>.W <catalyst>.B
+ */
+void clif_parse_refineui_refine( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20161012
+	const PACKET_CZ_REQ_REFINING* p = reinterpret_cast<PACKET_CZ_REQ_REFINING*>( RFIFOP( fd, 0 ) );
+
+	uint16 index = server_index( p->index );
+	t_itemid material = p->itemId;
+	int16 j;
+
+	// Check if the refine UI is open
+	if( !sd->state.refineui_open ){
+		return;
+	}
+
+	// Check if the index is valid
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	// Get the item db reference
+	struct item_data* id = sd->inventory_data[index];
+
+	// No item data was found
+	if( id == nullptr ){
+		return;
+	}
+
+	// Check the inventory
+	struct item* item = &sd->inventory.u.items_inventory[index];
+
+	// No item was found at the given index
+	if( item == nullptr ){
+		return;
+	}
+
+	// Check if the item is identified
+	if( !item->identify ){
+		return;
+	}
+
+	// Check if the item is broken
+	if( item->attribute ){
+		return;
+	}
+
+	std::shared_ptr<s_refine_level_info> info = refine_db.findLevelInfo( *id, *item );
+
+	// No refine possible
+	if( info == nullptr ){
+		return;
+	}
+
+	// No possibilities were found
+	if( info->costs.empty() ){
+		return;
+	}
+
+	// Check if the player has the selected material
+	if( ( j = pc_search_inventory( sd, material ) ) < 0 ){
+		return;
+	}
+
+	int16 blacksmith_index = -1;
+	uint16 blacksmith_amount = 0;
+
+	// Check if the player has enough blacksmith blessings
+	if( p->blacksmithBlessing != 0 ){
+		blacksmith_amount = info->blessing_amount;
+
+		// Player tried to use blacksmith blessing on a refine level, where it is not available
+		if( blacksmith_amount == 0 ){
+			return;
+		}
+
+		// Check if the player has blacksmith blessings
+		if( ( blacksmith_index = pc_search_inventory( sd, ITEMID_BLACKSMITH_BLESSING ) ) < 0 ){
+			return;
+		}
+
+		// Check if the player has enough blacksmith blessings
+		if( sd->inventory.u.items_inventory[blacksmith_index].amount < blacksmith_amount ){
+			return;
+		}
+	}
+
+	std::shared_ptr<s_refine_cost> cost = nullptr;
+
+	for( const auto& pair : info->costs ){
+		if( pair.second->nameid == material ){
+			cost = pair.second;
+			break;
+		}
+	}
+
+	// The material was not in the list of possible materials
+	if( cost == nullptr ){
+		return;
+	}
+
+	// Try to pay for the refine
+	if( pc_payzeny( sd, cost->zeny, LOG_TYPE_CONSUME ) ){
+		clif_npc_buy_result( sd, e_purchase_result::PURCHASE_FAIL_MONEY ); // "You do not have enough zeny."
+		return;
+	}
+
+	// Delete the required material
+	if( pc_delitem( sd, j, 1, 0, 0, LOG_TYPE_CONSUME ) ){
+		return;
+	}
+
+	// Delete the required blacksmith blessings
+	if( blacksmith_amount > 0 && pc_delitem( sd, blacksmith_index, blacksmith_amount, 0, 0, LOG_TYPE_CONSUME ) ){
+		return;
+	}
+
+	// Try to refine the item
+	if( cost->chance >= ( rnd() % 10000 ) ){
+		log_pick_pc( sd, LOG_TYPE_OTHER, -1, item );
+		// Success
+		item->refine = cap_value( item->refine + 1, 0, MAX_REFINE );
+		log_pick_pc( sd, LOG_TYPE_OTHER, 1, item );
+		clif_misceffect( *sd, NOTIFYEFFECT_REFINE_SUCCESS );
+		clif_refine( *sd, index, ITEMREFINING_SUCCESS );
+		if (info->broadcast_success) {
+			clif_broadcast_refine_result(*sd, item->nameid, item->refine, true);
+		}
+		if( id->type == IT_WEAPON ){
+			achievement_update_objective( sd, AG_ENCHANT_SUCCESS, 2, id->weapon_level, item->refine );
+		}
+		clif_refineui_info( sd, index );
+	}else{
+		// Failure
+
+		if (info->broadcast_failure) {
+			clif_broadcast_refine_result(*sd, item->nameid, item->refine, false);
+		}
+		// Blacksmith blessings were used to prevent breaking and downgrading
+		if( blacksmith_amount > 0 ){
+			clif_refine( *sd, index, ITEMREFINING_FAILURE2 );
+			clif_refineui_info( sd, index );
+		// Delete the item if it is breakable
+		}else if( cost->breaking_rate > 0 && ( rnd() % 10000 ) < cost->breaking_rate ){
+			clif_refine( *sd, index, ITEMREFINING_FAILURE );
+			pc_delitem( sd, index, 1, 0, 2, LOG_TYPE_CONSUME );
+		// Downgrade the item if necessary
+		}else if( cost->downgrade_amount > 0 ){
+			item->refine = cap_value( item->refine - cost->downgrade_amount, 0, MAX_REFINE );
+			clif_refine( *sd, index, ITEMREFINING_DOWNGRADE );
+			clif_refineui_info(sd, index);
+		// Only show failure, but dont do anything
+		}else{
+			clif_refine( *sd, index, ITEMREFINING_FAILURE2 );
+			clif_refineui_info( sd, index );
+		}
+
+		clif_misceffect( *sd, NOTIFYEFFECT_REFINE_FAILURE );
+		achievement_update_objective( sd, AG_ENCHANT_FAIL, 1, 1 );
+	}
+#endif
+}
+
+void clif_unequipall_reply( map_session_data* sd, bool failed ){
+#if PACKETVER_MAIN_NUM >= 20210818 || PACKETVER_RE_NUM >= 20211103
+	PACKET_ZC_ACK_TAKEOFF_EQUIP_ALL p = {};
+
+	p.PacketType = HEADER_ZC_ACK_TAKEOFF_EQUIP_ALL;
+	p.result = failed;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif // PACKETVER_MAIN_NUM >= 20210818 || PACKETVER_RE_NUM >= 20211103
+}
+
+void clif_parse_unequipall( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20210818 || PACKETVER_RE_NUM >= 20211103 || PACKETVER_ZERO_NUM >= 20210818
+	if( pc_cant_act( sd ) ){
+		clif_unequipall_reply( sd, true );
+		return;
+	}
+
+	const PACKET_CZ_REQ_TAKEOFF_EQUIP_ALL* p = reinterpret_cast<PACKET_CZ_REQ_TAKEOFF_EQUIP_ALL*>( RFIFOP( fd, 0 ) );
+
+#if PACKETVER_MAIN_NUM >= 20230906
+	uint32 location = p->location;
+	int32 max = EQI_MAX;
+#else
+	uint32 location = 0xFFFFFFFF;
+	int32 max = EQI_COSTUME_HEAD_TOP;
+#endif
+
+	for( int32 i = 0; i < max; i++ ){
+		if( sd->equip_index[i] >= 0 && ( location & equip_bitmask[i] ) != 0 ){
+			pc_unequipitem( sd, sd->equip_index[i], 1 );
+		}
+	}
+
+	clif_unequipall_reply( sd, false );
+#endif
+}
+
+void clif_stylist_response( map_session_data* sd, bool failed ){
+#if PACKETVER >= 20151104
+	PACKET_ZC_STYLE_CHANGE_RES p = {};
+
+	p.PacketType = HEADER_ZC_STYLE_CHANGE_RES;
+	p.flag = failed;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+
+	if( !failed ){
+		sd->state.stylist_open = false;
+	}
+#endif
+}
+
+bool clif_parse_stylist_buy_sub( map_session_data* sd, _look look, int16 index ){
+	std::shared_ptr<s_stylist_list> list = stylist_db.find( look );
+
+	if( list == nullptr ){
+		return false;
+	}
+
+	std::shared_ptr<s_stylist_entry> entry = util::umap_find( list->entries, index );
+
+	if( entry == nullptr ){
+		return false;
+	}
+
+	std::shared_ptr<s_stylist_costs> costs;
+
+	if( ( sd->class_ & MAPID_FIRSTMASK ) == MAPID_SUMMONER ){
+		costs = entry->doram;
+	}else{
+		costs = entry->human;
+	}
+
+	if( costs == nullptr ){
+		return false;
+	}
+
+	if( sd->status.zeny < costs->price ){
+		return false;
+	}
+
+	int16 inventoryIndex = -1;
+
+	if( costs->requiredItem != 0 ){
+		inventoryIndex = pc_search_inventory( sd, costs->requiredItem );
+
+		if( inventoryIndex < 0 ){
+			// No other option
+			if( costs->requiredItemBox == 0 ){
+				return false;
+			}
+
+			// Check if the box that contains the item is in the inventory
+			inventoryIndex = pc_search_inventory( sd, costs->requiredItemBox );
+
+			// The box containing the item also does not exist
+			if( inventoryIndex < 0 ){
+				return false;
+			}
+		}
+	}else if( costs->requiredItemBox != 0 ){
+		inventoryIndex = pc_search_inventory( sd, costs->requiredItem );
+
+		if( inventoryIndex < 0 ){
+			return false;
+		}
+	}
+
+	if( inventoryIndex >= 0 && pc_delitem( sd, inventoryIndex, 1, 0, 0, LOG_TYPE_OTHER ) != 0 ){
+		return false;
+	}
+
+	if( costs->price > 0 && pc_payzeny( sd, costs->price, LOG_TYPE_OTHER ) != 0 ){
+		return false;
+	}
+
+	switch( look ){
+		case LOOK_HAIR:
+		case LOOK_HAIR_COLOR:
+		case LOOK_CLOTHES_COLOR:
+		case LOOK_BODY2:
+			pc_changelook( sd, look, entry->value );
+			break;
+		case LOOK_HEAD_BOTTOM:
+		case LOOK_HEAD_MID:
+		case LOOK_HEAD_TOP: {
+			struct mail_message msg = {};
+
+			msg.dest_id = sd->status.char_id;
+			safestrncpy( msg.send_name, "Styling Shop", NAME_LENGTH );
+			safestrncpy( msg.title, "<MSG>2949</MSG>", MAIL_TITLE_LENGTH );
+			safestrncpy( msg.body, "<MSG>2950</MSG>", MAIL_BODY_LENGTH );
+
+			msg.item[0].nameid = entry->value;
+			msg.item[0].identify = 1;
+			msg.item[0].amount = 1;
+
+			msg.status = MAIL_NEW;
+			msg.type = MAIL_INBOX_NORMAL;
+			msg.timestamp = time( nullptr );
+
+			intif_Mail_send( 0, &msg );
+
+			} break;
+	}
+
+	return true;
+}
+
+void clif_parse_stylist_buy( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20151104
+#if PACKETVER >= 20180516
+	const PACKET_CZ_REQ_STYLE_CHANGE2* p = reinterpret_cast<PACKET_CZ_REQ_STYLE_CHANGE2*>( RFIFOP( fd, 0 ) );
+#else
+	const PACKET_CZ_REQ_STYLE_CHANGE* p = reinterpret_cast<PACKET_CZ_REQ_STYLE_CHANGE*>( RFIFOP( fd, 0 ) );
+#endif
+	if( p->HeadPalette != 0 && !clif_parse_stylist_buy_sub( sd, LOOK_HAIR_COLOR, p->HeadPalette ) ){
+		clif_stylist_response( sd, true );
+		return;
+	}
+
+	if( p->HeadStyle != 0 && !clif_parse_stylist_buy_sub( sd, LOOK_HAIR, p->HeadStyle ) ){
+		clif_stylist_response( sd, true );
+		return;
+	}
+
+	if( p->BodyPalette != 0 && !clif_parse_stylist_buy_sub( sd, LOOK_CLOTHES_COLOR, p->BodyPalette ) ){
+		clif_stylist_response( sd, true );
+		return;
+	}
+
+	if( p->TopAccessory != 0 && !clif_parse_stylist_buy_sub( sd, LOOK_HEAD_TOP, p->TopAccessory ) ){
+		clif_stylist_response( sd, true );
+		return;
+	}
+
+	if( p->MidAccessory != 0 && !clif_parse_stylist_buy_sub( sd, LOOK_HEAD_MID, p->MidAccessory ) ){
+		clif_stylist_response( sd, true );
+		return;
+	}
+
+	if( p->BottomAccessory != 0 && !clif_parse_stylist_buy_sub( sd, LOOK_HEAD_BOTTOM, p->BottomAccessory ) ){
+		clif_stylist_response( sd, true );
+		return;
+	}
+
+#if PACKETVER >= 20231220
+	if( p->BodyStyle != 0 ){
+		// TODO: Unsupported for now => This is job specific now
+		clif_stylist_response( sd, true );
+		return;

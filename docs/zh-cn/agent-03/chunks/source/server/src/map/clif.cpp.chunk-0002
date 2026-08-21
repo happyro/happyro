@@ -1,0 +1,500 @@
+		}
+		mapit_free(iter);
+		break;
+
+	case ALL_SAMEMAP: //All players on the same map
+		iter = mapit_getallusers();
+		while( ( tsd = static_cast<const map_session_data*>(mapit_next( iter )) ) != nullptr ){
+			if( bl->m == tsd->m && session_isActive( fd = tsd->fd ) ){
+				WFIFOHEAD( fd, len );
+				memcpy( WFIFOP( fd, 0 ), buf, len );
+				WFIFOSET( fd, len );
+			}
+		}
+		mapit_free(iter);
+		break;
+
+	case AREA:
+	case AREA_WOSC:
+		if (sd && bl->prev == nullptr) //Otherwise source misses the packet.[Skotlex]
+			clif_send (buf, len, bl, SELF);
+		[[fallthrough]];
+	case AREA_WOC:
+	case AREA_WOS:
+		map_foreachinallarea(clif_send_sub, bl->m, bl->x-AREA_SIZE, bl->y-AREA_SIZE, bl->x+AREA_SIZE, bl->y+AREA_SIZE,
+			BL_PC, buf, len, bl, type);
+		break;
+	case AREA_CHAT_WOC:
+		map_foreachinallarea(clif_send_sub, bl->m, bl->x-(AREA_SIZE-5), bl->y-(AREA_SIZE-5),
+			bl->x+(AREA_SIZE-5), bl->y+(AREA_SIZE-5), BL_PC, buf, len, bl, AREA_WOC);
+		break;
+
+	case CHAT:
+	case CHAT_WOS:
+		{
+			chat_data *cd;
+			if (sd) {
+				cd = (chat_data*)map_id2bl(sd->chatID);
+			} else if (bl->type == BL_CHAT) {
+				cd = (chat_data*)bl;
+			} else break;
+			if (cd == nullptr)
+				break;
+			for(i = 0; i < cd->users; i++) {
+				if (type == CHAT_WOS && cd->usersd[i] == sd)
+					continue;
+				if( session_isActive( fd = cd->usersd[i]->fd ) ){
+					WFIFOHEAD(fd,len);
+					memcpy(WFIFOP(fd,0), buf, len);
+					WFIFOSET(fd,len);
+				}
+			}
+		}
+		break;
+
+	case PARTY_AREA:
+	case PARTY_AREA_WOS:
+		x0 = bl->x - AREA_SIZE;
+		y0 = bl->y - AREA_SIZE;
+		x1 = bl->x + AREA_SIZE;
+		y1 = bl->y + AREA_SIZE;
+		[[fallthrough]];
+	case PARTY:
+	case PARTY_WOS:
+	case PARTY_SAMEMAP:
+	case PARTY_SAMEMAP_WOS:
+		if (sd && sd->status.party_id)
+			p = party_search(sd->status.party_id);
+
+		if (p) {
+			for(i=0;i<MAX_PARTY;i++){
+				if( (sd = p->data[i].sd) == nullptr )
+					continue;
+
+				if( !session_isActive( fd = sd->fd ) )
+					continue;
+
+				if( sd->id == bl->id && (type == PARTY_WOS || type == PARTY_SAMEMAP_WOS || type == PARTY_AREA_WOS) )
+					continue;
+
+				if( type != PARTY && type != PARTY_WOS && bl->m != sd->m )
+					continue;
+
+				if( (type == PARTY_AREA || type == PARTY_AREA_WOS) && (sd->x < x0 || sd->y < y0 || sd->x > x1 || sd->y > y1) )
+					continue;
+
+				WFIFOHEAD(fd, len);
+				memcpy(WFIFOP(fd, 0), buf, len);
+				WFIFOSET(fd, len);
+			}
+			if (!enable_spy) //Skip unnecessary parsing. [Skotlex]
+				break;
+
+			iter = mapit_getallusers();
+			while( ( tsd = static_cast<const map_session_data*>(mapit_next( iter )) ) != nullptr ){
+				if( tsd->partyspy == p->party.party_id && session_isActive( fd = tsd->fd ) ){
+					WFIFOHEAD( fd, len );
+					memcpy( WFIFOP( fd, 0 ), buf, len );
+					WFIFOSET( tsd->fd, len );
+				}
+			}
+			mapit_free(iter);
+		}
+		break;
+
+	case DUEL:
+	case DUEL_WOS:
+		if (!sd || !sd->duel_group) break; //Invalid usage.
+
+		iter = mapit_getallusers();
+		while( ( tsd = static_cast<const map_session_data*>(mapit_next( iter )) ) != nullptr ){
+			if( type == DUEL_WOS && bl->id == tsd->id )
+				continue;
+			if( sd->duel_group == tsd->duel_group && session_isActive( fd = tsd->fd ) ){
+				WFIFOHEAD( fd, len );
+				memcpy( WFIFOP( fd, 0 ), buf, len );
+				WFIFOSET( fd, len );
+			}
+		}
+		mapit_free(iter);
+		break;
+
+	case SELF:
+		if( clif_session_isValid(sd) ){
+			fd = sd->fd;
+			WFIFOHEAD(fd,len);
+			memcpy(WFIFOP(fd,0), buf, len);
+			WFIFOSET(fd,len);
+		}
+		break;
+
+	// New definitions for guilds [Valaris] - Cleaned up and reorganized by [Skotlex]
+	case GUILD_AREA:
+	case GUILD_AREA_WOS:
+		x0 = bl->x - AREA_SIZE;
+		y0 = bl->y - AREA_SIZE;
+		x1 = bl->x + AREA_SIZE;
+		y1 = bl->y + AREA_SIZE;
+		[[fallthrough]];
+	case GUILD_SAMEMAP:
+	case GUILD_SAMEMAP_WOS:
+	case GUILD:
+	case GUILD_WOS:
+	case GUILD_NOBG: {
+		if (!sd || !sd->status.guild_id || !sd->guild)
+			break;
+
+		const auto &g = sd->guild->guild;
+		for(i = 0; i < g.max_member; i++) {
+			if( (sd = g.member[i].sd) != nullptr ){
+				if( !session_isActive( fd = sd->fd ) )
+					continue;
+
+				if( type == GUILD_NOBG && sd->bg_id )
+					continue;
+
+				if( sd->id == bl->id && (type == GUILD_WOS || type == GUILD_SAMEMAP_WOS || type == GUILD_AREA_WOS) )
+					continue;
+
+				if( type != GUILD && type != GUILD_NOBG && type != GUILD_WOS && sd->m != bl->m )
+					continue;
+
+				if( (type == GUILD_AREA || type == GUILD_AREA_WOS) && (sd->x < x0 || sd->y < y0 || sd->x > x1 || sd->y > y1) )
+					continue;
+
+				WFIFOHEAD(fd,len);
+				memcpy(WFIFOP(fd,0), buf, len);
+				WFIFOSET(fd,len);
+			}
+		}
+		if (!enable_spy) //Skip unnecessary parsing. [Skotlex]
+			break;
+
+		iter = mapit_getallusers();
+		while( ( tsd = static_cast<const map_session_data*>(mapit_next( iter )) ) != nullptr ){
+			if( tsd->guildspy == g.guild_id && session_isActive( fd = tsd->fd ) ){
+				WFIFOHEAD( fd, len );
+				memcpy( WFIFOP( fd, 0 ), buf, len );
+				WFIFOSET( fd, len );
+			}
+		}
+		mapit_free(iter);
+		break;
+	}
+	case BG_AREA:
+	case BG_AREA_WOS:
+		x0 = bl->x - AREA_SIZE;
+		y0 = bl->y - AREA_SIZE;
+		x1 = bl->x + AREA_SIZE;
+		y1 = bl->y + AREA_SIZE;
+		[[fallthrough]];
+	case BG_SAMEMAP:
+	case BG_SAMEMAP_WOS:
+	case BG:
+	case BG_WOS:
+		if( sd && sd->bg_id > 0 && (bg = util::umap_find(bg_team_db, sd->bg_id)))
+		{
+			for (const auto &member : bg->members) {
+				if( ( sd = member.sd ) == nullptr || !session_isActive( fd = sd->fd ) )
+					continue;
+				if(sd->id == bl->id && (type == BG_WOS || type == BG_SAMEMAP_WOS || type == BG_AREA_WOS) )
+					continue;
+				if( type != BG && type != BG_WOS && sd->m != bl->m )
+					continue;
+				if( (type == BG_AREA || type == BG_AREA_WOS) && (sd->x < x0 || sd->y < y0 || sd->x > x1 || sd->y > y1) )
+					continue;
+				WFIFOHEAD(fd,len);
+				memcpy(WFIFOP(fd,0), buf, len);
+				WFIFOSET(fd,len);
+			}
+		}
+		break;
+	case CLAN:
+		if( sd && sd->clan ){
+			struct clan* clan = sd->clan;
+
+			for( i = 0; i < clan->max_member; i++ ){
+				if( ( sd = clan->members[i] ) == nullptr || !session_isActive( fd = sd->fd ) ){
+					continue;
+				}
+
+				WFIFOHEAD(fd,len);
+				memcpy(WFIFOP(fd,0), buf, len);
+				WFIFOSET(fd,len);
+			}
+
+			if (!enable_spy) //Skip unnecessary parsing. [Skotlex]
+				break;
+
+			iter = mapit_getallusers();
+			while( ( tsd = static_cast<const map_session_data*>(mapit_next( iter )) ) != nullptr ){
+				if( tsd->clanspy == clan->id && session_isActive( fd = tsd->fd ) ){
+					WFIFOHEAD(fd, len);
+					memcpy(WFIFOP(fd, 0), buf, len);
+					WFIFOSET(fd, len);
+				}
+			}
+			mapit_free(iter);
+		}
+		break;
+
+	default:
+		ShowError("clif_send: Unrecognized type %d\n",type);
+		return -1;
+	}
+
+	return 0;
+}
+
+
+/// Notifies the client, that it's connection attempt was accepted.
+/// 0073 <start time>.L <position>.3B <x size>.B <y size>.B (ZC_ACCEPT_ENTER)
+/// 02eb <start time>.L <position>.3B <x size>.B <y size>.B <font>.W (ZC_ACCEPT_ENTER2)
+/// 0a18 <start time>.L <position>.3B <x size>.B <y size>.B <font>.W <sex>.B (ZC_ACCEPT_ENTER3)
+void clif_authok( const map_session_data* sd )
+{
+	PACKET_ZC_ACCEPT_ENTER packet{};
+
+	packet.packetType = HEADER_ZC_ACCEPT_ENTER;
+	packet.startTime = client_tick(gettick());
+	WBUFPOS(packet.posDir, 0, sd->x, sd->y, sd->ud.dir);
+	packet.xSize = 5; // ignored
+	packet.ySize = 5; // ignored
+#if PACKETVER >= 20080102
+	packet.font = sd->status.font;
+#endif
+#if PACKETVER >= 20141016 && PACKETVER < 20160330
+	packet.sex = sd->status.sex;
+#endif
+
+	clif_send(&packet, sizeof(packet), sd, SELF);
+}
+
+
+/// Notifies the client, that it's connection attempt was refused.
+/// 0074 <error code>.B (ZC_REFUSE_ENTER)
+/// error code:
+///     0 = client type mismatch
+///     1 = ID mismatch
+///     2 = mobile - out of available time
+///     3 = mobile - already logged in
+///     4 = mobile - waiting state
+void clif_authrefuse(int32 fd, uint8 error_code)
+{
+	PACKET_ZC_REFUSE_ENTER packet{};
+
+	packet.packetType = HEADER_ZC_REFUSE_ENTER;
+	packet.errorCode = error_code;
+
+	socket_send<PACKET_ZC_REFUSE_ENTER>(fd, packet);
+}
+
+
+/// Notifies the client of a ban or forced disconnect.
+/// 0081 <error code>.B (SC_NOTIFY_BAN)
+/// error code:
+///     0 = BAN_UNFAIR
+///     1 = server closed -> MsgStringTable[4]
+///     2 = ID already logged in -> MsgStringTable[5]
+///     3 = timeout/too much lag -> MsgStringTable[241]
+///     4 = server full -> MsgStringTable[264]
+///     5 = underaged -> MsgStringTable[305]
+///     8 = Server sill recognizes last connection -> MsgStringTable[441]
+///     9 = too many connections from this ip -> MsgStringTable[529]
+///     10 = out of available time paid for -> MsgStringTable[530]
+///     11 = BAN_PAY_SUSPEND
+///     12 = BAN_PAY_CHANGE
+///     13 = BAN_PAY_WRONGIP
+///     14 = BAN_PAY_PNGAMEROOM
+///     15 = disconnected by a GM -> if( servicetype == taiwan ) MsgStringTable[579]
+///     16 = BAN_JAPAN_REFUSE1
+///     17 = BAN_JAPAN_REFUSE2
+///     18 = BAN_INFORMATION_REMAINED_ANOTHER_ACCOUNT
+///     100 = BAN_PC_IP_UNFAIR
+///     101 = BAN_PC_IP_COUNT_ALL
+///     102 = BAN_PC_IP_COUNT
+///     103 = BAN_GRAVITY_MEM_AGREE
+///     104 = BAN_GAME_MEM_AGREE
+///     105 = BAN_HAN_VALID
+///     106 = BAN_PC_IP_LIMIT_ACCESS
+///     107 = BAN_OVER_CHARACTER_LIST
+///     108 = BAN_IP_BLOCK
+///     109 = BAN_INVALID_PWD_CNT
+///     110 = BAN_NOT_ALLOWED_JOBCLASS
+///     ? = disconnected -> MsgStringTable[3]
+void clif_authfail_fd(int32 fd, int32 type)
+{
+	if (!session_isValid(fd) || session[fd]->func_parse != clif_parse) //clif_authfail should only be invoked on players!
+		return;
+	
+	PACKET_SC_NOTIFY_BAN packet{};
+
+	packet.packetType = HEADER_SC_NOTIFY_BAN;
+	packet.errorCode = static_cast<uint8>(type);
+
+	socket_send<PACKET_SC_NOTIFY_BAN>(fd, packet);
+
+	set_eof(fd);
+}
+
+
+/// Notifies the client, whether it can disconnect and change servers.
+/// 00b3 <type>.B (ZC_RESTART_ACK)
+/// type:
+///     1 = disconnect, char-select
+///     ? = nothing
+void clif_charselectok(int32 id, uint8 ok)
+{
+	map_session_data* sd = map_id2sd(id);
+
+	if (sd == nullptr)
+		return;
+
+	PACKET_ZC_RESTART_ACK packet{};
+
+	packet.packetType = HEADER_ZC_RESTART_ACK;
+	packet.type = ok;
+
+	clif_send( &packet, sizeof( packet ), sd, SELF );
+}
+
+/// Makes an item appear on the ground.
+/// 009E <id>.L <name id>.W <identified>.B <x>.W <y>.W <subX>.B <subY>.B <amount>.W (ZC_ITEM_FALL_ENTRY)
+/// 084B <id>.L <name id>.W <type>.W <identified>.B <x>.W <y>.W <subX>.B <subY>.B <amount>.W (ZC_ITEM_FALL_ENTRY4)
+/// 0ADD <id>.L <name id>.W <type>.W <identified>.B <x>.W <y>.W <subX>.B <subY>.B <amount>.W <show drop effect>.B <drop effect mode>.W (ZC_ITEM_FALL_ENTRY5)
+void clif_dropflooritem( const flooritem_data* fitem, bool canShowEffect ){
+	nullpo_retv(fitem);
+
+	if( fitem->item.nameid == 0 ){
+		return;
+	}
+
+	struct packet_dropflooritem p;
+
+	p.PacketType = dropflooritemType;
+	p.ITAID = fitem->id;
+	p.ITID = client_nameid( fitem->item.nameid );
+#if PACKETVER >= 20130000 /* not sure date */
+	p.type = itemtype( fitem->item.nameid );
+#endif
+	p.IsIdentified = fitem->item.identify ? 1 : 0;
+	p.xPos = fitem->x;
+	p.yPos = fitem->y;
+	p.subX = fitem->subx;
+	p.subY = fitem->suby;
+	p.count = fitem->item.amount;
+#if defined(PACKETVER_ZERO) || PACKETVER >= 20180418
+	if( canShowEffect ){
+		uint8 dropEffect = itemdb_dropeffect( fitem->item.nameid );
+
+		if( dropEffect > 0 ){
+			p.showdropeffect = 1;
+			p.dropeffectmode = dropEffect - 1;
+		}else if (battle_config.rndopt_drop_pillar != 0){
+			uint8 optionCount = 0;
+
+			for (uint8 i = 0; i < MAX_ITEM_RDM_OPT; i++) {
+				if (fitem->item.option[i].id != 0) {
+					optionCount++;
+				}
+			}
+
+			if (optionCount > 0) {
+				p.showdropeffect = 1;
+				if (optionCount == 1)
+					p.dropeffectmode = DROPEFFECT_BLUE_PILLAR - 1;
+				else if (optionCount == 2)
+					p.dropeffectmode = DROPEFFECT_YELLOW_PILLAR - 1;
+				else
+					p.dropeffectmode = DROPEFFECT_PURPLE_PILLAR - 1;
+			} else {
+				p.showdropeffect = 0;
+				p.dropeffectmode = DROPEFFECT_NONE;
+			}
+		} else {
+			p.showdropeffect = 0;
+			p.dropeffectmode = DROPEFFECT_NONE;
+		}
+	}else{
+		p.showdropeffect = 0;
+		p.dropeffectmode = DROPEFFECT_NONE;
+	}
+#endif
+	clif_send( &p, sizeof(p), fitem, AREA );
+}
+
+
+
+/// Makes an item disappear from the ground.
+/// 00a1 <id>.L (ZC_ITEM_DISAPPEAR)
+void clif_clearflooritem( const flooritem_data& fitem, const map_session_data* tsd ){
+	PACKET_ZC_ITEM_DISAPPEAR packet{};
+
+	packet.packetType = HEADER_ZC_ITEM_DISAPPEAR;
+	packet.itemAid = fitem.id;
+
+	if( tsd == nullptr ){
+		clif_send(&packet, sizeof(PACKET_ZC_ITEM_DISAPPEAR), &fitem, AREA);
+	} else {
+		clif_send(&packet, sizeof(PACKET_ZC_ITEM_DISAPPEAR), tsd, SELF );
+	}
+}
+
+
+/// Makes a unit (char, npc, mob, homun) disappear to one client.
+/// 0080 <id>.L <type>.B (ZC_NOTIFY_VANISH)
+/// type:
+///     0 = out of sight
+///     1 = died
+///     2 = logged out
+///     3 = teleport
+///     4 = trickdead
+void clif_clearunit_single( uint32 GID, clr_type type, const map_session_data& tsd ){
+	PACKET_ZC_NOTIFY_VANISH packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_VANISH;
+	packet.gid = GID;
+	packet.type = static_cast<decltype(packet.type)>(type);
+
+	clif_send( &packet, sizeof( packet ), &tsd, SELF );
+}
+
+/// Makes a unit (char, npc, mob, homun) disappear to all clients in area.
+/// 0080 <id>.L <type>.B (ZC_NOTIFY_VANISH)
+/// type:
+///     0 = out of sight
+///     1 = died
+///     2 = logged out
+///     3 = teleport
+///     4 = trickdead
+void clif_clearunit_area( const block_list& bl, clr_type type ){
+	PACKET_ZC_NOTIFY_VANISH packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_VANISH;
+	packet.gid = bl.id;
+	packet.type = static_cast<uint8>(type);
+
+	clif_send(&packet, sizeof(PACKET_ZC_NOTIFY_VANISH), &bl, type == CLR_DEAD ? AREA : AREA_WOS);
+
+	if(disguised(&bl)) {
+		packet.gid = disguised_bl_id( bl.id );
+		clif_send(&packet, sizeof(PACKET_ZC_NOTIFY_VANISH), &bl, SELF);
+	}
+}
+
+
+/// Used to make monsters with player-sprites disappear after dying
+/// like normal monsters, because the client does not remove those
+/// automatically.
+static TIMER_FUNC(clif_clearunit_delayed_sub){
+	block_list *bl = (block_list *)data;
+
+	if( bl != nullptr ){
+		clif_clearunit_area( *bl, (clr_type)id );
+		ers_free( delay_clearunit_ers, bl );
+	}
+
+	return 0;
+}
+void clif_clearunit_delayed( const block_list* bl, clr_type type, t_tick tick)
+{

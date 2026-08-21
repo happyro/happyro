@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "guild.hpp"
+
+#include <cstdlib>
+#include <memory>
+
+#include <common/cbasetypes.hpp>
+#include <common/database.hpp>
+#include <common/ers.hpp>
+#include <common/malloc.hpp>
+#include <common/mapindex.hpp>
+#include <common/nullpo.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp> // session_isActive
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "battle.hpp"
+#include "channel.hpp"
+#include "clif.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "log.hpp"
+#include "map.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "pc.hpp"
+#include "storage.hpp"
+#include "trade.hpp"
+
+using namespace rathena;
+
+std::unordered_map<int32, std::shared_ptr<MapGuild>> guild_db;
+CastleDatabase castle_db;
+
+static DBMap* guild_expcache_db; // uint32 char_id -> struct guild_expcache*
+static DBMap* guild_infoevent_db; // int32 guild_id -> struct eventlist*
+
+struct eventlist {
+	char name[EVENT_NAME_LENGTH];
+	struct eventlist *next;
+};
+
+//Constant related to the flash of the Guild EXP cache
+#define GUILD_SEND_XY_INTERVAL	5000 // Interval of sending coordinates and HP
+#define GUILD_PAYEXP_INTERVAL 10000 //Interval (maximum survival time of the cache, in milliseconds)
+#define GUILD_PAYEXP_LIST 8192 //The maximum number of cache
+
+//Guild EXP cache
+struct guild_expcache {
+	int32 guild_id, account_id, char_id;
+	t_exp exp;
+};
+static struct eri *expcache_ers; //For handling of guild exp payment.
+
+struct s_guild_skill_requirement{
+	uint16 id;
+	uint16 lv;
+};
+
+struct s_guild_skill_tree{
+	uint16 id;
+	uint16 max;
+	std::unordered_map<uint16,std::shared_ptr<s_guild_skill_requirement>> need;
+};
+
+class GuildSkillTreeDatabase : public TypesafeYamlDatabase<uint16, s_guild_skill_tree>{
+public:
+	GuildSkillTreeDatabase() : TypesafeYamlDatabase( "GUILD_SKILL_TREE_DB", 1 ){
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode( const ryml::NodeRef& node ) override;
+};
+
+const std::string GuildSkillTreeDatabase::getDefaultLocation(){
+	return std::string(db_path) + "/guild_skill_tree.yml";
+}
+
+uint64 GuildSkillTreeDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	std::string name;
+
+	if( !this->asString( node, "Id", name ) ){
+		return 0;
+	}
+
+	uint16 skill_id;
+
+	if( !( skill_id = skill_name2id( name.c_str() ) ) ){
+		this->invalidWarning( node["Id"], "Invalid guild skill name \"%s\", skipping.\n", name.c_str() );
+		return 0;
+	}
+
+	if( !SKILL_CHK_GUILD( skill_id ) ){
+		this->invalidWarning( node["Id"], "Guild skill \"%s\" with Id %u is out of the guild skill range [%u-%u], skipping.\n", name.c_str(), skill_id, GD_SKILLBASE, GD_MAX );
+		return 0;
+	}
+
+	std::shared_ptr<s_guild_skill_tree> skill = this->find( skill_id );
+	bool exists = skill != nullptr;
+
+	if( !exists ){
+		if( !this->nodeExists( node, "MaxLevel" ) ){
+			this->invalidWarning( node, "Missing node \"MaxLevel\", skipping.\n" );
+			return 0;
+		}
+
+		skill = std::make_shared<s_guild_skill_tree>();
+		skill->id = skill_id;
+	}
+
+	if( this->nodeExists( node, "MaxLevel" ) ){
+		uint16 level;
+
+		if( !this->asUInt16( node, "MaxLevel", level ) ){
+			return 0;
+		}
+
+		// Enable Guild's Glory when required for emblems
+		if( skill_id == GD_GLORYGUILD && battle_config.require_glory_guild && level == 0 ){
+			level = 1;
+		}
+
+		skill->max = level;
+	}
+
+	if( this->nodeExists( node, "Required" ) ){
+		const auto& reqNode = node["Required"];
+		for( const auto&  requiredNode : reqNode ){
+			std::string requiredName;
+
+			if( !this->asString( requiredNode, "Id", requiredName ) ){
+				return 0;
+			}
+
+			uint16 requiredSkillId;
+
+			if( !( requiredSkillId = skill_name2id( requiredName.c_str() ) ) ){
+				this->invalidWarning( requiredNode["Id"], "Invalid required guild skill name \"%s\", skipping.\n", requiredName.c_str() );
+				return 0;
+			}
+
+			if( !SKILL_CHK_GUILD( requiredSkillId ) ){
+				this->invalidWarning( requiredNode["Id"], "Required guild skill \"%s\" with Id %u is out of the guild skill range [%u-%u], skipping.\n", requiredName.c_str(), requiredSkillId, GD_SKILLBASE, GD_MAX );
+				return 0;
+			}
+
+			std::shared_ptr<s_guild_skill_requirement> requirement = util::umap_find( skill->need, requiredSkillId );
+			bool requirement_exists = requirement != nullptr;
+
+			if( !requirement_exists ){
+				if( !this->nodeExists( requiredNode, "Level" ) ){
+					this->invalidWarning( requiredNode, "Missing node \"Level\", skipping.\n" );
+					return 0;
+				}
+
+				requirement = std::make_shared<s_guild_skill_requirement>();
+				requirement->id = requiredSkillId;
+			}
+
+			if( this->nodeExists( requiredNode, "Level" ) ){
+				uint16 requiredLevel;
+
+				if( !this->asUInt16( requiredNode, "Level", requiredLevel ) ){
+					return 0;
+				}
+
+				if( requiredLevel == 0 ){
+					continue;
+				}
+
+				requirement->lv = requiredLevel;
+			}
+
+			if( !requirement_exists ){
+				skill->need[requiredSkillId] = requirement;
+			}
+		}
+	}
+
+	if( !exists ){
+		this->put( skill_id, skill );
+	}
+
+	return 1;
+}
+
+GuildSkillTreeDatabase guild_skill_tree_db;
+
+TIMER_FUNC(guild_payexp_timer);
+static TIMER_FUNC(guild_send_xy_timer);
+
+/* guild flags cache */
+npc_data **guild_flags;
+uint16 guild_flags_count;
+
+/**
+ * Get guild skill index in guild structure of mmo.hpp
+ * @param skill_id
+ * @return Index in skill_tree or -1
+ **/
+static int16 guild_skill_get_index(uint16 skill_id) {
+	if (!SKILL_CHK_GUILD(skill_id))
+		return -1;
+	skill_id -= GD_SKILLBASE;
+	if (skill_id >= MAX_GUILDSKILL)
+		return -1;
+	return skill_id;
+}
+
+/*==========================================
+ * Retrieves and validates the sd pointer for this guild member [Skotlex]
+ *------------------------------------------*/
+static TBL_PC* guild_sd_check(int32 guild_id, uint32 account_id, uint32 char_id) {
+	TBL_PC* sd = map_id2sd(account_id);
+
+	if (!(sd && sd->status.char_id == char_id))
+		return nullptr;
+
+	if (sd->status.guild_id != guild_id)
+	{	//If player belongs to a different guild, kick him out.
+		intif_guild_leave(guild_id,account_id,char_id,0,"** Guild Mismatch **");
+		return nullptr;
+	}
+
+	return sd;
+}
+
+// Modified [Komurka]
+uint16 guild_skill_get_max( uint16 id ){
+	std::shared_ptr<s_guild_skill_tree> skill = guild_skill_tree_db.find( id );
+
+	if( skill == nullptr ){
+		return 0;
+	}
+
+	return skill->max;
+}
+
+// Retrieve skill_lv learned by guild
+int32 guild_checkskill(const struct mmo_guild &g, int32 id) {
+	if ((id = guild_skill_get_index(id)) < 0)
+		return 0;
+	return g.skill[id].lv;
+}
+
+/*==========================================
+ * Guild skill check - from jA [Komurka]
+ *------------------------------------------*/
+bool guild_check_skill_require(const struct mmo_guild &g, uint16 id ){
+	std::shared_ptr<s_guild_skill_tree> skill = guild_skill_tree_db.find( id );
+
+	if( skill == nullptr ){
+		return false;
+	}
+
+	for( const auto& pair : skill->need ){
+		if( pair.second->lv > guild_checkskill(g, pair.second->id ) ){
+			return false;
+		}
+	}
+
+	return true;
+}
+
+const std::string CastleDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/castle_db.yml";
+}
+
+uint64 CastleDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	int32 castle_id;
+
+	if (!this->asInt32(node, "Id", castle_id))
+		return 0;
+
+	std::shared_ptr<guild_castle> gc = this->find(castle_id);
+	bool exists = gc != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Map", "Name", "Npc" }))
+			return 0;
+
+		gc = std::make_shared<guild_castle>();
+		gc->castle_id = castle_id;
+	}
+
+	if (this->nodeExists(node, "Map")) {
+		std::string map_name;
+
+		if (!this->asString(node, "Map", map_name))
+			return 0;
+
+		uint16 mapindex = mapindex_name2idx(map_name.c_str(), nullptr);
+
+		if( mapindex == 0 ){
+			this->invalidWarning(node["Map"], "Map %s doesn't exist, skipping.\n", map_name.c_str());
+			return 0;
+		}
+
+		gc->mapindex = mapindex;
+	}
+
+	if (this->nodeExists(node, "Name")) {
+		std::string castle_name;
+
+		if (!this->asString(node, "Name", castle_name))
+			return 0;
+
+		safestrncpy(gc->castle_name, castle_name.c_str(), sizeof(gc->castle_name));
+	}
+
+	if (this->nodeExists(node, "Npc")) {
+		std::string npc_name;
+
+		if (!this->asString(node, "Npc", npc_name))
+			return 0;
+
+		if (npc_name.size() > NPC_NAME_LENGTH) {
+			this->invalidWarning(node["NPC"], "Npc name %s too long, skipping.\n", npc_name.c_str());
+			return 0;
+		}
+
+		safestrncpy(gc->castle_event, npc_name.c_str(), sizeof(gc->castle_event));
+	}
+
+	if( this->nodeExists( node, "Type" ) ){
+		std::string type;
+
+		if( !this->asString( node, "Type", type ) ){
+			return 0;
+		}
+
+		std::string type_constant = "WOE_" + type;
+		int64 constant;
+
+		if( !script_get_constant( type_constant.c_str(), &constant ) || constant < WOE_FIRST_EDITION || constant >= WOE_MAX ){
+			this->invalidWarning( node["Type"], "Invalid WoE type %s.\n", type.c_str() );
+			return 0;
+		}
+
+		gc->type = static_cast<e_woe_type>( constant );
+	}else{
+		if( !exists ){
+			gc->type = WOE_FIRST_EDITION;
+		}
+	}
+
+	if( this->nodeExists( node, "ClientId" ) ){
+		uint16 id;
+
+		if( !this->asUInt16( node, "ClientId", id ) ){
+			return 0;
+		}
+
+		gc->client_id = id;
+	}else{
+		if( !exists ){
+			gc->client_id = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "WarpEnabled" ) ){
+		bool enabled;
+
+		if( !this->asBool( node, "WarpEnabled", enabled ) ){
+			return 0;
+		}
+
+		gc->warp_enabled = enabled;
+	}else{
+		if( !exists ){
+			gc->warp_enabled = false;
+		}
+	}
+
+	if (this->nodeExists(node, "WarpX")) {
+		uint16 warp_x;
+
+		if (!this->asUInt16(node, "WarpX", warp_x)) {
+			return 0;
+		}
+
+		if( warp_x == 0 ){
+			this->invalidWarning( node["WarpX"], "WarpX has to be greater than zero.\n" );
+			return 0;
+		}
+
+		map_data* md = map_getmapdata( map_mapindex2mapid( gc->mapindex ) );
+
+		// If the map is on another map-server, we cannot verify the bounds
+		if( md != nullptr && warp_x >= md->xs ){
+			this->invalidWarning( node["WarpX"], "WarpX has to be smaller than %hu.\n", md->xs );
+			return 0;
+		}
+
+		gc->warp_x = warp_x;
+	}
+	else {
+		if (!exists)
+			gc->warp_x = 0;
+	}
+
+	if (this->nodeExists(node, "WarpY")) {
+		uint16 warp_y;
+
+		if (!this->asUInt16(node, "WarpY", warp_y)) {
+			return 0;
+		}
+
+		if( warp_y == 0 ){
+			this->invalidWarning( node["WarpY"], "WarpY has to be greater than zero.\n" );
+			return 0;
+		}
+
+		map_data* md = map_getmapdata( map_mapindex2mapid( gc->mapindex ) );
+
+		// If the map is on another map-server, we cannot verify the bounds
+		if( md != nullptr && warp_y >= md->ys ){
+			this->invalidWarning( node["WarpY"], "WarpY has to be smaller than %hu.\n", md->ys );
+			return 0;
+		}
+
+		gc->warp_y = warp_y;
+	}
+	else {
+		if (!exists)
+			gc->warp_y = 0;
+	}
+
+	if (this->nodeExists(node, "WarpCost")) {
+		uint32 zeny;
+
+		if (!this->asUInt32(node, "WarpCost", zeny)) {
+			return 0;
+		}
+
+		if( zeny > MAX_ZENY ){
+			this->invalidWarning( node["WarpCost"], "WarpCost has to be smaller than %d.\n", MAX_ZENY );
+			return 0;
+		}
+
+		gc->zeny = zeny;
+	} else {
+		if (!exists)
+			gc->zeny = 100;
+	}
+
+	if (this->nodeExists(node, "WarpCostSiege")) {
+		uint32 zeny_siege;
+
+		if (!this->asUInt32(node, "WarpCostSiege", zeny_siege)) {
+			return 0;
+		}
+
+		if( zeny_siege > MAX_ZENY ){
+			this->invalidWarning( node["WarpCostSiege"], "WarpCostSiege has to be smaller than %d.\n", MAX_ZENY );
+			return 0;
+		}
+
+		gc->zeny_siege = zeny_siege;
+	}
+	else {
+		if (!exists)
+			gc->zeny_siege = 100000;
+	}
+
+	if (!exists)
+		this->put(castle_id, gc);
+
+	return 1;
+}
+
+void CastleDatabase::loadingFinished(){
+	for( const auto& pair : *this ){
+		std::shared_ptr<guild_castle> castle = pair.second;
+
+		if( castle->client_id != 0 ){
+			// Check if ClientId is unique
+			for( const auto& pair2 : *this ){
+				std::shared_ptr<guild_castle> castle2 = pair2.second;
+
+				if( castle->castle_id == castle2->castle_id ){
+					continue;
+				}
+
+				if( castle->client_id == castle2->client_id ){
+					ShowWarning( "Castle ClientId %hu is ambigous.\n", castle->client_id );
+					break;
+				}
+			}
+		}
+
+		if( castle->warp_enabled ){
+			if( castle->client_id == 0 ){
+				ShowWarning( "Warping to castle %d is enabled, but no ClientId is set. Disabling...\n", castle->castle_id );

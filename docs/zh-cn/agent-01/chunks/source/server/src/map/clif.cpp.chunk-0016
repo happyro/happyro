@@ -1,0 +1,500 @@
+	p.packetType = HEADER_ZC_ACK_BANKING_DEPOSIT;
+	p.money = sd.bank_vault;
+	p.zeny = sd.status.zeny;
+	p.reason = reason;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+/*
+ * Request saving some money in bank
+ * @author : original [Yommy/Hercules]
+ * 09A7 <AID>L <Money>L (CZ_REQ_BANKING_DEPOSIT)
+ */
+void clif_parse_BankDeposit(int32 fd, map_session_data* sd) {
+#if PACKETVER >= 20130717
+	const PACKET_CZ_REQ_BANKING_DEPOSIT* p = reinterpret_cast<PACKET_CZ_REQ_BANKING_DEPOSIT*>( RFIFOP( fd, 0 ) );
+
+	nullpo_retv(sd);
+	if( !battle_config.feature_banking ) {
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,1496),false,SELF); //Banking is disabled
+		return;
+	}
+	if( map_getmapflag( sd->m, MF_NOBANK ) ){
+		clif_displaymessage( sd->fd, msg_txt( sd, 831 ) ); // You cannot use the Bank on this map.
+		return;
+	}
+	else {
+		if(sd->status.account_id == p->AID){
+			enum e_BANKING_DEPOSIT_ACK reason = pc_bank_deposit(sd,max(0,p->zeny));
+			clif_bank_deposit( *sd, reason );
+		}
+	}
+#endif
+}
+
+/*
+ * Acknowledge of withdrawing some money from bank
+ * 09AA <Reason>W <Money>Q <balance>L (ZC_ACK_BANKING_WITHDRAW)
+ */
+void clif_bank_withdraw( map_session_data& sd, enum e_BANKING_WITHDRAW_ACK reason ){
+#if PACKETVER >= 20130717
+	PACKET_ZC_ACK_BANKING_WITHDRAW p = {};
+
+	p.packetType = HEADER_ZC_ACK_BANKING_WITHDRAW;
+	p.reason = reason;
+	p.money = sd.bank_vault;
+	p.zeny = sd.status.zeny;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+/*
+ * Request Withdrawing some money from bank
+ * 09A9 <AID>L <Money>L (CZ_REQ_BANKING_WITHDRAW)
+ */
+void clif_parse_BankWithdraw(int32 fd, map_session_data* sd) {
+#if PACKETVER >= 20130717
+	const PACKET_CZ_REQ_BANKING_WITHDRAW* p = reinterpret_cast<PACKET_CZ_REQ_BANKING_WITHDRAW*>( RFIFOP( fd, 0 ) );
+
+	nullpo_retv(sd);
+	if( !battle_config.feature_banking ) {
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,1496),false,SELF); //Banking is disabled
+		return;
+	}
+	if( map_getmapflag( sd->m, MF_NOBANK ) ){
+		clif_displaymessage( sd->fd, msg_txt( sd, 831 ) ); // You cannot use the Bank on this map.
+		return;
+	}
+	else {
+		if(sd->status.account_id == p->AID){
+			enum e_BANKING_WITHDRAW_ACK reason = pc_bank_withdraw(sd,max(0,p->zeny));
+			clif_bank_withdraw( *sd, reason );
+		}
+	}
+#endif
+}
+
+/// Deletes an item from character's cart.
+/// 0125 <index>.W <amount>.L (ZC_DELETE_ITEM_FROM_CART)
+void clif_cart_delitem( const map_session_data& sd, int32 index, int32 amount ){
+	PACKET_ZC_DELETE_ITEM_FROM_CART packet{};
+
+	packet.packetType = HEADER_ZC_DELETE_ITEM_FROM_CART;
+	packet.index = client_index( index );
+	packet.amount = amount;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Opens the shop creation menu.
+/// 012d <num>.W (ZC_OPENSTORE)
+/// num:
+///     number of allowed item slots
+void clif_openvendingreq( map_session_data& sd, uint16 num ){
+	PACKET_ZC_OPENSTORE packet{};
+
+	packet.packetType = HEADER_ZC_OPENSTORE;
+	packet.num = num;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Displays a vending board to target/area (ZC_STORE_ENTRY).
+/// 0131 <owner id>.L <message>.80B
+void clif_showvendingboard( map_session_data& sd, enum send_target target, block_list* tbl ){
+	if( tbl == nullptr ){
+		tbl = &sd;
+		target = AREA_WOS;
+	}
+
+	PACKET_ZC_STORE_ENTRY p = {};
+
+	p.packetType = HEADER_ZC_STORE_ENTRY;
+	p.makerAID = sd.status.account_id;
+	safestrncpy( p.storeName, sd.message, sizeof( p.storeName ) );
+
+	clif_send( &p, sizeof( p ), tbl, target );
+}
+
+
+/// Removes a vending board from screen.
+/// 0132 <owner id>.L (ZC_DISAPPEAR_ENTRY)
+void clif_closevendingboard( block_list& bl, send_target target, block_list* tbl ){
+	if( tbl == nullptr ){
+		tbl = &bl;
+		target = AREA_WOS;
+	}
+
+	PACKET_ZC_DISAPPEAR_ENTRY p = {};
+
+	p.packetType = HEADER_ZC_DISAPPEAR_ENTRY;
+	p.GID = bl.id;
+
+	clif_send( &p, sizeof( p ), tbl, target );
+}
+
+
+/// Sends a list of items in a shop.
+/// R 0133 <packet len>.W <owner id>.L { <price>.L <amount>.W <index>.W <type>.B <name id>.W <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W }* (ZC_PC_PURCHASE_ITEMLIST_FROMMC)
+/// R 0800 <packet len>.W <owner id>.L <unique id>.L { <price>.L <amount>.W <index>.W <type>.B <name id>.W <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W }* (ZC_PC_PURCHASE_ITEMLIST_FROMMC2)
+void clif_vendinglist( map_session_data& sd, map_session_data& vsd ){
+	PACKET_ZC_PC_PURCHASE_ITEMLIST_FROMMC* p = reinterpret_cast<PACKET_ZC_PC_PURCHASE_ITEMLIST_FROMMC*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_PC_PURCHASE_ITEMLIST_FROMMC;
+	p->packetLength = sizeof( *p );
+	p->AID = vsd.status.account_id;
+#if PACKETVER >= 20100105
+	p->venderId = vsd.vender_id;
+#endif
+
+	for( int32 i = 0, count = 0; i < vsd.vend_num; i++ ){
+		PACKET_ZC_PC_PURCHASE_ITEMLIST_FROMMC_sub& entry = p->items[count];
+		int32 index = vsd.vending[i].index;
+		struct item_data* data = itemdb_search( vsd.cart.u.items_cart[index].nameid );
+
+		if( data == nullptr ){
+			continue;
+		}
+
+		entry.price = vsd.vending[i].value;
+		entry.amount = vsd.vending[i].amount;
+		entry.index = client_index( index );
+		entry.itemType = itemtype( vsd.cart.u.items_cart[index].nameid );
+		entry.itemId = client_nameid( vsd.cart.u.items_cart[index].nameid );
+		entry.identified = vsd.cart.u.items_cart[index].identify;
+		entry.damaged = vsd.cart.u.items_cart[index].attribute;
+		entry.refine = vsd.cart.u.items_cart[index].refine;
+		clif_addcards( &entry.slot, &vsd.cart.u.items_cart[index] );
+#if PACKETVER >= 20150226
+		clif_add_random_options( entry.option_data, vsd.cart.u.items_cart[index] );
+#if PACKETVER >= 20160921
+		entry.location = pc_equippoint_sub( &sd, data );
+		entry.viewSprite = data->look;
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+		entry.grade = vsd.cart.u.items_cart[index].enchantgrade;
+#endif
+#endif
+#endif
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( entry ) );
+		count++;
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+}
+
+
+/// Shop purchase failure.
+/// 0135 <index>.W <amount>.W <result>.B (ZC_PC_PURCHASE_RESULT_FROMMC)
+/// result:
+///     0 = success
+///     1 = not enough zeny
+///     2 = overweight
+///     4 = out of stock
+///     5 = "cannot use an npc shop while in a trade"
+///     6 = Because the store information was incorrect the item was not purchased.
+///     7 = No sales information.
+void clif_buyvending( map_session_data& sd, uint16 index, uint16 amount, e_pc_purchase_result_frommc result ){
+	PACKET_ZC_PC_PURCHASE_RESULT_FROMMC packet{};
+
+	packet.packetType = HEADER_ZC_PC_PURCHASE_RESULT_FROMMC;
+	packet.index = client_index( index );
+	packet.amount = amount;
+	packet.result = static_cast<decltype(packet.result)>(result);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Show's vending player its list of items for sale.
+/// 0a28 <result>.B (ZC_ACK_OPENSTORE2)
+void clif_openvending_ack( const map_session_data& sd, e_ack_openstore2 result ){
+#if PACKETVER >= 20141022
+	PACKET_ZC_ACK_OPENSTORE2 packet{};
+
+	packet.packetType = HEADER_ZC_ACK_OPENSTORE2;
+	packet.result = static_cast<decltype(packet.result)>(result);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+#endif
+}
+
+/// Shop creation success.
+/// 0136 <packet len>.W <owner id>.L { <price>.L <index>.W <amount>.W <type>.B <name id>.W <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W }* (ZC_PC_PURCHASE_MYITEMLIST)
+void clif_openvending( const map_session_data& sd ){
+	PACKET_ZC_PC_PURCHASE_MYITEMLIST* p = reinterpret_cast<PACKET_ZC_PC_PURCHASE_MYITEMLIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_PC_PURCHASE_MYITEMLIST;
+	p->packetLength = sizeof( *p );
+	p->AID = sd.id;
+
+	for( int32 i = 0; i < sd.vend_num; i++ ) {
+		PACKET_ZC_PC_PURCHASE_MYITEMLIST_sub& entry = p->items[i];
+		int16 index = sd.vending[i].index;
+
+		entry.price = sd.vending[i].value;
+		entry.index = client_index( index );
+		entry.amount = sd.vending[i].amount;
+		entry.itemType = itemtype( sd.cart.u.items_cart[index].nameid );
+		entry.itemId = client_nameid( sd.cart.u.items_cart[index].nameid );
+		entry.identified = sd.cart.u.items_cart[index].identify;
+		entry.damaged = sd.cart.u.items_cart[index].attribute;
+		entry.refine = sd.cart.u.items_cart[index].refine;
+		clif_addcards( &entry.slot, &sd.cart.u.items_cart[index] );
+#if PACKETVER >= 20150226
+		clif_add_random_options( entry.option_data, sd.cart.u.items_cart[index] );
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+		entry.grade = sd.cart.u.items_cart[index].enchantgrade;
+#endif
+#endif
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( entry ) );
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+
+	clif_openvending_ack( sd, OPENSTORE2_SUCCESS );
+}
+
+
+/// Inform merchant that someone has bought an item.
+/// 0137 <index>.W <amount>.W (ZC_DELETEITEM_FROM_MCSTORE)
+/// 09e5 <index>.W <amount>.W <GID>.L <Date>.L <zeny>.L (ZC_DELETEITEM_FROM_MCSTORE2)
+void clif_vendingreport( map_session_data& sd, uint16 index, uint16 amount, uint32 char_id, int32 zeny ){
+	PACKET_ZC_DELETEITEM_FROM_MCSTORE packet{};
+
+	packet.packetType = HEADER_ZC_DELETEITEM_FROM_MCSTORE;
+	packet.index = client_index( index );
+	packet.amount = amount;
+
+// TODO : not sure for client date [Napster]
+#if PACKETVER >= 20141016
+	packet.buyerCID = char_id;
+	packet.date = client_tick( time(nullptr) );
+	packet.zeny = zeny;
+#endif
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Result of organizing a party (ZC_ACK_MAKE_GROUP).
+/// 00fa <result>.B
+/// result:
+///     0 = opens party window and shows MsgStringTable[77]="party successfully organized"
+///     1 = MsgStringTable[78]="party name already exists"
+///     2 = MsgStringTable[79]="already in a party"
+///     3 = cannot organize parties on this map
+///     ? = nothing
+void clif_party_created( const map_session_data& sd, int32 result ){
+	PACKET_ZC_ACK_MAKE_GROUP p = {};
+
+	p.PacketType = HEADER_ZC_ACK_MAKE_GROUP;
+	p.result = result;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Adds new member to a party.
+/// 0104 <account id>.L <role>.L <x>.W <y>.W <state>.B <party name>.24B <char name>.24B <map name>.16B (ZC_ADD_MEMBER_TO_GROUP)
+/// 01e9 <account id>.L <role>.L <x>.W <y>.W <state>.B <party name>.24B <char name>.24B <map name>.16B <item pickup rule>.B <item share rule>.B (ZC_ADD_MEMBER_TO_GROUP2)
+/// 0a43 <account id>.L <role>.L <class>.W <base level>.W <x>.W <y>.W <state>.B <party name>.24B <char name>.24B <map name>.16B <item pickup rule>.B <item share rule>.B (ZC_ADD_MEMBER_TO_GROUP3)
+/// role:
+///     0 = leader
+///     1 = normal
+/// state:
+///     0 = connected
+///     1 = disconnected
+void clif_party_member_info( const party_data& party, const map_session_data& sd ){
+	int32 id = party_getmemberid( &party, &sd );
+
+	if( id < 0 ){
+		return;
+	}
+
+	PACKET_ZC_ADD_MEMBER_TO_GROUP p = {};
+
+	p.packetType = partymemberinfo;
+	p.AID = sd.status.account_id;
+#if PACKETVER >= 20171207
+	p.GID = sd.status.char_id;
+#endif
+	p.leader = ( party.party.member[id].leader != 0 ) ? 0 : 1;
+#if PACKETVER_MAIN_NUM >= 20170524 || PACKETVER_RE_NUM >= 20170502 || defined(PACKETVER_ZERO)
+	p.class_ = sd.status.class_;
+	p.baseLevel = sd.status.base_level;
+#endif
+	p.x = sd.x;
+	p.y = sd.y;
+	p.offline = ( party.party.member[id].online != 0 ) ? 0 : 1;
+	safestrncpy( p.partyName, party.party.name, sizeof( p.partyName ) );
+	safestrncpy( p.playerName, sd.status.name, sizeof( p.playerName ) );
+	mapindex_getmapname_ext( map_mapid2mapname( sd.m ), p.mapName );
+	p.sharePickup = ( party.party.item&1 ) ? 1 : 0;
+	p.shareLoot = ( party.party.item&2 )? 1 : 0;
+
+	clif_send( &p, sizeof( p ), &sd, PARTY );
+}
+
+
+/// Sends party information (ZC_GROUP_LIST).
+/// 00fb <packet len>.W <party name>.24B { <account id>.L <nick>.24B <map name>.16B <role>.B <state>.B }*
+/// role:
+///     0 = leader
+///     1 = normal
+/// state:
+///     0 = connected
+///     1 = disconnected
+/// 0a44 <packet len>.W <party name>.24B { <account id>.L <nick>.24B <map name>.16B <role>.B <state>.B <class>.W <base level>.W }* <item pickup rule>.B <item share rule>.B <unknown>.L
+void clif_party_info( const party_data& party, const map_session_data* sd ){
+	send_target target;
+
+	if( sd == nullptr ){
+		sd = party_getavailablesd( &party );
+
+		if( sd == nullptr ){
+			// Nobody is online to notify
+			return;
+		}
+
+		// Send to whole party
+		target = PARTY;
+	}else{
+		// Send only to self
+		target = SELF;
+	}
+
+	PACKET_ZC_GROUP_LIST* p = reinterpret_cast<PACKET_ZC_GROUP_LIST*>( packet_buffer );
+
+	p->packetType = partyinfo;
+	p->packetLen = sizeof( *p );
+	safestrncpy( p->partyName, party.party.name, sizeof( p->partyName ) );
+
+	for( int32 i = 0, c = 0; i < MAX_PARTY; i++ ){
+		const party_member& m = party.party.member[i];
+
+		if( m.account_id == 0 ){
+			continue;
+		}
+
+		PACKET_ZC_GROUP_LIST_SUB& member = p->members[c];
+
+		member.AID = m.account_id;
+#if PACKETVER >= 20171207
+		member.GID = m.char_id;
+#endif
+		safestrncpy( member.playerName, m.name, sizeof( member.playerName ) );
+		mapindex_getmapname_ext( m.map, member.mapName );
+		member.leader = ( m.leader ) ? 0 : 1;
+		member.offline = ( m.online ) ? 0 : 1;
+#if PACKETVER_MAIN_NUM >= 20170524 || PACKETVER_RE_NUM >= 20170502 || defined(PACKETVER_ZERO)
+		member.class_ = m.class_;
+		member.baseLevel = m.lv;
+#endif
+
+		p->packetLen += static_cast<decltype(p->packetLen)>( sizeof( member ) );
+		c++;
+	}
+
+	clif_send( p, p->packetLen, sd, target );
+}
+
+
+/// The player's 'party invite' state, sent during login (ZC_PARTY_CONFIG).
+/// 02c9 <flag>.B
+/// flag:
+///     0 = allow party invites
+///     1 = auto-deny party invites
+void clif_partyinvitationstate( map_session_data& sd ){
+#if PACKETVER_MAIN_NUM >= 20070911 || defined(PACKETVER_RE) || PACKETVER_AD_NUM >= 20070911 || PACKETVER_SAK_NUM >= 20070904 || defined(PACKETVER_ZERO)
+	PACKET_ZC_PARTY_CONFIG p = {};
+
+	p.packetType = HEADER_ZC_PARTY_CONFIG;
+	p.denyPartyInvites = sd.status.disable_partyinvite;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+
+/// Party invitation request.
+/// 00fe <party id>.L <party name>.24B (ZC_REQ_JOIN_GROUP)
+/// 02c6 <party id>.L <party name>.24B (ZC_PARTY_JOIN_REQ)
+void clif_party_invite( const map_session_data& sd, const map_session_data& tsd ){
+	struct party_data* party = party_search( sd.status.party_id );
+
+	if( party == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_PARTY_JOIN_REQ p = {};
+
+	p.PacketType = HEADER_ZC_PARTY_JOIN_REQ;
+	p.GRID = party->party.party_id;
+	safestrncpy( p.groupName, party->party.name, sizeof( p.groupName ) );
+
+	clif_send( &p, sizeof( p ), &tsd, SELF );
+}
+
+
+/// Party invite result.
+/// 00fd <nick>.24S <result>.B (ZC_ACK_REQ_JOIN_GROUP)
+/// 02c5 <nick>.24S <result>.L (ZC_PARTY_JOIN_REQ_ACK)
+/// result=0  : char is already in a party -> MsgStringTable[80]
+/// result=1  : party invite was rejected -> MsgStringTable[81]
+/// result=2  : party invite was accepted -> MsgStringTable[82]
+/// result=3  : party is full -> MsgStringTable[83]
+/// result=4  : char of the same account already joined the party -> MsgStringTable[608]
+/// result=5  : char blocked party invite -> MsgStringTable[1324] (since 20070904)
+/// result=7  : char is not online or doesn't exist -> MsgStringTable[71] (since 20070904)
+/// result=8  : (%s) are currently in restricted map to join a party. -> MsgStringTable[1388] (since 20080527)
+/// result=9  : Cannot join a party in this map. -> MsgStringTable[1871] (since 20110215)
+/// result=10 : You cannot invite or withdraw while in memorial dungeon -> message: MSG_ID_BD3 (since 20161130)
+/// result=11 : The character is a level that can not join the party -> message: MSG_ID_C9A (since 20170412)
+void clif_party_invite_reply( const map_session_data& sd, const char* nick, enum e_party_invite_reply reply ){
+#if PACKETVER < 20070904
+	if( reply == PARTY_REPLY_OFFLINE ){
+		clif_displaymessage( sd.fd, msg_txt( &sd, 3 ) ); // Character not found.
+		return;
+	}
+#endif
+
+	PACKET_ZC_PARTY_JOIN_REQ_ACK p = {};
+
+	p.PacketType = HEADER_ZC_PARTY_JOIN_REQ_ACK;
+	safestrncpy( p.characterName, nick, sizeof( p.characterName ) );
+	p.result = reply;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Updates party settings.
+/// 0101 <exp option>.L (ZC_GROUPINFO_CHANGE)
+/// 07d8 <exp option>.L <item pick rule>.B <item share rule>.B (ZC_REQ_GROUPINFO_CHANGE_V2)
+/// exp option:
+///     0 = exp sharing disabled
+///     1 = exp sharing enabled
+///     2 = cannot change exp sharing
+///
+/// flag:
+///     0 = send to party
+///     1 = send to sd
+void clif_party_option( const party_data *p, const map_session_data* sd, int32 flag)
+{
+	unsigned char buf[16];
+#if PACKETVER < 20090603
+	const int32 cmd = 0x101;
+#else
+	const int32 cmd = 0x7d8;
+#endif
+
+	nullpo_retv(p);
+
+	if(!sd && flag==0){

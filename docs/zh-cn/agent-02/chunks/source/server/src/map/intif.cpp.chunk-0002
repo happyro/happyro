@@ -1,0 +1,500 @@
+			WFIFOL(inter_fd,4)  = sd->status.account_id;
+			WFIFOL(inter_fd,8)  = sd->status.char_id;
+			WFIFOW(inter_fd,12) = 0; // count
+
+			plen = 14;
+		}
+	}
+	dbi_destroy(iter);
+
+	WFIFOW(inter_fd, 2) = plen;
+	WFIFOSET(inter_fd, plen);
+
+	sd->vars_dirty = false;
+
+	return 0;
+}
+
+/**
+ * Request the registries for this player.
+ * @param sd : Player to load registry
+ * @param flag : Type of registry to load, &1=acc (login-serv), &2=acc (char-serv), &4=char
+ * @return 
+ */
+int32 intif_request_registry(map_session_data *sd, int32 flag)
+{
+	nullpo_ret(sd);
+
+	if (CheckForCharServer())
+		return 0;
+
+	WFIFOHEAD(inter_fd,13);
+	WFIFOW(inter_fd,0) = 0x3005;
+	WFIFOL(inter_fd,2) = sd->status.account_id;
+	WFIFOL(inter_fd,6) = sd->status.char_id;
+	WFIFOB(inter_fd,10) = (flag&1?1:0); //Request Acc Reg 2 (from login-serv))
+	WFIFOB(inter_fd,11) = (flag&2?1:0); //Request Acc Reg (from char-serv)
+	WFIFOB(inter_fd,12) = (flag&4?1:0); //Request Char Reg
+	WFIFOSET(inter_fd,13);
+
+	return 1;
+}
+
+/**
+ * Request to load guild storage from char-serv
+ * @param account_id: Player account identification
+ * @param guild_id: Guild of player
+ * @return false - error, true - message sent
+ */
+bool intif_request_guild_storage(uint32 account_id, int32 guild_id)
+{
+	if (CheckForCharServer())
+		return false;
+	WFIFOHEAD(inter_fd,10);
+	WFIFOW(inter_fd,0) = 0x3018;
+	WFIFOL(inter_fd,2) = account_id;
+	WFIFOL(inter_fd,6) = guild_id;
+	WFIFOSET(inter_fd,10);
+	return true;
+}
+
+/**
+ * Request to save guild storage
+ * @param account_id: account requesting the save
+ * @param gstor: Guild storage struct to save
+ * @return false - error, true - message sent
+ */
+bool intif_send_guild_storage(uint32 account_id, struct s_storage *gstor)
+{
+	if (CheckForCharServer())
+		return false;
+	WFIFOHEAD(inter_fd,sizeof(struct s_storage)+12);
+	WFIFOW(inter_fd,0) = 0x3019;
+	WFIFOW(inter_fd,2) = (uint16)sizeof(struct s_storage)+12;
+	WFIFOL(inter_fd,4) = account_id;
+	WFIFOL(inter_fd,8) = gstor->id;
+	memcpy( WFIFOP(inter_fd,12),gstor, sizeof(struct s_storage) );
+	WFIFOSET(inter_fd,WFIFOW(inter_fd,2));
+	return true;
+}
+
+/**
+ * Party creation request
+ * @param member : Struct of 1 party member
+ * @param name : Party name
+ * @param item : item pickup rule 
+ * @param item2 : item share rule
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_create_party(struct party_member *member,char *name,int32 item,int32 item2)
+{
+	if (CheckForCharServer())
+		return 0;
+	nullpo_ret(member);
+
+	WFIFOHEAD(inter_fd, 6+NAME_LENGTH+sizeof(struct party_member));
+	WFIFOW(inter_fd,0) = 0x3020;
+	WFIFOW(inter_fd,2) = 6+NAME_LENGTH+sizeof(struct party_member);
+	safestrncpy(WFIFOCP(inter_fd,4),name, NAME_LENGTH);
+	WFIFOB(inter_fd,28)= item;
+	WFIFOB(inter_fd,29)= item2;
+	memcpy(WFIFOP(inter_fd,30), member, sizeof(struct party_member));
+	WFIFOSET(inter_fd,WFIFOW(inter_fd, 2));
+	return 1;
+}
+
+/**
+ * Party information request
+ * @param party_id : Party id to request info
+ * @param char_id : Player id requesting
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_request_partyinfo(int32 party_id, uint32 char_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,10);
+	WFIFOW(inter_fd,0) = 0x3021;
+	WFIFOL(inter_fd,2) = party_id;
+	WFIFOL(inter_fd,6) = char_id;
+	WFIFOSET(inter_fd,10);
+	return 1;
+}
+
+/**
+ * Request to add a member to party
+ * @param party_id : Party to add member to
+ * @param member : member to add to party
+ * @return 
+ */
+int32 intif_party_addmember(int32 party_id,struct party_member *member)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,8+sizeof(struct party_member));
+	WFIFOW(inter_fd,0)=0x3022;
+	WFIFOW(inter_fd,2)=8+sizeof(struct party_member);
+	WFIFOL(inter_fd,4)=party_id;
+	memcpy(WFIFOP(inter_fd,8),member,sizeof(struct party_member));
+	WFIFOSET(inter_fd,WFIFOW(inter_fd, 2));
+	return 1;
+}
+
+/**
+ * Request to change party configuration (exp,item share)
+ * @param party_id : Party to alter
+ * @param account_id : account requesting change
+ * @param exp : sharing exp option
+ * @param item :  sharing item option
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_party_changeoption(int32 party_id,uint32 account_id,int32 exp,int32 item)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,14);
+	WFIFOW(inter_fd,0)=0x3023;
+	WFIFOL(inter_fd,2)=party_id;
+	WFIFOL(inter_fd,6)=account_id;
+	WFIFOW(inter_fd,10)=exp;
+	WFIFOW(inter_fd,12)=item;
+	WFIFOSET(inter_fd,14);
+	return 1;
+}
+
+/**
+ * Ask the char-serv to make aid,cid quit party
+ * @param party_id : Party to leave
+ * @param account_id : aid of player to leave
+ * @param char_id : cid of player to leave
+ * @return 0:char-serv disconected, 1=msg sent
+ */
+int32 intif_party_leave(int32 party_id, uint32 account_id, uint32 char_id, const char *name, enum e_party_member_withdraw type)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,15+NAME_LENGTH);
+	WFIFOW(inter_fd,0) = 0x3024;
+	WFIFOL(inter_fd,2) = party_id;
+	WFIFOL(inter_fd,6) = account_id;
+	WFIFOL(inter_fd,10) = char_id;
+	safestrncpy(WFIFOCP(inter_fd,14), name, NAME_LENGTH);
+	WFIFOB(inter_fd,14+NAME_LENGTH) = type;
+	WFIFOSET(inter_fd,15+NAME_LENGTH);
+	return 1;
+}
+
+/**
+ * Inform char-serv that a member as quit/lvlup change map, therefore changing party state
+ * @param sd : Player that moved
+ * @param online : If the player will stay online or no
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_party_changemap(map_session_data *sd,int32 online)
+{
+	int16 m, mapindex;
+
+	if (CheckForCharServer())
+		return 0;
+	if(!sd)
+		return 0;
+
+	if ((m = map_mapindex2mapid(sd->mapindex)) >= 0) {
+		struct map_data *mapdata = map_getmapdata(m);
+
+		if (mapdata->instance_id)
+			mapindex = map_getmapdata(mapdata->instance_src_map)->index;
+		else
+			mapindex = sd->mapindex;
+	} else
+		mapindex = sd->mapindex;
+
+	WFIFOHEAD( inter_fd, 17 + MAP_NAME_LENGTH_EXT );
+	WFIFOW(inter_fd,0)=0x3025;
+	WFIFOL(inter_fd,2)=sd->status.party_id;
+	WFIFOL(inter_fd,6)=sd->status.account_id;
+	WFIFOL(inter_fd,10)=sd->status.char_id;
+	WFIFOB(inter_fd,14)=online;
+	WFIFOW(inter_fd,15)=sd->status.base_level;
+	safestrncpy( WFIFOCP( inter_fd, 17 ), mapindex_id2name( mapindex ), MAP_NAME_LENGTH_EXT );
+	WFIFOSET( inter_fd, 17 + MAP_NAME_LENGTH_EXT );
+	return 1;
+}
+
+/**
+ * Request breaking party
+ * @param party_id : Party to delete
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_break_party(int32 party_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,6);
+	WFIFOW(inter_fd,0)=0x3026;
+	WFIFOL(inter_fd,2)=party_id;
+	WFIFOSET(inter_fd,6);
+	return 0;
+}
+
+// 
+/**
+ * Request sending party chat
+ * (we using this in case we have multiple map-serv attached 
+ * to be sure all party get the message)
+ * @param party_id : Party identification
+ * @param account_id : Player sending the message
+ * @param mes : Message to send
+ * @param len : Size of the message
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_party_message(int32 party_id, uint32 account_id, const char *mes, size_t len)
+{
+	if (CheckForCharServer())
+		return 0;
+
+	if (other_mapserver_count < 1)
+		return 0; //No need to send.
+
+	WFIFOHEAD(inter_fd,len + 12);
+	WFIFOW(inter_fd,0)=0x3027;
+	WFIFOW(inter_fd,2)=static_cast<int16>( len + 12 );
+	WFIFOL(inter_fd,4)=party_id;
+	WFIFOL(inter_fd,8)=account_id;
+	safestrncpy(WFIFOCP(inter_fd,12),mes,len);
+	WFIFOSET(inter_fd,len+12);
+	return 1;
+}
+
+/**
+ * Request a new leader for party
+ * @param party_id : Party to alter
+ * @param account_id : player to set as new leader
+ * @param char_id : player to set as new leader
+ * @return  0=error, 1=msg sent
+ */
+int32 intif_party_leaderchange(int32 party_id,uint32 account_id,uint32 char_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,14);
+	WFIFOW(inter_fd,0)=0x3029;
+	WFIFOL(inter_fd,2)=party_id;
+	WFIFOL(inter_fd,6)=account_id;
+	WFIFOL(inter_fd,10)=char_id;
+	WFIFOSET(inter_fd,14);
+	return 1;
+}
+
+/**
+ * Request to update party share level
+ * @param share_lvl : Max level number of difference to share exp
+ * @return  0=error, 1=msg sent
+ */
+int32 intif_party_sharelvlupdate(uint32 share_lvl)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,6);
+	WFIFOW(inter_fd,0)=0x302A;
+	WFIFOL(inter_fd,2)=share_lvl;
+	WFIFOSET(inter_fd,6);
+	return 1;
+}
+
+/**
+ * Request a Guild creation
+ * @param name : Name of the guild
+ * @param master : Guild_member info of master
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_create(const char *name,const struct guild_member *master)
+{
+	if (CheckForCharServer())
+		return 0;
+	nullpo_ret(master);
+
+	WFIFOHEAD(inter_fd,sizeof(struct guild_member)+(8+NAME_LENGTH));
+	WFIFOW(inter_fd,0)=0x3030;
+	WFIFOW(inter_fd,2)=sizeof(struct guild_member)+(8+NAME_LENGTH);
+	WFIFOL(inter_fd,4)=master->account_id;
+	safestrncpy(WFIFOCP(inter_fd,8),name,NAME_LENGTH);
+	memcpy(WFIFOP(inter_fd,8+NAME_LENGTH),master,sizeof(struct guild_member));
+	WFIFOSET(inter_fd,WFIFOW(inter_fd,2));
+	return 1;
+}
+
+/**
+ * Request Guild information
+ * @param guild_id : guild to get info from
+ * @return  0=error, 1=msg_sent
+ */
+int32 intif_guild_request_info(int32 guild_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,6);
+	WFIFOW(inter_fd,0) = 0x3031;
+	WFIFOL(inter_fd,2) = guild_id;
+	WFIFOSET(inter_fd,6);
+	return 1;
+}
+
+/**
+ * Request to add member to the guild
+ * @param guild_id : Guild to alter
+ * @param m : Member to add to the guild
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_addmember( int32 guild_id, struct guild_member& m ){
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,sizeof(struct guild_member)+8);
+	WFIFOW(inter_fd,0) = 0x3032;
+	WFIFOW(inter_fd,2) = sizeof(struct guild_member)+8;
+	WFIFOL(inter_fd,4) = guild_id;
+	memcpy( WFIFOP( inter_fd, 8 ), &m, sizeof( struct guild_member ) );
+	WFIFOSET(inter_fd,WFIFOW(inter_fd,2));
+	return 1;
+}
+
+/**
+ * Request a new leader for guild
+ * @param guild_id : guild to alter
+ * @param name : name of the new master
+ * @param len : size of the name
+ * @return 0=error, 1=msg_sent
+ */
+bool intif_guild_change_gm( int32 guild_id, const char* name, size_t len ){
+	if (CheckForCharServer())
+		return false;
+	WFIFOHEAD(inter_fd, len + 8);
+	WFIFOW(inter_fd, 0)=0x3033;
+	WFIFOW( inter_fd, 2 ) = static_cast<int16>( len + 8 );
+	WFIFOL(inter_fd, 4)=guild_id;
+	safestrncpy(WFIFOCP(inter_fd,8),name,len);
+	WFIFOSET(inter_fd,len+8);
+	return true;
+}
+
+/**
+ * Request to make a player leave a guild
+ * @param guild_id : guild to alter
+ * @param account_id : player aid to kick
+ * @param char_id : player cid to kick
+ * @param flag : 0:normal quit, 1=expulsion
+ * @param mes : quitting message (max 40)
+ * @return 0=error, 1=msg_sent
+ */
+bool intif_guild_leave( int32 guild_id, uint32 account_id, uint32 char_id, int32 flag, const char *mes ){
+	if (CheckForCharServer())
+		return false;
+	WFIFOHEAD(inter_fd, 55);
+	WFIFOW(inter_fd, 0) = 0x3034;
+	WFIFOL(inter_fd, 2) = guild_id;
+	WFIFOL(inter_fd, 6) = account_id;
+	WFIFOL(inter_fd,10) = char_id;
+	WFIFOB(inter_fd,14) = flag;
+	safestrncpy(WFIFOCP(inter_fd,15),mes,40);
+	WFIFOSET(inter_fd,55);
+	return true;
+}
+
+/**
+ * Update request / Lv online status of the guild members
+ * @param guild_id : guild to alter
+ * @param account_id : player aid to alter
+ * @param char_id : player cid to alter
+ * @param online : does the player is online (or will stay online)
+ * @param lv : player lv
+ * @param class_ : player class
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_memberinfoshort(int32 guild_id,uint32 account_id,uint32 char_id,int32 online,int32 lv,int32 class_)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, 19);
+	WFIFOW(inter_fd, 0) = 0x3035;
+	WFIFOL(inter_fd, 2) = guild_id;
+	WFIFOL(inter_fd, 6) = account_id;
+	WFIFOL(inter_fd,10) = char_id;
+	WFIFOB(inter_fd,14) = online;
+	WFIFOW(inter_fd,15) = lv;
+	WFIFOW(inter_fd,17) = class_;
+	WFIFOSET(inter_fd,19);
+	return 1;
+}
+
+/**
+ * Guild disbanded notification 
+ * @param guild_id : guild to disband
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_break(int32 guild_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, 6);
+	WFIFOW(inter_fd, 0) = 0x3036;
+	WFIFOL(inter_fd, 2) = guild_id;
+	WFIFOSET(inter_fd,6);
+	return 1;
+}
+
+/**
+ * Send a guild message
+ * (This is goign throught char-serv in case of multi-map setup)
+ * @param guild_id : Guild id to send the message to
+ * @param account_id : Player sending the msg
+ * @param mes : Message to send
+ * @param len : Size of the message
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_message(int32 guild_id, uint32 account_id, const char *mes, size_t len)
+{
+	if (CheckForCharServer())
+		return 0;
+
+	if (other_mapserver_count < 1)
+		return 0; //No need to send.
+
+	WFIFOHEAD(inter_fd, len + 12);
+	WFIFOW(inter_fd,0)=0x3037;
+	WFIFOW(inter_fd,2)=static_cast<int16>( len + 12 );
+	WFIFOL(inter_fd,4)=guild_id;
+	WFIFOL(inter_fd,8)=account_id;
+	safestrncpy(WFIFOCP(inter_fd,12),mes,len);
+	WFIFOSET(inter_fd,len+12);
+
+	return 1;
+}
+
+/**
+ * Request a change of Guild basic information
+ * @param guild_id : Guild to alter
+ * @param type : type of data to change (currently only guildlv)
+ * @param data : new value for type
+ * @param len : size of data
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_change_basicinfo(int32 guild_id,int32 type,const void *data,int32 len)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, len + 10);
+	WFIFOW(inter_fd,0)=0x3039;
+	WFIFOW(inter_fd,2)=len+10;
+	WFIFOL(inter_fd,4)=guild_id;
+	WFIFOW(inter_fd,8)=type;
+	memcpy(WFIFOP(inter_fd,10),data,len);
+	WFIFOSET(inter_fd,len+10);
+	return 1;
+}
+
+/**
+ * Request a change of Guild member information
+ * @param guild_id : Guild to alter
+ * @param account_id : Player aid to alter 
+ * @param char_id : Player cid to alter
+ * @param type : Type of modification

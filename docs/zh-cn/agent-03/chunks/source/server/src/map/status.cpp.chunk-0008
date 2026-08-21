@@ -1,0 +1,500 @@
+	return cap_value(bonus, -100, INT_MAX);
+}
+
+/**
+ * Get final MaxHP for players.
+ * The calculation needs base_level, base_status/battle_status (vit), additive modifier, and multiplicative modifier
+ * @param sd Player
+ * @param stat Vit of player
+ * @return max The max value of HP
+ */
+static uint32 status_calc_maxhp_pc( map_session_data& sd, uint32 vit ){
+	std::shared_ptr<s_job_info> job = job_db.find( sd.status.class_ );
+
+	if( job == nullptr ){
+		return 1;
+	}
+
+	// Prevent negative array index
+	uint32 level = umax( sd.status.base_level, 1 ) - 1;
+
+	double dmax = job->base_hp[level];
+
+	if( vit > 0 ){
+		dmax *= ( 1.0 + vit * 0.01 );
+	}
+
+	if( (sd.class_&JOBL_UPPER) || pc_is_primary_fourth(sd.class_) ){
+		dmax *= 1.25;
+	}else if( pc_is_taekwon_ranker( &sd ) ){
+		dmax *= 3;
+	}
+
+	// Vit from equip gives +1 additional HP
+	dmax += sd.indexed_bonus.param_equip[PARAM_VIT];
+
+	dmax += status_get_hpbonus( &sd, STATUS_BONUS_FIX );
+
+	double equip_bonus = ( dmax * status_get_hpbonus_equip( &sd ) / 100 );
+	// TODO: using bMaxHP* for usable items may cause rounding issue
+	double item_bonus = ( dmax * status_get_hpbonus_item( &sd ) / 100 );
+
+	dmax += equip_bonus + item_bonus;
+
+	// Aegis accuracy
+	dmax += static_cast<int64>( dmax * status_get_hpbonus( &sd, STATUS_BONUS_RATE ) / 100 );
+
+	// Make sure it's not negative before casting to uint32
+	if( dmax < 1.0 ){
+		dmax = 1.0;
+	}
+
+	return cap_value( static_cast<uint32>( dmax ), 1, std::numeric_limits<uint32>::max() );
+}
+
+/**
+ * Get final MaxSP for players.
+ * The calculation needs base_level, base_status/battle_status (int), additive modifier, and multiplicative modifier
+ * @param sd Player
+ * @param stat Int of player
+ * @return max The max value of HP
+ */
+static uint32 status_calc_maxsp_pc( map_session_data& sd, uint32 int_ ){
+	std::shared_ptr<s_job_info> job = job_db.find( sd.status.class_ );
+
+	if( job == nullptr ){
+		return 1;
+	}
+
+	// Prevent negative array index
+	uint32 level = umax( sd.status.base_level, 1 ) - 1;
+
+	double dmax = job->base_sp[level];
+
+	if( int_ > 0 ){
+		dmax *= ( 1.0 + int_ * 0.01 );
+	}
+
+	if( (sd.class_&JOBL_UPPER) || pc_is_primary_fourth(sd.class_) ){
+		dmax *= 1.25;
+	}else if( pc_is_taekwon_ranker( &sd ) ){
+		dmax *= 3;
+	}
+
+	// Int from equip gives +1 additional SP
+	dmax += sd.indexed_bonus.param_equip[PARAM_INT];
+
+	dmax += status_get_spbonus( &sd, STATUS_BONUS_FIX );
+
+	double equip_bonus = ( dmax * status_get_spbonus_equip( &sd ) / 100 );
+	// TODO: using bMaxSP* for usable items may cause rounding issue
+	double item_bonus = ( dmax * status_get_spbonus_item( &sd ) / 100 );
+
+	dmax += equip_bonus + item_bonus;
+
+	// Aegis accuracy
+	dmax += static_cast<int64>( dmax * status_get_spbonus( &sd, STATUS_BONUS_RATE ) / 100 );
+
+	// Make sure it's not negative before casting to uint32
+	if( dmax < 1.0 ){
+		dmax = 1.0;
+	}
+
+	return cap_value( static_cast<uint32>( dmax ), 1, std::numeric_limits<uint32>::max() );
+}
+
+/**
+ * Get final MaxAP for player.
+ * @param sd: Player data
+ * @return AP amount
+ */
+static uint32 status_calc_maxap_pc( map_session_data& sd ){
+	std::shared_ptr<s_job_info> job = job_db.find( sd.status.class_ );
+
+	if( job == nullptr ){
+		return 1;
+	}
+
+	// Prevent negative array index
+	uint32 level = umax( sd.status.base_level, 1 ) - 1;
+
+	double dmax = job->base_ap[level];
+
+	// No stat point dependent bonus
+	// No Upper Class or Taekwon ranker bonus
+
+	dmax += status_get_apbonus( &sd, STATUS_BONUS_FIX );
+
+	double equip_bonus = ( dmax * status_get_apbonus_equip( &sd ) / 100 );
+	// TODO: using bMaxAP* for usable items may cause rounding issue
+	double item_bonus = ( dmax * status_get_apbonus_item( &sd ) / 100 );
+
+	dmax += equip_bonus + item_bonus;
+
+	// Aegis accuracy
+	dmax += static_cast<int64>( dmax * status_get_apbonus( &sd, STATUS_BONUS_RATE ) / 100 );
+
+	// Make sure it's not negative before casting to uint32
+	if( dmax < 0. ){
+		dmax = 0.;
+	}
+
+	return cap_value( static_cast<uint32>( dmax ), 0, std::numeric_limits<uint32>::max() );
+}
+
+/**
+ * Calculates player's weight
+ * @param sd: Player object
+ * @param flag: Calculation type
+ *   CALCWT_ITEM - Item weight
+ *   CALCWT_MAXBONUS - Skill/Status/Configuration max weight bonus
+ * @return false - failed, true - success
+ */
+bool status_calc_weight(map_session_data *sd, enum e_status_calc_weight_opt flag)
+{
+	int32 b_weight, b_max_weight, skill, i;
+	status_change *sc;
+
+	nullpo_retr(false, sd);
+
+	sc = &sd->sc;
+	b_max_weight = sd->max_weight; // Store max weight for later comparison
+	b_weight = sd->weight; // Store current weight for later comparison
+	sd->max_weight = job_db.get_maxWeight(pc_mapid2jobid(sd->class_, sd->status.sex)) + sd->status.str * 300; // Recalculate max weight
+
+	if (flag&CALCWT_ITEM) {
+		sd->weight = 0; // Reset current weight
+
+		for(i = 0; i < MAX_INVENTORY; i++) {
+			if (!sd->inventory.u.items_inventory[i].nameid || sd->inventory_data[i] == nullptr)
+				continue;
+			sd->weight += sd->inventory_data[i]->weight * sd->inventory.u.items_inventory[i].amount;
+		}
+	}
+
+	if (flag&CALCWT_MAXBONUS) {
+		// Skill/Status bonus weight increases
+		sd->max_weight += sd->add_max_weight; // From bAddMaxWeight
+		if ((skill = pc_checkskill(sd, MC_INCCARRY)) > 0)
+			sd->max_weight += 2000 * skill;
+		if (pc_isriding(sd) && pc_checkskill(sd, KN_RIDING) > 0)
+			sd->max_weight += 10000;
+		else if (pc_isridingdragon(sd))
+			sd->max_weight += 5000 + 2000 * pc_checkskill(sd, RK_DRAGONTRAINING);
+		if (sc->getSCE(SC_KNOWLEDGE))
+			sd->max_weight += sd->max_weight * sc->getSCE(SC_KNOWLEDGE)->val1 / 10;
+		if ((skill = pc_checkskill(sd, ALL_INCCARRY)) > 0)
+			sd->max_weight += 2000 * skill;
+		if (pc_ismadogear(sd))
+			sd->max_weight += 15000;
+	}
+
+	// Update the client if the new weight calculations don't match
+	if (b_weight != sd->weight)
+		clif_updatestatus(*sd, SP_WEIGHT);
+	if (b_max_weight != sd->max_weight) {
+		clif_updatestatus(*sd, SP_MAXWEIGHT);
+		pc_updateweightstatus(*sd);
+	}
+
+	return true;
+}
+
+/**
+ * Calculates player's cart weight
+ * @param sd: Player object
+ * @param flag: Calculation type
+ *   CALCWT_ITEM - Cart item weight
+ *   CALCWT_MAXBONUS - Skill/Status/Configuration max weight bonus
+ *   CALCWT_CARTSTATE - Whether to check for cart state
+ * @return false - failed, true - success
+ */
+bool status_calc_cart_weight(map_session_data *sd, enum e_status_calc_weight_opt flag)
+{
+	int32 b_cart_weight_max, i;
+
+	nullpo_retr(false, sd);
+
+	if (!pc_iscarton(sd) && !(flag&CALCWT_CARTSTATE))
+		return false;
+
+	b_cart_weight_max = sd->cart_weight_max; // Store cart max weight for later comparison
+	sd->cart_weight_max = battle_config.max_cart_weight; // Recalculate max weight
+
+	if (flag&CALCWT_ITEM) {
+		sd->cart_weight = 0; // Reset current cart weight
+		sd->cart_num = 0; // Reset current cart item count
+
+		for(i = 0; i < MAX_CART; i++) {
+			if (!sd->cart.u.items_cart[i].nameid)
+				continue;
+			sd->cart_weight += itemdb_weight(sd->cart.u.items_cart[i].nameid) * sd->cart.u.items_cart[i].amount; // Recalculate current cart weight
+			sd->cart_num++; // Recalculate current cart item count
+		}
+	}
+
+	// Skill bonus max weight increases
+	if (flag&CALCWT_MAXBONUS)
+		sd->cart_weight_max += (pc_checkskill(sd, GN_REMODELING_CART) * 5000);
+
+	// Update the client if the new weight calculations don't match
+	if (b_cart_weight_max != sd->cart_weight_max)
+		clif_updatestatus(*sd, SP_CARTINFO);
+
+	return true;
+}
+
+/**
+ * Calculates player data from scratch without counting SC adjustments
+ * Should be invoked whenever players raise stats, learn passive skills or change equipment
+ * @param sd: Player object
+ * @param opt: Whether it is first calc (login) or not
+ * @return (-1) for too many recursive calls, (1) recursive call, (0) success
+ */
+int32 status_calc_pc_sub(map_session_data* sd, uint8 opt)
+{
+	static int32 calculating = 0; ///< Check for recursive call preemption. [Skotlex]
+	struct status_data *base_status; ///< Pointer to the player's base status
+	status_change *sc = &sd->sc;
+	struct s_skill b_skill[MAX_SKILL]; ///< Previous skill tree
+	int32 i, skill, refinedef = 0;
+	int16 index = -1;
+
+	if (++calculating > 10) // Too many recursive calls!
+		return -1;
+
+	// Remember player-specific values that are currently being shown to the client (for refresh purposes)
+	memcpy(b_skill, &sd->status.skill, sizeof(b_skill));
+
+	pc_calc_skilltree(sd);	// SkillTree calculation
+
+	if (opt&SCO_FIRST) {
+		// Load Hp/SP from char-received data.
+		sd->battle_status.hp = sd->status.hp;
+		sd->battle_status.sp = sd->status.sp;
+		if (battle_config.keep_ap_on_logout == 1)
+			sd->battle_status.ap = sd->status.ap;
+		sd->regen.sregen = &sd->sregen;
+		sd->regen.ssregen = &sd->ssregen;
+	}
+
+	base_status = &sd->base_status;
+	// These are not zeroed. [zzo]
+	sd->hprate = 100;
+	sd->sprate = 100;
+	sd->aprate = 100;
+	sd->castrate = 100;
+	sd->dsprate = 100;
+	sd->hprecov_rate = 100;
+	sd->sprecov_rate = 100;
+	sd->matk_rate = 100;
+	sd->critical_rate = sd->hit_rate = sd->flee_rate = sd->flee2_rate = 100;
+	sd->def_rate = sd->def2_rate = sd->mdef_rate = sd->mdef2_rate = 100;
+	sd->patk_rate = sd->smatk_rate = 100;
+	sd->res_rate = sd->mres_rate = 100;
+	sd->hplus_rate = sd->crate_rate = 100;
+	sd->regen.state.block = 0;
+	sd->add_max_weight = 0;
+
+	sd->indexed_bonus = {};
+
+	memset (&sd->right_weapon.overrefine, 0, sizeof(sd->right_weapon) - sizeof(sd->right_weapon.atkmods));
+	memset (&sd->left_weapon.overrefine, 0, sizeof(sd->left_weapon) - sizeof(sd->left_weapon.atkmods));
+
+	if (sd->special_state.intravision)
+		clif_status_load(sd, EFST_CLAIRVOYANCE, 0);
+
+	if (sd->special_state.no_walk_delay)
+		clif_status_load(sd, EFST_ENDURE, 0);
+
+	memset(&sd->special_state,0,sizeof(sd->special_state));
+
+	if (pc_isvip(sd)) // Magic Stone requirement avoidance for VIP.
+		sd->special_state.no_gemstone = battle_config.vip_gemstone;
+
+	if (!sd->state.permanent_speed) {
+		memset(&base_status->max_hp, 0, sizeof(struct status_data)-(sizeof(base_status->hp)+sizeof(base_status->sp)+sizeof(base_status->ap)));
+		base_status->speed = DEFAULT_WALK_SPEED;
+	} else {
+		int32 pSpeed = base_status->speed;
+
+		memset(&base_status->max_hp, 0, sizeof(struct status_data)-(sizeof(base_status->hp)+sizeof(base_status->sp)+sizeof(base_status->ap)));
+		base_status->speed = pSpeed;
+	}
+
+	// !FIXME: Most of these stuff should be calculated once, but how do I fix the memset above to do that? [Skotlex]
+	// Give them all modes except these (useful for clones)
+	base_status->mode = static_cast<e_mode>(MD_MASK&~(MD_STATUSIMMUNE|MD_IGNOREMELEE|MD_IGNOREMAGIC|MD_IGNORERANGED|MD_IGNOREMISC|MD_DETECTOR|MD_ANGRY|MD_TARGETWEAK));
+
+	base_status->size = (sd->class_&JOBL_BABY) ? SZ_SMALL : (((sd->class_&MAPID_FIRSTMASK) == MAPID_SUMMONER) ? battle_config.summoner_size : SZ_MEDIUM);
+	if (battle_config.character_size && pc_isriding(sd)) { // [Lupus]
+		if (sd->class_&JOBL_BABY) {
+			if (battle_config.character_size&SZ_BIG)
+				base_status->size++;
+		} else
+		if(battle_config.character_size&SZ_MEDIUM)
+			base_status->size++;
+	}
+	base_status->aspd_rate = 1000;
+	base_status->ele_lv = 1;
+	base_status->race = ((sd->class_&MAPID_FIRSTMASK) == MAPID_SUMMONER) ? battle_config.summoner_race : RC_PLAYER_HUMAN;
+	base_status->class_ = CLASS_NORMAL;
+
+	sd->autospell.clear();
+	sd->autospell2.clear();
+	sd->autospell3.clear();
+	sd->addeff.clear();
+	sd->addeff_atked.clear();
+	sd->addeff_onskill.clear();
+	sd->skillatk.clear();
+	sd->skillusesprate.clear();
+	sd->skillusesp.clear();
+	sd->skillheal.clear();
+	sd->skillheal2.clear();
+	sd->skillblown.clear();
+	sd->skillcastrate.clear();
+	sd->skillfixcastrate.clear();
+	sd->subskill.clear();
+	sd->skillcooldown.clear();
+	sd->skillfixcast.clear();
+	sd->skillvarcast.clear();
+	sd->add_def.clear();
+	sd->add_mdef.clear();
+	sd->add_mdmg.clear();
+	sd->reseff.clear();
+	sd->itemgrouphealrate.clear();
+	sd->add_drop.clear();
+	sd->itemhealrate.clear();
+	sd->subele2.clear();
+	sd->subrace3.clear();
+	sd->skilldelay.clear();
+	sd->sp_vanish.clear();
+	sd->hp_vanish.clear();
+	sd->itemsphealrate.clear();
+	sd->itemgroupsphealrate.clear();
+
+	sd->hp_loss.clear();
+	sd->sp_loss.clear();
+	sd->hp_regen.clear();
+	sd->sp_regen.clear();
+	sd->percent_hp_regen.clear();
+	sd->percent_sp_regen.clear();
+
+	// Zero up structures...
+	memset(&sd->def_set_race, 0, sizeof(sd->def_set_race)
+		+ sizeof(sd->mdef_set_race)
+		+ sizeof(sd->norecover_state_race)
+		+ sizeof(sd->hp_vanish_race)
+		+ sizeof(sd->sp_vanish_race)
+	);
+
+	memset(&sd->bonus, 0, sizeof(sd->bonus));
+
+	// Autobonus
+	pc_delautobonus(*sd, sd->autobonus, true);
+	pc_delautobonus(*sd, sd->autobonus2, true);
+	pc_delautobonus(*sd, sd->autobonus3, true);
+
+	if (sd->pd != nullptr) {
+		pet_delautobonus(*sd, sd->pd->autobonus, true);
+		pet_delautobonus(*sd, sd->pd->autobonus2, true);
+		pet_delautobonus(*sd, sd->pd->autobonus3, true);
+	}
+
+	// Parse equipment
+	for (i = 0; i < EQI_MAX; i++) {
+		current_equip_item_index = index = sd->equip_index[i]; // We pass INDEX to current_equip_item_index - for EQUIP_SCRIPT (new cards solution) [Lupus]
+		current_equip_combo_pos = 0;
+		if (index < 0)
+			continue;
+		if (i == EQI_AMMO)
+			continue;
+		if (pc_is_same_equip_index((enum equip_index)i, sd->equip_index, index))
+			continue;
+		if (!sd->inventory_data[index])
+			continue;
+
+		base_status->def += sd->inventory_data[index]->def;
+
+		// Items may be equipped, their effects however are nullified.
+		if (opt&SCO_FIRST && sd->inventory_data[index]->equip_script && (pc_has_permission(sd,PC_PERM_USE_ALL_EQUIPMENT)
+			|| !itemdb_isNoEquip(sd->inventory_data[index],sd->m))) { // Execute equip-script on login
+			run_script(sd->inventory_data[index]->equip_script,0,sd->id,0);
+			if (!calculating)
+				return 1;
+		}
+
+		// Sanitize the refine level in case someone decreased the value inbetween
+		if (sd->inventory.u.items_inventory[index].refine > MAX_REFINE)
+			sd->inventory.u.items_inventory[index].refine = MAX_REFINE;
+
+		std::shared_ptr<s_refine_level_info> info = refine_db.findCurrentLevelInfo( *sd->inventory_data[index], sd->inventory.u.items_inventory[index] );
+#ifdef RENEWAL
+		std::shared_ptr<s_enchantgradelevel> enchantgrade_info = nullptr;
+
+		if( sd->inventory.u.items_inventory[index].enchantgrade > 0 ){
+			enchantgrade_info = enchantgrade_db.findCurrentLevelInfo( *sd->inventory_data[index], sd->inventory.u.items_inventory[index] );
+		}
+#endif
+
+		if (sd->inventory_data[index]->type == IT_WEAPON) {
+			int32 wlv = sd->inventory_data[index]->weapon_level;
+			struct weapon_data *wd;
+			struct weapon_atk *wa;
+
+			if(wlv >= MAX_WEAPON_LEVEL)
+				wlv = MAX_WEAPON_LEVEL;
+
+			if(i == EQI_HAND_L && sd->inventory.u.items_inventory[index].equip == EQP_HAND_L) {
+				wd = &sd->left_weapon; // Left-hand weapon
+				wa = &base_status->lhw;
+			} else {
+				wd = &sd->right_weapon;
+				wa = &base_status->rhw;
+			}
+			wa->atk += sd->inventory_data[index]->atk;
+			if( info != nullptr ){
+				wa->atk2 += info->bonus / 100;
+
+#ifdef RENEWAL
+				if( enchantgrade_info != nullptr ){
+					wa->atk2 += ( ( ( info->bonus / 100 ) * enchantgrade_info->bonus ) / 100 );
+				}
+
+				if( wlv == 5 ){
+					base_status->patk += sd->inventory.u.items_inventory[index].refine * 2;
+					base_status->smatk += sd->inventory.u.items_inventory[index].refine * 2;
+				}
+#endif
+			}
+#ifdef RENEWAL
+			if (sd->bonus.weapon_atk_rate)
+				wa->atk += wa->atk * sd->bonus.weapon_atk_rate / 100;
+			wa->matk += sd->inventory_data[index]->matk;
+			wa->wlv = wlv;
+			// Renewal magic attack refine bonus
+			if( info != nullptr && sd->weapontype1 != W_BOW ){
+				wa->matk += info->bonus / 100;
+
+				if( enchantgrade_info != nullptr ){
+					wa->matk += ( ( ( info->bonus / 100 ) * enchantgrade_info->bonus ) / 100 );
+				}
+			}
+#endif
+			// Overrefine bonus.
+			if( info != nullptr ){
+				wd->overrefine = info->randombonus_max / 100;
+			}
+
+			wa->range += sd->inventory_data[index]->range;
+			if(sd->inventory_data[index]->script && (pc_has_permission(sd,PC_PERM_USE_ALL_EQUIPMENT) || !itemdb_isNoEquip(sd->inventory_data[index],sd->m))) {
+				if (wd == &sd->left_weapon) {
+					sd->state.lr_flag = LR_FLAG_WEAPON;
+					run_script(sd->inventory_data[index]->script,0,sd->id,0);
+					sd->state.lr_flag = LR_FLAG_NONE;
+				} else
+					run_script(sd->inventory_data[index]->script,0,sd->id,0);
+				if (!calculating) // Abort, run_script retriggered this. [Skotlex]
+					return 1;
+			}
+#ifdef RENEWAL

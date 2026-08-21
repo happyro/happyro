@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#pragma warning(disable:4800)
+#include "login.hpp"
+
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <unordered_map>
+
+#include <common/cli.hpp>
+#include <common/core.hpp>
+#include <common/malloc.hpp>
+#include <common/md5calc.hpp>
+#include <common/mmo.hpp>
+#include <common/msg_conf.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp> //ip2str
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+#include <config/core.hpp>
+
+#include "account.hpp"
+#include "ipban.hpp"
+#include "loginchrif.hpp"
+#include "loginclif.hpp"
+#include "logincnslif.hpp"
+#include "loginlog.hpp"
+
+using namespace rathena;
+using namespace rathena::server_login;
+
+#define LOGIN_MAX_MSG 30				/// Max number predefined in msg_conf
+static char* msg_table[LOGIN_MAX_MSG];	/// Login Server messages_conf
+
+//definition of exported var declared in header
+struct mmo_char_server ch_server[MAX_SERVERS];	/// char server data
+struct Login_Config login_config;				/// Configuration of login-serv
+std::unordered_map<uint32,struct online_login_data> online_db;
+std::unordered_map<uint32,struct auth_node> auth_db;
+
+// account database
+AccountDB* accounts = nullptr;
+// Advanced subnet check [LuzZza]
+struct s_subnet {
+	uint32 mask;
+	uint32 char_ip;
+	uint32 map_ip;
+} subnet[16];
+int32 subnet_count = 0; //number of subnet config
+
+int32 login_fd; // login server file descriptor socket
+
+//early declaration
+bool login_check_password( struct login_session_data& sd, struct mmo_account& acc );
+
+///Accessors
+AccountDB* login_get_accounts_db(void){
+	return accounts;
+}
+
+// Console Command Parser [Wizputer]
+//FIXME to be remove (moved to cnslif / will be done once map/char/login, all have their cnslif interface ready)
+int32 parse_console(const char* buf){
+	return cnslif_parse(buf);
+}
+
+struct online_login_data* login_get_online_user( uint32 account_id ){
+	return util::umap_find( online_db, account_id );
+}
+
+/**
+ * Receive info from char-serv that this user is online
+ * This function will start a timer to recheck if that user still online
+ * @param char_server : Serv id where account_id is connected
+ * @param account_id : aid connected
+ * @return the new online_login_data for that user
+ */
+struct online_login_data* login_add_online_user(int32 char_server, uint32 account_id){
+	struct online_login_data* p = login_get_online_user( account_id );
+
+	if( p == nullptr ){
+		// Allocate the player
+		p = &online_db[account_id];
+
+		p->account_id = account_id;
+		p->char_server = char_server;
+		p->waiting_disconnect = INVALID_TIMER;
+#ifdef VIP_ENABLE
+		p->vip_timeout_tid = INVALID_TIMER;
+#endif
+	}else{
+		p->char_server = char_server;
+
+		if( p->waiting_disconnect != INVALID_TIMER ){
+			delete_timer( p->waiting_disconnect, login_waiting_disconnect_timer );
+			p->waiting_disconnect = INVALID_TIMER;
+		}
+	}
+
+	accounts->enable_webtoken( accounts, account_id );
+
+	return p;
+}
+
+/**
+ * Received info from char serv that the account_id is now offline
+ * remove the user from online_db
+ *  Checking if user was already scheduled for deletion, and remove that timer if found.
+ * @param account_id : aid to remove from db
+ */
+void login_remove_online_user(uint32 account_id) {
+	struct online_login_data* p = login_get_online_user( account_id );
+
+	if( p == nullptr ){
+		return;
+	}
+
+	if( p->waiting_disconnect != INVALID_TIMER ){
+		delete_timer( p->waiting_disconnect, login_waiting_disconnect_timer );
+	}
+
+	accounts->disable_webtoken( accounts, account_id );
+
+	online_db.erase( account_id );
+}
+
+struct auth_node* login_get_auth_node( uint32 account_id ){
+	return util::umap_find( auth_db, account_id );
+}
+
+struct auth_node* login_add_auth_node( struct login_session_data* sd, uint32 ip ){
+	struct auth_node* node = &auth_db[sd->account_id];
+
+	node->account_id = sd->account_id;
+	node->login_id1 = sd->login_id1;
+	node->login_id2 = sd->login_id2;
+	node->sex = sd->sex;
+	node->ip = ip;
+	node->clienttype = sd->clienttype;
+
+	return node;
+}
+
+void login_remove_auth_node( uint32 account_id ){
+	auth_db.erase( account_id );
+}
+
+/**
+ * Timered function to disconnect a user from login.
+ *  This is done either after auth_ok or kicked by char-server.
+ *  Removing user from auth_db and online_db.
+ *  Delay is AUTH_TIMEOUT by default.
+ * @param tid: timer id
+ * @param tick: tick of execution
+ * @param id: user account id
+ * @param data: unused
+ * @return :0
+ */
+TIMER_FUNC(login_waiting_disconnect_timer){
+	struct online_login_data* p = login_get_online_user( id );
+
+	if( p != nullptr && p->waiting_disconnect == tid && p->account_id == id ){
+		p->waiting_disconnect = INVALID_TIMER;
+		login_remove_online_user(id);
+		login_remove_auth_node(id);
+	}
+
+	return 0;
+}
+
+void login_online_db_setoffline( int32 char_server ){
+	for( std::pair<uint32,struct online_login_data> pair : online_db ){
+		if( char_server == -1 ){
+			pair.second.char_server = -1;
+
+			if( pair.second.waiting_disconnect != INVALID_TIMER ){
+				delete_timer( pair.second.waiting_disconnect, login_waiting_disconnect_timer );
+				pair.second.waiting_disconnect = INVALID_TIMER;
+			}
+		}else if( pair.second.char_server == char_server ){
+			// Char server disconnected.
+			pair.second.char_server = -2;
+		}
+	}
+}
+
+/**
+ * Timered function to check if user is still connected.
+ *  Launches every 600s by default.
+ * @param tid: timer id
+ * @param tick: tick of execution
+ * @param id: unused
+ * @param data: unused
+ * @return : 0
+ */
+static TIMER_FUNC(login_online_data_cleanup){
+	for( std::pair<uint32,struct online_login_data> pair : online_db  ){
+		// Unknown server.. set them offline
+		if( pair.second.char_server == -2 ){
+			login_remove_online_user( pair.first );
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * Create a new account and save it in db/sql.
+ * @param userid: string for user login
+ * @param pass: string for user pass
+ * @param sex: should be M|F|S (todo make an enum ?)
+ * @param last_ip:
+ * @return :
+ *	-1: success
+ *	0: unregistered id (wrong sex fail to create in db);
+ *	1: incorrect pass or userid (userid|pass too short or already exist);
+ *	3: registration limit exceeded;
+ */
+int32 login_mmo_auth_new(const char* userid, const char* pass, const char sex, const char* last_ip) {
+	static int32 num_regs = 0; // registration counter
+	static t_tick new_reg_tick = 0;
+	t_tick tick = gettick();
+	struct mmo_account acc;
+
+	//Account Registration Flood Protection by [Kevin]
+	if( new_reg_tick == 0 )
+		new_reg_tick = gettick();
+	if( DIFF_TICK(tick, new_reg_tick) < 0 && num_regs >= login_config.allowed_regs ) {
+		ShowNotice("Account registration denied (registration limit exceeded)\n");
+		return 3;
+	}
+
+	if( strlen(userid) < login_config.acc_name_min_length || strlen(pass) < login_config.password_min_length)
+		return 1;
+
+	// check for invalid inputs
+	if( sex != 'M' && sex != 'F' )
+		return 0; // 0 = Unregistered ID
+
+	// check if the account doesn't exist already
+	if( accounts->load_str(accounts, &acc, userid) ) {
+		ShowNotice("Attempt of creation of an already existant account (account: %s, sex: %c)\n", userid, sex);
+		return 1; // 1 = Incorrect Password
+	}
+
+	memset(&acc, '\0', sizeof(acc));
+	acc.account_id = -1; // assigned by account db
+	safestrncpy(acc.userid, userid, sizeof(acc.userid));
+	safestrncpy(acc.pass, pass, sizeof(acc.pass));
+	acc.sex = sex;
+	safestrncpy(acc.email, "a@a.com", sizeof(acc.email));
+	acc.expiration_time = ( login_config.start_limited_time != -1 ) ? time(nullptr) + login_config.start_limited_time : 0;
+	safestrncpy(acc.lastlogin, "", sizeof(acc.lastlogin));
+	safestrncpy(acc.last_ip, last_ip, sizeof(acc.last_ip));
+	safestrncpy(acc.birthdate, "", sizeof(acc.birthdate));
+	safestrncpy(acc.pincode, "", sizeof(acc.pincode));
+	acc.pincode_change = 0;
+	acc.char_slots = MIN_CHARS;
+#ifdef VIP_ENABLE
+	acc.vip_time = 0;
+	acc.old_group = 0;
+#endif
+	if( !accounts->create(accounts, &acc) )
+		return 0;
+
+	ShowNotice("Account creation (account %s, id: %d, sex: %c)\n", acc.userid, acc.account_id, acc.sex);
+
+	if( DIFF_TICK(tick, new_reg_tick) > 0 ) {// Update the registration check.
+		num_regs = 0;
+		new_reg_tick = tick + login_config.time_allowed*1000;
+	}
+	++num_regs;
+
+	return -1;
+}
+
+/**
+ * Check/authentication of a connection.
+ * @param sd: string (atm:md5key or dbpass)
+ * @param isServer: string (atm:md5key or dbpass)
+ * @return :
+ *	-1: success
+ *	0: unregistered id;
+ *	1: incorrect pass;
+ *	2: expired id
+ *	3: blacklisted (or registration limit exceeded if new acc);
+ *	5: invalid client_version|hash;
+ *	6: banned
+ *	x: acc state (TODO document me deeper)
+ */
+int32 login_mmo_auth(struct login_session_data* sd, bool isServer) {
+	struct mmo_account acc;
+
+	char ip[16];
+	ip2str(session[sd->fd]->client_addr, ip);
+
+	// DNS Blacklist check
+	if( login_config.use_dnsbl ) {
+		char r_ip[16];
+		char ip_dnsbl[256];
+		char* dnsbl_serv;
+		uint8* sin_addr = (uint8*)&session[sd->fd]->client_addr;
+
+		sprintf(r_ip, "%u.%u.%u.%u", sin_addr[0], sin_addr[1], sin_addr[2], sin_addr[3]);
+
+		for( dnsbl_serv = strtok(login_config.dnsbl_servs,","); dnsbl_serv != nullptr; dnsbl_serv = strtok(nullptr,",") ) {
+			sprintf(ip_dnsbl, "%s.%s", r_ip, trim(dnsbl_serv));
+			if( host2ip(ip_dnsbl) ) {
+				ShowInfo("DNSBL: (%s) Blacklisted. User Kicked.\n", r_ip);
+				return 3;
+			}
+		}
+
+	}
+
+	size_t len = strnlen(sd->userid, NAME_LENGTH);
+
+	// Account creation with _M/_F
+	if( login_config.new_account_flag ) {
+		if( len > 2 && strnlen(sd->passwd, NAME_LENGTH) > 0 && // valid user and password lengths
+			sd->userid[len-2] == '_' && memchr("FfMm", sd->userid[len-1], 4) ) // _M/_F suffix
+		{
+			// Encoded password
+			if( sd->passwdenc != 0 ){
+				ShowError( "Account '%s' could not be created because client side password encryption is enabled.\n", sd->userid );
+				return 0; // unregistered id
+			}
+
+			int32 result;
+			// remove the _M/_F suffix
+			len -= 2;
+			sd->userid[len] = '\0';
+
+			result = login_mmo_auth_new(sd->userid, sd->passwd, TOUPPER(sd->userid[len+1]), ip);
+			if( result != -1 )
+				return result;// Failed to make account. [Skotlex].
+		}
+	}
+
+	if( !accounts->load_str(accounts, &acc, sd->userid) ) {
+		ShowNotice("Unknown account (account: %s, ip: %s)\n", sd->userid, ip);
+		return 0; // 0 = Unregistered ID
+	}
+
+	if( !isServer && sex_str2num( acc.sex ) == SEX_SERVER ){
+		ShowWarning( "Connection refused: ip %s tried to log into server account '%s'\n", ip, sd->userid );
+		return 0; // 0 = Unregistered ID
+	}
+
+	if( !login_check_password( *sd, acc ) ) {
+		ShowNotice("Invalid password (account: '%s', ip: %s)\n", sd->userid, ip);
+		return 1; // 1 = Incorrect Password
+	}
+
+	if( acc.expiration_time != 0 && acc.expiration_time < time(nullptr) ) {
+		ShowNotice("Connection refused (account: %s, expired ID, ip: %s)\n", sd->userid, ip);
+		return 2; // 2 = This ID is expired
+	}
+
+	if( acc.unban_time != 0 && acc.unban_time > time(nullptr) ) {
+		char tmpstr[24];
+		timestamp2string(tmpstr, sizeof(tmpstr), acc.unban_time, login_config.date_format);
+		ShowNotice("Connection refused (account: %s, banned until %s, ip: %s)\n", sd->userid, tmpstr, ip);
+		return 6; // 6 = Your are Prohibited to log in until %s
+	}
+
+	if( acc.state != 0 ) {
+		ShowNotice("Connection refused (account: %s, state: %d, ip: %s)\n", sd->userid, acc.state, ip);
+		return acc.state - 1;
+	}
+
+	if( login_config.client_hash_check && !isServer ) {
+		struct client_hash_node *node = nullptr;
+		bool match = false;
+
+		for( node = login_config.client_hash_nodes; node; node = node->next ) {
+			if( acc.group_id < node->group_id )
+				continue;
+			if( *node->hash == '\0' // Allowed to login without hash
+			 || (sd->has_client_hash && memcmp(node->hash, sd->client_hash, 16) == 0 ) // Correct hash
+			) {
+				match = true;
+				break;
+			}
+		}
+
+		if( !match ) {
+			char smd5[33];
+			int32 i;
+
+			if( !sd->has_client_hash ) {
+				ShowNotice("Client didn't send client hash (account: %s, ip: %s)\n", sd->userid, ip);
+				return 5;
+			}
+
+			for( i = 0; i < 16; i++ )
+				sprintf(&smd5[i * 2], "%02x", sd->client_hash[i]);
+
+			ShowNotice("Invalid client hash (account: %s, sent md5: %s, ip: %s)\n", sd->userid, smd5, ip);
+			return 5;
+		}
+	}
+
+	ShowNotice("Authentication accepted (account: %s, id: %d, ip: %s)\n", sd->userid, acc.account_id, ip);
+
+	// update session data
+	sd->account_id = acc.account_id;
+	sd->login_id1 = rnd_value(1u, UINT32_MAX);
+	sd->login_id2 = rnd_value(1u, UINT32_MAX);
+	safestrncpy(sd->lastlogin, acc.lastlogin, sizeof(sd->lastlogin));
+	sd->sex = acc.sex;
+	sd->group_id = acc.group_id;
+
+	// update account data
+	timestamp2string(acc.lastlogin, sizeof(acc.lastlogin), time(nullptr), "%Y-%m-%d %H:%M:%S");
+	safestrncpy(acc.last_ip, ip, sizeof(acc.last_ip));
+	acc.unban_time = 0;
+	acc.logincount++;
+	accounts->save(accounts, &acc, true);
+
+	if( login_config.use_web_auth_token ){
+		safestrncpy( sd->web_auth_token, acc.web_auth_token, WEB_AUTH_TOKEN_LENGTH );
+	}
+
+	if( sd->sex != 'S' && sd->account_id < START_ACCOUNT_NUM )
+		ShowWarning("Account %s has account id %d! Account IDs must be over %d to work properly!\n", sd->userid, sd->account_id, START_ACCOUNT_NUM);
+
+	return -1; // account OK
+}
+
+/**
+ * Verify if a password is correct.
+ * @param md5key: md5key of client
+ * @param passwdenc: encode key of client
+ * @param passwd: pass to check
+ * @param refpass: pass register in db
+ * @return true if matching else false
+ */
+bool login_check_password( struct login_session_data& sd, struct mmo_account& acc ){
+	if( sd.passwdenc == 0 ){
+		return 0 == strcmp( sd.passwd, acc.pass );
+	}
+
+	// password mode set to 1 -> md5(md5key, refpass) enable with <passwordencrypt></passwordencrypt>
+	if( sd.passwdenc & 0x01 ){
+		std::string pwd;
+
+		pwd.append( sd.md5key, sd.md5keylen );
+		pwd.append( acc.pass );
+
+		char md5str[32 + 1];
+
+		MD5_String( pwd.c_str(), md5str );
+
+		if( 0 == strcmp( sd.passwd, md5str ) ){
+			return true;
+		}
+	}
+
+	// password mode set to 2 -> md5(refpass, md5key) enable with <passwordencrypt2></passwordencrypt2>
+	if( sd.passwdenc & 0x02 ){
+		std::string pwd;
+
+		pwd.append( acc.pass );
+		pwd.append( sd.md5key, sd.md5keylen );
+
+		char md5str[32 + 1];
+
+		MD5_String( pwd.c_str(), md5str );
+
+		if( 0 == strcmp( sd.passwd, md5str ) ){
+			return true;
+		}
+	}
+
+	return false;
+}
+
+int32 login_get_usercount( int32 users ){
+#if PACKETVER >= 20170726
+	if( login_config.usercount_disable ){
+		return 4; // Removes count and colorization completely
+	}else if( users <= login_config.usercount_low ){
+		return 0; // Green => Smooth
+	}else if( users <= login_config.usercount_medium ){
+		return 1; // Yellow => Normal
+	}else if( users <= login_config.usercount_high ){
+		return 2; // Red => Busy
+	}else{
+		return 3; // Purple => Crowded
+	}
+#else
+	return users;
+#endif
+}

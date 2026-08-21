@@ -1,0 +1,500 @@
+		{
+			sd->battle_status.hp = sd->battle_status.max_hp;
+			clif_updatestatus(*sd, SP_HP);
+		}
+		break;
+	case SP_SP:
+		sd->battle_status.sp = cap_value(val, 0, (int32)sd->battle_status.max_sp);
+		break;
+	case SP_MAXSP:
+		sd->battle_status.max_sp = cap_value(val, 1, battle_config.max_sp);
+
+		if( sd->battle_status.max_sp < sd->battle_status.sp )
+		{
+			sd->battle_status.sp = sd->battle_status.max_sp;
+			clif_updatestatus(*sd, SP_SP);
+		}
+		break;
+	case SP_AP:
+		sd->battle_status.ap = cap_value(val, 0, (int32)sd->battle_status.max_ap);
+		break;
+	case SP_MAXAP:
+		sd->battle_status.max_ap = cap_value(val, 1, battle_config.max_ap);
+
+		if (sd->battle_status.max_ap < sd->battle_status.ap) {
+			sd->battle_status.ap = sd->battle_status.max_ap;
+			clif_updatestatus(*sd, SP_AP);
+		}
+		break;
+	case SP_STR:
+		sd->status.str = cap_value(val, 1, pc_maxparameter(sd,PARAM_STR));
+		break;
+	case SP_AGI:
+		sd->status.agi = cap_value(val, 1, pc_maxparameter(sd,PARAM_AGI));
+		break;
+	case SP_VIT:
+		sd->status.vit = cap_value(val, 1, pc_maxparameter(sd,PARAM_VIT));
+		break;
+	case SP_INT:
+		sd->status.int_ = cap_value(val, 1, pc_maxparameter(sd,PARAM_INT));
+		break;
+	case SP_DEX:
+		sd->status.dex = cap_value(val, 1, pc_maxparameter(sd,PARAM_DEX));
+		break;
+	case SP_LUK:
+		sd->status.luk = cap_value(val, 1, pc_maxparameter(sd,PARAM_LUK));
+		break;
+	case SP_POW:
+		sd->status.pow = cap_value(val, 0, pc_maxparameter(sd,PARAM_POW));
+		break;
+	case SP_STA:
+		sd->status.sta = cap_value(val, 0, pc_maxparameter(sd,PARAM_STA));
+		break;
+	case SP_WIS:
+		sd->status.wis = cap_value(val, 0, pc_maxparameter(sd,PARAM_WIS));
+		break;
+	case SP_SPL:
+		sd->status.spl = cap_value(val, 0, pc_maxparameter(sd,PARAM_SPL));
+		break;
+	case SP_CON:
+		sd->status.con = cap_value(val, 0, pc_maxparameter(sd,PARAM_CON));
+		break;
+	case SP_CRT:
+		sd->status.crt = cap_value(val, 0, pc_maxparameter(sd,PARAM_CRT));
+		break;
+	case SP_KARMA:
+		sd->status.karma = val;
+		break;
+	case SP_MANNER:
+		sd->status.manner = val;
+		if( val < 0 )
+			sc_start(nullptr, sd, SC_NOCHAT, 100, 0, 0);
+		else {
+			status_change_end(sd, SC_NOCHAT);
+			clif_manner_message(sd, 5);
+		}
+		return true; // status_change_start/status_change_end already sends packets warning the client
+	case SP_FAME:
+		sd->status.fame = val;
+		break;
+	case SP_KILLERRID:
+		sd->killerrid = val;
+		return true;
+	case SP_KILLEDRID:
+		sd->killedrid = val;
+		return true;
+	case SP_KILLEDGID:
+		sd->killedgid = val;
+		return true;
+	case SP_CHARMOVE:
+		sd->status.character_moves = val;
+		return true;
+	case SP_CHARRENAME:	
+		sd->status.rename = val;
+		return true;
+	case SP_CHARFONT:
+		sd->status.font = val;
+		clif_font(sd);
+		return true;
+	case SP_BANK_VAULT:
+		if (val < 0)
+			return false;
+		log_zeny(*sd, LOG_TYPE_BANK, sd->status.char_id, -(sd->bank_vault - cap_value(val, 0, MAX_BANK_ZENY)));
+		sd->bank_vault = cap_value(val, 0, MAX_BANK_ZENY);
+		pc_setreg2(sd, BANK_VAULT_VAR, sd->bank_vault);
+		return true;
+	case SP_ROULETTE_BRONZE:
+		sd->roulette_point.bronze = val;
+		pc_setreg2(sd, ROULETTE_BRONZE_VAR, sd->roulette_point.bronze);
+		return true;
+	case SP_ROULETTE_SILVER:
+		sd->roulette_point.silver = val;
+		pc_setreg2(sd, ROULETTE_SILVER_VAR, sd->roulette_point.silver);
+		return true;
+	case SP_ROULETTE_GOLD:
+		sd->roulette_point.gold = val;
+		pc_setreg2(sd, ROULETTE_GOLD_VAR, sd->roulette_point.gold);
+		return true;
+	case SP_CASHPOINTS:
+		if (val < 0)
+			return false;
+		if (!sd->state.connect_new)
+			log_cash(sd, LOG_TYPE_SCRIPT, LOG_CASH_TYPE_CASH, -(sd->cashPoints - cap_value(val, 0, MAX_CASHPOINT)));
+		sd->cashPoints = cap_value(val, 0, MAX_CASHPOINT);
+		pc_setaccountreg(sd, add_str(CASHPOINT_VAR), sd->cashPoints);
+		return true;
+	case SP_KAFRAPOINTS:
+		if (val < 0)
+			return false;
+		if (!sd->state.connect_new)
+			log_cash(sd, LOG_TYPE_SCRIPT, LOG_CASH_TYPE_KAFRA, -(sd->kafraPoints - cap_value(val, 0, MAX_KAFRAPOINT)));
+		sd->kafraPoints = cap_value(val, 0, MAX_KAFRAPOINT);
+		pc_setaccountreg(sd, add_str(KAFRAPOINT_VAR), sd->kafraPoints);
+		return true;
+	case SP_PCDIECOUNTER:
+		if (val < 0)
+			return false;
+		if (sd->die_counter == val)
+			return true;
+		sd->die_counter = val;
+		if (!sd->state.connect_new && sd->die_counter == 1 && (sd->class_&MAPID_SECONDMASK) == MAPID_SUPER_NOVICE)
+			status_calc_pc(sd, SCO_NONE); // Lost the bonus.
+		pc_setglobalreg(sd, add_str(PCDIECOUNTER_VAR), sd->die_counter);
+		return true;
+	case SP_COOKMASTERY:
+		if (sd->cook_mastery == val)
+			return true;
+		val = cap_value(val, 0, 1999);
+		sd->cook_mastery = val;
+		pc_setglobalreg(sd, add_str(COOKMASTERY_VAR), sd->cook_mastery);
+		return true;
+	default:
+		ShowError("pc_setparam: Attempted to set unknown parameter '%lld'.\n", type);
+		return false;
+	}
+	clif_updatestatus(*sd,static_cast<_sp>(type));
+
+	return true;
+}
+
+/*==========================================
+ * HP/SP/AP Healing. If flag is passed, the heal type is through clif_heal, otherwise update status.
+ *------------------------------------------*/
+void pc_heal(map_session_data *sd,uint32 hp,uint32 sp, uint32 ap, int32 type)
+{// Is there going to be a effect for gaining AP soon??? [Rytech]
+	nullpo_retv(sd);
+
+	if (type&2) {
+		if (hp || type&4) {
+			clif_heal( *sd, SP_HP, hp );
+			clif_update_hp(*sd);
+		}
+		if (sp)
+			clif_heal( *sd, SP_SP, sp );
+		if (ap)
+			clif_heal( *sd, SP_AP, ap );
+	} else {
+		if(hp)
+			clif_updatestatus(*sd,SP_HP);
+		if(sp)
+			clif_updatestatus(*sd,SP_SP);
+		if (ap)
+			clif_updatestatus(*sd,SP_AP);
+	}
+	return;
+}
+
+/**
+ * Heal player HP and/or SP linearly. Calculate any bonus based on active statuses.
+ * @param sd: Player data
+ * @param itemid: Item ID
+ * @param hp: HP to heal
+ * @param sp: SP to heal
+ * @return Amount healed to an object
+ */
+int32 pc_itemheal(map_session_data *sd, t_itemid itemid, int32 hp, int32 sp)
+{
+	int32 bonus, tmp, penalty = 0;
+
+	if (hp) {
+		bonus = 100 + (sd->battle_status.vit * 2) + pc_checkskill(sd, SM_RECOVERY) * 10 + pc_checkskill(sd, AM_LEARNINGPOTION) * 5;
+		// A potion produced by an Alchemist in the Fame Top 10 gets +50% effect [DracoRPG]
+		if (potion_flag == 2) {
+			bonus += bonus * 50 / 100;
+			if (sd->sc.getSCE(SC_SPIRIT) && sd->sc.getSCE(SC_SPIRIT)->val2 == SL_ROGUE)
+				bonus += bonus; // Receive an additional +100% effect from ranked potions to HP only
+		}
+		//All item bonuses.
+		bonus += sd->bonus.itemhealrate2;
+		//Item Group bonuses
+		bonus += bonus * pc_get_itemgroup_bonus(sd, itemid, sd->itemgrouphealrate) / 100;
+		//Individual item bonuses.
+		for(const auto &it : sd->itemhealrate) {
+			if (it.id == itemid) {
+				bonus += bonus * it.val / 100;
+				break;
+			}
+		}
+		// Recovery Potion
+		if (sd->sc.getSCE(SC_INCHEALRATE))
+			bonus += bonus * sd->sc.getSCE(SC_INCHEALRATE)->val1 / 100;
+
+		tmp = hp * bonus / 100; // Overflow check
+		if (bonus != 100 && tmp > hp)
+			hp = tmp;
+	}
+	if (sp) {
+		bonus = 100 + (sd->battle_status.int_ * 2) + pc_checkskill(sd, MG_SRECOVERY) * 10 + pc_checkskill(sd, AM_LEARNINGPOTION) * 5;
+		// A potion produced by an Alchemist in the Fame Top 10 gets +50% effect [DracoRPG]
+		if (potion_flag == 2)
+			bonus += bonus * 50 / 100;
+
+		// All item bonuses.
+		bonus += sd->bonus.itemsphealrate2;
+		// Item Group bonuses
+		bonus += bonus * pc_get_itemgroup_bonus( sd, itemid, sd->itemgroupsphealrate ) / 100;
+		// Individual item bonuses.
+		for( const auto &it : sd->itemsphealrate ){
+			if( it.id == itemid ){
+				bonus += bonus * it.val / 100;
+				break;
+			}
+		}
+
+		tmp = sp * bonus / 100; // Overflow check
+		if (bonus != 100 && tmp > sp)
+			sp = tmp;
+	}
+	if (!sd->sc.empty()) {
+		// Critical Wound and Death Hurt stack
+		if (sd->sc.getSCE(SC_CRITICALWOUND))
+			penalty += sd->sc.getSCE(SC_CRITICALWOUND)->val2;
+
+		if (sd->sc.getSCE(SC_DEATHHURT) && sd->sc.getSCE(SC_DEATHHURT)->val3 == 1)
+			penalty += 20;
+
+		if (sd->sc.getSCE(SC_NORECOVER_STATE))
+			penalty = 100;
+
+		if (sd->sc.getSCE(SC_VITALITYACTIVATION))
+			hp += hp / 2; // 1.5 times
+
+		if (sd->sc.getSCE(SC_WATER_INSIGNIA) && sd->sc.getSCE(SC_WATER_INSIGNIA)->val1 == 2) {
+			hp += hp / 10;
+			sp += sp / 10;
+		}
+
+#ifdef RENEWAL
+		if (sd->sc.getSCE(SC_APPLEIDUN))
+			hp += sd->sc.getSCE(SC_APPLEIDUN)->val3 / 100;
+#endif
+
+		if (penalty > 0) {
+			hp -= hp * penalty / 100;
+			sp -= sp * penalty / 100;
+		}
+
+#ifdef RENEWAL
+		if (sd->sc.getSCE(SC_EXTREMITYFIST))
+			sp = 0;
+#endif
+		if (sd->sc.getSCE(SC_BITESCAR))
+			hp = 0;
+	}
+
+	return status_heal(sd, hp, sp, 1);
+}
+
+/*==========================================
+ * HP/SP Recovery
+ * Heal player hp nad/or sp by rate
+ *------------------------------------------*/
+int32 pc_percentheal(map_session_data *sd,int32 hp,int32 sp)
+{
+	nullpo_ret(sd);
+
+	if (hp > 100) hp = 100;
+	else if (hp <-100) hp = -100;
+
+	if (sp > 100) sp = 100;
+	else if (sp <-100) sp = -100;
+
+	if(hp >= 0 && sp >= 0) //Heal
+		return status_percent_heal(sd, hp, sp);
+
+	if(hp <= 0 && sp <= 0) //Damage (negative rates indicate % of max rather than current), and only kill target IF the specified amount is 100%
+		return status_percent_damage(nullptr, sd, hp, sp, hp==-100);
+
+	//Crossed signs
+	if(hp) {
+		if(hp > 0)
+			status_percent_heal(sd, hp, 0);
+		else
+			status_percent_damage(nullptr, sd, hp, 0, hp==-100);
+	}
+
+	if(sp) {
+		if(sp > 0)
+			status_percent_heal(sd, 0, sp);
+		else
+			status_percent_damage(nullptr, sd, 0, sp, false);
+	}
+	return 0;
+}
+
+static int32 jobchange_killclone(block_list *bl, va_list ap)
+{
+	mob_data *md;
+		int32 flag;
+	md = (mob_data *)bl;
+	nullpo_ret(md);
+	flag = va_arg(ap, int32);
+
+	if (md->master_id && md->special_state.clone && md->master_id == flag)
+		status_kill(md);
+	return 1;
+}
+
+/**
+ * Called when player changes job
+ * Rewrote to make it tidider [Celest]
+ * @param sd
+ * @param job JOB ID. See enum e_job
+ * @param upper 1 - JOBL_UPPER; 2 - JOBL_BABY
+ * @return True if success, false if failed
+ **/
+bool pc_jobchange(map_session_data *sd,int32 job, char upper)
+{
+	int32 i, fame_flag = 0;
+
+	nullpo_retr(false,sd);
+
+	if (job < 0)
+		return false;
+
+	//Normalize job.
+	uint64 b_class = pc_jobid2mapid(job);
+	if (b_class == -1)
+		return false;
+	switch (upper) {
+		case 1:
+			b_class|= JOBL_UPPER;
+			break;
+		case 2:
+			b_class|= JOBL_BABY;
+			break;
+	}
+	//This will automatically adjust bard/dancer classes to the correct gender
+	//That is, if you try to jobchange into dancer, it will turn you to bard.
+	job = pc_mapid2jobid(b_class, sd->status.sex);
+	if (job == -1)
+		return false;
+
+	if (b_class == sd->class_)
+		return false; //Nothing to change.
+
+	// If the job does not exist in the job db, dont allow changing to it
+	if( !job_db.exists( job ) ){
+		return false;
+	}
+
+	if( ( b_class&JOBL_FOURTH ) && !( sd->class_&JOBL_FOURTH ) ){
+		// Changing to 4th job
+		sd->change_level_4th = sd->status.job_level;
+		pc_setglobalreg( sd, add_str( JOBCHANGE4TH_VAR ) , sd->change_level_4th );
+	}else if( ( b_class&JOBL_THIRD ) && !( sd->class_&JOBL_THIRD ) ){
+		// changing from 2nd to 3rd job
+		sd->change_level_3rd = sd->status.job_level;
+		pc_setglobalreg( sd, add_str( JOBCHANGE3RD_VAR ), sd->change_level_3rd );
+	}else if( ( b_class&JOBL_2 ) && !( sd->class_&JOBL_2 ) ){
+		// changing from 1st to 2nd job
+		sd->change_level_2nd = sd->status.job_level;
+		pc_setglobalreg( sd, add_str( JOBCHANGE2ND_VAR ), sd->change_level_2nd );
+	}
+
+	if(sd->cloneskill_idx > 0) {
+		pc_skill_plagiarism_reset(*sd, 1);
+	}
+
+	if(sd->reproduceskill_idx > 0) {
+		pc_skill_plagiarism_reset(*sd, 2);
+	}
+
+	if ( (b_class&MAPID_SECONDMASK) != (sd->class_&MAPID_SECONDMASK) ) { //Things to remove when changing class tree.
+		status_db.changeSkillTree(sd);
+	}
+
+	if( (sd->class_&MAPID_SECONDMASK) == MAPID_STAR_GLADIATOR && (b_class&MAPID_SECONDMASK) != MAPID_STAR_GLADIATOR) {
+		/* going off star glad lineage, reset feel and hate to not store no-longer-used vars in the database */
+		pc_resetfeel(sd);
+		pc_resethate(sd);
+	}
+
+	sd->status.class_ = job;
+	// Reset body style before changing job to avoid errors since not every job has a alternate outfit.
+	sd->status.body = sd->status.class_;
+
+	fame_flag = pc_famerank(sd->status.char_id,sd->class_&MAPID_SECONDMASK);
+	uint64 previous_class = sd->class_;
+	sd->class_ = b_class;
+	sd->status.job_level=1;
+	sd->status.job_exp=0;
+
+	if (sd->status.base_level > pc_maxbaselv(sd)) {
+		sd->status.base_level = pc_maxbaselv(sd);
+		sd->status.base_exp=0;
+		pc_resetstate(sd);
+		clif_updatestatus(*sd,SP_STATUSPOINT);
+		clif_updatestatus(*sd,SP_TRAITPOINT);
+		clif_updatestatus(*sd,SP_BASELEVEL);
+		clif_updatestatus(*sd,SP_BASEEXP);
+		clif_updatestatus(*sd,SP_NEXTBASEEXP);
+	}
+
+	// Give or reduce transcendent status points
+	if( ((b_class&JOBL_UPPER) || pc_is_primary_fourth(b_class)) && !((previous_class&JOBL_UPPER) || pc_is_primary_fourth(previous_class)) ){ // Change from a non t class to a t class -> give points
+		sd->status.status_point += battle_config.transcendent_status_points;
+		clif_updatestatus(*sd,SP_STATUSPOINT);
+	}else if( !((b_class&JOBL_UPPER) || pc_is_primary_fourth(b_class)) && ((previous_class&JOBL_UPPER) || pc_is_primary_fourth(previous_class)) ){ // Change from a t class to a non t class -> remove points
+		if( sd->status.status_point < battle_config.transcendent_status_points ){
+			// The player already used his bonus points, so we have to reset his status points
+			pc_resetstate(sd);
+		}else{
+			sd->status.status_point -= battle_config.transcendent_status_points;
+			clif_updatestatus(*sd,SP_STATUSPOINT);
+		}
+	}
+
+	// Update increase cost indicator
+	clif_updatestatus(*sd,SP_USTR);
+	clif_updatestatus(*sd,SP_UAGI);
+	clif_updatestatus(*sd,SP_UVIT);
+	clif_updatestatus(*sd,SP_UINT);
+	clif_updatestatus(*sd,SP_UDEX);
+	clif_updatestatus(*sd,SP_ULUK);
+
+	// Give or reduce trait status points
+	if (pc_is_trait_job(b_class) && !pc_is_trait_job(previous_class)) {// Change to a trait job.
+		sd->status.trait_point += battle_config.trait_points_job_change;
+		clif_updatestatus(*sd, SP_TRAITPOINT);
+		clif_updatestatus(*sd, SP_UPOW);
+		clif_updatestatus(*sd, SP_USTA);
+		clif_updatestatus(*sd, SP_UWIS);
+		clif_updatestatus(*sd, SP_USPL);
+		clif_updatestatus(*sd, SP_UCON);
+		clif_updatestatus(*sd, SP_UCRT);
+	} else if (!pc_is_trait_job(b_class) && pc_is_trait_job(previous_class)) {// Change to a non trait job.
+		if (sd->status.trait_point < battle_config.trait_points_job_change) {
+			// Player may have already used the trait status points. Force a reset.
+			pc_resetstate(sd);
+		} else {
+			sd->status.trait_point = 0;
+			clif_updatestatus(*sd, SP_TRAITPOINT);
+			clif_updatestatus(*sd, SP_UPOW);
+			clif_updatestatus(*sd, SP_USTA);
+			clif_updatestatus(*sd, SP_UWIS);
+			clif_updatestatus(*sd, SP_USPL);
+			clif_updatestatus(*sd, SP_UCON);
+			clif_updatestatus(*sd, SP_UCRT);
+		}
+	}
+
+	clif_updatestatus(*sd,SP_JOBLEVEL);
+	clif_updatestatus(*sd,SP_JOBEXP);
+	clif_updatestatus(*sd,SP_NEXTJOBEXP);
+
+	for(i=0;i<EQI_MAX;i++) {
+		if(sd->equip_index[i] >= 0)
+			if( pc_isequip( sd, sd->equip_index[i] ) != ITEM_EQUIP_ACK_OK ){
+				pc_unequipitem(sd,sd->equip_index[i],2);	// unequip invalid item for class
+			}
+	}
+
+	//Change look, if disguised, you need to undisguise
+	//to correctly calculate new job sprite without
+	if (sd->disguise)
+		pc_disguise(sd, 0);
+
+	status_set_viewdata(sd, job);
+	clif_changelook(sd,LOOK_BASE,sd->vd.look[LOOK_BASE]); // move sprite update to prevent client crashes with incompatible equipment [Valaris]
+#if PACKETVER >= 20151001

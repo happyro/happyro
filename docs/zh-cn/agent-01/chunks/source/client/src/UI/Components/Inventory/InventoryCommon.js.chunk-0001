@@ -1,0 +1,500 @@
+/**
+ * UI/Components/Inventory/InventoryCommon.js
+ *
+ * Shared factory for the Inventory window versions.
+ *
+ * Each version (InventoryV0..V3) provides its own name, htmlText and cssText
+ * plus a set of capability flags describing the behavioral differences that
+ * appeared over time (favorite tab, equipment switch, inventory expansion,
+ * enchant/refine routing, ...). The factory reproduces every version's legacy
+ * behavior 1:1; the flags are the only mechanism used to express real
+ * per-version differences.
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ * In some cases the client will send packet twice.eg NORMAL_ITEMLIST4; fixit [skybook888]
+ *
+ */
+
+import DB from 'DB/DBManager.js';
+import ItemType from 'DB/Items/ItemType.js';
+import Network from 'Network/NetworkManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import Client from 'Core/Client.js';
+import Preferences from 'Core/Preferences.js';
+import Renderer from 'Renderer/Renderer.js';
+import Mouse from 'Controls/MouseEventHandler.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import CartItems from 'UI/Components/CartItems/CartItems.js';
+import InputBox from 'UI/Components/InputBox/InputBox.js';
+import ItemCompare from 'UI/Components/ItemCompare/ItemCompare.js';
+import ItemInfo from 'UI/Components/ItemInfo/ItemInfo.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Equipment from 'UI/Components/Equipment/Equipment.js';
+import Storage from 'UI/Components/Storage/Storage.js';
+import SwitchEquip from 'UI/Components/SwitchEquip/SwitchEquip.js';
+import UIVersionManager from 'UI/UIVersionManager.js';
+import Configs from 'Core/Configs.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import BasicInfo from 'UI/Components/BasicInfo/BasicInfo.js';
+import Refine from 'UI/Components/Refine/Refine.js';
+import EnchantGrade from 'UI/Components/EnchantGrade/EnchantGrade.js';
+import EnchantUI from 'UI/Components/Enchant/Enchant.js';
+import Mail from 'UI/Components/Mail/Mail.js';
+import WriteRodex from 'UI/Components/Rodex/WriteRodex.js';
+
+function _sanitizeHtml(str) {
+	const whitelist = ['font', 'i', 'b'];
+	const div = document.createElement('div');
+	div.innerHTML = str;
+	div.querySelectorAll('*').forEach(el => {
+		if (!whitelist.includes(el.tagName.toLowerCase())) {
+			el.replaceWith(...el.childNodes);
+		}
+	});
+	return div.innerHTML;
+}
+
+/**
+ * Create an Inventory component.
+ *
+ * @param {object} config
+ * @param {string} config.name                     Component name (kept per version verbatim)
+ * @param {string} config.htmlText                 Version HTML template
+ * @param {string} config.cssText                  Version CSS
+ * @param {number} config.defaultHeight            Default `height` preference value
+ * @param {boolean} [config.resizableHeight]       V0: two-dimensional resize (width + height)
+ * @param {boolean} [config.tabSprite]             V0: tab highlight via tab_itm sprite (no `selected` class)
+ * @param {boolean} [config.favoriteTab]           V1+: favorite tab, footer tools, item compare, count separator
+ * @param {boolean} [config.equipSwitch]           V2+: equipment switch list and icons
+ * @param {boolean} [config.enchantGrade]          V3: enchant grade icon on items
+ * @param {boolean} [config.inventoryExpansion]    V3: inventory expansion button and packets
+ * @param {boolean} [config.refineEnchant]         V3: refine/enchant routing on item use
+ * @param {boolean} [config.useHiddenClass]        V3: toggle footer tools via `.hidden` class (vs style.display)
+ * @param {boolean} [config.hostDropPreventDefault] V2+: preventDefault on host dragover
+ * @param {boolean} [config.tabDropPreventDefault] V3: preventDefault on tab dragover
+ */
+export function createInventory(config) {
+	const {
+		name,
+		htmlText,
+		cssText,
+		defaultHeight,
+		resizableHeight = false,
+		tabSprite = false,
+		favoriteTab = false,
+		equipSwitch = false,
+		enchantGrade = false,
+		inventoryExpansion = false,
+		refineEnchant = false,
+		useHiddenClass = false,
+		hostDropPreventDefault = false,
+		tabDropPreventDefault = false
+	} = config;
+
+	const Component = new GUIComponent(name, cssText);
+	Component.render = () => htmlText;
+
+	Component.TAB = {
+		USABLE: 0,
+		EQUIP: 1,
+		ETC: 2,
+		FAV: 3
+	};
+
+	Component.list = [];
+	Component.newItems = [];
+	Component.equippedItems = [];
+	if (equipSwitch) {
+		Component.equipswitchlist = [];
+	}
+
+	let _realSize = 0;
+	let lockOverlayTimeout;
+
+	const prefDefaults = {
+		x: 0,
+		y: UIVersionManager.getInventoryVersion() > 0 ? 172 : 120,
+		width: 7,
+		height: defaultHeight,
+		show: false,
+		reduce: false,
+		tab: Component.TAB.USABLE,
+		magnet_top: false,
+		magnet_bottom: false,
+		magnet_left: true,
+		magnet_right: false
+	};
+	if (favoriteTab) {
+		prefDefaults.itemlock = false;
+		prefDefaults.itemcomp = true;
+		prefDefaults.npcsalelock = false;
+	}
+
+	const _preferences = Preferences.get(name, prefDefaults, 1.0);
+
+	if (favoriteTab) {
+		Component.itemlock = _preferences.itemlock;
+		Component.itemcomp = _preferences.itemcomp;
+		Component.npcsalelock = _preferences.npcsalelock;
+	}
+
+	// Toggle the visibility of a footer element, matching the legacy mechanism
+	// of each version: V3 uses the `.hidden` CSS class, earlier versions use
+	// inline display. NOTE: on V1/V2 the elements keep their initial `hidden`
+	// class, so setting display alone never actually reveals them — that legacy
+	// quirk is preserved here on purpose.
+	// TODO: V1/V2 footer tools (deal lock / sort) never become visible because
+	// the inline-display path cannot override the `.hidden` class in the markup.
+	function setElHidden(el, hidden) {
+		if (!el) {
+			return;
+		}
+		if (useHiddenClass) {
+			el.classList.toggle('hidden', hidden);
+		} else {
+			el.style.display = hidden ? 'none' : '';
+		}
+	}
+
+	/**
+	 * Initialize UI
+	 */
+	Component.init = function Init() {
+		const root = Component.getRoot();
+
+		const baseBtn = root.querySelector('.titlebar .base');
+		if (baseBtn) {
+			baseBtn.addEventListener('mousedown', e => e.stopImmediatePropagation());
+		}
+
+		const miniBtn = root.querySelector('.titlebar .mini');
+		if (miniBtn) {
+			miniBtn.addEventListener('click', onToggleReduction);
+		}
+
+		const tabButtons = root.querySelectorAll('.tabs button');
+		tabButtons.forEach(btn => {
+			btn.addEventListener('mousedown', onSwitchTab);
+			if (favoriteTab) {
+				btn.addEventListener('dragover', e => {
+					if (tabDropPreventDefault) {
+						// preventDefault is required to mark the tab as a valid drop target;
+						// without it the browser never fires the `drop` event (so dragging an
+						// item onto a tab — e.g. to favorite it — silently did nothing).
+						e.preventDefault();
+					}
+					e.stopImmediatePropagation();
+				});
+				btn.addEventListener('drop', onTabDrop);
+			}
+		});
+
+		const extendBtn = root.querySelector('.footer .extend');
+		if (extendBtn) {
+			extendBtn.addEventListener('mousedown', onResize);
+		}
+
+		const closeBtn = root.querySelector('.titlebar .close');
+		if (closeBtn) {
+			closeBtn.addEventListener('click', () => {
+				Component._host.style.display = 'none';
+			});
+		}
+
+		this._host.addEventListener('drop', onDrop);
+		this._host.addEventListener('dragover', e => {
+			e.stopImmediatePropagation();
+			if (hostDropPreventDefault) {
+				e.preventDefault();
+			}
+		});
+
+		const content = root.querySelector('.container .content');
+		if (content) {
+			content.addEventListener('mouseover', e => {
+				const item = e.target.closest('.item');
+				if (item) {
+					onItemOver.call(item, e);
+				}
+			});
+			content.addEventListener('mouseout', e => {
+				const item = e.target.closest('.item');
+				if (item) {
+					onItemOut();
+				}
+			});
+			content.addEventListener('dragstart', e => {
+				const item = e.target.closest('.item');
+				if (item) {
+					onItemDragStart.call(item, e);
+				}
+			});
+			content.addEventListener('dragend', e => {
+				const item = e.target.closest('.item');
+				if (item) {
+					onItemDragEnd();
+				}
+			});
+			content.addEventListener('contextmenu', e => {
+				e.preventDefault();
+				const item = e.target.closest('.item');
+				if (item) {
+					onItemInfo.call(item, e);
+				}
+			});
+			content.addEventListener('dblclick', e => {
+				const item = e.target.closest('.item');
+				if (item) {
+					onItemUsed.call(item, e);
+				}
+			});
+			content.addEventListener('click', e => {
+				const item = e.target.closest('.item');
+				if (item) {
+					onItemClick.call(item, e);
+				}
+			});
+		}
+
+		const ncnt = root.querySelector('.ncnt');
+		if (ncnt) {
+			ncnt.textContent = favoriteTab ? '0 / ' : '0';
+		}
+		const mcnt = root.querySelector('.mcnt');
+		if (mcnt) {
+			mcnt.textContent = '100';
+		}
+
+		this.draggable('.titlebar');
+
+		if (!tabSprite) {
+			root.querySelectorAll('.tabs button').forEach(b => b.classList.remove('selected'));
+			const allTabs = root.querySelectorAll('.tabs button');
+			if (allTabs[_preferences.tab]) {
+				allTabs[_preferences.tab].classList.add('selected');
+			}
+		}
+
+		if (favoriteTab) {
+			const lockImg = _preferences.itemlock
+				? 'inventory/item_drop_lock_on.bmp'
+				: 'inventory/item_drop_lock_off.bmp';
+			Client.loadFile(DB.INTERFACE_PATH + lockImg, data => {
+				const btn = root.querySelector('.item_drop_lock');
+				if (btn) {
+					btn.style.backgroundImage = `url(${data})`;
+				}
+			});
+
+			const compImg = _preferences.itemcomp ? 'inventory/item_compare_on.bmp' : 'inventory/item_compare_off.bmp';
+			Client.loadFile(DB.INTERFACE_PATH + compImg, data => {
+				const btn = root.querySelector('.item_compare');
+				if (btn) {
+					btn.style.backgroundImage = `url(${data})`;
+				}
+			});
+
+			const dealOn = root.querySelector('.deallock_on');
+			const dealOff = root.querySelector('.deallock_off');
+			const onFavTab = _preferences.tab === Component.TAB.FAV;
+			setElHidden(dealOn, !(onFavTab && _preferences.npcsalelock));
+			setElHidden(dealOff, !(onFavTab && !_preferences.npcsalelock));
+			setElHidden(root.querySelector('.sort'), !onFavTab);
+
+			const itemDropLock = root.querySelector('.item_drop_lock');
+			if (itemDropLock) {
+				itemDropLock.addEventListener('click', onItemLock);
+			}
+			const itemCompare = root.querySelector('.item_compare');
+			if (itemCompare) {
+				itemCompare.addEventListener('click', onItemCompare);
+			}
+			root.querySelectorAll('.deal_lock').forEach(btn => btn.addEventListener('click', onNPCLock));
+
+			const overlayClose = root.querySelector('.lockoverlayclose');
+			if (overlayClose) {
+				overlayClose.addEventListener('click', () => {
+					setElHidden(root.querySelector('.lockoverlaymsg'), true);
+					clearTimeout(lockOverlayTimeout);
+				});
+			}
+
+			const sortBtn = root.querySelector('.sort');
+			if (sortBtn) {
+				sortBtn.addEventListener('click', () => requestFilter());
+			}
+		}
+
+		if (inventoryExpansion) {
+			const itemExpansion = root.querySelector('.item_expansion');
+			if (itemExpansion) {
+				itemExpansion.addEventListener('click', onInventoryExpand);
+			}
+		}
+	};
+
+	/**
+	 * Apply preferences once append to body
+	 */
+	Component.onAppend = function OnAppend() {
+		const root = Component.getRoot();
+
+		if (!_preferences.show) {
+			this._host.style.display = 'none';
+		}
+
+		if (tabSprite) {
+			Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/tab_itm_0' + (_preferences.tab + 1) + '.bmp', data => {
+				const tabSpriteEl = root.querySelector('.tab-sprite');
+				if (tabSpriteEl) {
+					tabSpriteEl.style.backgroundImage = `url("${data}")`;
+				}
+			});
+		}
+
+		this.resize(_preferences.width, _preferences.height);
+
+		const hostRect = this._host.getBoundingClientRect();
+		this._host.style.top = `${Math.min(Math.max(0, _preferences.y), Renderer.height - hostRect.height)}px`;
+		this._host.style.left = `${Math.min(Math.max(0, _preferences.x), Renderer.width - hostRect.width)}px`;
+
+		this.magnet.TOP = _preferences.magnet_top;
+		this.magnet.BOTTOM = _preferences.magnet_bottom;
+		this.magnet.LEFT = _preferences.magnet_left;
+		this.magnet.RIGHT = _preferences.magnet_right;
+
+		_realSize = _preferences.reduce ? 0 : this._host.getBoundingClientRect().height;
+		const miniBtnAppend = root.querySelector('.titlebar .mini');
+		if (miniBtnAppend) {
+			miniBtnAppend.dispatchEvent(new Event('mousedown'));
+		}
+	};
+
+	/**
+	 * Remove Inventory from window (and so clean up items)
+	 */
+	Component.onRemove = function OnRemove() {
+		const root = Component.getRoot();
+		const content = root.querySelector('.container .content');
+		if (content) {
+			content.innerHTML = '';
+		}
+		this.list.length = 0;
+		if (equipSwitch) {
+			this.equipswitchlist.length = 0;
+		}
+		Component.newItems.length = 0;
+		document.querySelectorAll('.ItemInfo').forEach(el => el.remove());
+
+		// Save preferences
+		_preferences.show = this._host.style.display !== 'none';
+		_preferences.reduce = !!_realSize;
+		_preferences.y = parseInt(this._host.style.top, 10);
+		_preferences.x = parseInt(this._host.style.left, 10);
+		const hostRect = this._host.getBoundingClientRect();
+		_preferences.width = Math.floor((hostRect.width - (23 + 16 + 16 - 30)) / 32);
+		if (resizableHeight) {
+			_preferences.height = Math.floor((hostRect.height - (31 + 19 - 30)) / 32);
+		}
+		_preferences.magnet_top = this.magnet.TOP;
+		_preferences.magnet_bottom = this.magnet.BOTTOM;
+		_preferences.magnet_left = this.magnet.LEFT;
+		_preferences.magnet_right = this.magnet.RIGHT;
+		_preferences.save();
+	};
+
+	/**
+	 * Process shortcut
+	 *
+	 * @param {object} key
+	 */
+	Component.onShortCut = function onShurtCut(key) {
+		switch (key.cmd) {
+			case 'TOGGLE':
+				if (this._host.style.display === 'none') {
+					this._host.style.display = '';
+					this.focus();
+				} else {
+					this._host.dispatchEvent(new Event('mouseleave'));
+					this.clearNewItems();
+					const root = Component.getRoot();
+					root.querySelectorAll('.new_item').forEach(el => {
+						el.style.backgroundImage = '';
+					});
+					this._host.style.display = 'none';
+				}
+				break;
+		}
+
+		const basicInfoUI = BasicInfo.getUI();
+		if (basicInfoUI._host) {
+			const changeUI = basicInfoUI.getRoot().querySelector('#item .btn_overlay');
+			if (changeUI) {
+				changeUI.style.display = 'none';
+			}
+		}
+	};
+
+	/**
+	 * Show/Hide UI
+	 */
+	Component.toggle = function toggle() {
+		if (this._host.style.display === 'none') {
+			this._host.style.display = '';
+			this.focus();
+		} else {
+			this._host.dispatchEvent(new Event('mouseleave'));
+			this.clearNewItems();
+			const root = Component.getRoot();
+			root.querySelectorAll('.new_item').forEach(el => {
+				el.style.backgroundImage = '';
+			});
+			this._host.style.display = 'none';
+		}
+
+		const basicInfoUI = BasicInfo.getUI();
+		if (basicInfoUI._host) {
+			const changeUI = basicInfoUI.getRoot().querySelector('#item .btn_overlay');
+			if (changeUI) {
+				changeUI.style.display = 'none';
+			}
+		}
+	};
+
+	/**
+	 * Clear newItems array
+	 */
+	Component.clearNewItems = function clearNewItems() {
+		this.newItems = [];
+	};
+
+	/**
+	 * Extend inventory window size
+	 *
+	 * @param {number} width
+	 * @param {number} height
+	 */
+	Component.resize = function Resize(width, height) {
+		width = Math.min(Math.max(width, 6), 8);
+
+		const root = Component.getRoot();
+		const content = root.querySelector('.container .content');
+		if (content) {
+			content.style.width = `${width * 32}px`;
+		}
+
+		if (resizableHeight) {
+			height = Math.min(Math.max(height, 2), 5);
+			this._host.style.width = `${27 + 16 + 16 + width * 32}px`;
+			this._host.style.height = `${31 + 4 + 27 + height * 32}px`;
+		} else {
+			this._host.style.width = `${23 + 16 + 16 + width * 32}px`;
+		}
+
+		this.updateScroll();
+	};
+

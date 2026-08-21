@@ -1,0 +1,500 @@
+/**
+ * jobcanentermap("<mapname>"{,<JobID>});
+ * Check if (player with) JobID can enter the map.
+ * @param mapname Map name
+ * @param JobID Player's JobID (optional)
+ **/
+BUILDIN_FUNC(jobcanentermap) {
+	const char *mapname = script_getstr(st, 2);
+	int32 mapidx = mapindex_name2id(mapname), m = -1;
+	int32 jobid = 0;
+	TBL_PC *sd = nullptr;
+
+	if (!mapidx) {// Invalid map
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+	m = map_mapindex2mapid(mapidx);
+	if (m == -1) { // Map is on different map server
+		ShowError("buildin_jobcanentermap: Map '%s' is not found in this server.\n", mapname);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st, 3)) {
+		jobid = script_getnum(st, 3);
+	} else {
+		if (!script_rid2sd(sd)) {
+			script_pushint(st, false);
+			return SCRIPT_CMD_FAILURE;
+		}
+		jobid = sd->status.class_;
+	}
+
+	script_pushint(st, pc_job_can_entermap((enum e_job)jobid, m, sd ? pc_get_group_level(sd) : 0));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Return alliance information between the two guilds.
+ * getguildalliance(<guild id1>,<guild id2>);
+ * Return values:
+ *	-2 - Guild ID1 does not exist
+ *	-1 - Guild ID2 does not exist
+ *	 0 - Both guilds have no relation OR guild ID aren't given
+ *	 1 - Both guilds are allies
+ *	 2 - Both guilds are antagonists
+ */
+BUILDIN_FUNC(getguildalliance)
+{
+	int32 guild_id1, guild_id2, i = 0;
+
+	guild_id1 = script_getnum(st,2);
+	guild_id2 = script_getnum(st,3);
+
+	if (guild_id1 < 1 || guild_id2 < 1) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (guild_id1 == guild_id2) {
+		script_pushint(st, 1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	auto guild_data1 = guild_search(guild_id1);
+	auto guild_data2 = guild_search(guild_id2);
+
+	if (guild_data1 == nullptr) {
+		ShowWarning("buildin_getguildalliance: Requesting non-existent GuildID1 '%d'.\n", guild_id1);
+		script_pushint(st, -2);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (guild_data2 == nullptr) {
+		ShowWarning("buildin_getguildalliance: Requesting non-existent GuildID2 '%d'.\n", guild_id2);
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	ARR_FIND(0, MAX_GUILDALLIANCE, i, guild_data1->guild.alliance[i].guild_id == guild_id2);
+	if (i == MAX_GUILDALLIANCE) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (guild_data1->guild.alliance[i].opposition)
+		script_pushint(st, 2);
+	else
+		script_pushint(st, 1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*
+ * openstorage2 <storage_id>{,<mode>{,<account_id>}}
+ * mode @see enum e_storage_mode
+ **/
+BUILDIN_FUNC(openstorage2) {
+	map_session_data *sd = nullptr;
+
+	if (!script_accid2sd(4, sd)) {
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 stor_id = script_getnum(st, 2);
+
+	if (!storage_exists(stor_id)) {
+		ShowError("buildin_openstorage2: Invalid storage_id '%d'!\n", stor_id);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 mode;
+
+	if (!script_hasdata(st, 3))
+		mode = STOR_MODE_ALL;
+	else {
+		mode = script_getnum(st, 3);
+
+		if (mode < STOR_MODE_NONE || mode > STOR_MODE_ALL) {
+			ShowError("buildin_openstorage2: Invalid mode '%d'!\n", mode);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	script_pushint(st, storage_premiumStorage_load(sd, stor_id, mode));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Create a new channel
+ * channel_create "<chname>","<alias>"{,"<password>"{<option>{,<delay>{,<color>{,<char_id>}}}}};
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_create) {
+	struct Channel tmp_chan, *ch = nullptr;
+	const char *chname = script_getstr(st,2), *pass = nullptr;
+	int32 i = channel_chk((char*)chname, nullptr, 3);
+	TBL_PC *sd = nullptr;
+
+	if (i != 0) {
+		ShowError("buildin_channel_create: Channel name '%s' is invalid. Errno %d\n", chname, i);
+		script_pushint(st,i);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	memset(&tmp_chan, 0, sizeof(struct Channel));
+
+	if (script_hasdata(st,8)) {
+		tmp_chan.char_id = script_getnum(st,8);
+		if (!(sd = map_charid2sd(tmp_chan.char_id))) {
+			ShowError("buildin_channel_create: Player with char id '%d' is not found.\n", tmp_chan.char_id);
+			script_pushint(st,-5);
+			return SCRIPT_CMD_FAILURE;
+		}
+		tmp_chan.type = CHAN_TYPE_PRIVATE;
+		i = 1;
+	}
+	else {
+		tmp_chan.type = CHAN_TYPE_PUBLIC;
+		i = 0;
+	}
+
+	safestrncpy(tmp_chan.name, chname+1, sizeof(tmp_chan.name));
+	safestrncpy(tmp_chan.alias, script_getstr(st,3), sizeof(tmp_chan.alias));
+	if (script_hasdata(st,4) && (pass = script_getstr(st,4)) && strcmpi(pass,"null") != 0)
+		safestrncpy(tmp_chan.pass, pass, sizeof(tmp_chan.pass));
+	if (script_hasdata(st,5))
+		tmp_chan.opt = script_getnum(st,5);
+	else
+		tmp_chan.opt = i ? channel_config.private_channel.opt : CHAN_OPT_BASE;
+	if (script_hasdata(st,6))
+		tmp_chan.msg_delay = script_getnum(st,6);
+	else
+		tmp_chan.msg_delay = i ? channel_config.private_channel.delay : 1000;
+	if (script_hasdata(st,7))
+		tmp_chan.color = script_getnum(st,7);
+	else
+		tmp_chan.color = i ? channel_config.private_channel.color : channel_getColor("Default");
+
+	if (!(ch = channel_create(&tmp_chan))) {
+		ShowError("buildin_channel_create: Cannot create channel '%s'.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (tmp_chan.char_id)
+		channel_join(ch, sd);
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// ===================================
+// *channel_join "<channel_name>"{, <char_id>};
+// Join an existing channel.
+// The command returns 0 upon success, and these values upon failure:
+// -1 : Invalid channel or player
+// -2 : Player already in channel
+// -3 : Player banned
+// -4 : Reached max limit
+// ===================================
+BUILDIN_FUNC(channel_join) {
+	map_session_data *sd = nullptr;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	struct Channel *channel = nullptr;
+	const char *chname = script_getstr(st, 2);
+
+	if (!(channel = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_join: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st, channel_join(channel, sd));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Set channel option
+ * channel_setopt "<chname>",<option>,<value>;
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_setopt) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2);
+	int32 opt = script_getnum(st,3), value = script_getnum(st,4);
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_setopt: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	switch (opt) {
+		case CHAN_OPT_ANNOUNCE_SELF:
+		case CHAN_OPT_ANNOUNCE_JOIN:
+		case CHAN_OPT_ANNOUNCE_LEAVE:
+		case CHAN_OPT_COLOR_OVERRIDE:
+		case CHAN_OPT_CAN_CHAT:
+		case CHAN_OPT_CAN_LEAVE:
+		case CHAN_OPT_AUTOJOIN:
+			if (value)
+				ch->opt |= opt;
+			else
+				ch->opt &= ~opt;
+			break;
+		case CHAN_OPT_MSG_DELAY:
+			ch->msg_delay = value;
+			break;
+		default:
+			ShowError("buildin_channel_setopt: Invalid option %d!\n", opt);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Get channel options
+ * channel_getopt <chname>,<option>;
+ */
+BUILDIN_FUNC(channel_getopt) {
+	Channel *ch;
+	const char *chname = script_getstr(st, 2);
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_getopt: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 opt = script_getnum(st, 3);
+
+	switch (opt) {
+		case CHAN_OPT_ANNOUNCE_SELF:
+		case CHAN_OPT_ANNOUNCE_JOIN:
+		case CHAN_OPT_ANNOUNCE_LEAVE:
+		case CHAN_OPT_COLOR_OVERRIDE:
+		case CHAN_OPT_CAN_CHAT:
+		case CHAN_OPT_CAN_LEAVE:
+		case CHAN_OPT_AUTOJOIN:
+			script_pushint(st, (ch->opt & opt) != 0);
+			break;
+		case CHAN_OPT_MSG_DELAY:
+			script_pushint(st, ch->msg_delay);
+			break;
+		default:
+			ShowError("buildin_channel_getopt: Invalid option %d!\n", opt);
+			script_pushint(st, false);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Set channel color
+ * channel_setcolor "<chname>",<color>;
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_setcolor) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2);
+	int32 color = script_getnum(st,3);
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_setcolor: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	ch->color = (color & 0x0000FF) << 16 | (color & 0x00FF00) | (color & 0xFF0000) >> 16;//RGB to BGR
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Set channel password
+ * channel_setpass "<chname>","<password>";
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_setpass) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2), *passwd = script_getstr(st,3);
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_setpass: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!passwd || !strcmpi(passwd,"null"))
+		memset(ch->pass, '\0', sizeof(ch->pass));
+	else
+		safestrncpy(ch->pass, passwd, sizeof(ch->pass));
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Set authorized groups
+ * channel_setgroup "<chname>",<group_id>{,...,<group_id>};
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_setgroup) {
+	struct Channel *ch = nullptr;
+	const char *funcname = script_getfuncname(st), *chname = script_getstr(st,2);
+	int32 i, n = 0, group = 0;
+
+	if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_setgroup: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (funcname[strlen(funcname)-1] == '2') {
+		struct script_data *data = script_getdata(st,3);
+		const char *varname = reference_getname(data);
+		int32 id, idx;
+
+		if (varname[strlen(varname)-1] == '$') {
+			ShowError("buildin_channel_setgroup: The array %s is not numeric type.\n", varname);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (not_server_variable(*varname)) {
+			map_session_data *sd;
+
+			if (!script_rid2sd(sd)) {
+				ShowError("buildin_%s: Cannot use a player variable '%s' if no player is attached.\n", funcname, varname);
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+
+		n = script_array_highest_key(st, nullptr, reference_getname(data), reference_getref(data));
+		if (n < 1) {
+			ShowError("buildin_channel_setgroup: No group id listed.\n");
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (ch->groups)
+			aFree(ch->groups);
+		ch->groups = nullptr;
+		ch->group_count = 0;
+
+		id = reference_getid(data);
+		idx = reference_getindex(data);
+		for (i = 0; i < n; i++) {
+			group = (int32)get_val2_num( st, reference_uid( id, idx + i ), reference_getref( data ) );
+			if (group == 0) {
+				script_pushint(st,1);
+				return SCRIPT_CMD_SUCCESS;
+			}
+			RECREATE(ch->groups, uint16, ++ch->group_count);
+			ch->groups[ch->group_count-1] = group;
+			ShowInfo("buildin_channel_setgroup: (2) Added group %d. Num: %d\n", ch->groups[ch->group_count-1], ch->group_count);
+		}
+	}
+	else {
+		group = script_getnum(st,3);
+		n = script_lastdata(st)-1;
+
+		if (n < 1) {
+			ShowError("buildin_channel_setgroup: Please input at least 1 group_id.\n");
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (ch->groups)
+			aFree(ch->groups);
+		ch->groups = nullptr;
+		ch->group_count = 0;
+
+		if (group == 0) { // Removed group list
+			script_pushint(st,1);
+			return SCRIPT_CMD_SUCCESS;
+		}
+
+		CREATE(ch->groups, uint16, n);
+		for (i = 3; i < n+2; i++) {
+			ch->groups[ch->group_count++] = script_getnum(st,i);
+			ShowInfo("buildin_channel_setgroup: (1) Added group %d. Num: %d\n", ch->groups[ch->group_count-1], ch->group_count);
+		}
+	}
+	script_pushint(st,n);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Send message on channel
+ * channel_chat "<chname>","<message>"{,<color>};
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(channel_chat) {
+	struct Channel *ch = nullptr;
+	const char *chname = script_getstr(st,2), *msg = script_getstr(st,3);
+	char output[CHAT_SIZE_MAX+1];
+	unsigned long color = 0;
+
+	// Check also local channels
+	if (chname[0] != '#') { // By Map
+		int32 m = mapindex_name2id(chname);
+		if (!m || (m = map_mapindex2mapid(m)) < 0) {
+			ShowError("buildin_channel_chat: Invalid map '%s'.\n", chname);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+		if (!(ch = map_getmapdata(m)->channel)) {
+			ShowDebug("buildin_channel_chat: Map '%s' doesn't have local channel yet.\n", chname);
+			script_pushint(st,0);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+	else if (strcmpi(chname+1,channel_config.map_tmpl.name) == 0) {
+		TBL_NPC *nd = map_id2nd(st->oid);
+		if (!nd || nd->m == -1) {
+			ShowError("buildin_channel_chat: Floating NPC needs map name instead '%s'.\n", chname);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+		if (!(ch = map_getmapdata(nd->m)->channel)) {
+			ShowDebug("buildin_channel_chat: Map '%s' doesn't have local channel yet.\n", chname);
+			script_pushint(st,0);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+	else if (!(ch = channel_name2channel((char *)chname, nullptr, 0))) {
+		ShowError("buildin_channel_chat: Channel name '%s' is invalid.\n", chname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!ch) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	color = ch->color;
+	FETCH(4, color);
+
+	safesnprintf(output, CHAT_SIZE_MAX, "%s %s", ch->alias, msg);
+	clif_channel_msg(ch,output,color);
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Ban player from a channel
+ * channel_ban "<chname>",<char_id>;
+ * @author [Cydh]

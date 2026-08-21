@@ -1,0 +1,500 @@
+			set .@max, .@funds;
+			set .@ele, .@i;
+			deletearray .@rand$[0], getarraysize(.@rand$);
+		} else if (.@funds == .@max) {
+			if (!getarraysize(.@rand$))
+				set .@rand$[0], .@cas$[.@ele];
+			set .@rand$[getarraysize(.@rand$)], .@cas$[.@i];
+		}
+	}
+	if (getarraysize(.@rand$)) {
+		set .@i, rand(getarraysize(.@rand$));
+		setd "$"+.@rand$[.@i]+"_invest_result",3;
+	} else
+		setd "$"+.@cas$[.@ele]+"_invest_result",3;
+	set $2011_agit_invest,4;
+	set $agit_revoting_timer,0;
+	end;
+OnEnable:
+	enablenpc "Revoting Manager#Invest1";
+	end;
+OnDisable:
+	disablenpc "Revoting Manager#Invest1";
+	end;
+OnStart:
+	initnpctimer;
+	donpcevent "Revoting Manager#Invest2::OnNotice_on";
+	end;
+OnEnd:
+	stopnpctimer;
+	disablenpc "Revoting Manager#Invest1";
+	end;
+OnTimerReset:
+	initnpctimer;
+	end;
+OnTimer60000:
+	set .@revote, $agit_revoting_timer;
+	if (.@revote < 30) {
+		set $agit_revoting_timer, $agit_revoting_timer+1;
+		donpcevent "Revoting Manager#Invest1::OnTimerReset";
+	} else if (.@revote == 30) {
+		announce "Cat Paw Merchant Guild: Now we are going to close the additional vote. We will announce the results soon.",bc_all,0xFF0000; //FW_NORMAL 10
+		donpcevent "Revoting Manager#Invest2::OnDisable";
+		donpcevent "Revoting Manager#Invest1::OnEnable";
+		set $agit_revoting_timer, $agit_revoting_timer+1;
+		donpcevent "Revoting Manager#Invest1::OnTimerReset";
+	} else if (.@revote == 31) {
+		donpcevent "Revoting Manager#Invest1::OnCalculate";
+		donpcevent "Revoting Manager#Invest1::OnDisable";
+		stopnpctimer;
+		end;
+	} else {
+		donpcevent "Revoting Manager#Invest1::OnDisable";
+		stopnpctimer;
+	}
+	end;
+}
+
+prt_gld,164,98,3	script	Revoting Manager#Invest2	421,{
+	set .@invest, $2011_agit_invest;
+	if (.@invest < 11) {
+		mes "[Revoting Manager]";
+		mes "No! This is not the time to take a revote.";
+		close2;
+		disablenpc "Revoting Manager#Invest2";
+		end;
+	}
+	set .@playtime, checkquest(7349,PLAYTIME);
+	if (.@playtime == 0 || .@playtime == 1) {
+		mes "[Revoting Manager]";
+		mes "You've already participated in the vote.";
+		mes "Please relax and wait for the results.";
+		close;
+	} else if (.@playtime == 2)
+		erasequest 7349;
+	mes "[Revoting Manager]";
+	mes "Would you like to participate in the vote for choosing where to connect the 'Abyss Gate'?";
+	next;
+	if(select("Participate in the vote.:Skip for now.") == 2) {
+		mes "[Revoting Manager]";
+		mes "You've canceled the vote.";
+		close;
+	}
+	mes "[Revoting Manager]";
+	mes "You can vote once and won't need to invest for your choice.";
+	mes "Plesae choose one WOE area.";
+	next;
+
+	// Create menu.
+	explode(.@candidates$, callsub(OnGetCandidates, .@invest),"|");
+	for(set .@i,0; .@i<getarraysize(.@candidates$); set .@i,.@i+1) {
+		if (.@candidates$[.@i] == "alde")
+			set .@menu$[.@i],"Luina";
+		else if (.@candidates$[.@i] == "gef")
+			set .@menu$[.@i],"Britoniah";
+		else if (.@candidates$[.@i] == "pay")
+			set .@menu$[.@i],"Greenwood Lake";
+		else if (.@candidates$[.@i] == "prt")
+			set .@menu$[.@i],"Valkyrie Realm";
+	}
+	set .@vote, select(implode(.@menu$,":"))-1;
+
+	mes "[Revoting Manager]";
+	mes "You've voted for "+.@menu$[.@vote]+".";
+	mes "Thanks for voting.";
+	setquest 7349;
+	setd "$fund_"+.@candidates$[.@vote]+"_extra", getd("$fund_"+.@candidates$[.@vote]+"_extra") + 1;
+	close;
+OnGetCandidates:
+	switch(getarg(0)) {
+		case 11: return "prt|pay";
+		case 12: return "prt|alde";
+		case 13: return "prt|gef";
+		case 14: return "alde|pay";
+		case 15: return "gef|pay";
+		case 16: return "alde|gef";
+		case 17: return "prt|pay|alde";
+		case 18: return "prt|pay|gef";
+		case 19: return "prt|alde|gef";
+		case 20: return "alde|pay|gef";
+		case 21: return "prt|pay|alde|gef";
+	}
+	return "";
+OnInit:
+	disablenpc "Revoting Manager#Invest2";
+	end;
+OnEnable:
+	enablenpc "Revoting Manager#Invest2";
+	end;
+OnDisable:
+	disablenpc "Revoting Manager#Invest2";
+	stopnpctimer;
+	end;
+OnNotice_on:
+	initnpctimer;
+	end;
+OnTimer5000:
+	announce "Cat Paw Merchant Guild: As no WOE area has reached the maximum investment level to connect the 'Abyss Gate'...",bc_all,0xFF0000; //FW_NORMAL 10
+	end;
+OnTimer8000:
+	announce "Cat Paw Merchant Guild: We were about to connect the 'Abyss Gate' to the WOE area which invested most.",bc_all,0xFF0000; //FW_NORMAL 10
+	end;
+OnTimer11000:
+	announce "Cat Paw Merchant Guild: However, there were areas which invested the same amount. So we will put them to a vote.",bc_all,0xFF0000; //FW_NORMAL 10
+	end;
+OnTimer14000:
+	announce "Cat Paw Merchant Guild: Additional votes will be available for 30 minutes. You can vote in Valkyrie Realm.",bc_all,0xFF0000; //FW_NORMAL 10
+	end;
+OnTimer20000:
+	explode(.@candidates$, callsub(OnGetCandidates, $2011_agit_invest),"|");
+	for(set .@i,0; .@i<getarraysize(.@candidates$); set .@i,.@i+1) {
+		if (.@candidates$[.@i] == "alde")
+			set .@choices$[.@i],"Luina";
+		else if (.@candidates$[.@i] == "gef")
+			set .@choices$[.@i],"Britoniah";
+		else if (.@candidates$[.@i] == "pay")
+			set .@choices$[.@i],"Greenwood Lake";
+		else if (.@candidates$[.@i] == "prt")
+			set .@choices$[.@i],"Valkyrie Realm";
+	}
+	announce "Cat Paw Merchant Guild: The candidates for the additional vote are... "+implode(.@choices$," vs. ")+".",bc_all,0xFF0000; //FW_NORMAL 10
+	set $fund_prt_extra,0;
+	set $fund_pay_extra,0;
+	set $fund_gef_extra,0;
+	set $fund_alde_extra,0;
+	set $agit_revoting_timer,0;
+	donpcevent "Revoting Manager#Invest2::OnEnable";
+	stopnpctimer;
+	end;
+}
+
+/*
+prtg_cas01,2,2,0	script	Abrai	55,{
+	mes "I should quit my steward job.";
+	close;
+OnAgitInvest:
+	switch(callfunc("F_Invest_Status")) {
+	case 0:
+		set $2011_agit_invest,0;
+		donpcevent "#fund_master::OnReset";
+		break;
+	case 1:
+		set $2011_agit_invest,1;
+		donpcevent "#fund_master::OnInvest_start";
+		break;
+	case 2:
+		set $2011_agit_invest,2;
+		donpcevent "#fund_master::OnInvest_stop";
+		break;
+	case 3:
+		donpcevent "#fund_master::OnResult";
+		break;
+	}
+	end;
+}
+*/
+
+// Realms - Merchant Guilds, Gate Managers, Status Boards
+//============================================================
+-	script	Cat Paw Merchant Guild	-1,{
+
+	if (compare(strnpcinfo(4),"alde")) {
+		set .@npc$,"alde";
+		set .@name$,"Megrez";
+		set .@realm$,"Luina";
+		set .@intro$,"Luina Branch Manager in Al De Baran";
+	} else if (compare(strnpcinfo(4),"gef")) {
+		set .@npc$,"gef";
+		set .@name$,"Meraq";
+		set .@realm$,"Britoniah";
+		set .@intro$,"Britoniah Branch Manager";
+	} else if (compare(strnpcinfo(4),"pay")) {
+		set .@npc$,"pay";
+		set .@name$,"Phecda";
+		set .@realm$,"Greenwood Lake";
+		set .@intro$,"Payon Greenwood Lake Branch Manager";
+	} else if (compare(strnpcinfo(4),"prt")) {
+		set .@npc$,"prt";
+		set .@name$,"Dubae";
+		set .@realm$,"Valkyrie Realm";
+		set .@intro$,"Prontera Valkyrie Realm Branch Manager";
+	}
+	set .@n$,"["+.@name$+"]";
+
+	mes .@n$;
+	mes "I'm "+.@name$+", the "+.@intro$+" of the Cat Paw Merchant Guild.";
+	mes "I consult about investments for the Abyss Gate development.";
+	mes "How may I help you?";
+	next;
+	switch(select("What is the Abyss Gate?:Investing in the gate development?:I want to invest in this area.:Cancel")) {
+	case 1:
+		mes .@n$;
+		mes "It is only called the Abyss Gate for convenience but it's simply a ^4d4dffgap to another dimension^000000.";
+		next;
+		mes .@n$;
+		mes "More of these gaps are found here and there after Morocc created the Crack of Dimension.";
+		mes "I personally think that the Abyss Gate found recently is part of the past or even from the future.";
+		next;
+		mes .@n$;
+		mes "It is said that the Abyss Gate forcefully connects to another dimension beyond our world.";
+		mes "Probably because there are those that follow the Emperium's power.";
+		next;
+		mes .@n$;
+		mes "There are a total of 4 Abyss Gates found so far. They all connect to the Agit region overflowing with the Emperium's force.";
+		next;
+		mes .@n$;
+		mes "We named each by dimension beyond the gap.";
+		mes "^4d4dffWay of the Warrior, Hill of the Dead, Winds of the Ancient, and the Hero's Tears.^000000";
+		mes "And all these four gaps are called the ^4d4dffAbyss Gate^000000.";
+		next;
+		mes .@n$;
+		mes "The gap may lead to the past, future or even an unknown world.";
+		mes "The power the Abyss Gate holds is both fearful but sweet";
+		next;
+		mes .@n$;
+		mes "Are you also interested in exploring the Abyss Gate?";
+		mes "Ha ha. You'll need to go through several steps before exploring.";
+		next;
+		mes .@n$;
+		mes "If you are interested,";
+		mes "will you take the time to sit down and talk about investing in maintaining the Abyss Gate?";
+		close;
+	case 2:
+		mes .@n$;
+		mes "Are you curious about investing in the Gate development?";
+		mes "What do you want to know about?";
+		next;
+		switch(select("About the Gate?:About investments?:How to invest?:Benefits from investing?")) {
+		case 1:
+			mes .@n$;
+			mes "The Gate is what it is named after, a door.";
+			mes "A dimensional passageway that connects here to there.";
+			next;
+			mes .@n$;
+			mes "The Abyss Gate was created as a very unstable path from beyond the dimensional gap,";
+			mes "therefore traveling through the Gate will need an artificial dimension connection.";
+			next;
+			mes .@n$;
+			mes "Humans are far from having the advanced technology that's needed";
+			mes "but our Cat Paw Merchant Guild holds the high technology to use the Crack of Dimension.";
+			next;
+			mes .@n$;
+			mes "So we made a proposal.";
+			mes "With the promise of support the Cat Paw Merchant Guild and paying for the immense expense for maintaining the connection with the Gate,";
+			mes "we will make the connection to the Crack of Dimension.";
+			next;
+			mes .@n$;
+			mes "Of course working on the Crack of Dimension is no easy job and it does come with risks.";
+			mes "There are cases where people go missing from traveling between.";
+			next;
+			mes .@n$;
+			mes "The best maintaining duration is about 4 days";
+			mes "You invest in us and we create the door that connects to the dimensional gap.";
+			next;
+			mes .@n$;
+			mes "Doesn't this sound like the perfect win-win proposal?";
+			close;
+		case 2:
+			mes .@n$;
+			mes "Forcing through the unstable dimensional gap and creating a passageway is very dangerous.";
+			mes "Not to mention the huge resources needed.";
+			next;
+			mes .@n$;
+			mes "If you take care of the charges and also the danger pay by investing in the Cat Paw Merchant Guild,";
+			mes "we'll create and maintain the gate regardless of the risks.";
+			next;
+			mes .@n$;
+			mes "But then of course the money involved for the gate costs will be extreme.";
+			mes "It will be easy if you can find investors to share the amount.";
+			next;
+			mes .@n$;
+			mes "There is a basic charge to start connecting the gate.";
+			mes "Results depend on the how much investment money is collected.";
+			next;
+			mes .@n$;
+			mes "The Abyss Gate exists in each Agit region.";
+			mes "Can you imagine how much money and sacrifice our guild will have to go through to develop in all areas?";
+			next;
+			mes .@n$;
+			mes "This explains the regional competition in investments.";
+			mes "If not enough gate maintenance costs are collected then it is obvious the region with the most investments will receive the benefits";
+			next;
+			mes .@n$;
+			mes "If ^4d4dffthe Abyss Gate is successfully connected then the dungeon of the hideout area";
+			mes "will be open to others instead of being guild exclusive^000000 which will be very attractive for investment.";
+			next;
+			mes .@n$;
+			mes "But then again, this is only for when the gate is connected.";
+			close;
+		case 3:
+			mes .@n$;
+			mes "It's simple.";
+			mes "Visit the branch manager of the ^4d4dffregion you want to invest in during the investment duration^000000 and make your investment.";
+			next;
+			mes .@n$;
+			mes "We usually receive ^4d4dffthe common currency here, Zeny^000000.";
+			mes "But since we're talking about supporting our Cat Paw Merchant Guild, you can also invest with items in demand in Malangdo.";
+			next;
+			mes .@n$;
+			mes "Provide the items in need to Namis in Malangdo who is in charge of general affairs in our guild.";
+			mes "Bring back your Investment Certificate to add it to the investment tribute.";
+			next;
+			mes .@n$;
+			mes "You must visit and invest at the region you want in order for your investment to be counted as a tribute.";
+			close;
+		case 4:
+			mes .@n$;
+			mes "The Abyss Gate is basically contracting and connecting with the castle that owns the Agit;";
+			mes "therefore, we will provide all we have once the costs for connecting and maintaining the gate are sufficient.";
+			next;
+			mes .@n$;
+			mes "In terms of the minimum and maximum costs for the whole work,";
+			mes "if the collected investment ^4d4dffexceeds the minimum costs^000000, we can connect you to the ^4d4dffdeepest layer of an unknown guild dungeon^000000.";
+			next;
+			mes .@n$;
+			mes "If investments exceed the maximum costs, that region will be connected to the";
+			mes "^4d4dffAbyss Gate^000000 regardless of the investment rank which includes the deepest layer of the guild dungeon.";
+			next;
+			mes .@n$;
+			mes "^ff0000If there is no Agit region that reached the maximum investment, then the region with the";
+			mes "highest investment participation will get the Abyss Gate connected with the investment collected from all regions.^000000";
+			next;
+			mes .@n$;
+			mes "Once the Abyss Gate is connected, the deepest layer (2F) of the guild dungeon";
+			mes "will be open to all adventurers that participated in the regional investment.";
+			next;
+			mes .@n$;
+			mes "Visits to the dungeon will be counted for the next investment for the Agit region";
+			mes "so being in good terms with the guild that claims the Agit castle will be a bonus.";
+			next;
+			mes .@n$;
+			mes "By the way, it isn't easy to maintain the connection with the Abyss Gate and investments and reconnection is needed weekly";
+			mes "so please continue your support and investment if you want the power of the unknown.";
+			close;
+		}
+	case 3:
+		if (checkweight(1201,1) == 0 || MaxWeight - Weight < 1000) {
+			mes "- Currently you're carrying -";
+			mes "- too many items with you. -";
+			mes "- Please try again after you -";
+			mes "- lose some weight. -";
+			close;
+		}
+		if (countitem(6488) >= 4800) {
+			mes .@n$;
+			mes "You have too many Thank You Tickets to receive any more.";
+			mes "Cannot give you any more tickets. Please use your ticket and come back.";
+			mes "The ticket can be exchanged with various items in Malangdo.";
+			close;
+		}
+		if (callfunc("F_Invest_Status") != 1) {
+			mes .@n$;
+			mes "We do not receive investments now.";
+			mes "Please come back during the investment duration.";
+			close;
+		}
+		set .@guild, getcharid(2);
+		for(set .@i,1; .@i<=5; set .@i,.@i+1) {
+			set .@castle_name$[.@i], getcastlename(.@npc$+"g_cas0"+.@i);
+			set .@owner_id[.@i], getcastledata(.@npc$+"g_cas0"+.@i,CD_GUILD_ID);
+			set .@owner_name$[.@i], getguildname(.@owner_id[.@i]);
+			if (.@guild == .@owner_id[.@i]) {
+				set .@menu$, .@menu$+.@castle_name$[.@i]+" ["+.@owner_name$[.@i]+"] Guild:";
+				set .@castles_owned, .@castles_owned | (1<<.@i);
+			} else
+				set .@menu$, .@menu$+"^aaaaaaNot the guild that claimed "+.@castle_name$[.@i]+"^000000:";
+		}
+		mes .@n$;
+		mes "Would you like to invest in the ^4d4dff"+.@realm$+"^000000 region?";
+		mes "If there is a castle occupied already, you will invest in the castle and the guild that is occupying it.";
+		next;
+		if (.@castles_owned) {
+			set .@i, select(.@menu$+"Cancel");
+			if (.@i == 6) {
+				mes .@n$;
+				mes "Canceled.";
+				close;
+			}
+			if (.@guild != .@owner_id[.@i]) {
+				mes .@n$;
+				mes "The guild that is occupying "+.@castle_name$[.@i]+" is "+.@owner_name$[.@i]+".";
+				mes "Doesn't look like your guild.";
+				close;
+			}
+			mes .@n$;
+			mes "Invest under "+.@castle_name$[.@i]+"'s"+.@owner_name$[.@i]+" guild name.";
+			callfunc "F_Invest_Abyss","$fund_"+.@npc$+"0"+.@i,.@n$;
+			end;
+		} else {
+			mes .@n$;
+			callfunc "F_Invest_Abyss","$fund_"+.@npc$+"_extra",.@n$," for "+.@realm$;
+			end;
+		}
+	case 4:
+		mes .@n$;
+		mes "Is that so?";
+		mes "Please come back whenever you are interested in investing in the Abyss Gate development.";
+		close;
+	}
+}
+
+-	script	Gate Manager#realm	-1,{
+
+	if (compare(strnpcinfo(4),"alde")) {
+		set .@npc$,"alde";
+		set .@name$,"Alkor";
+		set .@gate$,"Hero's Tears";
+		set .@realm$,"Luina";
+	} else if (compare(strnpcinfo(4),"gef")) {
+		set .@npc$,"gef";
+		set .@name$,"Mizar";
+		set .@gate$,"Hill of the Dead";
+		set .@realm$,"Britoniah";
+	} else if (compare(strnpcinfo(4),"pay")) {
+		set .@npc$,"pay";
+		set .@name$,"Alkaid";
+		set .@gate$,"Winds of the Ancient";
+		set .@realm$,"Greenwood Lake";
+	} else if (compare(strnpcinfo(4),"prt")) {
+		set .@npc$,"prt";
+		set .@name$,"Arios";
+		set .@gate$,"Way of the Warrior";
+		set .@realm$,"Valkyrie Realm";
+	}
+	set .@n$,"["+.@name$+"]";
+
+	if (callfunc("F_Invest_Status") != 3) {
+		mes .@n$;
+		mes "There are currently no connected dungeon gates.";
+		close;
+	}
+	set .@status, getd("$"+.@npc$+"_invest_result");
+	if (.@status == 3) {
+		mes .@n$;
+		mes "We've successfully connected the Abyss Gate ["+.@gate$+"] with the help from your investment.";
+		mes "The Agit dungeon will be open to everyone with a small entrance fee in "+.@realm$+".";
+		next;
+		mes .@n$;
+		mes "Please visit as often as possible since the entrance fee is saved as an investment for the region.";
+		mes "Do you want to enter the Agit dungeon?";
+		next;
+		set .@i, select(.@realm$+" Dungeon 1F - 10000z:"+.@realm$+" Dungeon 2F - 10000z:Cancel");
+		if (.@i == 3) {
+			mes .@n$;
+			mes "Canceled.";
+			close;
+		}
+		if (Zeny < 10000) {
+			mes .@n$;
+			mes "I'm collecting a small entrance fee.";
+			mes "Your contribution will be saved for the next investment.";
+			mes "Entrance fee is 10000z.";
+			close;
+		}
+		mes .@n$;
+		mes "I'm sending you to the "+.@realm$+" Agit Dungeon "+.@i+"F.";
+		set Zeny, Zeny-10000;
+		setd "$fund_"+.@npc$+"_extra", getd("$fund_"+.@npc$+"_extra") + 1;
+		close2;
+		if (compare(strnpcinfo(2),"alde"))
+			warp "gld_dun02"+((.@i == 2)?"_2":""),32,122;

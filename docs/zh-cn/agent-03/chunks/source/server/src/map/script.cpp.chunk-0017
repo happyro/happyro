@@ -1,0 +1,500 @@
+			return SCRIPT_CMD_FAILURE;
+		}
+		nameid = id->nameid;
+	} else {
+		nameid = script_getnum(st, 2);
+
+		id = item_db.find( nameid );
+
+		if( id == nullptr ){
+			ShowError("buildin_rentitem2: Nonexistant item %u requested.\n", nameid);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	int32 seconds = script_getnum(st,3);
+	int32 iden = script_getnum(st,4);
+	int32 ref = script_getnum(st,5);
+	int32 attr = script_getnum(st,6);
+
+	if (id->type==IT_WEAPON || id->type==IT_ARMOR || id->type==IT_SHADOWGEAR) {
+		if(ref > MAX_REFINE)
+			ref = MAX_REFINE;
+	}
+	else if (id->type==IT_PETEGG) {
+		iden = 1;
+		ref = 0;
+	}
+	else {
+		iden = 1;
+		ref = attr = 0;
+	}
+
+	t_itemid c1 = script_getnum(st,7);
+	t_itemid c2 = script_getnum(st,8);
+	t_itemid c3 = script_getnum(st,9);
+	t_itemid c4 = script_getnum(st,10);
+
+	struct item it = {};
+
+	it.nameid = nameid;
+	it.identify = iden;
+	it.refine = ref;
+	it.attribute = attr;
+	it.card[0] = c1;
+	it.card[1] = c2;
+	it.card[2] = c3;
+	it.card[3] = c4;
+	it.expire_time = (uint32)(time(nullptr) + seconds);
+	it.bound = BOUND_NONE;
+
+	if (funcname[strlen(funcname)-1] == '3') {
+		bool res = script_getitem_randomoption(st, sd, &it, funcname, 11);
+		if (!res)
+			return SCRIPT_CMD_FAILURE;
+	}
+	else if (funcname[strlen(funcname)-1] == '4') {
+		bool res = script_getitem_randomoption(st, sd, &it, funcname, 12);
+		if (!res)
+			return SCRIPT_CMD_FAILURE;
+
+		int32 grade = script_getnum(st, 11);
+		if (grade < ENCHANTGRADE_NONE || grade > MAX_ENCHANTGRADE) {
+			ShowError("buildin_rentitem2: Not a correct grade! Grade=%d\n", grade);
+			return SCRIPT_CMD_FAILURE;
+		}
+		it.enchantgrade = static_cast<e_enchantgrade>(grade);
+	}
+
+	unsigned char flag = 0;
+
+	if( (flag = pc_additem(sd, &it, 1, LOG_TYPE_SCRIPT)) ) {
+		clif_additem(sd, 0, 0, flag);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * gets an item with someone's name inscribed [Skotlex]
+ * getinscribeditem item_num, character_name
+ * Returned Qty is always 1, only works on equip-able
+ * equipment
+ *------------------------------------------*/
+BUILDIN_FUNC(getnameditem)
+{
+	t_itemid nameid;
+	struct item item_tmp;
+	TBL_PC *sd, *tsd;
+
+	if (!script_rid2sd(sd))
+	{	//Player not attached!
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if( script_isstring(st, 2) ){
+		const char *name = script_getstr(st, 2);
+		std::shared_ptr<item_data> item_data = item_db.searchname( name );
+
+		// Failed
+		if( item_data == nullptr){
+			script_pushint(st,0);
+			return SCRIPT_CMD_SUCCESS;
+		}
+		nameid = item_data->nameid;
+	}else
+		nameid = script_getnum(st, 2);
+
+	if(!item_db.exists(nameid)/* || itemdb_isstackable(nameid)*/)
+	{	//Even though named stackable items "could" be risky, they are required for certain quests.
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if( script_isstring(st, 3) )	//Char Name
+		tsd = map_nick2sd(script_getstr(st, 3),false);
+	else	//Char Id was given
+		tsd = map_charid2sd(script_getnum(st, 3));
+
+	if( tsd == nullptr )
+	{	//Failed
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	memset(&item_tmp,0,sizeof(item_tmp));
+	item_tmp.nameid=nameid;
+	item_tmp.amount=1;
+	item_tmp.identify=1;
+	item_tmp.card[0]=CARD0_CREATE; //we don't use 255! because for example SIGNED WEAPON shouldn't get TOP10 BS Fame bonus [Lupus]
+	item_tmp.card[2]=GetWord(tsd->status.char_id,0);
+	item_tmp.card[3]=GetWord(tsd->status.char_id,1);
+	if(pc_additem(sd,&item_tmp,1,LOG_TYPE_SCRIPT)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;	//Failed to add item, we will not drop if they don't fit
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * gets a random item ID from an item group [Skotlex]
+ * groupranditem <group_num>{,<sub_group>};
+ *------------------------------------------*/
+BUILDIN_FUNC(grouprandomitem) {
+	int32 sub_group = 1;
+
+	FETCH(3, sub_group);
+	std::shared_ptr<s_item_group_entry> entry = itemdb_group.get_random_entry(script_getnum(st,2),sub_group);
+	if (!entry) {
+		ShowError("buildin_grouprandomitem: Invalid item group with group_id '%d', sub_group '%d'.\n", script_getnum(st,2), sub_group);
+		script_pushint(st,UNKNOWN_ITEM_ID);
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st,entry->nameid);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+* makeitem <item id>,<amount>,"<map name>",<X>,<Y>{,<canShowEffect>};
+* makeitem "<item name>",<amount>,"<map name>",<X>,<Y>{,<canShowEffect>};
+*/
+BUILDIN_FUNC(makeitem) {
+	t_itemid nameid;
+	uint16 amount, flag = 0, x, y;
+	const char *mapname;
+	int32 m;
+	struct item item_tmp;
+	bool canShowEffect = false;
+
+	if( script_isstring(st, 2) ){
+		const char *name = script_getstr(st, 2);
+		std::shared_ptr<item_data> item_data = item_db.searchname( name );
+
+		if( item_data )
+			nameid = item_data->nameid;
+		else{
+			ShowError( "buildin_makeitem: Unknown item %s\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	else {
+		int32 val = script_getnum( st, 2 );
+
+		if( val < 0 ){
+			flag = 1;
+			nameid = (t_itemid)( -1 * val );
+		}else{
+			nameid = (t_itemid)val;
+		}
+
+		if( !item_db.exists( nameid ) ){
+			ShowError( "buildin_makeitem: Unknown item id %u\n", nameid );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	amount = script_getnum(st,3);
+	mapname	= script_getstr(st,4);
+	x = script_getnum(st,5);
+	y = script_getnum(st,6);
+
+	if (script_hasdata(st, 7))
+		canShowEffect = script_getnum(st, 7) != 0;
+
+	if (strcmp(mapname, "this")==0) {
+		TBL_PC *sd;
+		if (!script_rid2sd(sd))
+			return SCRIPT_CMD_SUCCESS; //Failed...
+		m = sd->m;
+	} else
+		m = map_mapname2mapid(mapname);
+
+	memset(&item_tmp,0,sizeof(item_tmp));
+	item_tmp.nameid = nameid;
+	if (!flag)
+		item_tmp.identify = 1;
+	else
+		item_tmp.identify = itemdb_isidentified(nameid);
+
+	map_addflooritem(&item_tmp, amount, m, x, y, 0, 0, 0, 4, 0, canShowEffect);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * makeitem2 <item id>,<amount>,"<map name>",<X>,<Y>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<canShowEffect>};
+ * makeitem2 "<item name>",<amount>,"<map name>",<X>,<Y>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<canShowEffect>};
+ *
+ * makeitem3 <item id>,<amount>,"<map name>",<X>,<Y>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<canShowEffect>};
+ * makeitem3 "<item name>",<amount>,"<map name>",<X>,<Y>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<canShowEffect>};
+ *
+ * makeitem4 <item id>,<amount>,"<map name>",<X>,<Y>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<canShowEffect>};
+ * makeitem4 "<item name>",<amount>,"<map name>",<X>,<Y>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<canShowEffect>};
+ */
+BUILDIN_FUNC(makeitem2) {
+	t_itemid nameid;
+	const char *funcname = script_getfuncname(st);
+
+	if( script_isstring( st, 2 ) ){
+		const char *name = script_getstr( st, 2 );
+		std::shared_ptr<item_data> item_data = item_db.searchname( name );
+
+		if( item_data ){
+			nameid = item_data->nameid;
+		}else{
+			ShowError( "buildin_%s: Unknown item %s\n", funcname, name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else{
+		nameid = (t_itemid)script_getnum( st, 2 );
+
+		if( !item_db.exists( nameid ) ){
+			ShowError( "buildin_%s: Unknown item id %u\n", funcname, nameid );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	int32 amount = script_getnum(st,3);
+	const char *mapname	= script_getstr(st,4);
+	int32 x = script_getnum(st,5);
+	int32 y = script_getnum(st,6);
+	int32 m;
+
+	if (strcmp(mapname,"this")==0) {
+		TBL_PC *sd;
+		if (!script_rid2sd(sd))
+			return SCRIPT_CMD_SUCCESS; //Failed...
+		m = sd->m;
+	}
+	else
+		m = map_mapname2mapid(mapname);
+	
+	struct item_data *id;
+
+	if ((id = itemdb_search(nameid))) {
+		struct item item_tmp = {};
+
+		item_tmp.nameid = nameid;
+
+		char iden = (char)script_getnum(st,7);
+		char ref = (char)script_getnum(st,8);
+		char attr = (char)script_getnum(st,9);		
+
+		if (id->type==IT_WEAPON || id->type==IT_ARMOR || id->type==IT_SHADOWGEAR) {
+			if(ref > MAX_REFINE)
+				ref = MAX_REFINE;
+		}
+		else if (id->type==IT_PETEGG) {
+			iden = 1;
+			ref = 0;
+		}
+		else {
+			iden = 1;
+			ref = attr = 0;
+		}
+
+		item_tmp.identify = iden;
+		item_tmp.refine = ref;
+		item_tmp.attribute = attr;
+		item_tmp.card[0] = script_getnum(st,10);
+		item_tmp.card[1] = script_getnum(st,11);
+		item_tmp.card[2] = script_getnum(st,12);
+		item_tmp.card[3] = script_getnum(st,13);
+
+		bool canShowEffect = false;
+
+		if (funcname[strlen(funcname)-1] == '3' || funcname[strlen(funcname)-1] == '4') {
+			int32 offset = 14;
+
+			if (funcname[strlen(funcname)-1] == '4') {
+				offset = 15;
+
+				int32 grade = script_getnum(st, 14);
+				if (grade < ENCHANTGRADE_NONE || grade > MAX_ENCHANTGRADE) {
+					ShowError( "buildin_%s: Not a correct grade! Grade=%d\n", funcname, grade );
+					return SCRIPT_CMD_FAILURE;
+				}
+				item_tmp.enchantgrade = static_cast<e_enchantgrade>(grade);
+			}
+
+			bool res = script_getitem_randomoption(st, nullptr, &item_tmp, funcname, offset);
+			if (!res)
+				return SCRIPT_CMD_FAILURE;
+
+			if (script_hasdata(st, offset+3)) {
+				if (script_getnum(st, offset+3) != 0)
+					canShowEffect = script_getnum(st, offset+3) != 0;
+			}
+		}
+		else {
+			if (script_hasdata(st, 14)) {
+				if (script_getnum(st, 14) != 0)
+					canShowEffect = script_getnum(st, 14) != 0;
+			}
+		}
+
+		map_addflooritem(&item_tmp, amount, m, x, y, 0, 0, 0, 4, 0, canShowEffect);
+	}
+	else
+		return SCRIPT_CMD_FAILURE;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Counts / deletes the current item given by idx.
+/// Used by buildin_delitem_search
+/// Relies on all input data being already fully valid.
+static void buildin_delitem_delete(map_session_data* sd, int32 idx, int32* amount, uint8 loc, bool delete_items)
+{
+	int32 delamount;
+	struct item *itm = nullptr;
+	struct s_storage *gstor = nullptr;
+
+	switch(loc) {
+		case TABLE_CART:
+			itm = &sd->cart.u.items_cart[idx];
+			break;
+		case TABLE_STORAGE:
+			itm = &sd->storage.u.items_storage[idx];
+			break;
+		case TABLE_GUILD_STORAGE:
+		{
+			gstor = guild2storage2(sd->status.guild_id);
+
+			itm = &gstor->u.items_guild[idx];
+		}
+			break;
+		default: // TABLE_INVENTORY
+			itm = &sd->inventory.u.items_inventory[idx];
+			break;
+	}
+
+	delamount = ( amount[0] < itm->amount ) ? amount[0] : itm->amount;
+
+	if( delete_items )
+	{
+		if( itemdb_type(itm->nameid) == IT_PETEGG && itm->card[0] == CARD0_PET )
+		{// delete associated pet
+			intif_delete_petdata(MakeDWord(itm->card[1], itm->card[2]));
+		}
+		switch(loc) {
+			case TABLE_CART:
+				pc_cart_delitem(sd,idx,delamount,0,LOG_TYPE_SCRIPT);
+				break;
+			case TABLE_STORAGE:
+				storage_delitem(sd,&sd->storage,idx,delamount);
+				log_pick_pc(sd,LOG_TYPE_SCRIPT,-delamount,itm);
+				break;
+			case TABLE_GUILD_STORAGE:
+				gstor->lock = true;
+				storage_guild_delitem(sd, gstor, idx, delamount);
+				log_pick_pc(sd, LOG_TYPE_SCRIPT, -delamount, itm);
+				storage_guild_storageclose(sd);
+				gstor->lock = false;
+				break;
+			default: // TABLE_INVENTORY
+				pc_delitem(sd, idx, delamount, 0, 0, LOG_TYPE_SCRIPT);
+				break;
+		}
+	}
+
+	amount[0]-= delamount;
+}
+
+
+/// Searches for item(s) and checks, if there is enough of them.
+/// Used by delitem and delitem2
+/// Relies on all input data being already fully valid.
+/// @param exact_match will also match item by specified attributes
+///   0x0: Only item id
+///   0x1: identify, attributes, cards
+///   0x2: random option
+/// @return true when all items could be deleted, false when there were not enough items to delete
+static bool buildin_delitem_search(map_session_data* sd, struct item* it, uint8 exact_match, uint8 loc)
+{
+	bool delete_items = false;
+	int32 i, amount, size;
+	struct item *items;
+
+	// prefer always non-equipped items
+	it->equip = 0;
+
+	// when searching for nameid only, prefer additionally
+	if( !exact_match )
+	{
+		// non-refined items
+		it->refine = 0;
+		// card-less items
+		memset(it->card, 0, sizeof(it->card));
+	}
+
+	switch(loc) {
+		case TABLE_CART:
+			size = MAX_CART;
+			items = sd->cart.u.items_cart;
+			break;
+		case TABLE_STORAGE:
+			size = MAX_STORAGE;
+			items = sd->storage.u.items_storage;
+			break;
+		case TABLE_GUILD_STORAGE:
+		{
+			struct s_storage *gstor = guild2storage2(sd->status.guild_id);
+
+			size = MAX_GUILD_STORAGE;
+			items = gstor->u.items_guild;
+		}
+			break;
+		default: // TABLE_INVENTORY
+			size = MAX_INVENTORY;
+			items = sd->inventory.u.items_inventory;
+			break;
+	}
+
+	for(;;)
+	{
+		uint16 important = 0;
+		amount = it->amount;
+
+		// 1st pass -- less important items / exact match
+		for( i = 0; amount && i < size; i++ )
+		{
+			struct item *itm = nullptr;
+
+			if( !&items[i] || !(itm = &items[i])->nameid || itm->nameid != it->nameid )
+			{// wrong/invalid item
+				continue;
+			}
+
+			if( itm->equip != it->equip || itm->refine != it->refine )
+			{// not matching attributes
+				important++;
+				continue;
+			}
+
+			if( exact_match )
+			{
+				if( (exact_match&0x1) && ( itm->identify != it->identify || itm->attribute != it->attribute || itm->enchantgrade != it->enchantgrade || memcmp(itm->card, it->card, sizeof(itm->card)) ) )
+				{// not matching exact attributes
+					continue;
+				}
+				if (exact_match&0x2) {
+					uint8 j;
+					for (j = 0; j < MAX_ITEM_RDM_OPT; j++) {
+						if (itm->option[j].id != it->option[j].id || itm->option[j].value != it->option[j].value || itm->option[j].param != it->option[j].param)
+							break;
+					}
+					if (j != MAX_ITEM_RDM_OPT)
+						continue;
+				}
+			}
+			else
+			{
+				if( itemdb_type(itm->nameid) == IT_PETEGG )
+				{
+					if( itm->card[0] == CARD0_PET && CheckForCharServer() )
+					{// pet which cannot be deleted
+						continue;
+					}

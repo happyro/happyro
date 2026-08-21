@@ -1,0 +1,500 @@
+/**
+ * Renderer/GR2/GR2ModelRenderer.js
+ *
+ * GPU-skinned Granny3D (.gr2) model renderer for on-map 3dmob actors (guild flag,
+ * Emperium, guardians). Ported from the sandbox robrowser render path
+ * (re-ro-clients-asm/sandbox/src/subsystems/gr2/draw-gpu-robrowser.js) to roBrowser
+ * conventions, consuming Loaders/GR2Loader.js.
+ *
+ * Architecture:
+ *   - Per-TYPE resource cache (key = gr2 path): one VBO/IBO/VAO/textures/skeleton/parsed
+ *     per type, refcounted. N instances carry only { world, actor, animIndex, t }.
+ *   - 40 Hz pose cache: poseAt is recomputed on the rag tick, keyed
+ *     (path, animIndex, quantize(t, 1/40)). Same-type / same-phase instances collapse to
+ *     one poseAt; culled/absent instances never pose.
+ *   - Bones: mat4 uBones[48] uniform + one draw per submesh per instance.
+ *
+ * Wired at the AnimatedModels seam of MapRenderer.onRender, wrapped in
+ * SpriteRenderer.runWithDepth(true, true, true). Each instance frustum-culls on its ground anchor
+ * before posing (see frustumCullClip in render()). Drive it from the /api.html console via
+ * window.RO.load('Renderer/GR2/GR2ModelRenderer'): RO.spawn(path, {pos, dir, action}).
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ */
+
+import Client from 'Core/Client.js';
+import glMatrix from 'Utils/gl-matrix.js';
+import WebGL from 'Utils/WebGL.js';
+import SpriteRenderer from 'Renderer/SpriteRenderer.js';
+import Session from 'Engine/SessionStorage.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import FlatColorTile from 'Renderer/Effects/FlatColorTile.js';
+import GR2Loader from 'Loaders/GR2Loader.js';
+import { poseAt, parseAnimated } from 'granny-ro-js/wasm';
+import {
+	packRobrowserInterleave,
+	flattenPose,
+	poseCacheKey,
+	quantizePoseTime,
+	gr2ActionFor,
+	frustumCullClip,
+	POSE_HZ
+} from './gr2Pack.js';
+import { buildWorld, computeGroundOffset } from './gr2World.js';
+import { createActor, setAction, actorPose, ACTION } from './actorAction.js';
+import { bankPathsFor } from './gr2Banks.js';
+// The `?raw` shader imports and the `granny-ro-js/wasm` subpath (line 33) resolve in
+// production too: the builder (applications/tools/builder-web.mjs) drives Vite's `build()`,
+// so it runs the same Rollup pipeline as dev -- `?raw` is a first-class transform (already
+// used pervasively for UI .css/.html) and the wasm entry is a plain ESM module with the
+// binary base64-inlined (atob + WebAssembly.instantiate, no separate .wasm / fetch). Verified
+// via `npm run build`: poseAt + WebAssembly.instantiate land in dist/Web/Online.js.
+import _vertexShader from './GR2Model.vs?raw';
+import _fragmentShader from './GR2Model.fs?raw';
+
+const mat3 = glMatrix.mat3;
+const mat4 = glMatrix.mat4;
+
+/**
+ * Phase-0 grayscale directional lighting (gr2-lighting-shadow-mars26.md): intensity
+ * 128/255, ambient floor 127/255, no env tint, full directional opacity. No uShadow cell
+ * scalar, no shadow blob.
+ */
+const ALPHA_REF = 207 / 255;
+const _phaseDiffuse = new Float32Array([128 / 255, 128 / 255, 128 / 255]);
+const _phaseAmbient = new Float32Array([127 / 255, 127 / 255, 127 / 255]);
+const _phaseEnv = new Float32Array([1, 1, 1]);
+
+/**
+ * Byte-decided per-model lighting (gr2-lighting-shadow-mars26.md §6): the client shades each GR2
+ * with a fixed grayscale diffuse/ambient keyed on the model, NOT the map light. Two constant sets
+ * (dispatch is exhaustive — flag vs. everything else). Values ÷255 from the client bytes; the
+ * Emperium set numerically equals the Phase-0 grays but encodes a distinct byte fact, so it is
+ * named on its own. Keyed on the .gr2 basename — dev-spawned instances have no entity, so the
+ * basename is the only universal key.
+ */
+const _gr2FlagDiffuse = new Float32Array([100 / 255, 100 / 255, 100 / 255]); // 0.392
+const _gr2EmpDiffuse = new Float32Array([128 / 255, 128 / 255, 128 / 255]); // 0.502
+const _gr2EmpAmbient = new Float32Array([127 / 255, 127 / 255, 127 / 255]); // 0.498
+const _gr2FlagAmbient = new Float32Array(3); // scratch: per-frame grayscale of the map ambient
+// ── Supported GR2 3D roster ──────────────────────────────────────────────────────────────────
+// The complete set of .gr2 models the client renders in 3D, keyed by lowercase basename. This is
+// the single source of truth: it drives BOTH isSupported() (below) and the per-model lighting
+// dispatch in render(). A monster/NPC whose body resolves to a .gr2 NOT listed here (dragon_5,
+// Hugeling90_6, or any future model) has no decode/lighting path, so the Entity layer substitutes
+// a 2D Poring sprite instead of an invisible actor (see EntityView.UpdateBody -> isSupported).
+//
+// To add a model: add ONE line below with its lighting profile. That single edit enrols it in the
+// 3D path (isSupported turns true) AND selects its shading (render() reads the profile value).
+//   'flag' -> ambient runtime-tinted off the map light (guild flag only)
+//   'emp'  -> fixed byte-decided grayscale diffuse/ambient (gr2-lighting-shadow-mars26.md §6)
+//   'map'  -> plain map light (default profile; no model uses it yet)
+const GR2_ROSTER = {
+	guildflag90_1: 'flag', // Guild flag
+	empelium90_0: 'emp', // Emperium
+	kguardian90_7: 'emp', // Knight guardian
+	aguardian90_8: 'emp', // Archer guardian
+	sguardian90_9: 'emp', // Soldier guardian
+	treasurebox_2: 'emp' // Treasure box
+};
+
+// Lowercased .gr2 basename (no dir, no extension) — the per-model lighting key.
+function gr2Basename(path) {
+	const cut = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+	const dot = path.lastIndexOf('.');
+	return path.slice(cut + 1, dot > cut ? dot : path.length).toLowerCase();
+}
+
+// Collapse a map-light color to one grayscale scalar (Rec.601 luma), broadcast R=G=B. Stand-in for
+// the flag's runtime scene-global ambient (0xef90f4, no static byte). VISUAL-UNVERIFIED — swap to a
+// flat average if the in-engine A/B wants it flatter.
+function grayBroadcast(src, out) {
+	const g = 0.299 * src[0] + 0.587 * src[1] + 0.114 * src[2];
+	out[0] = out[1] = out[2] = g;
+	return out;
+}
+
+let _program = null;
+
+// GL context cached from render() so detach() can free per-instance emblem textures off-frame.
+// Safe to cache: roBrowser uses one persistent WebGL context, _gl is re-assigned every render()
+// (never nulled), and if the context is ever lost the engine pauses rendering (Renderer.onContextLost)
+// -- a deleteTexture on a lost context is a spec no-op and the GPU has already freed everything, so
+// a "stale" _gl can neither crash nor leak. Not a dangling-context hazard.
+let _gl = null;
+
+// Per-type resource cache (key = gr2 path).
+let _types = {};
+
+// Negative cache: gr2 paths that 404'd on fetch (absent from the GRF). Populated in acquire's
+// onError; consumed by isMissing() so the Entity path falls back to a Poring sprite instead of
+// rendering nothing. Session-lifetime on purpose -- a missing model stays missing across maps,
+// so free() deliberately does NOT clear it (no re-request, no re-attempt of the dead 3D path).
+// Bounded, not a growing leak: acquire() only ever receives ROSTERED paths (UpdateBody gates on
+// isSupported before this.gr2 is set), so this holds at most one key per roster entry.
+const _missing = {};
+
+// Live instances: { path, world, worldBuilt, actor, dir, pos, standbyIdx, animIndex, t,
+// _lastAction, _lastTick, screenRect, emblemTex, _emblemImg } (+ entity, attached on bind).
+let _instances = [];
+
+// Pose cache — set each frame to only the poses used that frame (bounds memory, keeps the
+// 40 Hz reuse across rAF frames when the quantized bucket is unchanged).
+let _poseCache = {};
+
+// Debug aid: highlight each instance's anchor CELL with a flat tile. The tile marks the cell
+// CENTER (its shader adds +0.5) — the SAME cell centre the model's origin now lands on (worldCore
+// adds RB_PLACEMENT_OFS = +0.5), so tile and pole should COINCIDE; a visible offset between them
+// means a placement regression. Toggle from the dev console (`mod.debugCell = true`); off by
+// default, no gameplay effect.
+const _dbgCellTile = FlatColorTile('gr2_debug_cell', { r: 0.0, g: 1.0, b: 1.0, a: 0.45 });
+const _dbgTileInst = new _dbgCellTile([0, 0, 0]);
+let _dbgCellInited = false;
+let _debugCell = false;
+
+// GR2 pick-box geometry — TWO modes, switched at the call site in render() by commenting (no
+// runtime flag). The client hit-tests a base bounding-SPHERE, NOT the model AABB (fcn.006852e0):
+//   sphere centre (0,0,0) = model base, radius 10.0 client-u (fcn.006800d0.c:202-206).
+//   10 client-u ÷ 5 (roBrowser /5 referential, gr2World.RB_UNIT_SCALE) = 2.0 world-u (cells).
+//   Half-extent = √(r²·0.5) — the client's projected corner offset (fcn.006852e0.c:70-71).
+// These constants feed computeBaseSphereRect (the "sphere" mode), which is the shipped DEFAULT.
+// The alternative is the full model AABB ("tout le drapeau" — whole model hoverable, more generous
+// than the client), switched in at the pick site by commenting.
+// VISUAL-UNVERIFIED: the world-unit radius is a single-constant calibration point (visual gate).
+const BASE_SPHERE_RADIUS = 2.0;
+const BASE_SPHERE_HALF_EXTENT = Math.sqrt(BASE_SPHERE_RADIUS * BASE_SPHERE_RADIUS * 0.5);
+
+// granny-ro-js WASM init (texture pixel decode); shared across all types.
+let _readyPromise = null;
+
+// Scratchpads to evade the GC.
+const _mv = mat4.create();
+const _mvp = mat4.create();
+const _nmat = mat3.create();
+const _lightView = new Float32Array(3);
+const _clip = new Float32Array(4);
+
+// Frustum-cull margin (NDC), padded so a model straddling the screen edge is not clipped
+// by its ground anchor alone.
+const CULL_MARGIN = 0.2;
+
+// Clip-w floor: a projected point with w <= this is on/behind the camera plane, skip it.
+const CLIP_W_EPS = 1e-6;
+
+// RO direction is an 8-way index (0-7); the world yaw wants degrees (45 deg per step).
+const DIR_STEP_DEG = 45;
+
+// Removal-fade toggles — both OFF by default = FAITHFUL. For a genuine 3D (.gr2) actor the
+// official mars26 client instantiates NEITHER the out-of-sight alpha fade NOR the death corpse
+// (CCorpse) — both are 2D-sprite-only; a genuine 3D actor hard-POPS on removal (verified by RE
+// on mars26; no alpha fade-in on spawn either). Our GR2 roster (guardians, Emperium, guild
+// flag, treasure box) IS that 3D set, so popping is correct. Set a toggle true to A/B a
+// roBrowser-parity fade over remove_delay instead (NON-authentic). Exported -> runtime-mutable:
+// RO.load('Renderer/GR2/GR2ModelRenderer').FADE.death.
+//   death  -> the DIE removal        vanish -> the out-of-sight removal
+const FADE = { death: false, vanish: false };
+
+/**
+ * Initialize the shader program.
+ */
+function init(gl) {
+	_program = WebGL.createShaderProgram(gl, _vertexShader, _fragmentShader);
+
+	_program.uniform = {
+		uModelViewMat: gl.getUniformLocation(_program, 'uModelViewMat'),
+		uProjectionMat: gl.getUniformLocation(_program, 'uProjectionMat'),
+		uNormalMat: gl.getUniformLocation(_program, 'uNormalMat'),
+		uBones: gl.getUniformLocation(_program, 'uBones[0]'),
+		uLightDirection: gl.getUniformLocation(_program, 'uLightDirection'),
+		uLightOpacity: gl.getUniformLocation(_program, 'uLightOpacity'),
+		uLightAmbient: gl.getUniformLocation(_program, 'uLightAmbient'),
+		uLightDiffuse: gl.getUniformLocation(_program, 'uLightDiffuse'),
+		uLightEnv: gl.getUniformLocation(_program, 'uLightEnv'),
+		uAlphaRef: gl.getUniformLocation(_program, 'uAlphaRef'),
+		uAlpha: gl.getUniformLocation(_program, 'uAlpha'),
+		uFogUse: gl.getUniformLocation(_program, 'uFogUse'),
+		uFogNear: gl.getUniformLocation(_program, 'uFogNear'),
+		uFogFar: gl.getUniformLocation(_program, 'uFogFar'),
+		uFogColor: gl.getUniformLocation(_program, 'uFogColor'),
+		uDiffuse: gl.getUniformLocation(_program, 'uDiffuse')
+	};
+
+	_program.attribute = {
+		aPosition: gl.getAttribLocation(_program, 'aPosition'),
+		aNormal: gl.getAttribLocation(_program, 'aNormal'),
+		aTextureCoord: gl.getAttribLocation(_program, 'aTextureCoord'),
+		aBoneIndex: gl.getAttribLocation(_program, 'aBoneIndex'),
+		aBoneWeight: gl.getAttribLocation(_program, 'aBoneWeight')
+	};
+}
+
+/**
+ * Free all type GL resources and drop every instance (MapRenderer calls this on map unload).
+ */
+function free(gl) {
+	for (const path in _types) {
+		const type = _types[path];
+		const submeshes = type.submeshes;
+		if (submeshes) {
+			for (let s = 0; s < submeshes.length; s++) {
+				const sm = submeshes[s];
+				gl.deleteVertexArray(sm.vao);
+				gl.deleteBuffer(sm.vbo);
+				gl.deleteBuffer(sm.ibo);
+			}
+		}
+		if (type.textures) {
+			for (const file in type.textures.byFile) {
+				gl.deleteTexture(type.textures.byFile[file]);
+			}
+		}
+	}
+	// Per-instance (per-guild) emblem textures live on the instance, not the type cache.
+	for (let i = 0; i < _instances.length; i++) {
+		if (_instances[i].emblemTex) {
+			gl.deleteTexture(_instances[i].emblemTex);
+		}
+	}
+	_types = {};
+	_instances = [];
+	_poseCache = {};
+	// _program and _gl are intentionally kept (not deleted/nulled): roBrowser uses one persistent
+	// WebGL context across map loads, so the compiled program stays valid and render() reuses it via
+	// the `if (!_program)` guard -- re-init only on a genuinely fresh context. Same pattern as
+	// AnimatedModels.js free(). If context loss/restore ever recreates the GL context, both would
+	// need to reset _program here.
+}
+
+/**
+ * keyGr2Magenta(px) — ASM-faithful gr2 texture transparency. The client keys MAGENTA
+ * 0xFF00FF by zeroing the whole pixel to black + alpha 0 (mars26 fcn.0054e950 / ver12
+ * fcn.00417550). Discarded before the RGB contributes (opaque + hard alpha-test at 207).
+ * A 32-bit source with its own alpha is honoured verbatim.
+ */
+function keyGr2Magenta(px) {
+	for (let i = 3; i < px.length; i += 4) {
+		if (px[i] < 255) {
+			return px;
+		}
+	}
+	const out = new Uint8Array(px);
+	for (let i = 0; i < out.length; i += 4) {
+		if (out[i] >= 248 && out[i + 1] < 8 && out[i + 2] >= 248) {
+			out[i] = out[i + 1] = out[i + 2] = out[i + 3] = 0;
+		}
+	}
+	return out;
+}
+
+// 1x1 fallback pixels. A granny texture that decoded no pixels -> a neutral grey placeholder;
+// a submesh whose texFile matches no embedded texture -> the shared __grey stand-in.
+const TEX_MISSING_PX = new Uint8Array([200, 200, 200, 255]);
+const TEX_GREY_PX = new Uint8Array([180, 180, 185, 255]);
+
+/**
+ * makeTypeTextures(gl, parsed) -> { byFile:{ textureFile -> GLTexture } }. One texture per
+ * embedded granny texture, keyed by its file name (the string a packed mesh carries in
+ * texFile). LINEAR + CLAMP = the client's active sampler 0 (byte-cited).
+ */
+function makeTypeTextures(gl, parsed) {
+	const byFile = {};
+	const list = parsed.textures || [];
+	for (let i = 0; i < list.length; i++) {
+		const t = list[i];
+		const tex = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, tex);
+		if (t && t.pixels) {
+			gl.texImage2D(
+				gl.TEXTURE_2D,
+				0,
+				gl.RGBA,
+				t.width,
+				t.height,
+				0,
+				gl.RGBA,
+				gl.UNSIGNED_BYTE,
+				keyGr2Magenta(t.pixels)
+			);
+		} else {
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, TEX_MISSING_PX);
+		}
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		byFile[t.name] = tex;
+	}
+	const grey = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, grey);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, TEX_GREY_PX);
+	byFile.__grey = grey;
+	gl.bindTexture(gl.TEXTURE_2D, null);
+	return { byFile: byFile };
+}
+
+// A4R4G4B4 4-bit quantize — the client's on-load emblem format (byte-cited fcn.0054e1d0 class-1).
+// Drop each channel to 4 bits then replicate the nibble across the byte (nibble ×0x11: 0..15 -> 0..255).
+const A4_NIBBLE_EXPAND = 0x11;
+function quantize4bit(px) {
+	for (let i = 0; i < px.length; i++) {
+		px[i] = (px[i] >> 4) * A4_NIBBLE_EXPAND;
+	}
+}
+
+// Module-scope scratch canvas reused across emblem uploads (guild/version changes are frequent);
+// created lazily and re-cleared per call by re-setting its size, so no per-change allocation.
+let _emblemCanvas = null;
+
+/**
+ * buildEmblemTexture(gl, img, prevTex) — the live per-guild emblem, POT-padded the way the client
+ * does it. The client requests the emblem 24x24 then rounds it up to the next power-of-two
+ * (32x32, fcn.00529000) with the pixels in the TOP-LEFT corner and the rest transparent, so
+ * UV 0..1 sample the whole 32x32 and the emblem reads at 75% top-left of the Plane01 quad
+ * (~centered, upper third of the banner). The placement IS the POT padding — no geometry recentre.
+ * The transparent [24..31] border is discarded by the shader's hard alpha-test (ALPHA_REF). The
+ * source already passed Texture.load (magenta keyed) in Guild.js, so only the A4R4G4B4 quantize is
+ * applied here. Reuses prevTex on a guild/version change so a re-bind never leaks. LINEAR + CLAMP
+ * = the client's sampler (byte-cited).
+ */
+function buildEmblemTexture(gl, img, prevTex) {
+	const POT = 32,
+		SRC = 24;
+	const cv = _emblemCanvas || (_emblemCanvas = document.createElement('canvas'));
+	// Re-setting the size clears the canvas so a smaller/transparent emblem never leaks prior pixels.
+	cv.width = POT;
+	cv.height = POT;
+	const ctx = cv.getContext('2d', { willReadFrequently: true });
+	ctx.imageSmoothingEnabled = false;
+	ctx.drawImage(img, 0, 0, SRC, SRC);
+	const im = ctx.getImageData(0, 0, POT, POT);
+	quantize4bit(im.data);
+
+	const tex = prevTex || gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, tex);
+	gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, im);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+	gl.bindTexture(gl.TEXTURE_2D, null);
+	return tex;
+}
+
+/**
+ * acquire(path) — refcount a type; on first acquire fetch the .gr2 (worker Thread ->
+ * cyro source) and decode it on the CPU (GL upload is deferred to the first render that
+ * has a gl context). Returns the type entry immediately (empty until decode completes).
+ */
+function acquire(path) {
+	let type = _types[path];
+	if (type) {
+		type.refcount++;
+		return type;
+	}
+
+	const declaredBanks = bankPathsFor(path); // [{ name, path }]
+	type = {
+		path: path,
+		refcount: 1,
+		cpuReady: false,
+		glReady: false,
+		parsed: null,
+		meshes: null,
+		ipRow: undefined,
+		boneCount: 0,
+		duration: 1,
+		submeshes: null,
+		textures: null,
+		// External animation banks (data/model/3dmob_bone/<setId>_<suffix>.gr2) loaded
+		// lazily, prioritised by the current action (see pumpBanks). The main .gr2 gives
+		// the mesh + embedded standby; move/attack/dead/damage stream in on demand.
+		declaredBanks: declaredBanks,
+		bankQueue: declaredBanks.map(b => b.name),
+		bankState: {}, // name -> 'loading' | 'loaded'
+		bankLoading: false
+	};
+	_types[path] = type;
+
+	if (!_readyPromise) {
+		_readyPromise = GR2Loader.ready();
+	}
+	Client.getFile(
+		path,
+		function (buffer) {
+			_readyPromise.then(function () {
+				// The type may have been freed before the async decode returned.
+				if (_types[path] !== type) {
+					return;
+				}
+				try {
+					const loader = new GR2Loader(buffer);
+					type.parsed = loader.parsed;
+					type.meshes = loader.meshes;
+					// ipRow BEFORE groundOffset: grounding must run in the model's real draw frame
+					// (v . ipRow . worldCore) — a non-identity IP (treasurebox 90deg rot, guardian Y
+					// translation) else grounds in the wrong frame and the model floats/sinks/lies flat.
+					type.ipRow = loader.ipRow;
+					type.groundOffset = computeGroundOffset(type.meshes, type.ipRow); // drop the base onto the terrain
+					type.aabb = computeLocalAABB(type.meshes); // local bounds for the screen-space pick box
+					type.boneCount = loader.boneCount;
+					type.duration = loader.duration;
+					type.cpuReady = true;
+				} catch (e) {
+					// Decode threw (unexpected/corrupt buffer): same fate as a 404 -- flag missing so the
+					// Entity path reverts to a Poring sprite instead of an invisible actor, and no re-attempt.
+					// A defensive net only; the rostered models are expected to decode cleanly.
+					_missing[path] = true;
+					console.error('[GR2ModelRenderer] decode failed', path, e);
+				}
+			});
+		},
+		function () {
+			// Absent from the GRF -> flag it so the Entity path substitutes a Poring sprite
+			// (see EntityView.UpdateBody / EntityRender.render). No retry: the flag is permanent.
+			_missing[path] = true;
+			console.warn('[GR2ModelRenderer] failed to fetch', path);
+		}
+	);
+	return type;
+}
+
+// Interleaved vertex layout — MUST mirror gr2Pack.js packRobrowserInterleave (16 floats/vertex,
+// 64-byte stride): position(3), normal(3), uv(2), boneIndex(4), boneWeight(4). Byte offsets are the
+// float offsets (0/3/6/8/12) x4.
+const GR2_VERTEX_STRIDE = 64;
+const GR2_VERTEX_LAYOUT = [
+	{ attr: 'aPosition', size: 3, offset: 0 },
+	{ attr: 'aNormal', size: 3, offset: 12 },
+	{ attr: 'aTextureCoord', size: 2, offset: 24 },
+	{ attr: 'aBoneIndex', size: 4, offset: 32 },
+	{ attr: 'aBoneWeight', size: 4, offset: 48 }
+];
+
+/**
+ * buildTypeGL(gl, type) — upload the type's VBO/IBO/VAO per submesh + textures, once the
+ * CPU decode is done. One VAO per submesh, 16-float interleave (see GR2_VERTEX_LAYOUT).
+ */
+function buildTypeGL(gl, type) {
+	type.textures = makeTypeTextures(gl, type.parsed);
+	const attr = _program.attribute;
+	type.submeshes = type.meshes.map(function (mesh) {
+		const vao = gl.createVertexArray();
+		gl.bindVertexArray(vao);
+
+		const vbo = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+		gl.bufferData(gl.ARRAY_BUFFER, packRobrowserInterleave(mesh), gl.STATIC_DRAW);
+
+		for (let a = 0; a < GR2_VERTEX_LAYOUT.length; a++) {
+			const layout = GR2_VERTEX_LAYOUT[a];
+			const loc = attr[layout.attr];
+			gl.enableVertexAttribArray(loc);
+			gl.vertexAttribPointer(loc, layout.size, gl.FLOAT, false, GR2_VERTEX_STRIDE, layout.offset);
+		}
+
+		const ibo = gl.createBuffer();
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
+
+		gl.bindVertexArray(null);

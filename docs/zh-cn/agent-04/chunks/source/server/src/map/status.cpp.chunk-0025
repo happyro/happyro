@@ -1,0 +1,500 @@
+				//if( sd->md ) mercenary_delete(sd->md,3); // Are Mercenaries removed? [aleos]
+			}
+			break;
+		case SC__LAZINESS:
+			val2 = 10 + 10 * val1; // Cast Increase
+			val3 = 10 * val1; // Flee Reduction
+			break;
+		case SC__UNLUCKY:
+		{
+			sc_type rand_eff; 
+			switch(rnd() % 3) {
+				case 1: rand_eff = SC_BLIND; break;
+				case 2: rand_eff = SC_SILENCE; break;
+				default: rand_eff = SC_POISON; break;
+			}
+			val2 = 10 * val1; // Crit and Flee2 Reduction
+			status_change_start(src,bl,rand_eff,10000,val1,0,(rand_eff == SC_POISON ? src->id : 0),0,tick,SCSTART_NOTICKDEF|SCSTART_NORATEDEF);
+			break;
+		}
+		case SC__WEAKNESS:
+			val2 = 10 * val1;
+			// Bypasses coating protection and MADO
+			sc_start(src,bl,SC_STRIPWEAPON,100,val1,tick);
+			sc_start(src,bl,SC_STRIPSHIELD,100,val1,tick);
+			break;
+		case SC_GN_CARTBOOST:
+			if( val1 < 3 )
+				val2 = 50;
+			else if( val1 > 2 && val1 < 5 )
+				val2 = 75;
+			else
+				val2 = 100;
+			break;
+		case SC_PROPERTYWALK:
+			val3 = 0;
+			break;
+		case SC_STRIKING:
+			// val2 = watk bonus already calc
+			val3 = 6 - val1;// spcost = 6 - level (lvl1:5 ... lvl 5: 1)
+			val4 = tick / 1000;
+			tick_time = 1000; // [GodLesZ] tick time
+			break;
+		case SC_WARMER:
+			val4 = tick / 3000;
+			tick = INFINITE_TICK; // Duration sent to the client should be infinite
+			tick_time = 3000;
+			break;
+		case SC_HELLS_PLANT:
+			tick_time = status_get_sc_interval(type);
+			val4 = tick - tick_time; // Remaining time
+			break;
+		case SC_SWINGDANCE:
+			val3 = 3 * val1 + val2; // Walk speed and aspd reduction.
+			break;
+		case SC_SYMPHONYOFLOVER:
+			val3 = 2 * val1 + val2 + (sd?sd->status.job_level:50) / 4; // MDEF Increase
+			break;
+		case SC_MOONLITSERENADE: // MATK Increase
+		case SC_RUSHWINDMILL: // ATK Increase
+			val3 = 4 + val1 * 3 + val2 + (sd?sd->status.job_level:50) / 5;
+			break;
+		case SC_ECHOSONG:
+			val3 = 6 * val1 + val2 + (sd?sd->status.job_level:50) / 4; // DEF Increase
+			break;
+		case SC_HARMONIZE:
+			val2 = 5 + 5 * val1;
+			break;
+		case SC_DEEPSLEEP:
+			val4 = tick / 2000;
+			tick_time = 2000; // [GodLesZ] tick time
+			break;
+		case SC_SIRCLEOFNATURE:
+			val2 = 50 * val1; // HP recovery rate
+			break;
+		case SC_SONGOFMANA:
+			status_heal(bl, 0, status->max_sp * (val1 <= 2 ? 10 : val1 <= 4 ? 15 : 20) / 100, 1);
+			val3 = 50 * val1;
+			break;
+		case SC_SATURDAYNIGHTFEVER:
+			if (!val4) val4 = skill_get_time2(scdb->skill_id,val1);
+			if (!val4) val4 = 3000;
+			val3 = tick/val4;
+			tick_time = val4; // [GodLesZ] tick time
+			break;
+		case SC_GLOOMYDAY:
+			val2 = 20 + 5 * val1; // Flee reduction.
+			val3 = 15 + 5 * val1; // ASPD reduction.
+			if( sd && rnd()%100 < val1 ) { // (Skill Lv) %
+				val4 = 1; // Reduce walk speed by half.
+				if( pc_isriding(sd) ) pc_setriding(sd, 0);
+				if( pc_isridingdragon(sd) ) pc_setoption(sd, sd->sc.option&~OPTION_DRAGON);
+			}
+			break;
+		case SC_GLOOMYDAY_SK:
+			// Random number between [15 ~ (Voice Lesson Skill Level x 5) + (Skill Level x 10)] %.
+			val2 = 15 + rnd()%( (sd?pc_checkskill(sd, WM_LESSON)*5:0) + val1*10 );
+			break;
+		case SC_SITDOWN_FORCE:
+		case SC_BANANA_BOMB_SITDOWN:
+			if( sd && !pc_issit(sd) ) {
+				pc_setsit(sd);
+				skill_sit(sd, true);
+				clif_sitting(*bl);
+			}
+			break;
+		case SC_DANCEWITHWUG:
+			val3 = 5 * val1; // ASPD Increase
+			val4 = 20 + 10 * val1; // Fixed Cast Time Reduction
+			break;
+		case SC_LERADSDEW:
+			val3 = 2 + 3 * val1 + min(3 * val2, 25); // MaxHP Increase
+			break;
+		case SC_MELODYOFSINK:
+			val2 = 10 * val1; // INT Reduction.
+			val3 = 2 + 2 * val1; // MaxSP reduction
+			break;
+		case SC_BEYONDOFWARCRY:
+			val2 = 10 + 10 * val1; // STR Reduction
+			val3 = 4 * val1; // MaxHP Reduction
+			break;
+		case SC_UNLIMITEDHUMMINGVOICE:
+			val3 = 4 * val1 + min(3 * val2, 15); // !TODO: What's the Lesson bonus?
+			break;
+		case SC_REFLECTDAMAGE:
+			val2 = 10 * val1; // Reflect reduction amount
+			val4 = tick/1000; // Number of SP cycles (duration)
+			tick_time = 1000; // [GodLesZ] tick time
+			break;
+		case SC_FORCEOFVANGUARD:
+			val2 = 8 + 12 * val1; // Chance
+			val3 = 5 + 2 * val1; // Max rage counters
+			tick = INFINITE_TICK; // Endless duration in the client
+			tick_time = 10000; // [GodLesZ] tick time
+			break;
+		case SC_EXEEDBREAK:
+			val2 = 150 * val1;
+			if (sd) { // Players
+				int16 index = sd->equip_index[EQI_HAND_R];
+
+				if (index >= 0 && sd->inventory_data[index] && sd->inventory_data[index]->type == IT_WEAPON)
+					val2 += 15 * sd->status.job_level + sd->inventory_data[index]->weight / 10 * sd->inventory_data[index]->weapon_level * status_get_lv(bl) / 100;
+			} else // Monster
+				val2 += 750;
+			break;
+		case SC_PRESTIGE:
+			val2 = (status->int_ + status->luk) * val1 / 20 * status_get_lv(bl) / 200 + val1;	// Chance to evade magic damage.
+			val3 = ((val1 * 15) + (10 * (sd?pc_checkskill(sd,CR_DEFENDER):skill_get_max(CR_DEFENDER)))) * status_get_lv(bl) / 100; // Defence added
+			break;
+		case SC_SHIELDSPELL_HP:
+			val2 = 5; // 5% HP every 3 seconds
+			tick_time = status_get_sc_interval(type);
+			val4 = tick - tick_time; // Remaining time
+			break;
+		case SC_SHIELDSPELL_SP:
+			val2 = 3; // 3% SP every 5 seconds
+			tick_time = status_get_sc_interval(type);
+			val4 = tick - tick_time; // Remaining time
+			break;
+		case SC_SHIELDSPELL_ATK:
+			val2 = 150; // WATK/MATK bonus
+			break;
+		case SC_BANDING:
+			val2 = (sd ? skill_banding_count(sd) : 1);
+			tick_time = 5000; // [GodLesZ] tick time
+			break;
+		case SC_MAGNETICFIELD:
+			tick_time = 1000; // [GodLesZ] tick time
+			val4 = tick / tick_time;
+			break;
+		case SC_INSPIRATION:
+			val2 = 40 * val1; // ATK/MATK
+			val3 = 6 * val1; //All stat bonus
+			val4 = tick / 5000;
+			tick_time = 5000; // [GodLesZ] tick time
+			status_change_clear_buffs(bl, SCCB_DEBUFFS); // Remove debuffs
+			break;
+		case SC_CRESCENTELBOW:
+			val2 = (sd?sd->status.job_level:50) / 2 + (50 + 5 * val1);
+			break;
+		case SC_LIGHTNINGWALK: // [(Job Level / 2) + (40 + 5 * Skill Level)] %
+			val1 = (sd?sd->status.job_level:2)/2 + 40 + 5 * val1;
+			break;
+		case SC_GT_ENERGYGAIN:
+			val2 = 10 + 5 * val1; // Sphere gain chance.
+			break;
+		case SC_GT_CHANGE:
+			// Take note there is no def increase as skill desc says. [malufett]
+			val2 = val1 * 8; // ATK increase
+			val3 = status->agi * val1 / 60; // ASPD increase: [(Target AGI x Skill Level) / 60] %
+			break;
+		case SC_GT_REVITALIZE:
+			// Take note there is no vit, aspd, speed increase as skill desc says. [malufett]
+			val2 = 2 * val1; // MaxHP: [(Skill Level * 2)]%
+			val3 = val1 * 30 + 50; // Natural HP recovery increase: [(Skill Level x 30) + 50] %
+			// The stat def is not shown in the status window and it is processed differently
+			val4 = val1 * 20; // STAT DEF increase
+			break;
+		case SC_PYROTECHNIC_OPTION:
+			val2 = 60; // Eatk Renewal (Atk2)
+			break;
+		case SC_HEATER_OPTION:
+			val2 = 120; // Eatk Renewal (Atk2)
+			val3 = ELE_FIRE; // Change into fire element.
+			break;
+		case SC_TROPIC_OPTION:
+			val2 = 180; // Eatk Renewal (Atk2)
+			val3 = MG_FIREBOLT;
+			break;
+		case SC_AQUAPLAY_OPTION:
+			val2 = 40;
+			break;
+		case SC_COOLER_OPTION:
+			val2 = 80;
+			val3 = ELE_WATER; // Change into water element.
+			break;
+		case SC_CHILLY_AIR_OPTION:
+			val2 = 120; // Matk. Renewal (Matk1)
+			val3 = MG_COLDBOLT;
+			break;
+		case SC_WIND_STEP_OPTION:
+			val2 = 50; // % Increase speed and flee.
+			break;
+		case SC_BLAST_OPTION:
+			val2 = 20;
+			val3 = ELE_WIND; // Change into wind element.
+			break;
+		case SC_WILD_STORM_OPTION:
+			val2 = MG_LIGHTNINGBOLT;
+			break;
+		case SC_PETROLOGY_OPTION:
+			val2 = 5; //HP Rate bonus
+			val3 = 50;
+			break;
+		case SC_SOLID_SKIN_OPTION:
+			val2 = 33; //% Increase DEF
+			break;
+		case SC_CURSED_SOIL_OPTION:
+			val2 = 10; //HP rate bonus
+			val3 = ELE_EARTH; // Change into earth element.
+			break;
+		case SC_UPHEAVAL_OPTION:
+			val2 = 15; //HP rate bonus
+			val3 = WZ_EARTHSPIKE;
+			break;
+		case SC_CIRCLE_OF_FIRE_OPTION:
+			val2 = 300;
+			break;
+		case SC_WATER_SCREEN_OPTION:
+			tick_time = 10000;
+			break;
+		case SC_FIRE_CLOAK_OPTION:
+		case SC_WATER_DROP_OPTION:
+		case SC_WIND_CURTAIN_OPTION:
+		case SC_STONE_SHIELD_OPTION:
+			val2 = 100; // Elemental modifier.
+			break;
+		case SC_TROPIC:
+		case SC_CHILLY_AIR:
+		case SC_WILD_STORM:
+		case SC_UPHEAVAL:
+			val2 += 10;
+			[[fallthrough]];
+		case SC_HEATER:
+		case SC_COOLER:
+		case SC_BLAST:
+		case SC_CURSED_SOIL:
+			val2 += 10;
+			[[fallthrough]];
+		case SC_PYROTECHNIC:
+		case SC_AQUAPLAY:
+		case SC_GUST:
+		case SC_PETROLOGY:
+			val2 += 5;
+			val3 += 9000;
+			[[fallthrough]];
+		case SC_CIRCLE_OF_FIRE:
+		case SC_FIRE_CLOAK:
+		case SC_WATER_DROP:
+		case SC_WATER_SCREEN:
+		case SC_WIND_CURTAIN:
+		case SC_WIND_STEP:
+		case SC_STONE_SHIELD:
+		case SC_SOLID_SKIN:
+			val2 += 5;
+			val3 += 1000;
+			tick_time = val3; // [GodLesZ] tick time
+			break;
+		case SC_WATER_BARRIER:
+			val2 = 30; // Reductions. Atk2 and Flee1
+			break;
+		case SC_ZEPHYR:
+			val2 = 25; // Flee.
+			break;
+		case SC_TIDAL_WEAPON:
+			val2 = 20; // Increase Elemental's attack.
+			break;
+		case SC_ROCK_CRUSHER:
+		case SC_ROCK_CRUSHER_ATK:
+		case SC_POWER_OF_GAIA:
+			val2 = 33; //Def rate bonus/Speed rate reduction
+			val3 = 20; //HP rate bonus
+			break;
+		case SC_TEARGAS:
+			val2 = status_get_max_hp(bl) * 5 / 100; // Drain 5% HP
+			val4 = tick / 2000;
+			tick_time = 2000;
+			break;
+		case SC_TEARGAS_SOB:
+			val4 = tick / 3000;
+			tick_time = 3000;
+			break;
+		case SC_STOMACHACHE:
+			val2 = 8; // SP consume.
+			val4 = tick / 10000;
+			tick_time = 10000; // [GodLesZ] tick time
+			break;
+		case SC_PROMOTE_HEALTH_RESERCH:
+			//val1: 1 = Regular Potion, 2 = Thrown Potion
+			//val2: 1 = Small Potion, 2 = Medium Potion, 3 = Large Potion
+			//val3: MaxHP Increase By Fixed Amount
+			if (val1 == 1) // If potion was normally used, take the user's BaseLv
+				val3 = 1000 * val2 - 500 + status_get_lv(bl) * 10 / 3;
+			else if (val1 == 2) // If potion was thrown at someone, take the thrower's BaseLv
+				val3 = 1000 * val2 - 500 + status_get_lv(src) * 10 / 3;
+			if (val3 <= 0) // Prevents a negeative value from happening
+				val3 = 0;
+			break;
+		case SC_ENERGY_DRINK_RESERCH:
+			//val1: 1 = Regular Potion, 2 = Thrown Potion
+			//val2: 1 = Small Potion, 2 = Medium Potion, 3 = Large Potion
+			//val3: MaxSP Increase By Percentage Amount
+			if (val1 == 1) // If potion was normally used, take the user's BaseLv
+				val3 = status_get_lv(bl) / 10 + 5 * val2 - 10;
+			else if (val1 == 2) // If potion was thrown at someone, take the thrower's BaseLv
+				val3 = status_get_lv(src) / 10 + 5 * val2 - 10;
+			if (val3 <= 0) // Prevents a negeative value from happening
+				val3 = 0;
+			break;
+		case SC_KYOUGAKU:
+			val2 = 2*val1 + rnd()%val1;
+			clif_status_change(bl,EFST_ACTIVE_MONSTER_TRANSFORM,1,0,1002,0,0);
+			break;
+		case SC_KAGEMUSYA:
+			val2 = 20; // Damage increase bonus
+			val3 = val1 * 2;
+			tick_time = 1000;
+			val4 = tick / tick_time;
+			break;
+		case SC_ZANGETSU:
+			if( status_get_hp(bl) % 2 == 0 )
+				val2 = (status_get_lv(bl) / 3) + (20 * val1); //+Watk
+			else
+				val2 -= (status_get_lv(bl) / 3) + (30 * val1); //-Watk
+
+			if( status_get_sp(bl) % 2 == 0 )
+				val3 = (status_get_lv(bl) / 3) + (20 * val1); //+Matk
+			else
+				val3 -= (status_get_lv(bl) / 3) + (30 * val1); //-Matk
+			break;
+		case SC_GENSOU:
+			{
+				int32 hp = status_get_hp(bl), lv = 5;
+				int16 per = 100 / (status_get_max_hp(bl) / hp);
+
+				if( per <= 15 )
+					lv = 1;
+				else if( per <= 30 )
+					lv = 2;
+				else if( per <= 50 )
+					lv = 3;
+				else if( per <= 75 )
+					lv = 4;
+				if( hp % 2 == 0)
+					status_heal(bl, hp * (6-lv) * 4 / 100, status_get_sp(bl) * (6-lv) * 3 / 100, 1);
+				else
+					status_zap(bl, hp * (lv*4) / 100, status_get_sp(bl) * (lv*3) / 100);
+			}
+			break;
+		case SC_ANGRIFFS_MODUS:
+			val2 = 50 + 20 * val1; // atk bonus
+			val3 = 25 + 10 * val1; // Flee reduction.
+			val4 = tick/1000; // hp/sp reduction timer
+			tick_time = 1000;
+			break;
+		case SC_GOLDENE_FERSE:
+			val2 = 10 + 10*val1; // flee bonus
+			val3 = 6 + 4 * val1; // Aspd Bonus
+			val4 = 2 + 2 * val1; // Chance of holy attack
+			break;
+		case SC_STONE_WALL:
+			val2 = 100 * val1; // DEF bonus
+			val3 = 30 * val1; // MDEF bonus
+			break;
+		case SC_OVERED_BOOST:
+			val2 = 400 + 40 * val1; // flee bonus
+			val3 = 180 + 2 * val1; // aspd bonus
+			val4 = 50; // def reduc %
+			break;
+		case SC_GRANITIC_ARMOR:
+			val2 = 2*val1; // dmg reduction
+			val3 = 6*val1; // dmg taken on status end (6%:12%:18%:24%:30%)
+			val4 = 5*val1; // unknow formula
+			break;
+		case SC_MAGMA_FLOW:
+			val2 = 3*val1; // Activation chance
+			break;
+		case SC_PYROCLASTIC:
+			val2 += 100 + 10*val1; // atk bonus // !TODO: Confirm formula
+			break;
+		case SC_TEMPERING:
+			val2 += 5 + val1; // patk bonus
+			break;
+		case SC_GOLDENE_TONE:
+			val2 += 3 * val1; // res/mres bonus
+			break;
+		case SC_PARALYSIS: // [Lighta] need real info
+			val2 = 2*val1; // def reduction
+			val3 = 500*val1; // varcast augmentation
+			break;
+		case SC_TOXIN_OF_MANDARA:
+			val2 = 15*val1; // res reduction
+			break;
+		case SC_LIGHT_OF_REGENE: // Yommy leak need confirm
+			val2 = 20 * val1; // hp reco on death %
+			break;
+		case SC_PAIN_KILLER: // Yommy leak need confirm
+			val2 = min((( 200 * val1 ) * status_get_lv(src)) / 150, 1000); // dmg reduction linear. upto a maximum of 1000 [iRO Wiki]
+			if(sc->getSCE(SC_PARALYSIS))
+				sc_start(src,bl, SC_ENDURE, 100, val1, tick); // Start endure for same duration
+			break;
+		case SC_STYLE_CHANGE:
+			tick = INFINITE_TICK; // Infinite duration
+			break;
+		case SC_CBC:
+			val3 = 10; // Drain sp % dmg
+			val4 = tick/1000; // dmg each sec
+			tick = 1000;
+			break;
+		case SC_EQC:
+			val2 = 5 * val1; // def % reduc
+			val3 = 2 * val1; // HP drain %
+			break;
+		case SC_ASH:
+			val2 = 0; // hit % reduc
+			val3 = 0; // def % reduc
+			val4 = 0; // atk flee % reduc
+			if (!status_bl_has_mode(bl,MD_STATUSIMMUNE)) {
+				val2 = 50;
+				if (status_get_race(bl) == RC_PLANT) // plant type
+					val3 = 50;
+				if (status_get_element(bl) == ELE_WATER) // defense water type
+					val4 = 50;
+			}
+			break;
+		case SC_FULL_THROTTLE:
+			val2 = ( val1 == 1 ? 6 : 6 - val1 );
+			val3 = 20; //+% AllStats
+			tick_time = 1000;
+			val4 = tick / tick_time;
+			break;
+		case SC_REBOUND:
+			tick_time = 2000;
+			val4 = tick / tick_time;
+			clif_emotion( *bl, ET_SWEAT );
+			break;
+		case SC_KINGS_GRACE:
+			val2 = 3 + val1; //HP Recover rate
+			tick_time = 1000;
+			val4 = tick / tick_time;
+			break;
+		case SC_TELEKINESIS_INTENSE:
+			val2 = 10 * val1; // sp consum / casttime reduc %
+			val3 = 40 * val1; // magic dmg bonus
+			break;
+		case SC_OFFERTORIUM:
+			val2 = 30 * val1; // heal power bonus
+			val3 = 100 + 20 * val1; // sp cost inc
+			break;
+		case SC_FRIGG_SONG:
+			val2 = 5 * val1; // maxhp bonus
+			val3 = 80 + 20 * val1; // healing
+			tick_time = 1000;
+			val4 = tick / tick_time;
+			break;
+		case SC_FLASHCOMBO:
+			val2 = 20 * val1 + 20; // atk bonus
+			break;
+		case SC_DARKCROW:
+			val2 = 30 * val1; // ATK bonus
+			break;
+		case SC_UNLIMIT:
+			val2 = 50 * val1;
+			break;
+		case SC_MONSTER_TRANSFORM:
+		case SC_ACTIVE_MONSTER_TRANSFORM:
+			if( !mobdb_checkid(val1) )
+				val1 = MOBID_PORING; // Default poring
+			break;
+#ifndef RENEWAL
+		case SC_APPLEIDUN:

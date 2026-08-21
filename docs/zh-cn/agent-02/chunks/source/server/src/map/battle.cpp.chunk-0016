@@ -1,0 +1,500 @@
+		sp = skill_get_sp(skill_id,skill_lv) * 2 / 3;
+
+		if (status_charge(src, 0, sp)) {
+			struct unit_data *ud = unit_bl2ud(src);
+
+			switch (skill_get_casttype(skill_id)) {
+				case CAST_GROUND:
+					skill_castend_pos2(src, target->x, target->y, skill_id, skill_lv, tick, flag);
+					break;
+				case CAST_NODAMAGE:
+					skill_castend_nodamage_id(src, target, skill_id, skill_lv, tick, flag);
+					break;
+				case CAST_DAMAGE:
+					skill_castend_damage_id(src, target, skill_id, skill_lv, tick, flag);
+					break;
+			}
+			if (ud) {
+				int32 autospell_tick = skill_delayfix(src, skill_id, skill_lv);
+
+				if (DIFF_TICK(ud->canact_tick, tick + autospell_tick) < 0) {
+					ud->canact_tick = i64max(tick + autospell_tick, ud->canact_tick);
+					if (battle_config.display_status_timers && sd)
+						clif_status_change(src, EFST_POSTDELAY, 1, autospell_tick, 0, 0, 0);
+				}
+			}
+		}
+	}
+	if (sd) {
+		uint16 r_skill = 0, sk_idx = 0;
+		if( wd.flag&BF_WEAPON && sc && sc->getSCE(SC__AUTOSHADOWSPELL) && rnd()%100 < sc->getSCE(SC__AUTOSHADOWSPELL)->val3 &&
+			(r_skill = (uint16)sc->getSCE(SC__AUTOSHADOWSPELL)->val1) && (sk_idx = skill_get_index(r_skill)) &&
+			sd->status.skill[sk_idx].id != 0 && sd->status.skill[sk_idx].flag == SKILL_FLAG_PLAGIARIZED )
+		{
+			if (r_skill != AL_HOLYLIGHT && r_skill != PR_MAGNUS) {
+				int32 r_lv = sc->getSCE(SC__AUTOSHADOWSPELL)->val2, type;
+
+				if( (type = skill_get_casttype(r_skill)) == CAST_GROUND ) {
+					int32 maxcount = 0;
+					std::shared_ptr<s_skill_db> skill = skill_db.find(r_skill);
+
+					if( !(BL_PC&battle_config.skill_reiteration) && skill->unit_flag[UF_NOREITERATION] )
+							type = -1;
+
+					if( BL_PC&battle_config.skill_nofootset && skill->unit_flag[UF_NOFOOTSET] )
+							type = -1;
+
+					if( BL_PC&battle_config.land_skill_limit &&
+						(maxcount = skill_get_maxcount(r_skill, r_lv)) > 0
+					  ) {
+						unit_skillunit_maxcount(sd->ud, r_skill, maxcount);
+
+						if( maxcount == 0 )
+							type = -1;
+					}
+
+					if( type != CAST_GROUND ){
+						clif_skill_fail( *sd, r_skill );
+						return wd.dmg_lv;
+					}
+				}
+
+				if (sd->state.autocast == 0) {
+					sd->state.autocast = 1;
+					skill_consume_requirement(sd, r_skill, r_lv, 3);
+					switch (type) {
+						case CAST_GROUND:
+							skill_castend_pos2(src, target->x, target->y, r_skill, r_lv, tick, flag);
+							break;
+						case CAST_NODAMAGE:
+							skill_castend_nodamage_id(src, target, r_skill, r_lv, tick, flag);
+							break;
+						case CAST_DAMAGE:
+							skill_castend_damage_id(src, target, r_skill, r_lv, tick, flag);
+							break;
+					}
+				}
+				sd->state.autocast = 0;
+
+				sd->ud.canact_tick = i64max(tick + skill_delayfix(src, r_skill, r_lv), sd->ud.canact_tick);
+				clif_status_change(src, EFST_POSTDELAY, 1, skill_delayfix(src, r_skill, r_lv), 0, 0, 1);
+			}
+		}
+		if (wd.flag&BF_WEAPON && sc && sc->getSCE(SC_FALLINGSTAR) && rand()%100 < sc->getSCE(SC_FALLINGSTAR)->val2) {
+			if (sd)
+				sd->state.autocast = 1;
+			if (status_charge(src, 0, skill_get_sp(SJ_FALLINGSTAR_ATK, sc->getSCE(SC_FALLINGSTAR)->val1)))
+				skill_castend_nodamage_id(src, src, SJ_FALLINGSTAR_ATK, sc->getSCE(SC_FALLINGSTAR)->val1, tick, flag);
+			if (sd)
+				sd->state.autocast = 0;
+		}
+
+		if( sc ){
+			if( sc->getSCE( SC_SERVANTWEAPON ) && sd->servantball > 0 && rnd_chance( 5 * sc->getSCE( SC_SERVANTWEAPON )->val1, 100 ) ){
+				uint16 skill_id = DK_SERVANTWEAPON_ATK;
+				uint16 skill_lv = sc->getSCE(SC_SERVANTWEAPON)->val1;
+
+				sd->state.autocast = 1;
+				pc_delservantball( *sd );
+				skill_castend_damage_id( src, target, skill_id, skill_lv, tick, flag );
+				battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+				sd->state.autocast = 0;
+			}
+
+			// TODO: Whats the official success chance? Is SP consumed for every autocast? [Rytech]
+			if( sc->getSCE(SC_DUPLELIGHT) && pc_checkskill(sd, CD_PETITIO) > 0 && rnd() % 100 < 20 ){
+				uint16 skill_id = CD_PETITIO;
+				uint16 skill_lv = pc_checkskill( sd, CD_PETITIO );
+
+				sd->state.autocast = 1;
+				skill_castend_damage_id( src, target, skill_id, skill_lv, tick, flag );
+				battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+				sd->state.autocast = 0;
+			}
+
+			if( sc->getSCE(SC_ABYSSFORCEWEAPON) && sd->abyssball > 0 && rnd_chance( 25, 100 ) ){
+				uint16 skill_id = ABC_FROM_THE_ABYSS_ATK;
+				uint16 skill_lv = sc->getSCE(SC_ABYSSFORCEWEAPON)->val1;
+
+				sd->state.autocast = 1;
+				pc_delabyssball( *sd );
+				skill_castend_damage_id( src, target, skill_id, skill_lv, tick, flag );
+				battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+				sd->state.autocast = 0;
+			}
+
+			// It has a success chance of triggering even tho the description says nothing about it.
+			// TODO: Need to find out what the official success chance is. [Rytech]
+			if( sc->getSCE(SC_ABYSSFORCEWEAPON) && rnd() % 100 < 20 ){
+				uint16 skill_id = ABC_ABYSS_SQUARE;
+				uint16 skill_lv = pc_checkskill(sd, ABC_ABYSS_SQUARE);
+
+				sd->state.autocast = 1;
+				skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+				battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+				sd->state.autocast = 0;
+			}
+
+			if( sc->getSCE( SC_AUTO_FIRING_LAUNCHER ) ){
+				uint16 skill_id;
+				uint16 skill_lv;
+
+				switch( sc->getSCE( SC_AUTO_FIRING_LAUNCHER )->val1 ){
+					case 1:
+						skill_id = NW_BASIC_GRENADE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 6, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+						break;
+
+					case 2:
+						skill_id = NW_BASIC_GRENADE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 7, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+						break;
+
+					case 3:
+						skill_id = NW_HASTY_FIRE_IN_THE_HOLE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 3, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+
+						skill_id = NW_BASIC_GRENADE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 8, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+						break;
+
+					case 4:
+						skill_id = NW_HASTY_FIRE_IN_THE_HOLE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 5, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+
+						skill_id = NW_BASIC_GRENADE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 9, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+						break;
+
+					case 5:
+						skill_id = NW_GRENADES_DROPPING;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 3, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+
+						skill_id = NW_HASTY_FIRE_IN_THE_HOLE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 7, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+
+						skill_id = NW_BASIC_GRENADE;
+						skill_lv = pc_checkskill( sd, skill_id );
+
+						if( skill_lv > 0 && rnd_chance( 10, 100 ) ){
+							sd->state.autocast = 1;
+							skill_castend_pos2( src, target->x, target->y, skill_id, skill_lv, tick, flag );
+							battle_autocast_aftercast( src, skill_id, skill_lv, tick );
+							sd->state.autocast = 0;
+						}
+						break;
+				}
+			}
+
+			// Autocasted skills from super elemental supportive buffs.
+			if (sc->getSCE(SC_FLAMETECHNIC_OPTION) && rnd() % 100 < 7)
+				battle_autocast_elembuff_skill(sd, target, MG_FIREBOLT, tick, flag);
+			if (sc->getSCE(SC_COLD_FORCE_OPTION) && rnd() % 100 < 7)
+				battle_autocast_elembuff_skill(sd, target, MG_COLDBOLT, tick, flag);
+			if (sc->getSCE(SC_GRACE_BREEZE_OPTION) && rnd() % 100 < 7)
+				battle_autocast_elembuff_skill(sd, target, MG_LIGHTNINGBOLT, tick, flag);
+			if (sc->getSCE(SC_EARTH_CARE_OPTION) && rnd() % 100 < 7)
+				battle_autocast_elembuff_skill(sd, target, WZ_EARTHSPIKE, tick, flag);
+			if (sc->getSCE(SC_DEEP_POISONING_OPTION) && rnd() % 100 < 7)
+				battle_autocast_elembuff_skill(sd, target, SO_POISON_BUSTER, tick, flag);
+		}
+		if (wd.flag & BF_WEAPON && src != target && damage > 0) {
+			if (battle_config.left_cardfix_to_right)
+				battle_drain(sd, target, wd.damage, wd.damage, tstatus->race, tstatus->class_);
+			else
+				battle_drain(sd, target, wd.damage, wd.damage2, tstatus->race, tstatus->class_);
+		}
+	}
+
+	if (sd && tsc && wd.flag&BF_LONG && tsc->getSCE(SC_WINDSIGN) && rand()%100 < tsc->getSCE(SC_WINDSIGN)->val2)
+		status_heal(src, 0, 0, 1, 0);
+
+	return wd.dmg_lv;
+}
+
+/*=========================
+ * Check for undead status
+ *-------------------------
+ * Credits:
+ *	Original coder Skotlex
+ *  Refactored by Baalberith
+ */
+int32 battle_check_undead(int32 race,int32 element)
+{
+	if(battle_config.undead_detect_type == 0 || battle_config.undead_detect_type == 3) {
+		if(element == ELE_UNDEAD)
+			return 1;
+	}
+	else if(battle_config.undead_detect_type == 1) {
+		if(race == RC_UNDEAD)
+			return 1;
+	}
+	else {
+		if(element == ELE_UNDEAD || race == RC_UNDEAD)
+			return 1;
+	}
+	return 0;
+}
+
+/*================================================================
+ * Returns the upmost level master starting with the given object
+ *----------------------------------------------------------------*/
+block_list* battle_get_master(block_list *src)
+{
+	block_list *prev; //Used for infinite loop check (master of yourself?)
+	do {
+		prev = src;
+		switch (src->type) {
+			case BL_PET:
+				if (((TBL_PET*)src)->master)
+					src = (block_list*)((TBL_PET*)src)->master;
+				break;
+			case BL_MOB:
+				if (((TBL_MOB*)src)->master_id)
+					src = map_id2bl(((TBL_MOB*)src)->master_id);
+				break;
+			case BL_HOM:
+				if (((TBL_HOM*)src)->master)
+					src = (block_list*)((TBL_HOM*)src)->master;
+				break;
+			case BL_MER:
+				if (((TBL_MER*)src)->master)
+					src = (block_list*)((TBL_MER*)src)->master;
+				break;
+			case BL_ELEM:
+				if (((TBL_ELEM*)src)->master)
+					src = (block_list*)((TBL_ELEM*)src)->master;
+				break;
+			case BL_SKILL:
+				if (((TBL_SKILL*)src)->group && ((TBL_SKILL*)src)->group->src_id)
+					src = map_id2bl(((TBL_SKILL*)src)->group->src_id);
+				break;
+		}
+	} while (src && src != prev);
+	return prev;
+}
+
+const block_list* battle_get_master( const block_list* src ){
+	return battle_get_master(const_cast<block_list*>(src));
+}
+
+static bool battle_get_exception_ai( const block_list &src) {
+	const mob_data* md = BL_CAST(BL_MOB,&src);
+
+	if (!md)
+		return false;
+
+	switch (md->special_state.ai) {
+		case AI_ABR:
+		case AI_ATTACK:
+		case AI_BIONIC:
+		case AI_ZANZOU:
+			return true;
+	}
+	return false;
+}
+
+/*==========================================
+ * Checks the state between two targets
+ * (enemy, friend, party, guild, etc)
+ *------------------------------------------
+ * Usage:
+ * See battle.hpp for possible values/combinations
+ * to be used here (BCT_* constants)
+ * Return value is:
+ * 1: flag holds true (is enemy, party, etc)
+ * -1: flag fails
+ * 0: Invalid target (non-targetable ever)
+ *
+ * Credits:
+ *	Original coder unknown
+ *	Rewritten by Skotlex
+*/
+int32 battle_check_target( const block_list* src, const block_list* target, int32 flag )
+{
+	int16 m; //map
+	int32 state = 0; //Initial state none
+	int32 strip_enemy = 1; //Flag which marks whether to remove the BCT_ENEMY status if it's also friend/ally.
+	const block_list* s_bl = src, *t_bl = target;
+	const unit_data* ud = nullptr;
+
+	nullpo_ret(src);
+	nullpo_ret(target);
+
+	ud = unit_bl2ud(target);
+	m = target->m;
+
+	//t_bl/s_bl hold the 'master' of the attack, while src/target are the actual
+	//objects involved.
+	if( (t_bl = battle_get_master(target)) == nullptr )
+		t_bl = target;
+
+	if( (s_bl = battle_get_master(src)) == nullptr )
+		s_bl = src;
+
+	// Can't hit self and master, but can hit other slaves
+	if (flag&BCT_WOS && (src == target || s_bl == target))
+		return -1;
+
+	if ( s_bl->type == BL_PC ) {
+		switch( t_bl->type ) {
+			case BL_MOB: // Source => PC, Target => MOB
+				if ( pc_has_permission(static_cast<const map_session_data*>(s_bl), PC_PERM_DISABLE_PVM) )
+					return 0;
+				break;
+			case BL_PC:
+				if (pc_has_permission(static_cast<const map_session_data*>(s_bl), PC_PERM_DISABLE_PVP))
+					return 0;
+				break;
+			default:/* anything else goes */
+				break;
+		}
+	}
+
+	const map_data* mapdata = map_getmapdata(m);
+
+	switch( target->type ) { // Checks on actual target
+		case BL_PC: {
+				const status_change* sc = status_get_sc(src);
+				const map_session_data* tsd = static_cast<const map_session_data*>(target);
+				if (tsd->invincible_timer != INVALID_TIMER || pc_isinvisible(tsd))
+					return -1; //Cannot be targeted yet.
+				if( sc != nullptr && !sc->empty() ) {
+					if( sc->getSCE(SC_VOICEOFSIREN) && sc->getSCE(SC_VOICEOFSIREN)->val2 == target->id )
+						return -1;
+				}
+			}
+			break;
+		case BL_MOB:
+		{
+			const mob_data* md = static_cast<const mob_data*>(target);
+
+			if (ud && ud->immune_attack)
+				return 0;
+			if((((md->special_state.ai == AI_SPHERE && battle_config.alchemist_summon_setting&2) || //Marine Spheres
+				 (md->special_state.ai == AI_FLORA && battle_config.alchemist_summon_setting&1)) && s_bl->type == BL_PC && src->type != BL_MOB) || //Floras
+				(md->special_state.ai == AI_ZANZOU && t_bl->id != s_bl->id) || //Zanzou
+				(md->special_state.ai == AI_FAW && (t_bl->id != s_bl->id || (s_bl->type == BL_PC && src->type != BL_MOB)))
+			){	//Targettable by players
+				state |= BCT_ENEMY;
+				strip_enemy = 0;
+			}
+			break;
+		}
+		case BL_SKILL:
+		{
+			const skill_unit* su = static_cast<const skill_unit*>(target);
+			uint16 skill_id = battle_getcurrentskill(src);
+			if( !su || !su->group)
+				return 0;
+			if( skill_get_inf2(su->group->skill_id, INF2_ISTRAP) && su->group->unit_id != UNT_USED_TRAPS) {
+				if (!skill_id || su->group->skill_id == NPC_REVERBERATION || su->group->skill_id == WM_POEMOFNETHERWORLD) {
+					;
+				}
+				else if (skill_get_inf2(skill_id, INF2_TARGETTRAP)) { // Only a few skills can target traps
+					switch (skill_id) {
+						case RK_DRAGONBREATH:
+						case RK_DRAGONBREATH_WATER:
+						case NC_SELFDESTRUCTION:
+						case NC_AXETORNADO:
+						case SR_SKYNETBLOW:
+							// Can only hit traps in PVP/GVG maps
+							if (!mapdata->getMapFlag(MF_PVP) && !mapdata->getMapFlag(MF_GVG))
+								return 0;
+							break;
+					}
+				}
+				else
+					return 0;
+				state |= BCT_ENEMY;
+				strip_enemy = 0;
+			} else if (su->group->skill_id == WZ_ICEWALL || (su->group->skill_id == GN_WALLOFTHORN && skill_id != GN_CARTCANNON)) {
+				switch (skill_id) {
+					case RK_DRAGONBREATH:
+					case RK_DRAGONBREATH_WATER:
+					case NC_SELFDESTRUCTION:
+					case NC_AXETORNADO:
+					case SR_SKYNETBLOW:
+						// Can only hit icewall in PVP/GVG maps
+						if (!mapdata->getMapFlag(MF_PVP) && !mapdata->getMapFlag(MF_GVG))
+							return 0;
+						break;
+					case HT_CLAYMORETRAP:
+						// Can't hit icewall
+						return 0;
+					default:
+						// Usually BCT_ALL stands for only hitting chars, but skills specifically set to hit traps also hit icewall
+						if ((flag&BCT_ALL) == BCT_ALL && !skill_get_inf2(skill_id, INF2_TARGETTRAP))
+							return -1;
+				}
+				state |= BCT_ENEMY;
+				strip_enemy = 0;
+			} else	//Excepting traps, Icewall, and Wall of Thorns, you should not be able to target skills.
+				return 0;
+		}
+			break;
+		case BL_MER:
+		case BL_HOM:
+		case BL_ELEM:
+			if (ud && ud->immune_attack)
+				return 0;
+			break;
+		//All else not specified is an invalid target.
+		default:
+			return 0;

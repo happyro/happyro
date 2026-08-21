@@ -1,0 +1,500 @@
+	}
+
+	script_pushint(st, st->freeloop);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * @commands (script based)
+ **/
+BUILDIN_FUNC(bindatcmd) {
+	const char* atcmd;
+	const char* eventName;
+	int32 i, level = 0, level2 = 100;
+	bool create = false;
+
+	atcmd = script_getstr(st,2);
+	eventName = script_getstr(st,3);
+
+	if( *atcmd == atcommand_symbol || *atcmd == charcommand_symbol )
+		atcmd++;
+
+	if( script_hasdata(st,4) ) level = script_getnum(st,4);
+	if( script_hasdata(st,5) ) level2 = script_getnum(st,5);
+
+	if( atcmd_binding_count == 0 ) {
+		CREATE(atcmd_binding,struct atcmd_binding_data*,1);
+
+		create = true;
+	} else {
+		ARR_FIND(0, atcmd_binding_count, i, strcmp(atcmd_binding[i]->command,atcmd) == 0);
+		if( i < atcmd_binding_count ) {/* update existent entry */
+			safestrncpy(atcmd_binding[i]->npc_event, eventName, EVENT_NAME_LENGTH);
+			atcmd_binding[i]->level = level;
+			atcmd_binding[i]->level2 = level2;
+		} else
+			create = true;
+	}
+
+	if( create ) {
+		i = atcmd_binding_count;
+
+		if( atcmd_binding_count++ != 0 )
+			RECREATE(atcmd_binding,struct atcmd_binding_data*,atcmd_binding_count);
+
+		CREATE(atcmd_binding[i],struct atcmd_binding_data,1);
+
+		safestrncpy(atcmd_binding[i]->command, atcmd, 50);
+		safestrncpy(atcmd_binding[i]->npc_event, eventName, EVENT_NAME_LENGTH);
+		atcmd_binding[i]->level = level;
+		atcmd_binding[i]->level2 = level2;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(unbindatcmd) {
+	const char* atcmd;
+	int32 i =  0;
+
+	atcmd = script_getstr(st, 2);
+
+	if( *atcmd == atcommand_symbol || *atcmd == charcommand_symbol )
+		atcmd++;
+
+	if( atcmd_binding_count == 0 ) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	ARR_FIND(0, atcmd_binding_count, i, strcmp(atcmd_binding[i]->command, atcmd) == 0);
+	if( i < atcmd_binding_count ) {
+		int32 cursor = 0;
+		aFree(atcmd_binding[i]);
+		atcmd_binding[i] = nullptr;
+		/* compact the list now that we freed a slot somewhere */
+		for( i = 0, cursor = 0; i < atcmd_binding_count; i++ ) {
+			if( atcmd_binding[i] == nullptr )
+				continue;
+
+			if( cursor != i ) {
+				memmove(&atcmd_binding[cursor], &atcmd_binding[i], sizeof(struct atcmd_binding_data*));
+			}
+
+			cursor++;
+		}
+
+		if( (atcmd_binding_count = cursor) == 0 )
+			aFree(atcmd_binding);
+
+		script_pushint(st, 1);
+	} else
+		script_pushint(st, 0);/* not found */
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(useatcmd) {
+	return atcommand_sub(st,3);
+}
+
+BUILDIN_FUNC(checkre)
+{
+	int32 num;
+
+	num=script_getnum(st,2);
+	switch(num){
+		case 0:
+			#ifdef RENEWAL
+				script_pushint(st, 1);
+			#else
+				script_pushint(st, 0);
+			#endif
+			break;
+		case 1:
+			#ifdef RENEWAL_CAST
+				script_pushint(st, 1);
+			#else
+				script_pushint(st, 0);
+			#endif
+			break;
+		case 2:
+			#ifdef RENEWAL_DROP
+				script_pushint(st, 1);
+			#else
+				script_pushint(st, 0);
+			#endif
+			break;
+		case 3:
+			#ifdef RENEWAL_EXP
+				script_pushint(st, 1);
+			#else
+				script_pushint(st, 0);
+			#endif
+			break;
+		case 4:
+			#ifdef RENEWAL_LVDMG
+				script_pushint(st, 1);
+			#else
+				script_pushint(st, 0);
+			#endif
+			break;
+		case 5:
+			#ifdef RENEWAL_ASPD
+				script_pushint(st, 1);
+			#else
+				script_pushint(st, 0);
+			#endif
+			break;
+		default:
+			ShowWarning("buildin_checkre: unknown parameter.\n");
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/* getrandgroupitem <group_id>{,<quantity>{,<sub_group>{,<identify>{,<char_id>}}}} */
+BUILDIN_FUNC(getrandgroupitem) {
+	map_session_data* sd;
+	int32 i, get_count = 0, identify = 0;
+	uint16 group, qty = 0;
+	uint8 sub_group = 1;
+
+	if (!script_charid2sd(6, sd))
+		return SCRIPT_CMD_SUCCESS;
+
+	group = script_getnum(st,2);
+
+	if (!group) {
+		ShowError("buildin_getrandgroupitem: Invalid group id (%d)!\n",script_getnum(st,2));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	FETCH(3, qty);
+	FETCH(4, sub_group);
+	FETCH(5, identify);
+
+	std::shared_ptr<s_item_group_entry> entry = itemdb_group.get_random_entry(group,sub_group);
+
+	if( entry == nullptr ){
+		ShowError( "buildin_getrandgroupitem: Unable to find a random entry in group %hu for sub group %hu.\n", group, sub_group );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	item item_tmp = {};
+
+	item_tmp.nameid   = entry->nameid;
+	item_tmp.identify = identify ? 1 : itemdb_isidentified(entry->nameid);
+
+	if (!qty)
+		qty = entry->amount;
+
+	//Check if it's stackable.
+	if (!itemdb_isstackable(entry->nameid)) {
+		item_tmp.amount = 1;
+		get_count = qty;
+	}
+	else {
+		item_tmp.amount = qty;
+		get_count = 1;
+	}
+
+	if( pc_inventoryblank( sd ) < get_count ){
+		ShowError( "buildin_getrandgroupitem: Not enough free space in inventory.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	for (i = 0; i < get_count; i++) {
+		// if not pet egg
+		if (!pet_create_egg(sd, entry->nameid)) {
+			e_additem_result flag = pc_additem( sd, &item_tmp, item_tmp.amount, LOG_TYPE_SCRIPT );
+
+			if( flag != ADDITEM_SUCCESS ){
+				clif_additem(sd,0,0,flag);
+				ShowError( "buildin_getrandgroupitem: Failed to add the item to player.\n" );
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/* getgroupitem <group_id>{,<identify>{,<char_id>}};
+ * Gives item(s) to the attached player based on item group contents
+ */
+BUILDIN_FUNC(getgroupitem) {
+	map_session_data* sd;
+	int32 group_id = script_getnum(st,2);
+	
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	bool identify = false;
+
+	if( script_hasdata( st, 3 ) ){
+		identify = script_getnum( st, 3 );
+	}
+	
+	if( itemdb_group.pc_get_itemgroup( group_id, identify, *sd ) ){
+		ShowError("buildin_getgroupitem: Invalid group id '%d' specified.\n",group_id);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/* cleanmap <map_name>;
+ * cleanarea <map_name>, <x0>, <y0>, <x1>, <y1>; */
+static int32 atcommand_cleanfloor_sub(block_list *bl, va_list ap)
+{
+	nullpo_ret(bl);
+	map_clearflooritem(bl);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(cleanmap)
+{
+	const char *mapname;
+	int16 m;
+
+	mapname = script_getstr(st, 2);
+	m = map_mapname2mapid(mapname);
+	if (!m)
+		return SCRIPT_CMD_FAILURE;
+
+	if ((script_lastdata(st) - 2) < 4) {
+		map_foreachinmap(atcommand_cleanfloor_sub, m, BL_ITEM);
+	} else {
+		int16 x0 = script_getnum(st, 3);
+		int16 y0 = script_getnum(st, 4);
+		int16 x1 = script_getnum(st, 5);
+		int16 y1 = script_getnum(st, 6);
+		if (x0 > 0 && y0 > 0 && x1 > 0 && y1 > 0) {
+			map_foreachinallarea(atcommand_cleanfloor_sub, m, x0, y0, x1, y1, BL_ITEM);
+		} else {
+			ShowError("cleanarea: invalid coordinate defined!\n");
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/* Cast a skill on the attached player.
+ * npcskill <skill id>, <skill lvl>, <stat point>, <NPC level>;
+ * npcskill "<skill name>", <skill lvl>, <stat point>, <NPC level>; */
+BUILDIN_FUNC(npcskill)
+{
+	uint16 skill_id;
+	uint16 skill_level;
+	uint32 stat_point;
+	uint32 npc_level;
+	npc_data *nd;
+	map_session_data *sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+	
+	if (script_isstring(st, 2)) {
+		const char *name = script_getstr(st, 2);
+
+		if (!(skill_id = skill_name2id(name))) {
+			ShowError("buildin_npcskill: Invalid skill name %s.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		skill_id = script_getnum(st, 2);
+
+		if (!skill_get_index(skill_id)) {
+			ShowError("buildin_npcskill: Invalid skill ID %d.\n", skill_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	skill_level	= script_getnum(st, 3);
+	stat_point	= script_getnum(st, 4);
+	npc_level	= script_getnum(st, 5);
+	nd			= (npc_data *)map_id2bl(sd->npc_id);
+
+	if (stat_point > battle_config.max_third_parameter) {
+		ShowError("npcskill: stat point exceeded maximum of %d.\n",battle_config.max_third_parameter );
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (npc_level > MAX_LEVEL) {
+		ShowError("npcskill: level exceeded maximum of %d.\n", MAX_LEVEL);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (nd == nullptr) { //ain't possible, but I don't trust people.
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	nd->level = npc_level;
+	nd->stat_point = stat_point;
+
+	if (!nd->status.hp)
+		status_calc_npc(nd, SCO_FIRST);
+	else
+		status_calc_npc(nd, SCO_NONE);
+
+	if (skill_get_inf(skill_id)&INF_GROUND_SKILL)
+		unit_skilluse_pos2(nd, sd->x, sd->y, skill_id, skill_level,0,0,true);
+	else
+		unit_skilluse_id2(nd, sd->id, skill_id, skill_level,0,0,true);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/* Consumes an item.
+ * consumeitem <item id>{,<char_id>};
+ * consumeitem "<item name>"{,<char_id>};
+ * @param item: Item ID or name
+ */
+BUILDIN_FUNC(consumeitem)
+{
+	map_session_data *sd;
+	std::shared_ptr<item_data> item_data;
+
+	if (!script_charid2sd(3, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( script_isstring(st, 2) ){
+		const char *name = script_getstr(st, 2);
+
+		item_data = item_db.searchname( name );
+
+		if( item_data == nullptr ){
+			ShowError( "buildin_consumeitem: Nonexistant item %s requested.\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		t_itemid nameid = script_getnum(st, 2);
+
+		item_data = item_db.find( nameid );
+
+		if( item_data == nullptr ){
+			ShowError("buildin_consumeitem: Nonexistant item %u requested.\n", nameid );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	// Save the old script the player was attached to
+	struct script_state* previous_st = sd->st;
+	// Save the old item id, if this command was called inside another item
+	t_itemid previous_itemid = sd->itemid;
+
+	// Only if there was an old script
+	if( previous_st != nullptr ){
+		// Detach the player from the current script
+		script_detach_rid( previous_st );
+	}
+
+	// Set the item id to the item id of the script that will be executed (needed for announcement of group containers for example)
+	sd->itemid = item_data->nameid;
+	run_script( item_data->script, 0, sd->id, 0 );
+
+	if( sd->st != nullptr ){
+		script_free_state( sd->st );
+		sd->st = nullptr;
+	}
+
+	// If an old script is present
+	if( previous_st != nullptr ){
+		// Because of detach the RID will be removed, so we need to restore it
+		previous_st->rid = sd->id;
+
+		// Reattach the player to it, so that the limitations of that script kick back in
+		script_attach_state( previous_st );
+	}
+
+	// Restore the old item id
+	sd->itemid = previous_itemid;
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Makes a player sit/stand.
+ * sit {"<character name>"};
+ * stand {"<character name>"};
+ * Note: Use readparam(Sitting) which returns 1 or 0 (sitting or standing).
+ * @param name: Player name that will be invoked
+ */
+BUILDIN_FUNC(sit)
+{
+	TBL_PC *sd;
+
+	if( !script_nick2sd(2,sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	if( !pc_issit(sd) ) {
+		pc_setsit(sd);
+		skill_sit(sd, 1);
+		clif_sitting(*sd);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Makes player to stand
+* @param name: Player name that will be set
+*/
+BUILDIN_FUNC(stand)
+{
+	TBL_PC *sd;
+
+	if( !script_nick2sd(2,sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	if( pc_issit(sd) && pc_setstand(sd, false)) {
+		skill_sit(sd, 0);
+		clif_standing(*sd);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Creates an array of bounded item IDs
+ * countbound {<type>{,<char_id>}};
+ * @param type: 0 - All bound items; 1 - Account Bound; 2 - Guild Bound; 3 - Party Bound
+ * @return amt: Total number of different items type found
+ */
+BUILDIN_FUNC(countbound)
+{
+	TBL_PC *sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	int32 i, k = 0;
+	int32 type = script_getnum(st,2);
+
+	for( i = 0; i < MAX_INVENTORY; i ++ ) {
+		if( sd->inventory.u.items_inventory[i].nameid > 0 && (
+			(!type && sd->inventory.u.items_inventory[i].bound) || (type && sd->inventory.u.items_inventory[i].bound == type)
+			))
+		{
+			pc_setreg(sd,reference_uid(add_str("@bound_items"), k),sd->inventory.u.items_inventory[i].nameid);
+			pc_setreg(sd,reference_uid(add_str("@bound_amount"), k),sd->inventory.u.items_inventory[i].amount);
+			k++;
+		}
+	}
+
+	script_pushint(st,k);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Creates new party
+ * party_create "<party name>"{,<char id>{,<item share>{,<item share type>}}};
+ * @param party_name: String of party name that will be created
+ * @param char_id: Chara that will be leader of this new party. If no char_id specified, the invoker will be party leader
+ * @param item_share: 0-Each Take. 1-Party Share
+ * @param item_share_type: 0-Each Take. 1-Even Share
+ * @return val: Result value
+ *	-3	- party name is exist
+ *	-2	- player is in party already
+ *	-1	- player is not found
+ *	0	- unknown error
+ *	1	- success, will return party id $@party_create_id
+ */
+BUILDIN_FUNC(party_create)
+{
+	char party_name[NAME_LENGTH];
+	int32 item1 = 0, item2 = 0;
+	TBL_PC *sd = nullptr;

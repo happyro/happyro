@@ -1,0 +1,500 @@
+	return (uint64)key.i;
+}
+
+/**
+ * Default hasher for DB_UINT databases.
+ * Just returns the value of the key.
+ * <code>maxlen</code> is ignored.
+ * @param key Key to be hashed
+ * @param maxlen Maximum length of the key to hash
+ * @return hash of the key
+ * @see DBType#DB_UINT
+ * @see #DBHasher
+ * @see #db_default_hash(DBType)
+ */
+static uint64 db_uint_hash(DBKey key, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_uint_hash);
+	return (uint64)key.ui;
+}
+
+/**
+ * Default hasher for DB_STRING databases.
+ * @param key Key to be hashed
+ * @param maxlen Maximum length of the key to hash
+ * @return hash of the key
+ * @see DBType#DB_STRING
+ * @see #DBHasher
+ * @see #db_default_hash(DBType)
+ */
+static uint64 db_string_hash(DBKey key, uint16 maxlen)
+{
+	const char *k = key.str;
+	uint32 hash = 0;
+	uint16 i;
+
+	DB_COUNTSTAT(db_string_hash);
+
+	for (i = 0; *k; ++i) {
+		hash = (hash*33 + ((unsigned char)*k))^(hash>>24);
+		k++;
+		if (i == maxlen)
+			break;
+	}
+
+	return (uint64)hash;
+}
+
+/**
+ * Default hasher for DB_ISTRING databases.
+ * @param key Key to be hashed
+ * @param maxlen Maximum length of the key to hash
+ * @return hash of the key
+ * @see DBType#DB_ISTRING
+ * @see #db_default_hash(DBType)
+ */
+static uint64 db_istring_hash(DBKey key, uint16 maxlen)
+{
+	const char *k = key.str;
+	uint32 hash = 0;
+	uint16 i;
+
+	DB_COUNTSTAT(db_istring_hash);
+
+	for (i = 0; *k; i++) {
+		hash = (hash*33 + ((unsigned char)TOLOWER(*k)))^(hash>>24);
+		k++;
+		if (i == maxlen)
+			break;
+	}
+
+	return (uint64)hash;
+}
+
+/**
+ * Default hasher for DB_INT64 databases.
+ * Returns the value of the key as an uint64.
+ * <code>maxlen</code> is ignored.
+ * @param key Key to be hashed
+ * @param maxlen Maximum length of the key to hash
+ * @return hash of the key
+ * @see DBType#DB_INT64
+ * @see #DBHasher
+ * @see #db_default_hash(DBType)
+ */
+static uint64 db_int64_hash(DBKey key, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_int64_hash);
+	return (uint64)key.i64;
+}
+
+/**
+ * Default hasher for DB_UINT64 databases.
+ * Just returns the value of the key.
+ * <code>maxlen</code> is ignored.
+ * @param key Key to be hashed
+ * @param maxlen Maximum length of the key to hash
+ * @return hash of the key
+ * @see DBType#DB_UINT64
+ * @see #DBHasher
+ * @see #db_default_hash(DBType)
+ */
+static uint64 db_uint64_hash(DBKey key, uint16 maxlen)
+{
+	(void)maxlen;//not used
+	DB_COUNTSTAT(db_uint64_hash);
+	return key.ui64;
+}
+
+/**
+ * Releaser that releases nothing.
+ * @param key Key of the database entry
+ * @param data Data of the database entry
+ * @param which What is being requested to be released
+ * @protected
+ * @see #DBReleaser
+ * @see #db_default_releaser(DBType,DBOptions)
+ */
+static void db_release_nothing(DBKey key, DBData data, DBRelease which)
+{
+	(void)key;(void)data;(void)which;//not used
+	DB_COUNTSTAT(db_release_nothing);
+}
+
+/**
+ * Releaser that only releases the key.
+ * @param key Key of the database entry
+ * @param data Data of the database entry
+ * @param which What is being requested to be released
+ * @protected
+ * @see #DBReleaser
+ * @see #db_default_release(DBType,DBOptions)
+ */
+static void db_release_key(DBKey key, DBData data, DBRelease which)
+{
+	(void)data;//not used
+	DB_COUNTSTAT(db_release_key);
+	if (which&DB_RELEASE_KEY) aFree((char*)key.str); // needs to be a pointer
+}
+
+/**
+ * Releaser that only releases the data.
+ * @param key Key of the database entry
+ * @param data Data of the database entry
+ * @param which What is being requested to be released
+ * @protected
+ * @see #DBData
+ * @see #DBRelease
+ * @see #DBReleaser
+ * @see #db_default_release(DBType,DBOptions)
+ */
+static void db_release_data(DBKey key, DBData data, DBRelease which)
+{
+	(void)key;//not used
+	DB_COUNTSTAT(db_release_data);
+	if (which&DB_RELEASE_DATA && data.type == DB_DATA_PTR) {
+		aFree(data.u.ptr);
+		data.u.ptr = nullptr;
+	}
+}
+
+/**
+ * Releaser that releases both key and data.
+ * @param key Key of the database entry
+ * @param data Data of the database entry
+ * @param which What is being requested to be released
+ * @protected
+ * @see #DBKey
+ * @see #DBData
+ * @see #DBRelease
+ * @see #DBReleaser
+ * @see #db_default_release(DBType,DBOptions)
+ */
+static void db_release_both(DBKey key, DBData data, DBRelease which)
+{
+	DB_COUNTSTAT(db_release_both);
+	if (which&DB_RELEASE_KEY) aFree((char*)key.str); // needs to be a pointer
+	if (which&DB_RELEASE_DATA && data.type == DB_DATA_PTR) {
+		aFree(data.u.ptr);
+		data.u.ptr = nullptr;
+	}
+}
+
+/*****************************************************************************\
+ *  (4) Section with protected functions used in the interface of the        *
+ *  database and interface of the iterator.                                  *
+ *  dbit_obj_first   - Fetches the first entry from the database.            *
+ *  dbit_obj_last    - Fetches the last entry from the database.             *
+ *  dbit_obj_next    - Fetches the next entry from the database.             *
+ *  dbit_obj_prev    - Fetches the previous entry from the database.         *
+ *  dbit_obj_exists  - Returns true if the current entry exists.             *
+ *  dbit_obj_remove  - Remove the current entry from the database.           *
+ *  dbit_obj_destroy - Destroys the iterator, unlocking the database and     *
+ *           freeing used memory.                                            *
+ *  db_obj_iterator - Return a new database iterator.                         *
+ *  db_obj_exists   - Checks if an entry exists.                             *
+ *  db_obj_get      - Get the data identified by the key.                    *
+ *  db_obj_vgetall  - Get the data of the matched entries.                   *
+ *  db_obj_getall   - Get the data of the matched entries.                   *
+ *  db_obj_vensure  - Get the data identified by the key, creating if it     *
+ *           doesn't exist yet.                                              *
+ *  db_obj_ensure   - Get the data identified by the key, creating if it     *
+ *           doesn't exist yet.                                              *
+ *  db_obj_put      - Put data identified by the key in the database.        *
+ *  db_obj_remove   - Remove an entry from the database.                     *
+ *  db_obj_vforeach - Apply a function to every entry in the database.       *
+ *  db_obj_foreach  - Apply a function to every entry in the database.       *
+ *  db_obj_vclear   - Remove all entries from the database.                  *
+ *  db_obj_clear    - Remove all entries from the database.                  *
+ *  db_obj_vdestroy - Destroy the database, freeing all the used memory.     *
+ *  db_obj_destroy  - Destroy the database, freeing all the used memory.     *
+ *  db_obj_size     - Return the size of the database.                       *
+ *  db_obj_type     - Return the type of the database.                       *
+ *  db_obj_options  - Return the options of the database.                    *
+\*****************************************************************************/
+
+/**
+ * Fetches the first entry in the database.
+ * Returns the data of the entry.
+ * Puts the key in out_key, if out_key is not nullptr.
+ * @param self Iterator
+ * @param out_key Key of the entry
+ * @return Data of the entry
+ * @protected
+ * @see DBIterator#first
+ */
+DBData* dbit_obj_first(DBIterator* self, DBKey* out_key)
+{
+	DBIterator_impl* it = (DBIterator_impl*)self;
+
+	DB_COUNTSTAT(dbit_first);
+	// position before the first entry
+	it->ht_index = -1;
+	it->node = nullptr;
+	// get next entry
+	return self->next(self, out_key);
+}
+
+/**
+ * Fetches the last entry in the database.
+ * Returns the data of the entry.
+ * Puts the key in out_key, if out_key is not nullptr.
+ * @param self Iterator
+ * @param out_key Key of the entry
+ * @return Data of the entry
+ * @protected
+ * @see DBIterator#last
+ */
+DBData* dbit_obj_last(DBIterator* self, DBKey* out_key)
+{
+	DBIterator_impl* it = (DBIterator_impl*)self;
+
+	DB_COUNTSTAT(dbit_last);
+	// position after the last entry
+	it->ht_index = HASH_SIZE;
+	it->node = nullptr;
+	// get previous entry
+	return self->prev(self, out_key);
+}
+
+/**
+ * Fetches the next entry in the database.
+ * Returns the data of the entry.
+ * Puts the key in out_key, if out_key is not nullptr.
+ * @param self Iterator
+ * @param out_key Key of the entry
+ * @return Data of the entry
+ * @protected
+ * @see DBIterator#next
+ */
+DBData* dbit_obj_next(DBIterator* self, DBKey* out_key)
+{
+	DBIterator_impl* it = (DBIterator_impl*)self;
+	DBNode *node;
+	DBNode *parent;
+	struct dbn fake;
+
+	DB_COUNTSTAT(dbit_next);
+	if( it->ht_index < 0 )
+	{// get first node
+		it->ht_index = 0;
+		it->node = nullptr;
+	}
+	node = it->node;
+	memset(&fake, 0, sizeof(fake));
+	for( ; it->ht_index < HASH_SIZE; ++(it->ht_index) )
+	{
+		// Iterate in the order: left tree, current node, right tree
+		if( node == nullptr )
+		{// prepare initial node of this hash
+			node = it->db->ht[it->ht_index];
+			if( node == nullptr )
+				continue;// next hash
+			fake.right = node;
+			node = &fake;
+		}
+
+		while( node )
+		{// next node
+			if( node->right )
+			{// continue in the right subtree
+				node = node->right;
+				while( node->left )
+					node = node->left;// get leftmost node
+			}
+			else
+			{// continue to the next parent (recursive)
+				parent = node->parent;
+				while( parent )
+				{
+					if( parent->right != node )
+						break;
+					node = parent;
+					parent = node->parent;
+				}
+				if( parent == nullptr )
+				{// next hash
+					node = nullptr;
+					break;
+				}
+				node = parent;
+			}
+
+			if( !node->deleted )
+			{// found next entry
+				it->node = node;
+				if( out_key )
+					memcpy(out_key, &node->key, sizeof(DBKey));
+				return &node->data;
+			}
+		}
+	}
+	it->node = nullptr;
+	return nullptr;// not found
+}
+
+/**
+ * Fetches the previous entry in the database.
+ * Returns the data of the entry.
+ * Puts the key in out_key, if out_key is not nullptr.
+ * @param self Iterator
+ * @param out_key Key of the entry
+ * @return Data of the entry
+ * @protected
+ * @see DBIterator#prev
+ */
+DBData* dbit_obj_prev(DBIterator* self, DBKey* out_key)
+{
+	DBIterator_impl* it = (DBIterator_impl*)self;
+	DBNode *node;
+	DBNode *parent;
+	struct dbn fake;
+
+	DB_COUNTSTAT(dbit_prev);
+	if( it->ht_index >= HASH_SIZE )
+	{// get last node
+		it->ht_index = HASH_SIZE-1;
+		it->node = nullptr;
+	}
+	node = it->node;
+	memset(&fake, 0, sizeof(fake));
+	for( ; it->ht_index >= 0; --(it->ht_index) )
+	{
+		// Iterate in the order: right tree, current node, left tree
+		if( node == nullptr )
+		{// prepare initial node of this hash
+			node = it->db->ht[it->ht_index];
+			if( node == nullptr )
+				continue;// next hash
+			fake.left = node;
+			node = &fake;
+		}
+
+		while( node )
+		{// next node
+			if( node->left )
+			{// continue in the left subtree
+				node = node->left;
+				while( node->right )
+					node = node->right;// get rightmost node
+			}
+			else
+			{// continue to the next parent (recursive)
+				parent = node->parent;
+				while( parent )
+				{
+					if( parent->left != node )
+						break;
+					node = parent;
+					parent = node->parent;
+				}
+				if( parent == nullptr )
+				{// next hash
+					node = nullptr;
+					break;
+				}
+				node = parent;
+			}
+
+			if( !node->deleted )
+			{// found previous entry
+				it->node = node;
+				if( out_key )
+					memcpy(out_key, &node->key, sizeof(DBKey));
+				return &node->data;
+			}
+		}
+	}
+	it->node = nullptr;
+	return nullptr;// not found
+}
+
+/**
+ * Returns true if the fetched entry exists.
+ * The databases entries might have nullptr data, so use this to test if
+ * the iterator is done.
+ * @param self Iterator
+ * @return true if the entry exists
+ * @protected
+ * @see DBIterator#exists
+ */
+bool dbit_obj_exists(DBIterator* self)
+{
+	DBIterator_impl* it = (DBIterator_impl*)self;
+
+	DB_COUNTSTAT(dbit_exists);
+	return (it->node && !it->node->deleted);
+}
+
+/**
+ * Removes the current entry from the database.
+ * NOTE: {@link DBIterator#exists} will return false until another entry
+ *       is fetched
+ * Puts data of the removed entry in out_data, if out_data is not nullptr (unless data has been released)
+ * @param self Iterator
+ * @param out_data Data of the removed entry.
+ * @return 1 if entry was removed, 0 otherwise
+ * @protected
+ * @see DBMap#remove
+ * @see DBIterator#remove
+ */
+int32 dbit_obj_remove(DBIterator* self, DBData *out_data)
+{
+	DBIterator_impl* it = (DBIterator_impl*)self;
+	DBNode *node;
+	int32 retval = 0;
+
+	DB_COUNTSTAT(dbit_remove);
+	node = it->node;
+	if( node && !node->deleted )
+	{
+		DBMap_impl* db = it->db;
+		if( db->cache == node )
+			db->cache = nullptr;
+		db->release(node->key, node->data, DB_RELEASE_DATA);
+		if( out_data )
+			memcpy(out_data, &node->data, sizeof(DBData));
+		retval = 1;
+		db_free_add(db, node, &db->ht[it->ht_index]);
+	}
+	return retval;
+}
+
+/**
+ * Destroys this iterator and unlocks the database.
+ * @param self Iterator
+ * @protected
+ */
+void dbit_obj_destroy(DBIterator* self)
+{
+	DBIterator_impl* it = (DBIterator_impl*)self;
+
+	DB_COUNTSTAT(dbit_destroy);
+	// unlock the database
+	db_free_unlock(it->db);
+	// free iterator
+	ers_free(db_iterator_ers,self);
+}
+
+/**
+ * Returns a new iterator for this database.
+ * The iterator keeps the database locked until it is destroyed.
+ * The database will keep functioning normally but will only free internal
+ * memory when unlocked, so destroy the iterator as soon as possible.
+ * @param self Database
+ * @return New iterator
+ * @protected
+ */
+static DBIterator* db_obj_iterator(DBMap* self)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBIterator_impl* it;
+
+	DB_COUNTSTAT(db_iterator);
+	it = ers_alloc(db_iterator_ers, struct DBIterator_impl);
+	/* Interface of the iterator **/
+	it->vtable.first   = dbit_obj_first;
+	it->vtable.last    = dbit_obj_last;
+	it->vtable.next    = dbit_obj_next;

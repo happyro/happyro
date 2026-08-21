@@ -1,0 +1,500 @@
+// 0x187
+PACKET.CZ.PING = function PACKET_CZ_PING() {
+	this.AID = 0;
+};
+PACKET.CZ.PING.prototype.build = function () {
+	const pkt_len = 2 + 4;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x187);
+	pkt_buf.writeULong(this.AID);
+	return pkt_buf;
+};
+
+// 0x18a
+PACKET.CZ.REQ_DISCONNECT = function PACKET_CZ_REQ_DISCONNECT() {
+	this.type = 0;
+};
+PACKET.CZ.REQ_DISCONNECT.prototype.build = function () {
+	const pkt_len = 2 + 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x18a);
+	pkt_buf.writeShort(this.type);
+	return pkt_buf;
+};
+
+// 0x18e
+PACKET.CZ.REQMAKINGITEM = function PACKET_CZ_REQMAKINGITEM() {
+	this.itemList = {};
+};
+PACKET.CZ.REQMAKINGITEM.prototype.build = function () {
+	const pkt_len = PACKETVER.value >= 20181121 ? 18 : 10;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x18e);
+	if (PACKETVER.value >= 20181121) {
+		pkt_buf.writeULong(this.itemList.ITID);
+		pkt_buf.writeULong(this.itemList.material_ID[0]);
+		pkt_buf.writeULong(this.itemList.material_ID[1]);
+		pkt_buf.writeULong(this.itemList.material_ID[2]);
+	} else {
+		pkt_buf.writeUShort(this.itemList.ITID);
+		pkt_buf.writeUShort(this.itemList.material_ID[0]);
+		pkt_buf.writeUShort(this.itemList.material_ID[1]);
+		pkt_buf.writeUShort(this.itemList.material_ID[2]);
+	}
+	return pkt_buf;
+};
+
+// 0x190
+PACKET.CZ.USE_SKILL_TOGROUNDMoreInfo = function PACKET_CZ_USE_SKILL_TOGROUND_MoreInfo() {
+	this.selectedLevel = 0;
+	this.SKID = 0;
+	this.xPos = 0;
+	this.yPos = 0;
+	this.contents = '';
+};
+PACKET.CZ.USE_SKILL_TOGROUNDMoreInfo.prototype.build = function () {
+	const ver = this.getPacketVersion();
+	const pkt = new BinaryWriter(ver[2]);
+
+	pkt.writeShort(ver[1]);
+	pkt.view.setInt16(ver[3], this.selectedLevel, true);
+	pkt.view.setUint16(ver[4], this.SKID, true);
+	pkt.view.setInt16(ver[5], this.xPos, true);
+	pkt.view.setInt16(ver[6], this.yPos, true);
+	pkt.view.setString(ver[7], this.contents, 80);
+	return pkt;
+};
+
+// 0x193
+PACKET.CZ.REQNAME_BYGID = function PACKET_CZ_REQNAME_BYGID() {
+	this.GID = 0;
+};
+PACKET.CZ.REQNAME_BYGID.prototype.build = function () {
+	const ver = this.getPacketVersion();
+	const pkt = new BinaryWriter(ver[2]);
+
+	pkt.writeShort(ver[1]);
+	pkt.view.setUint32(ver[3], this.GID, true);
+	return pkt;
+};
+
+// 0x9d4
+PACKET.CZ.NPC_TRADE_QUIT = function PACKET_CZ_NPC_TRADE_QUIT() {};
+PACKET.CZ.NPC_TRADE_QUIT.prototype.build = function () {
+	const pkt_len = 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x9d4);
+	return pkt_buf;
+};
+
+// 0x9d5
+PACKET.ZC.NPC_MARKET_OPEN = function PACKET_ZC_NPC_MARKET_OPEN(fp, end) {
+	this.itemList = (function () {
+		// Determine item size based on PACKETVER
+		const item_size = PACKETVER.value >= 20181121 ? 15 : 13; // Adjust sizes based on nameid (4 or 2 bytes)
+		const count = ((end - fp.tell()) / item_size) | 0; // Calculate item count
+		const out = new Array(count);
+
+		for (let i = 0; i < count; ++i) {
+			out[i] = {};
+			// Parse fields with conditional handling for nameid
+			out[i].ITID = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort(); // uint32 or uint16
+			out[i].type = fp.readUChar();
+			out[i].price = fp.readULong();
+			out[i].qty = fp.readULong();
+			out[i].weight = fp.readUShort();
+		}
+		return out;
+	})();
+};
+PACKET.ZC.NPC_MARKET_OPEN.size = -1;
+
+// 0x9d6
+PACKET.CZ.NPC_MARKET_PURCHASE = function PACKET_CZ_NPC_MARKET_PURCHASE() {
+	this.itemList = [];
+};
+PACKET.CZ.NPC_MARKET_PURCHASE.prototype.build = function () {
+	// Determine the item size based on PACKETVER
+	const item_size = PACKETVER.value >= 20181121 ? 8 : 6; // 8 bytes (4 + 4) or 6 bytes (2 + 4)
+	const pkt_len = 4 + this.itemList.length * item_size; // Total packet length
+	const pkt_buf = new BinaryWriter(pkt_len); // Create a buffer with the required size
+
+	pkt_buf.writeShort(0x9d6); // Packet type
+	pkt_buf.writeShort(pkt_len); // Packet length
+
+	for (let i = 0; i < this.itemList.length; ++i) {
+		// Write ITID based on PACKETVER
+		if (PACKETVER.value >= 20181121) {
+			pkt_buf.writeULong(this.itemList[i].itemId); // uint32
+		} else {
+			pkt_buf.writeUShort(this.itemList[i].itemId); // uint16
+		}
+
+		// Write quantity (int32)
+		pkt_buf.writeLong(this.itemList[i].amount); // int32
+	}
+
+	return pkt_buf;
+};
+
+// 0x9d7
+PACKET.ZC.NPC_MARKET_PURCHASE_RESULT = function PACKET_ZC_NPC_MARKET_PURCHASE_RESULT(fp, end) {
+	this.result = fp.readUChar();
+	this.itemList = (function () {
+		// Determine item size based on PACKETVER
+		const item_size = PACKETVER.value >= 20181121 ? 10 : 8; // Adjust sizes based on nameid (4 or 2 bytes)
+		const count = ((end - fp.tell()) / item_size) | 0; // Calculate item count
+		const out = new Array(count);
+
+		for (let i = 0; i < count; ++i) {
+			out[i] = {};
+			// Parse fields with conditional handling for nameid
+			out[i].ITID = PACKETVER.value >= 20181121 ? fp.readULong() : fp.readUShort(); // uint32 or uint16
+			out[i].qty = fp.readUShort();
+			out[i].price = fp.readULong();
+		}
+		return out;
+	})();
+};
+PACKET.ZC.NPC_MARKET_PURCHASE_RESULT.size = -1;
+
+// 0x9d8
+PACKET.CZ.NPC_MARKET_CLOSE = function PACKET_CZ_NPC_MARKET_CLOSE() {};
+PACKET.CZ.NPC_MARKET_CLOSE.prototype.build = function () {
+	const pkt_len = 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x9d8);
+	return pkt_buf;
+};
+
+// 0x19f
+PACKET.CZ.TRYCAPTURE_MONSTER = function PACKET_CZ_TRYCAPTURE_MONSTER() {
+	this.targetAID = 0;
+};
+PACKET.CZ.TRYCAPTURE_MONSTER.prototype.build = function () {
+	const pkt_len = 2 + 4;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x19f);
+	pkt_buf.writeULong(this.targetAID);
+	return pkt_buf;
+};
+
+// 0x1a1
+PACKET.CZ.COMMAND_PET = function PACKET_CZ_COMMAND_PET() {
+	this.cSub = 0;
+};
+PACKET.CZ.COMMAND_PET.prototype.build = function () {
+	const pkt_len = 2 + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1a1);
+	pkt_buf.writeChar(this.cSub);
+	return pkt_buf;
+};
+
+// 0x1a5
+PACKET.CZ.RENAME_PET = function PACKET_CZ_RENAME_PET() {
+	this.szName = '';
+};
+PACKET.CZ.RENAME_PET.prototype.build = function () {
+	const pkt_len = 2 + 24;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1a5);
+	pkt_buf.writeString(this.szName, 24);
+	return pkt_buf;
+};
+
+// 0x1a7
+PACKET.CZ.SELECT_PETEGG = function PACKET_CZ_SELECT_PETEGG() {
+	this.index = 0;
+};
+PACKET.CZ.SELECT_PETEGG.prototype.build = function () {
+	const pkt_len = 2 + 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1a7);
+	pkt_buf.writeShort(this.index);
+	return pkt_buf;
+};
+
+// 0x1a8
+PACKET.CZ.PETEGG_INFO = function PACKET_CZ_PETEGG_INFO() {
+	this.index = 0;
+};
+PACKET.CZ.PETEGG_INFO.prototype.build = function () {
+	const pkt_len = 2 + 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1a8);
+	pkt_buf.writeShort(this.index);
+	return pkt_buf;
+};
+
+// 0x1a9
+PACKET.CZ.PET_ACT = function PACKET_CZ_PET_ACT() {
+	this.data = 0;
+};
+PACKET.CZ.PET_ACT.prototype.build = function () {
+	const pkt_len = 2 + 4;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1a9);
+	pkt_buf.writeLong(this.data);
+	return pkt_buf;
+};
+
+// 0x1ae
+PACKET.CZ.REQ_MAKINGARROW = function PACKET_CZ_REQ_MAKINGARROW() {
+	this.id = 0;
+};
+PACKET.CZ.REQ_MAKINGARROW.prototype.build = function () {
+	let pkt_len = 2 + 2;
+	if (PACKETVER.value >= 20181121) {
+		pkt_len += 2;
+	}
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1ae);
+	if (PACKETVER.value >= 20181121) {
+		pkt_buf.writeULong(this.id);
+	} else {
+		pkt_buf.writeUShort(this.id);
+	}
+	return pkt_buf;
+};
+
+// 0x1af
+PACKET.CZ.REQ_CHANGECART = function PACKET_CZ_REQ_CHANGECART() {
+	this.num = 0;
+};
+PACKET.CZ.REQ_CHANGECART.prototype.build = function () {
+	const pkt_len = 2 + 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1af);
+	pkt_buf.writeShort(this.num);
+	return pkt_buf;
+};
+
+// 0x1b2
+PACKET.CZ.REQ_OPENSTORE2 = function PACKET_CZ_REQ_OPENSTORE2() {
+	this.storeName = '';
+	this.result = 0;
+	this.storeList = [];
+};
+PACKET.CZ.REQ_OPENSTORE2.prototype.build = function () {
+	const pkt_len = 2 + 2 + 80 + 1 + this.storeList.length * 8;
+	const pkt_buf = new BinaryWriter(pkt_len);
+	let i, count;
+
+	pkt_buf.writeShort(0x1b2);
+	pkt_buf.writeShort(pkt_len);
+	pkt_buf.writeString(this.storeName, 80);
+	pkt_buf.writeUChar(this.result);
+
+	for (i = 0, count = this.storeList.length; i < count; ++i) {
+		pkt_buf.writeShort(this.storeList[i].index);
+		pkt_buf.writeShort(this.storeList[i].count);
+		pkt_buf.writeLong(this.storeList[i].price);
+	}
+
+	return pkt_buf;
+};
+
+// 0x1b7
+PACKET.CZ.GUILD_ZENY = function PACKET_CZ_GUILD_ZENY() {
+	this.zeny = 0;
+};
+PACKET.CZ.GUILD_ZENY.prototype.build = function () {
+	const pkt_len = 2 + 4;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1b7);
+	pkt_buf.writeLong(this.zeny);
+	return pkt_buf;
+};
+
+// 0x1bb
+PACKET.CZ.SHIFT = function PACKET_CZ_SHIFT() {
+	this.CharacterName = '';
+};
+PACKET.CZ.SHIFT.prototype.build = function () {
+	const pkt_len = 2 + 24;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1bb);
+	pkt_buf.writeString(this.CharacterName, 24);
+	return pkt_buf;
+};
+
+// 0x1bf
+PACKET.CA.REPLY_PNGAMEROOM = function PACKET_CA_REPLY_PNGAMEROOM() {
+	this.Permission = 0;
+};
+PACKET.CA.REPLY_PNGAMEROOM.prototype.build = function () {
+	const pkt_len = 2 + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1bf);
+	pkt_buf.writeUChar(this.Permission);
+	return pkt_buf;
+};
+
+// 0x1c0
+PACKET.CZ.REQ_REMAINTIME = function PACKET_CZ_REQ_REMAINTIME() {};
+PACKET.CZ.REQ_REMAINTIME.prototype.build = function () {
+	const pkt_len = 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1c0);
+	return pkt_buf;
+};
+
+// 0x1c6
+PACKET.CS.REQ_ENCRYPTION = function PACKET_CS_REQ_ENCRYPTION() {
+	this.encCount = 0;
+	this.decCount = 0;
+};
+PACKET.CS.REQ_ENCRYPTION.prototype.build = function () {
+	const pkt_len = 2 + 1 + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1c6);
+	pkt_buf.writeChar(this.encCount);
+	pkt_buf.writeChar(this.decCount);
+	return pkt_buf;
+};
+
+// 0x1ca
+PACKET.CZ.REQMAKINGHOMUN = function PACKET_CZ_REQMAKINGHOMUN() {
+	this.result = 0;
+};
+PACKET.CZ.REQMAKINGHOMUN.prototype.build = function () {
+	const pkt_len = 2 + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1ca);
+	pkt_buf.writeUChar(this.result);
+	return pkt_buf;
+};
+
+// 0x1cb
+PACKET.CZ.MONSTER_TALK = function PACKET_CZ_MONSTER_TALK() {
+	this.GID = 0;
+	this.stateId = 0;
+	this.skillId = 0;
+	this.arg1 = 0;
+};
+PACKET.CZ.MONSTER_TALK.prototype.build = function () {
+	const pkt_len = 2 + 4 + 1 + 1 + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1cb);
+	pkt_buf.writeULong(this.GID);
+	pkt_buf.writeUChar(this.stateId);
+	pkt_buf.writeUChar(this.skillId);
+	pkt_buf.writeUChar(this.arg1);
+	return pkt_buf;
+};
+
+// 0x1ce
+PACKET.CZ.SELECTAUTOSPELL = function PACKET_CZ_SELECTAUTOSPELL() {
+	this.SKID = 0;
+};
+PACKET.CZ.SELECTAUTOSPELL.prototype.build = function () {
+	const pkt_len = 2 + 4;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1ce);
+	pkt_buf.writeLong(this.SKID);
+	return pkt_buf;
+};
+
+// 0x1d5
+PACKET.CZ.INPUT_EDITDLGSTR = function PACKET_CZ_INPUT_EDITDLGSTR() {
+	this.NAID = 0;
+	this.msg = '';
+};
+PACKET.CZ.INPUT_EDITDLGSTR.prototype.build = function () {
+	const pkt_len = 2 + 2 + 4 + this.msg.length + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1d5);
+	pkt_buf.writeShort(pkt_len);
+	pkt_buf.writeULong(this.NAID);
+	pkt_buf.writeString(this.msg);
+	return pkt_buf;
+};
+
+// 0x1db
+PACKET.CA.REQ_HASH = function PACKET_CA_REQ_HASH() {};
+PACKET.CA.REQ_HASH.prototype.build = function () {
+	const pkt_len = 2;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1db);
+	return pkt_buf;
+};
+
+// 0x1dd
+PACKET.CA.LOGIN2 = function PACKET_CA_LOGIN2() {
+	this.Version = 0;
+	this.ID = '';
+	this.PasswdMD5 = '';
+	this.clienttype = 0;
+};
+PACKET.CA.LOGIN2.prototype.build = function () {
+	const pkt_len = 2 + 4 + 24 + 16 + 1;
+	const pkt_buf = new BinaryWriter(pkt_len);
+
+	pkt_buf.writeShort(0x1dd);
+	pkt_buf.writeULong(this.Version);
+	pkt_buf.writeString(this.ID, 24);
+	pkt_buf.writeString(this.PasswdMD5, 16);
+	pkt_buf.writeUChar(this.clienttype);
+	return pkt_buf;
+};
+
+/*// 0x01b2
+	PACKET.CZ.REQ_OPEN_VENDING = function PACKET_CZ_REQ_REQ_OPEN_VENDING() {
+		this.shop_name = '';
+		this.result = 0;
+		this.itemlist = [];
+	};
+	PACKET.CZ.REQ_OPEN_VENDING.prototype.build = function() {
+		let i = 0;
+		let ver = this.getPacketVersion();
+		let pkt_len = 2+2+80+1+itemlist.length*8;
+		let pkt_buf = new BinaryWriter(len);
+		pkt_buf.writeShort(ver[1]);
+		pkt_buf.writeShort(pkt_len);
+		pkt_buf.writeString(this.shop_name,80);
+		pkt_buf.writeChar(this.result);
+		for(i=0; i < this.itemlist.length; i += 1)
+		{
+			pkt_buf.writeShort(this.itemlist[i].index);
+			pkt_buf.writeShort(this.itemlist[i].amount);
+			pkt_buf.writeLong(this.itemlist[i].price);
+		}
+		return pkt_buf;
+	};*/
+
+// 0x1df
+PACKET.CZ.REQ_ACCOUNTNAME = function PACKET_CZ_REQ_ACCOUNTNAME() {
+	this.AID = 0;
+};
+PACKET.CZ.REQ_ACCOUNTNAME.prototype.build = function () {
+	const ver = this.getPacketVersion();
+	const pkt = new BinaryWriter(ver[2]);
+
+	pkt.writeShort(ver[1]);
+	pkt.view.setUint32(ver[3], this.AID, true);
+	return pkt;
+};

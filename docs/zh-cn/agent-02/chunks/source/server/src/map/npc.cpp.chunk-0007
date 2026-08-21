@@ -1,0 +1,500 @@
+		script_setarray_pc( sd, "@sold_identify", i, sd->inventory.u.items_inventory[idx].identify, &key_identify );
+		script_setarray_pc( sd, "@sold_enchantgrade", i, sd->inventory.u.items_inventory[idx].enchantgrade, &key_enchantgrade );
+
+		for( j = 0; j < MAX_SLOTS; j++ )
+		{// store each of the cards from the equipment in the array
+			snprintf(card_slot, sizeof(card_slot), "@sold_card%d", j + 1);
+			script_setarray_pc( sd, card_slot, i, sd->inventory.u.items_inventory[idx].card[j], &key_card[j] );
+		}
+
+		for (j = 0; j < MAX_ITEM_RDM_OPT; j++) { // Store each of the item options in the array
+			snprintf(option_id, sizeof(option_id), "@sold_option_id%d", j + 1);
+			script_setarray_pc( sd, option_id, i, sd->inventory.u.items_inventory[idx].option[j].id, &key_option_id[j] );
+			snprintf(option_val, sizeof(option_val), "@sold_option_val%d", j + 1);
+			script_setarray_pc( sd, option_val, i, sd->inventory.u.items_inventory[idx].option[j].value, &key_option_val[j] );
+			snprintf(option_param, sizeof(option_param), "@sold_option_param%d", j + 1);
+			script_setarray_pc( sd, option_param, i, sd->inventory.u.items_inventory[idx].option[j].param, &key_option_param[j] );
+		}
+	}
+
+	// invoke event
+	snprintf(npc_ev, ARRAYLENGTH(npc_ev), "%s::%s", nd->exname, script_config.onsell_event_name);
+	npc_event(sd, npc_ev, 0);
+	return 0;
+}
+
+
+/// Player item selling to npc shop.
+///
+/// @param item_list 'n' pairs <index,amount>
+/// @return result code for clif_parse_NpcSellListSend
+uint8 npc_selllist(map_session_data* sd, int32 list_length, const PACKET_CZ_PC_SELL_ITEMLIST_sub* item_list)
+{
+	double z;
+	int32 i,skill;
+	npc_data *nd;
+
+	nullpo_retr(1, sd);
+	nullpo_retr(1, item_list);
+
+	if( ( nd = npc_checknear(sd, map_id2bl(sd->npc_shopid)) ) == nullptr || nd->subtype != NPCTYPE_SHOP )
+	{
+		return 1;
+	}
+
+	z = 0;
+
+	// verify the sell list
+	for( i = 0; i < list_length; i++ )
+	{
+		t_itemid nameid;
+		int32 amount, idx, value;
+
+		idx    = item_list[i].index - 2;
+		amount = item_list[i].amount;
+
+		if( idx >= MAX_INVENTORY || idx < 0 || amount < 0 )
+		{
+			return 1;
+		}
+
+		nameid = sd->inventory.u.items_inventory[idx].nameid;
+
+		if( !nameid || !sd->inventory_data[idx] || sd->inventory.u.items_inventory[idx].amount < amount)
+		{
+			return 1;
+		}
+
+		if( nd->master_nd )
+		{// Script-controlled shops decide by themselves, what can be sold and at what price.
+			continue;
+		}
+
+		if (!pc_can_sell_item(sd, &sd->inventory.u.items_inventory[idx], nd->subtype)) {
+			return 1; // In official server, this illegal attempt the player will be disconnected
+		}
+
+		if (battle_config.rental_item_novalue && sd->inventory.u.items_inventory[idx].expire_time)
+			value = 0;
+		else
+			value = pc_modifysellvalue(sd, sd->inventory_data[idx]->value_sell);
+
+		z+= (double)value*amount;
+	}
+
+	if( nd->master_nd )
+	{// Script-controlled shops
+		return npc_selllist_sub(sd, list_length, item_list, nd->master_nd);
+	}
+
+	// delete items
+	for( i = 0; i < list_length; i++ )
+	{
+		int32 amount, idx;
+
+		idx = item_list[i].index - 2;
+		amount = item_list[i].amount;
+
+		// Forged packet, we do not care if he loses items
+		if( sd->inventory_data[idx] == nullptr ){
+			return 1;
+		}
+
+		if( sd->inventory_data[idx]->type == IT_PETEGG && sd->inventory.u.items_inventory[idx].card[0] == CARD0_PET )
+		{
+			if( pet_db_search(sd->inventory.u.items_inventory[idx].nameid, PET_EGG) )
+			{
+				intif_delete_petdata(MakeDWord(sd->inventory.u.items_inventory[idx].card[1], sd->inventory.u.items_inventory[idx].card[2]));
+			}
+		}
+
+		if (pc_delitem(sd, idx, amount, 0, 6, LOG_TYPE_NPC)) {
+			return 1;
+		}
+	}
+
+	if( z > MAX_ZENY )
+		z = MAX_ZENY;
+
+	pc_getzeny(sd, (int32)z, LOG_TYPE_NPC);
+
+	// custom merchant shop exp bonus
+	if( battle_config.shop_exp > 0 && z > 0 && ( skill = pc_checkskill(sd,MC_OVERCHARGE) ) > 0)
+	{
+		uint16 sk_idx = skill_get_index(MC_OVERCHARGE);
+		if( sd->status.skill[sk_idx].flag >= SKILL_FLAG_REPLACED_LV_0 )
+			skill = sd->status.skill[sk_idx].flag - SKILL_FLAG_REPLACED_LV_0;
+
+		if( skill > 0 )
+		{
+			z = z * (double)skill * (double)battle_config.shop_exp/10000.;
+			if( z < 1 )
+				z = 1;
+			pc_gainexp(sd, nullptr, 0, (int32)z, 0);
+		}
+	}
+
+	return 0;
+}
+
+e_purchase_result npc_barter_purchase( map_session_data& sd, std::shared_ptr<s_npc_barter> barter, std::vector<s_barter_purchase>& purchases ){
+	uint64 requiredZeny = 0;
+	uint32 requiredWeight = 0;
+	uint32 reducedWeight = 0;
+	uint16 requiredSlots = 0;
+	uint32 requiredItems[MAX_INVENTORY] = { 0 };
+
+	for( s_barter_purchase& purchase : purchases ){
+		purchase.data = item_db.find( purchase.item->nameid ).get();
+
+		if( purchase.data == nullptr ){
+			return e_purchase_result::PURCHASE_FAIL_EXCHANGE_FAILED;
+		}
+
+		uint32 amount = purchase.amount;
+
+		if( purchase.item->stockLimited && purchase.item->stock < amount ){
+			return e_purchase_result::PURCHASE_FAIL_STOCK_EMPTY;
+		}
+
+		char result = pc_checkadditem( &sd, purchase.item->nameid, amount );
+
+		if( result == CHKADDITEM_OVERAMOUNT ){
+			return e_purchase_result::PURCHASE_FAIL_COUNT;
+		}else if( result == CHKADDITEM_NEW ){
+			requiredSlots += purchase.data->inventorySlotNeeded( amount );
+		}
+
+		requiredZeny += ( purchase.item->price * amount );
+		requiredWeight += ( purchase.data->weight * amount );
+
+		for( const auto& requirementPair : purchase.item->requirements ){
+			std::shared_ptr<s_npc_barter_requirement> requirement = requirementPair.second;
+			std::shared_ptr<item_data> id = item_db.find(requirement->nameid);
+
+			if( id == nullptr ){
+				return e_purchase_result::PURCHASE_FAIL_EXCHANGE_FAILED;
+			}
+
+			if( itemdb_isstackable2( id.get() ) ){
+				int32 j;
+
+				for( j = 0; j < MAX_INVENTORY; j++ ){
+					if( sd.inventory.u.items_inventory[j].nameid == requirement->nameid ){
+						// Equipped items are not taken into account
+						if( sd.inventory.u.items_inventory[j].equip != 0 ){
+							continue;
+						}
+
+						// Items in equip switch are not taken into account
+						if( sd.inventory.u.items_inventory[j].equipSwitch != 0 ){
+							continue;
+						}
+
+						// Server is configured to hide favorite items on selling
+						if( battle_config.hide_fav_sell && sd.inventory.u.items_inventory[j].favorite != 0 ){
+							continue;
+						}
+
+						// Actually stackable items should never be refinable, but who knows...
+						if( requirement->refine >= 0 && sd.inventory.u.items_inventory[j].refine != requirement->refine ){
+							// Refine does not match, continue with next item
+							continue;
+						}
+
+						// Found a match, accumulate required amount
+						requiredItems[j] += requirement->amount * amount;
+
+						// Check if there are still enough items available
+						if( requiredItems[j] > sd.inventory.u.items_inventory[j].amount ){
+							return e_purchase_result::PURCHASE_FAIL_GOODS;
+						}
+
+						// Cancel the loop
+						break;
+					}
+				}
+
+				// Required item not found
+				if( j == MAX_INVENTORY ){
+					return e_purchase_result::PURCHASE_FAIL_GOODS;
+				}
+			}else{
+				for( int32 i = 0; i < (requirement->amount * amount); i++ ){
+					int32 j;
+
+					for( j = 0; j < MAX_INVENTORY; j++ ){
+						if( sd.inventory.u.items_inventory[j].nameid == requirement->nameid ){
+							// Equipped items are not taken into account
+							if( sd.inventory.u.items_inventory[j].equip != 0 ){
+								continue;
+							}
+
+							// Items in equip switch are not taken into account
+							if( sd.inventory.u.items_inventory[j].equipSwitch != 0 ){
+								continue;
+							}
+
+							// Server is configured to hide favorite items on selling
+							if( battle_config.hide_fav_sell && sd.inventory.u.items_inventory[j].favorite != 0 ){
+								continue;
+							}
+
+							// If necessary, check if the refine rate matches
+							if( requirement->refine >= 0 && sd.inventory.u.items_inventory[j].refine != requirement->refine ){
+								// Refine does not match, continue with next item
+								continue;
+							}
+
+							// Found a match, since it is not stackable, check if it was already taken
+							if( requiredItems[j] > 0 ){
+								// Item was already taken, try to find another match
+								continue;
+							}
+
+							// Mark it as taken
+							requiredItems[j] = 1;
+
+							// Cancel the loop
+							break;
+						}
+					}
+
+					// Required item not found
+					if( j == MAX_INVENTORY ){
+						// Maybe the refine level did not match
+						if( requirement->refine >= 0 ){
+							int32 refine;
+
+							// Try to find a higher refine level, going from the next lowest to the highest possible
+							for( refine = requirement->refine + 1; refine <= MAX_REFINE; refine++ ){
+								for( j = 0; j < MAX_INVENTORY; j++ ){
+									if( sd.inventory.u.items_inventory[j].nameid == requirement->nameid ){
+										// Equipped items are not taken into account
+										if( sd.inventory.u.items_inventory[j].equip != 0 ){
+											continue;
+										}
+
+										// Items in equip switch are not taken into account
+										if(	sd.inventory.u.items_inventory[j].equipSwitch != 0 ){
+											continue;
+										}
+
+										// Server is configured to hide favorite items on selling
+										if( battle_config.hide_fav_sell && sd.inventory.u.items_inventory[j].favorite != 0 ){
+											continue;
+										}
+
+										// If necessary, check if the refine rate matches
+										if( requirement->refine >= 0 && sd.inventory.u.items_inventory[j].refine != refine ){
+											// Refine does not match, continue with next item
+											continue;
+										}
+
+										// Found a match, since it is not stackable, check if it was already taken
+										if( requiredItems[j] > 0 ){
+											// Item was already taken, try to find another match
+											continue;
+										}
+
+										// Mark it as taken
+										requiredItems[j] = 1;
+
+										// Cancel the loop
+										break;
+									}
+								}
+
+								// If a match was found, make sure to cancel the loop
+								if( j < MAX_INVENTORY ){
+									// Cancel the loop
+									break;
+								}
+							}
+
+							// No matching entry found
+							if( refine > MAX_REFINE ){
+								return e_purchase_result::PURCHASE_FAIL_GOODS;
+							}
+						}else{
+							return e_purchase_result::PURCHASE_FAIL_GOODS;
+						}
+					}
+				}
+			}
+
+			reducedWeight += ( purchase.amount * requirement->amount * id->weight );
+		}
+	}
+
+	// Check if there is enough Zeny
+	if( sd.status.zeny < requiredZeny ){
+		return e_purchase_result::PURCHASE_FAIL_MONEY;
+	}
+
+	// Check if there is enough Weight Limit
+	if( ( sd.weight + requiredWeight - reducedWeight ) > sd.max_weight ){
+		return e_purchase_result::PURCHASE_FAIL_WEIGHT;
+	}
+
+	if( pc_inventoryblank( &sd ) < requiredSlots ){
+		return e_purchase_result::PURCHASE_FAIL_COUNT;
+	}
+
+	for( int32 i = 0; i < MAX_INVENTORY; i++ ){
+		if( requiredItems[i] > 0 ){
+			if( pc_delitem( &sd, i, requiredItems[i], 0, 0, LOG_TYPE_BARTER ) != 0 ){
+				return e_purchase_result::PURCHASE_FAIL_EXCHANGE_FAILED;
+			}
+		}
+	}
+
+	if( pc_payzeny( &sd, (int32)requiredZeny, LOG_TYPE_BARTER ) != 0 ){
+		return e_purchase_result::PURCHASE_FAIL_MONEY;
+	}
+
+	for( s_barter_purchase& purchase : purchases ){
+		if( purchase.item->stockLimited ){
+			purchase.item->stock -= purchase.amount;
+
+			if( Sql_Query( mmysql_handle, "REPLACE INTO `%s` (`name`,`index`,`amount`) VALUES ( '%s', '%hu', '%hu' )", barter_table, barter->name.c_str(), purchase.item->index, purchase.item->stock ) != SQL_SUCCESS ){
+				Sql_ShowDebug( mmysql_handle );
+				return e_purchase_result::PURCHASE_FAIL_EXCHANGE_FAILED;
+			}
+		}
+
+		if( itemdb_isstackable2( purchase.data ) ){
+			struct item it = {};
+
+			it.nameid = purchase.item->nameid;
+			it.identify = true;
+
+			if( pc_additem( &sd, &it, purchase.amount, LOG_TYPE_BARTER ) != ADDITEM_SUCCESS ){
+				return e_purchase_result::PURCHASE_FAIL_EXCHANGE_FAILED;
+			}
+		}else{
+			if( purchase.data->type == IT_PETEGG ){
+				for( int32 i = 0; i < purchase.amount; i++ ){
+					if( !pet_create_egg( &sd, purchase.item->nameid ) ){
+						return e_purchase_result::PURCHASE_FAIL_EXCHANGE_FAILED;
+					}
+				}
+			}else{
+				for( int32 i = 0; i < purchase.amount; i++ ){
+					struct item it = {};
+
+					it.nameid = purchase.item->nameid;
+					it.identify = true;
+					it.refine = purchase.item->refine;
+
+					if( pc_additem( &sd, &it, 1, LOG_TYPE_BARTER ) != ADDITEM_SUCCESS ){
+						return e_purchase_result::PURCHASE_FAIL_EXCHANGE_FAILED;
+					}
+				}
+			}
+		}
+	}
+
+	return e_purchase_result::PURCHASE_SUCCEED;
+}
+
+
+//Atempt to remove an npc from a map
+//This doesn't remove it from map_db
+int32 npc_remove_map(npc_data* nd)
+{
+	int32 i;
+	nullpo_retr(1, nd);
+
+	if(nd->prev == nullptr || nd->m < 0)
+		return 1; //Not assigned to a map.
+
+	struct map_data *mapdata = map_getmapdata(nd->m);
+
+	if (nd->subtype == NPCTYPE_SCRIPT)
+		skill_clear_unitgroup(nd);
+	clif_clearunit_area( *nd, CLR_RESPAWN );
+	npc_unsetcells(nd);
+	map_delblock(nd);
+	//Remove npc from map[].npc list. [Skotlex]
+	ARR_FIND( 0, mapdata->npc_num, i, mapdata->npc[i] == nd );
+	if( i == mapdata->npc_num ) return 2; //failed to find it?
+
+	mapdata->npc_num--;
+	if (i >= mapdata->npc_num_area)
+		mapdata->npc[i] = mapdata->npc[ mapdata->npc_num ];
+	else if (i >= mapdata->npc_num_warp) {
+		mapdata->npc_num_area--;
+		mapdata->npc[i] = mapdata->npc[ mapdata->npc_num_area ];
+		mapdata->npc[ mapdata->npc_num_area ] = mapdata->npc[ mapdata->npc_num ];
+	}
+	else {
+		mapdata->npc_num_warp--;
+		mapdata->npc_num_area--;
+		mapdata->npc[i] = mapdata->npc[ mapdata->npc_num_warp ];
+		mapdata->npc[ mapdata->npc_num_warp ] = mapdata->npc[ mapdata->npc_num_area ];
+		mapdata->npc[ mapdata->npc_num_area ] = mapdata->npc[ mapdata->npc_num ];
+	}
+	mapdata->npc[ mapdata->npc_num ] = nullptr;
+	return 0;
+}
+
+/**
+ * @see DBApply
+ */
+static int32 npc_unload_ev(DBKey key, DBData *data, va_list ap)
+{
+	struct event_data* ev = (struct event_data*)db_data2ptr(data);
+	char* npcname = va_arg(ap, char *);
+
+	if(strcmp(ev->nd->exname,npcname)==0){
+		db_remove(ev_db, key);
+		return 1;
+	}
+	return 0;
+}
+
+//Chk if npc matches src_id, then unload.
+//Sub-function used to find duplicates.
+static int32 npc_unload_dup_sub(npc_data* nd, va_list args)
+{
+	int32 src_id;
+
+	src_id = va_arg(args, int32);
+	if (nd->src_id == src_id)
+		npc_unload(nd, true);
+	return 0;
+}
+
+//Removes all npcs that are duplicates of the passed one. [Skotlex]
+void npc_unload_duplicates(npc_data* nd)
+{
+	map_foreachnpc(npc_unload_dup_sub,nd->id);
+}
+
+//Removes an npc from map and db.
+//Single is to free name (for duplicates).
+int32 npc_unload(npc_data* nd, bool single) {
+	nullpo_ret(nd);
+
+	status_change_clear(nd, 1);
+	npc_remove_map(nd);
+	map_deliddb(nd);
+	if( single )
+		strdb_remove(npcname_db, nd->exname);
+
+	if (nd->chat_id) // remove npc chatroom object and kick users
+		chat_deletenpcchat(nd);
+
+#ifdef PCRE_SUPPORT
+	npc_chat_finalize(nd); // deallocate npc PCRE data structures
+#endif
+
+	if( single && nd->path ) {
+		struct npc_path_data* npd = nullptr;
+		if( nd->path ) {
+			npd = (struct npc_path_data*)strdb_get(npc_path_db, nd->path);
+		}
+
+		if( npd && --npd->references == 0 ) {
+			strdb_remove(npc_path_db, nd->path);/* remove from db */

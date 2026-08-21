@@ -1,0 +1,35 @@
+
+	msg.id = 0; // id will be assigned by charserver
+	msg.send_id = sd->status.char_id;
+	msg.dest_id = 0; // will attempt to resolve name
+	safestrncpy(msg.send_name, sd->status.name, NAME_LENGTH);
+	safestrncpy(msg.dest_name, (char*)dest_name, NAME_LENGTH);
+	safestrncpy(msg.title, (char*)title, MAIL_TITLE_LENGTH);
+	msg.type = MAIL_INBOX_NORMAL;
+
+	if (msg.title[0] == '\0') {
+		return; // Message has no length and somehow client verification was skipped.
+	}
+
+	if (body_len)
+		safestrncpy(msg.body, (char*)body_msg, min(body_len + 1, MAIL_BODY_LENGTH));
+	else
+		memset(msg.body, 0x00, MAIL_BODY_LENGTH);
+
+	msg.timestamp = time(nullptr);
+	if( !intif_Mail_send(sd->status.account_id, &msg) )
+		mail_deliveryfail(sd, &msg);
+
+	sd->cansendmail_tick = gettick() + battle_config.mail_delay; // Flood Protection
+}
+
+void mail_refresh_remaining_amount( map_session_data* sd ){
+	int32 doy = date_get_dayofyear();
+
+	nullpo_retv(sd);
+
+	// If it was not yet started or it was started on another day
+	if( sd->sc.getSCE(SC_DAILYSENDMAILCNT) == nullptr || sd->sc.getSCE(SC_DAILYSENDMAILCNT)->val1 != doy ){
+		sc_start2( sd, sd, SC_DAILYSENDMAILCNT, 100, doy, 0, INFINITE_TICK );
+	}
+}

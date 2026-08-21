@@ -1,0 +1,500 @@
+				if (!script_rid2sd(sd)) {
+					ShowError("buildin_getpartymember: Cannot use a player variable '%s' if no player is attached.\n", varname);
+					return SCRIPT_CMD_FAILURE;
+				}
+			}
+		}
+
+		for (i = 0; i < MAX_PARTY; i++) {
+			if (p->party.member[i].account_id) {
+				switch (type) {
+					case 2:
+						if (data)
+							setd_sub_num( st, nullptr, varname, j, p->party.member[i].account_id, data->ref );
+						else
+							mapreg_setreg(reference_uid(add_str("$@partymemberaid"), j),p->party.member[i].account_id);
+						break;
+					case 1:
+						if (data)
+							setd_sub_num( st, nullptr, varname, j, p->party.member[i].char_id, data->ref );
+						else
+							mapreg_setreg(reference_uid(add_str("$@partymembercid"), j),p->party.member[i].char_id);
+						break;
+					default:
+						if (data)
+							setd_sub_str( st, nullptr, varname, j, p->party.member[i].name, data->ref );
+						else
+							mapreg_setregstr(reference_uid(add_str("$@partymembername$"), j),p->party.member[i].name);
+						break;
+				}
+
+				j++;
+			}
+		}
+	}
+
+	mapreg_setreg(add_str("$@partymembercount"),j);
+	script_pushint(st, j);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Retrieves party leader. if flag is specified,
+ * return some of the leader data. Otherwise, return name.
+ *------------------------------------------*/
+BUILDIN_FUNC(getpartyleader)
+{
+	int32 party_id, type = 0, i=0;
+	struct party_data *p;
+
+	party_id=script_getnum(st,2);
+	if( script_hasdata(st,3) )
+		type=script_getnum(st,3);
+
+	p=party_search(party_id);
+
+	if (p) //Search leader
+	for(i = 0; i < MAX_PARTY && !p->party.member[i].leader; i++);
+
+	if (!p || i == MAX_PARTY) { //leader not found
+		if (type)
+			script_pushint(st,-1);
+		else
+			script_pushconststr(st,"null");
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch (type) {
+		case 1: script_pushint(st,p->party.member[i].account_id); break;
+		case 2: script_pushint(st,p->party.member[i].char_id); break;
+		case 3: script_pushint(st,p->party.member[i].class_); break;
+		case 4: script_pushstrcopy( st, p->party.member[i].map ); break;
+		case 5: script_pushint(st,p->party.member[i].lv); break;
+		default: script_pushstrcopy(st,p->party.member[i].name); break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Return the name of the @guild_id
+ * null if not found
+ *------------------------------------------*/
+BUILDIN_FUNC(getguildname)
+{
+	int32 guild_id;
+
+	guild_id = script_getnum(st,2);
+	auto g = guild_search(guild_id);
+	if (g)
+		script_pushstrcopy(st,g->guild.name);
+	else 
+		script_pushconststr(st,"null");
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Return the name of the guild master of @guild_id
+ * null if not found
+ *------------------------------------------*/
+BUILDIN_FUNC(getguildmaster)
+{
+	int32 guild_id;
+
+	guild_id = script_getnum(st,2);
+	auto g = guild_search(guild_id);
+	if (g)
+		script_pushstrcopy(st,g->guild.member[0].name);
+	else 
+		script_pushconststr(st,"null");
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getguildmasterid)
+{
+	int32 guild_id;
+
+	guild_id = script_getnum(st,2);
+	auto g = guild_search(guild_id);
+	if (g)
+		script_pushint(st,g->guild.member[0].char_id);
+	else
+		script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Returns the requested information of the provided guild ID
+ *------------------------------------------*/
+BUILDIN_FUNC(getguildinfo)
+{
+	int32 guild_id = script_getnum(st,2);
+	auto g = guild_search(guild_id);
+	
+	if ( g == nullptr ) {
+		ShowError( "buildin_getguildinfo: The guild ID '%d' doesn't exist or is not yet loaded into the map-server. \n", guild_id );
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	int32 type = script_getnum(st,3);
+	
+	switch ( type ) {
+		case GUILDINFO_NAME:
+			script_pushstrcopy(st, g->guild.name);
+			break;
+		case GUILDINFO_LEVEL:
+			script_pushint(st, g->guild.guild_lv);
+			break;
+		case GUILDINFO_AVERAGELEVEL:
+			script_pushint(st, g->guild.average_lv);
+			break;
+		case GUILDINFO_ONLINECOUNT:
+			script_pushint(st, g->guild.connect_member);
+			break;
+		case GUILDINFO_MEMBERCOUNT: {
+			int32 c = 0;
+			for ( int32 i = 0; i < g->guild.max_member; ++i ) {
+				if( g->guild.member[i].account_id > 0 )
+					c++;
+			}
+			script_pushint(st, c);
+		} break;
+		case GUILDINFO_MAXMEMBERCOUNT:
+			script_pushint(st, g->guild.max_member);
+			break;
+		case GUILDINFO_EXP:
+			script_pushint(st, g->guild.exp);
+			break;
+		case GUILDINFO_NEXTEXP:
+			script_pushint(st, g->guild.next_exp);
+			break;
+		case GUILDINFO_MASTERID:
+			script_pushint(st, g->guild.member[0].char_id);
+			break;
+		case GUILDINFO_MASTERNAME:
+			script_pushstrcopy(st, g->guild.member[0].name);
+			break;
+		default:
+			ShowError( "buildin_getguildinfo: Invalid guildinfo type. \n", type );
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+	}
+	
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Get char string information by type :
+ * Return by @type :
+ *	0 : char_name
+ *	1 : party_name or ""
+ *	2 : guild_name or ""
+ *	3 : map_name
+ *	- : ""
+ * strcharinfo(<type>{,<char_id>})
+ *------------------------------------------*/
+BUILDIN_FUNC(strcharinfo)
+{
+	TBL_PC *sd;
+	int32 num;
+	struct party_data* p;
+
+	if (!script_charid2sd(3,sd)) {
+		script_pushconststr(st,"");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	num=script_getnum(st,2);
+	switch(num){
+		case 0:
+			script_pushstrcopy(st,sd->status.name);
+			break;
+		case 1:
+			if( ( p = party_search(sd->status.party_id) ) != nullptr ) {
+				script_pushstrcopy(st,p->party.name);
+			} else {
+				script_pushconststr(st,"");
+			}
+			break;
+		case 2:
+			if (sd->guild) {
+				script_pushstrcopy(st,sd->guild->guild.name);
+			} else {
+				script_pushconststr(st,"");
+			}
+			break;
+		case 3:
+			script_pushconststr(st,map_getmapdata(sd->m)->name);
+			break;
+		default:
+			ShowWarning("buildin_strcharinfo: unknown parameter.\n");
+			script_pushconststr(st,"");
+			break;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Get npc string information by type
+ * return by @type:
+ *	0 : name
+ *	1 : str#
+ *	2 : #str
+ *	3 : ::str
+ *	4 : map name
+ *	5 : NPC file path
+ *------------------------------------------*/
+BUILDIN_FUNC(strnpcinfo)
+{
+	TBL_NPC* nd;
+	int32 num;
+	char *buf,*name=nullptr;
+	if(script_hasdata(st,3)){
+		int32 id = script_getnum(st,3);
+		nd = map_id2nd(id);
+	}else
+		nd = map_id2nd(st->oid);
+	if (!nd) {
+		script_pushconststr(st, "");
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	num = script_getnum(st,2);
+	switch(num){
+		case 0: // display name
+			name = aStrdup(nd->name);
+			break;
+		case 1: // visible part of display name
+			if((buf = strchr(nd->name,'#')) != nullptr)
+			{
+				name = aStrdup(nd->name);
+				name[buf - nd->name] = 0;
+			} else // Return the name, there is no '#' present
+				name = aStrdup(nd->name);
+			break;
+		case 2: // # fragment
+			if((buf = strchr(nd->name,'#')) != nullptr)
+				name = aStrdup(buf+1);
+			break;
+		case 3: // unique name
+			name = aStrdup(nd->exname);
+			break;
+		case 4: // map name
+			if (nd->m >= 0)
+				name = aStrdup(map_getmapdata(nd->m)->name);
+			break;
+		case 5: // NPC file path
+			name = aStrdup(nd->path);
+			break;
+	}
+
+	if(name)
+		script_pushstr(st, name);
+	else
+		script_pushconststr(st, "");
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * getequipid({<equipment slot>,<char_id>})
+ **/
+BUILDIN_FUNC(getequipid)
+{
+	int32 i, num;
+	TBL_PC* sd;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st, 2))
+		num = script_getnum(st, 2);
+	else
+		num = EQI_COMPOUND_ON;
+
+	if (num == EQI_COMPOUND_ON)
+		i = current_equip_item_index;
+	else if (equip_index_check(num)) // get inventory position of item
+		i = pc_checkequip(sd, equip_bitmask[num]);
+	else {
+		ShowError( "buildin_getequipid: Unknown equip index '%d'\n", num );
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (i >= 0 && i < MAX_INVENTORY && sd->inventory_data[i])
+		script_pushint(st, sd->inventory_data[i]->nameid);
+	else
+		script_pushint(st, -1);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * getequipuniqueid(<equipment slot>{,<char_id>})
+ *------------------------------------------*/
+BUILDIN_FUNC(getequipuniqueid)
+{
+	int32 i, num;
+	TBL_PC* sd;
+	struct item* item;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushconststr(st, "");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	num = script_getnum(st,2);
+	if ( !equip_index_check(num) ) {
+		script_pushconststr(st, "");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	// get inventory position of item
+	i = pc_checkequip(sd,equip_bitmask[num]);
+	if (i < 0) {
+		script_pushconststr(st, "");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	item = &sd->inventory.u.items_inventory[i];
+	if (item != 0) {
+		int32 maxlen = 256;
+		char *buf = (char *)aMalloc(maxlen*sizeof(char));
+
+		memset(buf, 0, maxlen);
+		snprintf(buf, maxlen-1, "%llu", (unsigned long long)item->unique_id);
+
+		script_pushstr(st, buf);
+	} else
+		script_pushconststr(st, "");
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Get the equipment name at pos
+ * return item jname or ""
+ * getequipname(<equipment slot>{,<char_id>})
+ *------------------------------------------*/
+BUILDIN_FUNC(getequipname)
+{
+	int32 i, num;
+	TBL_PC* sd;
+	struct item_data* item;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushconststr(st, "");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	num = script_getnum(st,2);
+	if( !equip_index_check(num) )
+	{
+		script_pushconststr(st,"");
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	// get inventory position of item
+	i = pc_checkequip(sd,equip_bitmask[num]);
+	if( i < 0 )
+	{
+		script_pushconststr(st,"");
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	item = sd->inventory_data[i];
+	if( item != 0 )
+		script_pushstrcopy(st,item->ename.c_str());
+	else
+		script_pushconststr(st,"");
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * getbrokenid [Valaris]
+ * getbrokenid(<number>{,<char_id>})
+ *------------------------------------------*/
+BUILDIN_FUNC(getbrokenid)
+{
+	int32 i,num,id = 0,brokencounter = 0;
+	TBL_PC *sd;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	num = script_getnum(st,2);
+	for(i = 0; i < MAX_INVENTORY; i++) {
+		if( sd->inventory.u.items_inventory[i].attribute == 1 && !itemdb_ishatched_egg( &sd->inventory.u.items_inventory[i] ) ){
+				brokencounter++;
+				if(num == brokencounter){
+					id = sd->inventory.u.items_inventory[i].nameid;
+					break;
+				}
+		}
+	}
+
+	script_pushint(st,id);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * repair [Valaris]
+ * repair <num>{,<char_id>};
+ *------------------------------------------*/
+BUILDIN_FUNC(repair)
+{
+	int32 i,num;
+	int32 repaircounter = 0;
+	TBL_PC *sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	num = script_getnum(st,2);
+	for(i = 0; i < MAX_INVENTORY; i++) {
+		if( sd->inventory.u.items_inventory[i].attribute == 1 && !itemdb_ishatched_egg( &sd->inventory.u.items_inventory[i] ) ){
+				repaircounter++;
+				if(num == repaircounter) {
+					sd->inventory.u.items_inventory[i].attribute = 0;
+					clif_equiplist(sd);
+					clif_produceeffect(sd, 0, sd->inventory.u.items_inventory[i].nameid);
+					clif_misceffect( *sd, NOTIFYEFFECT_REFINE_SUCCESS );
+					break;
+				}
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * repairall {<char_id>}
+ *------------------------------------------*/
+BUILDIN_FUNC(repairall)
+{
+	int32 i, repaircounter = 0;
+	TBL_PC *sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	for(i = 0; i < MAX_INVENTORY; i++)
+	{
+		if( sd->inventory.u.items_inventory[i].nameid && sd->inventory.u.items_inventory[i].attribute == 1 && !itemdb_ishatched_egg( &sd->inventory.u.items_inventory[i] ) ){
+			sd->inventory.u.items_inventory[i].attribute = 0;
+			clif_produceeffect(sd,0,sd->inventory.u.items_inventory[i].nameid);
+			repaircounter++;
+		}
+	}
+
+	if(repaircounter)
+	{
+		clif_misceffect( *sd, NOTIFYEFFECT_REFINE_SUCCESS );

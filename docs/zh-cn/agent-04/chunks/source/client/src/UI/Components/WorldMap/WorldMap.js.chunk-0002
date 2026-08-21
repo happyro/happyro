@@ -1,0 +1,196 @@
+
+	// replace the existing source image with the new one
+	img.decoding = 'async';
+	img.src = canvas.toDataURL();
+}
+
+/**
+ * Apply preferences once append to body
+ */
+WorldMap.onAppend = function onAppend() {
+	// Apply preferences
+	if (!_preferences.show) {
+		this._host.style.display = 'none';
+	}
+
+	// settings
+	this.settings = { episode: 98, add: [], remove: [] };
+	const conf = Configs.get('worldMapSettings', { episode: 98, add: [], remove: [] });
+
+	// Prevent stupidity
+	if ('episode' in conf) {
+		this.settings.episode = conf.episode;
+	}
+
+	if ('add' in conf && Array.isArray(conf.add)) {
+		this.settings.add = conf.add;
+	}
+
+	if ('remove' in conf && Array.isArray(conf.remove)) {
+		this.settings.remove = conf.remove;
+	}
+
+	console.log('%c[WoldMap] Episode: ', 'color:#007000', this.settings.episode);
+	if (this.settings.add.length > 0) {
+		console.log('%c[WoldMap] Add Maps: ', 'color:#007000', this.settings.add);
+	}
+	if (this.settings.remove.length > 0) {
+		console.log('%c[WoldMap] Remove Maps: ', 'color:#007000', this.settings.remove);
+	}
+
+	// set maps
+	setMapList();
+
+	// resize map container & add sections
+	selectMap();
+
+	this._host.style.top = '0px';
+	this._host.style.left = '0px';
+};
+
+WorldMap.onRemove = function onRemove() {
+	// Save preferences
+	_preferences.show = this._host.style.display !== 'none';
+	_preferences.y = 0;
+	_preferences.x = 0;
+	_preferences.width = 0;
+	_preferences.height = 0;
+	_preferences.save();
+};
+
+/**
+ * Show/Hide UI
+ */
+WorldMap.toggle = function toggle() {
+	const isVisible = this._host.style.display !== 'none';
+	if (isVisible) {
+		this._host.style.display = 'none';
+		hideTooltip();
+	} else {
+		this._host.style.display = '';
+		selectMap();
+		this.focus();
+	}
+};
+
+WorldMap.captureKeyEvents = true;
+
+WorldMap.onKeyDown = function onKeyDown(event) {
+	if (this.isEditableFocused()) {
+		if (event.which === KEYS.ESCAPE || event.key === 'Escape') {
+			this.toggle();
+			event.stopImmediatePropagation();
+			return false;
+		}
+		event.stopImmediatePropagation();
+		return true;
+	}
+
+	if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && this._host.style.display !== 'none') {
+		this.toggle();
+	}
+};
+
+/**
+ * Process shortcut
+ *
+ * @param {object} key
+ */
+WorldMap.onShortCut = function onShortCut(key) {
+	switch (key.cmd) {
+		case 'TOGGLE':
+			this.toggle();
+			break;
+	}
+};
+
+/**
+ * Resize UI
+ */
+WorldMap.onResize = function () {
+	resizeMap();
+};
+
+/**
+ * Update party members on map
+ *
+ * @param {object} pkt
+ */
+WorldMap.updatePartyMembers = function updatePartyMembers(pkt) {
+	_partyMembersByMap = {};
+	pkt.groupInfo.forEach(member => {
+		if (member.AID !== Session.AID && member.state === 0) {
+			const mapId = member.mapName.replace(/\.gat$/i, '');
+			if (!_partyMembersByMap[mapId]) {
+				_partyMembersByMap[mapId] = [];
+			}
+			_partyMembersByMap[mapId].push({ AID: member.AID, Name: member.characterName });
+		}
+	});
+
+	const root = WorldMap.getRoot();
+	root.querySelectorAll('.worldmap .section').forEach(el => el.classList.remove('membersonmap'));
+	for (const mapId of Object.keys(_partyMembersByMap)) {
+		const el = root.querySelector('.worldmap .section#' + CSS.escape(mapId));
+		if (el) el.classList.add('membersonmap');
+	}
+};
+
+/**
+ * Toggle all maps
+ */
+function onToggleMaps() {
+	const root = WorldMap.getRoot();
+	if (WorldMap.showAllMaps) {
+		root.querySelectorAll('.worldmap .section').forEach(el => el.classList.remove('allmapvisible'));
+		WorldMap.showAllMaps = false;
+	} else {
+		root.querySelectorAll('.worldmap .section').forEach(el => el.classList.add('allmapvisible'));
+		WorldMap.showAllMaps = true;
+	}
+}
+
+/**
+ * Show Monster level range
+ */
+function onShowLVL() {
+	WorldMap.showLVLMode = !WorldMap.showLVLMode;
+	const root = WorldMap.getRoot();
+
+	Client.loadFile(DB.INTERFACE_PATH + 'checkbox_' + (WorldMap.showLVLMode ? '1' : '0') + '.bmp', function (data) {
+		const btn = root.querySelector('.showlvl');
+		if (btn) btn.style.backgroundImage = 'url(' + data + ')';
+	});
+
+	const worldmapEl = root.querySelector('.worldmap');
+	if (worldmapEl) {
+		if (!WorldMap.showLVLMode) {
+			worldmapEl.classList.remove('show-lvls');
+		} else {
+			worldmapEl.classList.add('show-lvls');
+		}
+	}
+}
+
+/**
+ * Stop event propagation
+ * @param {object} event
+ */
+function stopPropagation(event) {
+	event.stopImmediatePropagation();
+	return false;
+}
+
+/**
+ * Closing window
+ */
+function onClose() {
+	WorldMap._host.style.display = 'none';
+}
+
+WorldMap.mouseMode = GUIComponent.MouseMode.STOP;
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(WorldMap);

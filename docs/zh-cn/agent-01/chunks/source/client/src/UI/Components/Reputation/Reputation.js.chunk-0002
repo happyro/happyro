@@ -1,0 +1,239 @@
+			}
+		});
+	} else {
+		clearHighlights();
+	}
+
+	updateReputePager();
+}
+
+/**
+ * Create a reputation entry element from given info
+ * @param {number} reputeId
+ * @param {object} info
+ * @returns {HTMLDivElement}
+ */
+function createReputeEntry(reputeId, info) {
+	const wrapper = document.createElement('div');
+	wrapper.className = 'rep_group_wrapper';
+	wrapper.dataset.reputeId = reputeId;
+	wrapper.style.backgroundImage = `url(${bg})`;
+
+	// Name
+	const name = document.createElement('div');
+	name.className = 'rep_group_name';
+	name.textContent = info.Name;
+	wrapper.appendChild(name);
+
+	// Indicators
+	const indicatorWrapper = document.createElement('div');
+	indicatorWrapper.className = 'rep_group_indicator_wrapper';
+
+	const indicatorCount = info.MaxPoint_Positive / 1000;
+
+	for (let i = 1; i <= indicatorCount; i++) {
+		const indicator = document.createElement('div');
+		indicator.className = `rep_group_indicator indicator_${i}`;
+		indicator.dataset.index = i;
+		indicator.style.backgroundImage = `url(${indicator_empty})`;
+		indicatorWrapper.appendChild(indicator);
+	}
+
+	wrapper.appendChild(indicatorWrapper);
+
+	// Progress bar
+	const progress = document.createElement('div');
+	progress.className = 'rep_group_progess_bar';
+	wrapper.appendChild(progress);
+
+	// Points
+	const points = document.createElement('div');
+	points.className = 'rep_id_points';
+	points.textContent = '0 / 1000';
+	wrapper.appendChild(points);
+
+	return wrapper;
+}
+
+/**
+ * Update the UI of a specific Repute entry
+ * @param {string} reputeId
+ * @param {number} points
+ */
+function updateReputeUI(reputeId, points) {
+	const root = _root();
+	const wrapper = root.querySelector(`.rep_group_wrapper[data-repute-id="${reputeId}"]`);
+
+	if (!wrapper) {
+		return;
+	}
+
+	const indicators = wrapper.querySelectorAll('.rep_group_indicator');
+	const absPoints = Math.abs(points);
+	const fullIndicators = Math.floor(absPoints / 1000);
+	const remainder = absPoints % 1000;
+
+	// Update indicators
+	indicators.forEach((el, index) => {
+		el.style.backgroundImage =
+			index < fullIndicators
+				? points >= 0
+					? `url(${indicator_blue})`
+					: `url(${indicator_red})`
+				: `url(${indicator_empty})`;
+	});
+
+	// Update points text
+	const pointsEl = wrapper.querySelector('.rep_id_points');
+	if (pointsEl) {
+		pointsEl.textContent = `${remainder} / 1000`;
+	}
+
+	// Update progress bar
+	const progress = wrapper.querySelector('.rep_group_progess_bar');
+	if (progress) {
+		const percent = (remainder / 1000) * 100;
+		const fillColor = points >= 0 ? '#7b95ce' : '#f60206';
+		progress.style.backgroundImage = `linear-gradient(to right, ${fillColor} 0%, ${fillColor} ${percent}%, transparent ${percent}%)`;
+	}
+}
+
+/**
+ * Perform search on the reputation entries based on the given query.
+ * @param {string} query
+ */
+function performSearch(query) {
+	const root = _root();
+	const items = root.querySelectorAll('.rep_group_wrapper');
+	const totalWrapper = root.querySelector('.rep_group_total_points_wrapper');
+	const groupSelector = root.querySelector('#repute_groups');
+
+	if (!query) {
+		if (groupSelector) {
+			groupSelector.value = 'all';
+		}
+		if (totalWrapper) {
+			totalWrapper.style.display = 'none';
+		}
+		filterByGroup('all');
+		return;
+	}
+
+	const lowerQuery = query.toLowerCase();
+
+	const visibleIds = [];
+	items.forEach(el => {
+		const reputeId = Number(el.dataset.reputeId);
+		const info = DB.getReputeData(reputeId);
+		const points = Reputation.reputeState?.[reputeId] || 0;
+
+		const matches = info?.Name.toLowerCase().includes(lowerQuery);
+		const show = matches && isReputeVisible(info, points);
+		el.dataset.visible = show ? 'true' : 'false';
+		if (show) {
+			visibleIds.push(reputeId);
+		}
+	});
+
+	Reputation.page.reputeIds = visibleIds;
+	Reputation.page.current = 0;
+	renderReputePage(0);
+}
+
+/**
+ * Closing window
+ */
+function onClose() {
+	Reputation._host.style.display = 'none';
+}
+
+/**
+ * Packet received from server
+ * Initializes the Reputation UI
+ * @param {object} pkt - PACKET.ZC.REPUTE_INFO
+ */
+function onReputeInfo(pkt) {
+	if (!Reputation.__active) {
+		Reputation.append();
+		Reputation._host.style.display = 'none';
+	}
+
+	const root = _root();
+
+	// Get currently selected group
+	const groupSelector = root.querySelector('#repute_groups');
+	const selectedGroup = groupSelector ? groupSelector.value : 'all';
+
+	// Track which groups need updating
+	let updateSelectedGroup = false;
+
+	pkt.reputeInfo.forEach(entry => {
+		// Update individual UI
+		Reputation.reputeState[entry.type] = entry.points;
+		updateReputeUI(entry.type, entry.points);
+
+		// Check if the repute ID belongs to the currently selected group
+		if (selectedGroup && selectedGroup !== 'all') {
+			const reputeList = Object.values(DB.getReputeGroupList(selectedGroup) || {});
+			if (reputeList.includes(entry.type)) {
+				updateSelectedGroup = true;
+			}
+		}
+	});
+
+	// Update total points only if relevant
+	if (updateSelectedGroup) {
+		updateGroupTotalPoints(selectedGroup);
+	}
+}
+
+/**
+ * Sets up Highlight, selects the given group,
+ * and filters the reputation entries normally
+ *
+ * @param {object} pkt - PACKET.ZC.REPUTE_OPEN
+ */
+function onReputeOpen(pkt) {
+	const groupId = pkt.table === 0 ? 'all' : pkt.table;
+	const highlightId = pkt.type || null;
+
+	// setup highlight
+	Reputation.highlight.reputeId = highlightId;
+	Reputation.highlight.active = !!highlightId;
+	Reputation.highlight.consumed = false;
+
+	const root = _root();
+
+	// select group
+	const groupSelector = root.querySelector('#repute_groups');
+	if (groupSelector) {
+		groupSelector.value = groupId;
+	}
+
+	// filter normally
+	filterByGroup(groupId);
+
+	Reputation._host.style.display = '';
+}
+
+/**
+ * Clears all highlight effects from the reputation entries.
+ */
+function clearHighlights() {
+	const root = _root();
+	root.querySelectorAll('.rep_group_wrapper').forEach(el => {
+		el.style.backgroundImage = `url(${bg})`;
+		el.dataset.highlight = 'false';
+	});
+}
+
+/**
+ * Packet Hooks to functions
+ */
+Network.hookPacket(PACKET.ZC.REPUTE_INFO, onReputeInfo);
+Network.hookPacket(PACKET.ZC_REPUTE_OPEN, onReputeOpen);
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(Reputation);

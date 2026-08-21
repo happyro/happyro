@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "map.hpp"
+
+#include <cstdlib>
+#include <cmath>
+
+#include <config/core.hpp>
+
+#include <common/cbasetypes.hpp>
+#include <common/cli.hpp>
+#include <common/core.hpp>
+#include <common/ers.hpp>
+#include <common/grfio.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp> // WFIFO*()
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "atcommand.hpp"
+#include "battle.hpp"
+#include "battleground.hpp"
+#include "cashshop.hpp"
+#include "channel.hpp"
+#include "chat.hpp"
+#include "chrif.hpp"
+#include "clan.hpp"
+#include "clif.hpp"
+#include "duel.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "log.hpp"
+#include "mapreg.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "navi.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "path.hpp"
+#include "pc.hpp"
+#include "pet.hpp"
+#include "quest.hpp"
+#include "storage.hpp"
+#include "trade.hpp"
+
+using namespace rathena;
+using namespace rathena::server_map;
+
+std::string default_codepage = "";
+
+int32 map_server_port = 3306;
+std::string map_server_ip = "127.0.0.1";
+std::string map_server_id = "ragnarok";
+std::string map_server_pw = "";
+std::string map_server_db = "ragnarok";
+Sql* mmysql_handle;
+Sql* qsmysql_handle; /// For query_sql
+
+int32 db_use_sqldbs = 0;
+char barter_table[32] = "barter";
+char buyingstores_table[32] = "buyingstores";
+char buyingstore_items_table[32] = "buyingstore_items";
+#ifdef RENEWAL
+char item_table[32] = "item_db_re";
+char item2_table[32] = "item_db2_re";
+char mob_table[32] = "mob_db_re";
+char mob2_table[32] = "mob_db2_re";
+char mob_skill_table[32] = "mob_skill_db_re";
+char mob_skill2_table[32] = "mob_skill_db2_re";
+#else
+char item_table[32] = "item_db";
+char item2_table[32] = "item_db2";
+char mob_table[32] = "mob_db";
+char mob2_table[32] = "mob_db2";
+char mob_skill_table[32] = "mob_skill_db";
+char mob_skill2_table[32] = "mob_skill_db2";
+#endif
+char sales_table[32] = "sales";
+char vendings_table[32] = "vendings";
+char vending_items_table[32] = "vending_items";
+char market_table[32] = "market";
+char partybookings_table[32] = "party_bookings";
+char roulette_table[32] = "db_roulette";
+char guild_storage_log_table[32] = "guild_storage_log";
+
+// log database
+std::string log_db_ip = "127.0.0.1";
+uint16 log_db_port = 3306;
+std::string log_db_id = "ragnarok";
+std::string log_db_pw = "";
+std::string log_db_db = "log";
+Sql* logmysql_handle;
+
+// inter config
+struct inter_conf inter_config {};
+
+// DBMap declaration
+static DBMap* id_db=nullptr; /// int32 id -> block_list*
+static DBMap* pc_db=nullptr; /// int32 id -> map_session_data*
+static DBMap* mobid_db=nullptr; /// int32 id -> mob_data*
+static DBMap* bossid_db=nullptr; /// int32 id -> mob_data* (MVP db)
+static DBMap* map_db=nullptr; /// uint32 mapindex -> struct map_data*
+static DBMap* nick_db=nullptr; /// uint32 char_id -> struct charid2nick* (requested names of offline characters)
+static DBMap* charid_db=nullptr; /// uint32 char_id -> map_session_data*
+static DBMap* regen_db=nullptr; /// int32 id -> block_list* (status_natural_heal processing)
+static DBMap* map_msg_db=nullptr;
+
+static int32 map_users=0;
+
+#define BLOCK_SIZE 8
+#define block_free_max 1048576
+block_list *block_free[block_free_max];
+static int32 block_free_count = 0, block_free_lock = 0;
+
+#define BL_LIST_MAX 1048576
+static block_list *bl_list[BL_LIST_MAX];
+static int32 bl_list_count = 0;
+
+#ifndef MAP_MAX_MSG
+	#define MAP_MAX_MSG 1550
+#endif
+
+struct map_data map[MAX_MAP_PER_SERVER];
+int32 map_num = 0;
+
+int32 map_port=0;
+
+int32 autosave_interval = DEFAULT_AUTOSAVE_INTERVAL;
+int32 minsave_interval = 100;
+int16 save_settings = CHARSAVE_ALL;
+bool agit_flag = false;
+bool agit2_flag = false;
+bool agit3_flag = false;
+int32 night_flag = 0; // 0=day, 1=night [Yor]
+
+struct charid_request {
+	struct charid_request* next;
+	int32 charid;// who want to be notified of the nick
+};
+struct charid2nick {
+	char nick[NAME_LENGTH];
+	struct charid_request* requests;// requests of notification on this nick
+};
+
+// This is the main header found at the very beginning of the map cache
+struct map_cache_main_header {
+	uint32 file_size;
+	uint16 map_count;
+};
+
+// This is the header appended before every compressed map cells info in the map cache
+struct map_cache_map_info {
+	char name[MAP_NAME_LENGTH];
+	int16 xs;
+	int16 ys;
+	int32 len;
+};
+
+char motd_txt[256] = "conf/motd.txt";
+char charhelp_txt[256] = "conf/charhelp.txt";
+char channel_conf[256] = "conf/channels.conf";
+
+const char *MSG_CONF_NAME_RUS;
+const char *MSG_CONF_NAME_SPN;
+const char *MSG_CONF_NAME_GRM;
+const char *MSG_CONF_NAME_CHN;
+const char *MSG_CONF_NAME_MAL;
+const char *MSG_CONF_NAME_IDN;
+const char *MSG_CONF_NAME_FRN;
+const char *MSG_CONF_NAME_POR;
+const char *MSG_CONF_NAME_THA;
+
+char wisp_server_name[NAME_LENGTH] = "Server"; // can be modified in char-server configuration file
+
+int32 console = 0;
+int32 enable_spy = 0; //To enable/disable @spy commands, which consume too much cpu time when sending packets. [Skotlex]
+int32 enable_grf = 0;	//To enable/disable reading maps from GRF files, bypassing mapcache [blackhole89]
+
+#ifdef MAP_GENERATOR
+struct s_generator_options {
+	bool navi;
+	bool itemmoveinfo;
+	bool reputation;
+} gen_options;
+#endif
+
+/**
+ * Get the map data
+ * @param mapid: Map ID to lookup
+ * @return map_data on success or nullptr on failure
+ */
+struct map_data *map_getmapdata(int16 mapid)
+{
+	if (mapid < 0 || mapid >= MAX_MAP_PER_SERVER)
+		return nullptr;
+
+	return &map[mapid];
+}
+
+/*==========================================
+ * server player count (of all mapservers)
+ *------------------------------------------*/
+void map_setusers(int32 users)
+{
+	map_users = users;
+}
+
+int32 map_getusers(void)
+{
+	return map_users;
+}
+
+/*==========================================
+ * server player count (this mapserver only)
+ *------------------------------------------*/
+int32 map_usercount(void)
+{
+	return pc_db->size(pc_db);
+}
+
+void map_destroyblock( block_list* bl ){
+	if( bl == nullptr ){
+		return;
+	}
+
+	switch( bl->type ){
+		case BL_NUL:
+			// Dummy type, has no destructor
+			break;
+
+		case BL_PC:
+			// Do not call the destructor here, it will be done in chrif_auth_delete
+			//reinterpret_cast<map_session_data*>( bl )->~map_session_data();
+			break;
+
+		case BL_MOB:
+			reinterpret_cast<mob_data*>( bl )->~mob_data();
+			break;
+
+		case BL_PET:
+			reinterpret_cast<pet_data*>( bl )->~pet_data();
+			break;
+
+		case BL_HOM:
+			reinterpret_cast<homun_data*>( bl )->~homun_data();
+			break;
+
+		case BL_MER:
+			reinterpret_cast<s_mercenary_data*>( bl )->~s_mercenary_data();
+			break;
+
+		case BL_ITEM:
+			reinterpret_cast<flooritem_data*>( bl )->~flooritem_data();
+			break;
+
+		case BL_SKILL:
+			reinterpret_cast<skill_unit*>( bl )->~skill_unit();
+			break;
+
+		case BL_NPC:
+			reinterpret_cast<npc_data*>( bl )->~npc_data();
+			break;
+
+		case BL_CHAT:
+			reinterpret_cast<chat_data*>( bl )->~chat_data();
+			break;
+
+		case BL_ELEM:
+			reinterpret_cast<s_elemental_data*>( bl )->~s_elemental_data();
+			break;
+
+		default:
+			ShowError( "map_destroyblock: unknown type %d\n", bl->type );
+			break;
+	}
+
+	aFree( bl );
+}
+
+/*==========================================
+ * Attempt to free a map blocklist
+ *------------------------------------------*/
+int32 map_freeblock (block_list *bl)
+{
+	nullpo_retr(block_free_lock, bl);
+	if (block_free_lock == 0 || block_free_count >= block_free_max)
+	{
+		map_destroyblock( bl );
+		bl = nullptr;
+		if (block_free_count >= block_free_max)
+			ShowWarning("map_freeblock: too many free block! %d %d\n", block_free_count, block_free_lock);
+	} else
+		block_free[block_free_count++] = bl;
+
+	return block_free_lock;
+}
+/*==========================================
+ * Lock blocklist, (prevent map_freeblock usage)
+ *------------------------------------------*/
+int32 map_freeblock_lock (void)
+{
+	return ++block_free_lock;
+}
+
+/*==========================================
+ * Remove the lock on map_bl
+ *------------------------------------------*/
+int32 map_freeblock_unlock (void)
+{
+	if ((--block_free_lock) == 0) {
+		int32 i;
+		for (i = 0; i < block_free_count; i++)
+		{
+			map_destroyblock( block_free[i] );
+			block_free[i] = nullptr;
+		}
+		block_free_count = 0;
+	} else if (block_free_lock < 0) {
+		ShowError("map_freeblock_unlock: lock count < 0 !\n");
+		block_free_lock = 0;
+	}
+
+	return block_free_lock;
+}
+
+FreeBlockLock::FreeBlockLock(bool startLocked) {
+	this->locked = false;
+
+	if (startLocked) {
+		this->lock();
+	}
+}
+
+FreeBlockLock::~FreeBlockLock() {
+	if (this->locked) {
+		this->unlock();
+	}
+}
+
+void FreeBlockLock::lock() {
+	if (!this->locked) {
+		map_freeblock_lock();
+		this->locked = true;
+	} else {
+		ShowWarning("FreeBlockLock is already locked.\n");
+	}
+}
+
+void FreeBlockLock::unlock() {
+	if (this->locked) {
+		map_freeblock_unlock();
+		this->locked = false;
+	} else {
+		ShowWarning("FreeBlockLock is not locked.\n");
+	}
+}
+
+
+//
+// blocklist
+//
+/*==========================================
+ * Handling of map_bl[]
+ * The address of bl_heal is set in bl->prev
+ *------------------------------------------*/
+static block_list bl_head;
+
+#ifdef CELL_NOSTACK
+/*==========================================
+ * These pair of functions update the counter of how many objects
+ * lie on a tile.
+ *------------------------------------------*/
+static void map_addblcell(block_list *bl)
+{
+	struct map_data *mapdata = map_getmapdata(bl->m);
+
+	if( bl->m<0 || bl->x<0 || bl->x>=mapdata->xs || bl->y<0 || bl->y>=mapdata->ys || !(bl->type&BL_CHAR) )
+		return;
+	mapdata->cell[bl->x+bl->y*mapdata->xs].cell_bl++;
+	return;
+}
+
+static void map_delblcell(block_list *bl)
+{
+	struct map_data *mapdata = map_getmapdata(bl->m);
+
+	if( bl->m <0 || bl->x<0 || bl->x>=mapdata->xs || bl->y<0 || bl->y>=mapdata->ys || !(bl->type&BL_CHAR) )
+		return;
+	mapdata->cell[bl->x+bl->y*mapdata->xs].cell_bl--;
+}
+#endif
+
+/*==========================================
+ * Adds a block to the map.
+ * Returns 0 on success, 1 on failure (illegal coordinates).
+ *------------------------------------------*/
+int32 map_addblock(block_list* bl)
+{
+	int16 m, x, y;
+	int32 pos;
+
+	nullpo_ret(bl);
+
+	if (bl->prev != nullptr) {
+		ShowError("map_addblock: bl->prev != nullptr\n");
+		return 1;
+	}
+
+	m = bl->m;
+	x = bl->x;
+	y = bl->y;
+
+	if( m < 0 )
+	{
+		ShowError("map_addblock: invalid map id (%d), only %d are loaded.\n", m, map_num);
+		return 1;
+	}
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if (mapdata == nullptr || mapdata->cell == nullptr) // Player warped to a freed map. Stop them!
+		return 1;
+
+	if( x < 0 || x >= mapdata->xs || y < 0 || y >= mapdata->ys )
+	{
+		ShowError("map_addblock: out-of-bounds coordinates (\"%s\",%d,%d), map is %dx%d\n", mapdata->name, x, y, mapdata->xs, mapdata->ys);
+		return 1;
+	}
+
+	pos = x/BLOCK_SIZE+(y/BLOCK_SIZE)*mapdata->bxs;
+
+	if (bl->type == BL_MOB) {
+		bl->next = mapdata->block_mob[pos];
+		bl->prev = &bl_head;
+		if (bl->next) bl->next->prev = bl;
+		mapdata->block_mob[pos] = bl;
+	} else {
+		bl->next = mapdata->block[pos];
+		bl->prev = &bl_head;
+		if (bl->next) bl->next->prev = bl;
+		mapdata->block[pos] = bl;
+	}
+
+#ifdef CELL_NOSTACK
+	map_addblcell(bl);
+#endif
+
+	return 0;
+}
+
+/*==========================================
+ * Removes a block from the map.
+ *------------------------------------------*/
+int32 map_delblock(block_list* bl)
+{
+	int32 pos;
+	nullpo_ret(bl);
+
+	// blocklist (2ways chainlist)
+	if (bl->prev == nullptr) {
+		if (bl->next != nullptr) {
+			// can't delete block (already at the beginning of the chain)
+			ShowError("map_delblock error : bl->next!=nullptr\n");
+		}
+		return 0;
+	}
+
+#ifdef CELL_NOSTACK
+	map_delblcell(bl);
+#endif
+
+	struct map_data *mapdata = map_getmapdata(bl->m);
+
+	nullpo_ret(mapdata);
+
+	pos = bl->x/BLOCK_SIZE+(bl->y/BLOCK_SIZE)*mapdata->bxs;
+
+	if (bl->next)
+		bl->next->prev = bl->prev;
+	if (bl->prev == &bl_head) {
+	//Since the head of the list, update the block_list map of []
+		if (bl->type == BL_MOB) {
+			nullpo_ret(mapdata->block_mob);
+			mapdata->block_mob[pos] = bl->next;
+		} else {
+			nullpo_ret(mapdata->block);
+			mapdata->block[pos] = bl->next;
+		}
+	} else {
+		bl->prev->next = bl->next;

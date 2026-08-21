@@ -1,0 +1,407 @@
+			job = JobConst.SURA_2ND;
+			break;
+		case JobConst.TROUBADOUR:
+		case JobConst.TROUBADOUR_H:
+		case JobConst.TROUBADOUR_B:
+		case JobConst.MINSTREL:
+		case JobConst.MINSTREL_H:
+		case JobConst.MINSTREL_B:
+			job = JobConst.MINSTREL_2ND;
+			break;
+		case JobConst.TROUVERE:
+		case JobConst.TROUVERE_H:
+		case JobConst.TROUVERE_B:
+		case JobConst.WANDERER:
+		case JobConst.WANDERER_H:
+		case JobConst.WANDERER_B:
+			job = JobConst.WANDERER_2ND;
+			break;
+	}
+	return job || this._job;
+}
+
+/**
+ * Updating BodyStyle
+ *
+ * @param {number} Body2 id
+ */
+function UpdateBodyStyle(look) {
+	let path;
+	let Entity;
+
+	if (look < 0) {
+		return;
+	}
+
+	setTimeout(
+		function () {
+			this._body = look;
+			let job = this._job;
+			let cashMountCostume = false;
+			if (PACKETVER.value <= 20231220) {
+				if (look > 0) {
+					look = getBodyVal.call(this);
+				}
+			}
+
+			if (this.costume) {
+				const mountValue = this._allRidingState ? AllMountTable[look] : MountTable[look];
+				if (
+					look > JobConst.COSTUME_SECOND_JOB_START &&
+					look < JobConst.COSTUME_SECOND_JOB_END &&
+					this._allRidingState
+				) {
+					// we don't have costume all_riding constants
+					job = mountValue;
+					cashMountCostume = true;
+				} else {
+					look = mountValue;
+					job = this.costume;
+				}
+			}
+
+			path = this.isAdmin ? DB.getAdminPath(this._sex) : DB.getBodyPath(job, this._sex, look, cashMountCostume);
+			Entity = this.constructor;
+
+			// Loading
+			Client.loadFile(path + '.act');
+			Client.loadFile(
+				path + '.spr',
+				function () {
+					this.files.body.spr = path + '.spr';
+					this.files.body.act = path + '.act';
+
+					// Update linked attachments
+					this.bodypalette = this._bodypalette;
+					this.weapon = this._weapon;
+					this.shield = this._shield;
+				}.bind(this),
+				null,
+				{
+					to_rgba: this.objecttype !== Entity.TYPE_PC
+				}
+			);
+		}.bind(this),
+		50
+	);
+}
+
+/**
+ * Update body palette
+ *
+ * @param {number} body palette number
+ */
+function UpdateBodyPalette(pal) {
+	this._bodypalette = pal;
+
+	// Internal palette
+	if (pal <= 0) {
+		this.files.body.pal = null;
+		return;
+	}
+
+	// Wait body to be loaded
+	if (this._job === -1) {
+		return;
+	}
+
+	this.files.body.pal = DB.getBodyPalPath(this._job, this._bodypalette, this._sex);
+}
+
+/**
+ * Update head
+ *
+ * @param {number} head index
+ */
+function UpdateHead(head) {
+	if (head < 0) {
+		return;
+	}
+
+	this._head = head;
+	const path = DB.getHeadPath(head, this.job, this._sex, this.isOrcish);
+
+	Client.loadFile(path + '.act');
+	Client.loadFile(
+		path + '.spr',
+		function () {
+			// Don't apply the head sprite if it should be suppressed
+			if (!shouldSuppressHead.call(this)) {
+				this.files.head.spr = path + '.spr';
+				this.files.head.act = path + '.act';
+				this.files.head.pal = null;
+			}
+			this.headpalette = this._headpalette;
+		}.bind(this)
+	);
+}
+
+/**
+ * Update head palette
+ *
+ * @param {number} palette id
+ */
+function UpdateHeadPalette(pal) {
+	this._headpalette = pal;
+
+	// Using internal palette stored in sprite
+	if (pal <= 0) {
+		this.files.head.pal = null;
+		return;
+	}
+
+	// Wait head to load before
+	if (this._head === -1) {
+		return;
+	}
+	this.files.head.pal = DB.getHeadPalPath(this._head, this._headpalette, this.job, this._sex);
+}
+
+/**
+ * Update Generic function to load hats, weapons and shields
+ *
+ * @param {string} type - weapon / shield / etc
+ * @param {string} method from DB to get path
+ * @param {function} callback if fail
+ */
+function UpdateGeneric(type, func, fallback) {
+	return function (val) {
+		let path;
+		const _this = this;
+		let _val = val;
+
+		// Nothing to load
+		if (val <= 0) {
+			this['_' + type] = 0;
+			return;
+		}
+
+		// Find file path
+		switch (type) {
+			case 'weapon':
+			case 'shield':
+			case 'robe':
+				path = DB[func](val, this.job, this._sex);
+				break;
+
+			default:
+				path = DB[func](val, this._sex);
+				break;
+		}
+
+		// No path found, remove current files used
+		if (!path) {
+			this.files[type].spr = null;
+			this.files[type].act = null;
+			this.files[type].pal = null;
+
+			// Load weapon sound
+			if (type === 'weapon') {
+				this.sound.attackFile = DB.getWeaponSound(val);
+			}
+
+			return;
+		}
+
+		function LoadView(filepath, final) {
+			Client.loadFile(filepath + '.act');
+			Client.loadFile(
+				filepath + '.spr',
+				function () {
+					_this['_' + type] = _val;
+
+					// Head accessories should not be applied if they should be suppressed
+					const isAccessory = type === 'accessory' || type === 'accessory2' || type === 'accessory3';
+
+					if (!isAccessory || !shouldSuppressHead.call(_this)) {
+						_this.files[type].spr = filepath + '.spr';
+						_this.files[type].act = filepath + '.act';
+					}
+
+					// Load weapon sound
+					if (type === 'weapon') {
+						_this.attackFile = DB.getWeaponSound(_val);
+
+						//Load weapon trail effect
+						const trail_file = DB.getWeaponTrail(_val, _this.job, _this._sex);
+						if (trail_file) {
+							Client.loadFile(trail_file + '.act');
+							Client.loadFile(trail_file + '.spr', function () {
+								_this.files['weapon_trail'].spr = trail_file + '.spr';
+								_this.files['weapon_trail'].act = trail_file + '.act';
+							});
+						}
+					}
+				},
+
+				// if weapon isn't loaded, try to load the default sprite for the weapon type
+				function () {
+					if (fallback && !final) {
+						_val = DB[fallback](val);
+						filepath = DB[func](_val, _this.job, _this._sex);
+						if (filepath) {
+							LoadView(filepath, true);
+						}
+					} else if (type === 'robe' && !final) {
+						const fallbackPath = DB.getRobePathNoSex(val, _this.job, _this._sex);
+						if (fallbackPath) {
+							Client.loadFile(fallbackPath + '.spr', function () {
+								_this['_' + type] = _val;
+								if (!shouldSuppressHead.call(_this)) {
+									_this.files[type].spr = fallbackPath + '.spr';
+									_this.files[type].act = filepath + '.act';
+								}
+							});
+						}
+					}
+				},
+				// The generic just used : weapon, shield, accessory.
+				// This sprites don't use external palettes, so compile it now to rgba.
+				{ to_rgba: true }
+			);
+		}
+
+		// Start loading view
+		LoadView(path);
+	};
+}
+
+/**
+ * Unified transformation handler - Optimized (Shared across entities)
+ */
+function onTransformationChange() {
+	this._transformationSeq++;
+
+	// Cache effective job
+	const oldEffectiveJob = this._effectiveJob;
+	this._effectiveJob = getEffectiveJob.call(this);
+
+	// Only trigger UpdateBody if job actually changed
+	if (this._effectiveJob && (this._effectiveJob !== oldEffectiveJob || !this.files.body.spr)) {
+		UpdateBody.call(this, this._effectiveJob);
+	}
+
+	// Immediate suppression/restoration for UI responsiveness
+	refreshHeadState.call(this);
+}
+
+/**
+ * Hooking, export
+ */
+export default function Init() {
+	this.files = new View();
+
+	Object.defineProperty(this, 'sex', {
+		get: function () {
+			return this._sex;
+		},
+		set: UpdateSex
+	});
+
+	Object.defineProperty(this, 'job', {
+		get: function () {
+			return this._effectiveJob;
+		},
+		set: UpdateBody
+	});
+
+	this._body = this._job;
+	Object.defineProperty(this, 'body', {
+		get: function () {
+			return this._body;
+		},
+		set: UpdateBodyStyle
+	});
+
+	Object.defineProperty(this, 'bodypalette', {
+		get: function () {
+			return this._bodypalette;
+		},
+		set: UpdateBodyPalette
+	});
+
+	Object.defineProperty(this, 'head', {
+		get: function () {
+			return this._head;
+		},
+		set: UpdateHead
+	});
+
+	Object.defineProperty(this, 'headpalette', {
+		get: function () {
+			return this._headpalette;
+		},
+		set: UpdateHeadPalette
+	});
+
+	Object.defineProperty(this, 'weapon', {
+		get: function () {
+			return this._weapon;
+		},
+		set: UpdateGeneric('weapon', 'getWeaponPath', 'getWeaponViewID')
+	});
+
+	Object.defineProperty(this, 'shield', {
+		get: function () {
+			return this._shield;
+		},
+		set: UpdateGeneric('shield', 'getShieldPath')
+	});
+
+	Object.defineProperty(this, 'accessory', {
+		get: function () {
+			return this._accessory;
+		},
+		set: UpdateGeneric('accessory', 'getHatPath')
+	});
+
+	Object.defineProperty(this, 'accessory2', {
+		get: function () {
+			return this._accessory2;
+		},
+		set: UpdateGeneric('accessory2', 'getHatPath')
+	});
+
+	Object.defineProperty(this, 'accessory3', {
+		get: function () {
+			return this._accessory3;
+		},
+		set: UpdateGeneric('accessory3', 'getHatPath')
+	});
+
+	Object.defineProperty(this, 'robe', {
+		get: function () {
+			return this._robe;
+		},
+		set: UpdateGeneric('robe', 'getRobePath')
+	});
+
+	// Initialize transformation properties
+	this._monster_transform = null;
+	this._active_monster_transform = null;
+	this._job_transform = null;
+	this._transformationSeq = 0;
+	this._effectiveJob = this._job;
+
+	const _this = this;
+
+	// Transformation properties - consolidated setter logic
+	function createTransformationProperty(name) {
+		Object.defineProperty(_this, name, {
+			get: function () {
+				return _this['_' + name] || null;
+			},
+			set: function (value) {
+				const oldValue = _this['_' + name];
+				if (value !== oldValue) {
+					_this['_' + name] = value;
+					onTransformationChange.call(_this);
+				}
+			}
+		});
+	}
+
+	createTransformationProperty('monster_transform');
+	createTransformationProperty('active_monster_transform');
+	createTransformationProperty('job_transform');
+}

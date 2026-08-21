@@ -1,0 +1,500 @@
+/**
+ * UI/Components/Enchant/Enchant.js
+ *
+ * Enchant UI Window
+ */
+
+import DB from 'DB/DBManager.js';
+import Client from 'Core/Client.js';
+import EffectDB from 'DB/Effects/EffectTable.js';
+import EffectConst from 'DB/Effects/EffectConst.js';
+import Camera from 'Renderer/Camera.js';
+import Renderer from 'Renderer/Renderer.js';
+import StrEffect from 'Renderer/Effects/StrEffect.js';
+import WebGL from 'Utils/WebGL.js';
+import Network from 'Network/NetworkManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import Session from 'Engine/SessionStorage.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import ItemInfo from 'UI/Components/ItemInfo/ItemInfo.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Inventory from 'UI/Components/Inventory/Inventory.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import htmlText from './Enchant.html?raw';
+import cssText from './Enchant.css?raw';
+
+const Enchant = new GUIComponent('Enchant', cssText);
+
+Enchant.render = () => htmlText;
+
+Enchant.captureKeyEvents = true;
+
+function _root() {
+	return Enchant._shadow || Enchant._host;
+}
+
+const EnchantState = {
+	groupId: 0,
+	group: null,
+	item: null,
+	itemIndex: 0,
+	action: 'random',
+	selectedSlot: null,
+	selectedPerfect: null,
+	selectedUpgradeSlot: null,
+	pending: null,
+	pendingLock: false
+};
+
+const EnchantAssets = {
+	subpage: {
+		normal: null,
+		upgrade: null,
+		reset: null
+	},
+	menuTabs: {
+		random: null,
+		perfect: null,
+		upgrade: null,
+		reset: null
+	},
+	actionButton: {
+		normal: null,
+		hover: null,
+		down: null,
+		disabled: null
+	}
+};
+
+const DEFAULT_INTRO_DURATION_MS = 2000;
+
+const EnchantEffectState = {
+	introEndAt: 0,
+	resultTimer: null,
+	overlayTimer: null,
+	overlayActive: false,
+	overlayNode: null,
+	canvasStyles: null,
+	activeEffects: [],
+	renderCallback: null,
+	renderActive: false,
+	overlayProgram: null,
+	overlayBuffer: null,
+	fallbackPosition: [0, 0, 0]
+};
+
+const EnchantEffectDurations = {};
+
+const EnchantEffectGroups = {
+	enchant: {
+		intro: EffectConst.EF_UI_ENCHANT_INTRO_YELLOW,
+		success: EffectConst.EF_UI_ENCHANT_SUCCESS,
+		fail: EffectConst.EF_UI_ENCHANT_FAIL
+	},
+	upgrade: {
+		intro: EffectConst.EF_UI_ENCHANT_INTRO_BLUE,
+		success: EffectConst.EF_UI_ENCHANT_UP_SUCCESS,
+		fail: EffectConst.EF_UI_ENCHANT_UP_FAIL
+	},
+	reset: {
+		intro: EffectConst.EF_UI_ENCHANT_INTRO_GREEN,
+		success: EffectConst.EF_UI_ENCHANT_RESET_SUCCESS,
+		fail: EffectConst.EF_UI_ENCHANT_RESET_FAIL
+	}
+};
+
+const ENCHANT_OVERLAY_ALPHA = 0.5;
+const ENCHANT_OVERLAY_COLOR = new Float32Array([0, 0, 0, ENCHANT_OVERLAY_ALPHA]);
+
+const EnchantEffectFog = {
+	use: false,
+	exist: true,
+	far: 30,
+	near: 180,
+	factor: 1.0,
+	color: new Float32Array([1, 1, 1])
+};
+
+let _effectStyleNode = null;
+
+function clearState() {
+	EnchantState.groupId = 0;
+	EnchantState.group = null;
+	EnchantState.item = null;
+	EnchantState.itemIndex = 0;
+	EnchantState.action = 'random';
+	EnchantState.selectedSlot = null;
+	EnchantState.selectedPerfect = null;
+	EnchantState.selectedUpgradeSlot = null;
+	EnchantState.pending = null;
+	EnchantState.pendingLock = false;
+}
+
+function formatZeny(zeny) {
+	return String(zeny || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function getSlotKey(slotNum) {
+	return 'card' + (slotNum + 1);
+}
+
+function getSlotValue(item, slotNum) {
+	if (!item || !item.slot) {
+		return 0;
+	}
+	return item.slot[getSlotKey(slotNum)] || 0;
+}
+
+function setSlotValue(item, slotNum, value) {
+	if (!item) {
+		return;
+	}
+	if (!item.slot) {
+		item.slot = {};
+	}
+	item.slot[getSlotKey(slotNum)] = value;
+}
+
+function getBaseSlotCount(item) {
+	const it = DB.getItemInfo(item.ITID);
+	const slotCount = it && it.slotCount ? parseInt(it.slotCount, 10) : 0;
+	return isNaN(slotCount) ? 0 : slotCount;
+}
+
+function getItemGrade(item) {
+	return item.enchantgrade || item.grade || 0;
+}
+
+function hasRandomOptions(item) {
+	if (!item || !item.Options) {
+		return false;
+	}
+	for (let i = 1; i < item.Options.length; i++) {
+		if (item.Options[i] && item.Options[i].index > 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function isTargetItem(item, group) {
+	if (!item || !group || !group.targetItems) {
+		return false;
+	}
+	const baseName = DB.getBasefromItemID(item.ITID);
+	for (let i = 0; i < group.targetItems.length; i++) {
+		const target = group.targetItems[i];
+		if (target.id && target.id === item.ITID) {
+			return true;
+		}
+		if (!target.id && baseName && target.base === baseName) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function getNextEnchantSlot(item, group) {
+	const slotOrder = group && group.slotOrder && group.slotOrder.length ? group.slotOrder : [0, 1, 2, 3];
+	const baseSlots = getBaseSlotCount(item);
+	for (let i = 0; i < slotOrder.length; i++) {
+		const slotNum = slotOrder[i];
+		if (slotNum < baseSlots) {
+			continue;
+		}
+		if (!getSlotValue(item, slotNum)) {
+			return slotNum;
+		}
+	}
+	return null;
+}
+
+function getUpgradeCandidates(item, group) {
+	const candidates = [];
+	const slotOrder = group.slotOrder && group.slotOrder.length ? group.slotOrder : [0, 1, 2, 3];
+	const baseSlots = getBaseSlotCount(item);
+	for (let i = 0; i < slotOrder.length; i++) {
+		const slotNum = slotOrder[i];
+		if (slotNum < baseSlots) {
+			continue;
+		}
+		const slotData = group.slots[slotNum];
+		if (!slotData || !slotData.upgrade) {
+			continue;
+		}
+		const currentId = getSlotValue(item, slotNum);
+		if (!currentId) {
+			continue;
+		}
+		const baseName = DB.getBasefromItemID(currentId);
+		const entry = baseName ? slotData.upgrade[baseName] : null;
+		if (!entry) {
+			continue;
+		}
+		candidates.push({
+			slotNum: slotNum,
+			baseName: baseName,
+			entry: entry,
+			currentId: currentId
+		});
+	}
+	return candidates;
+}
+
+function setStatus(message, isError) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const status = root.querySelector('.status');
+	if (!status) {
+		return;
+	}
+	status.textContent = message || '';
+	status.classList.toggle('error', !!isError);
+}
+
+function setCaution(message) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const caution = root.querySelector('.caution');
+	if (caution) {
+		caution.textContent = message || '';
+	}
+}
+
+function showHoverOverlay(text, identified, target) {
+	const root = _root();
+	if (!root || !text) {
+		return;
+	}
+	const overlay = root.querySelector('.overlay');
+	if (!overlay) {
+		return;
+	}
+	const hostRect = Enchant._host.getBoundingClientRect();
+	const targetRect = target.getBoundingClientRect();
+	overlay.textContent = text;
+	Object.assign(overlay.style, {
+		top: targetRect.top - hostRect.top + 'px',
+		left: targetRect.left - hostRect.left + 35 + 'px'
+	});
+	overlay.classList.toggle('grey', !identified);
+	overlay.style.display = 'block';
+}
+
+function hideHoverOverlay() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const overlay = root.querySelector('.overlay');
+	if (overlay) {
+		overlay.style.display = 'none';
+	}
+}
+
+function showItemInfo(item) {
+	if (!item) {
+		return false;
+	}
+	if (ItemInfo.uid === item.ITID) {
+		ItemInfo.remove();
+		return false;
+	}
+	ItemInfo.append();
+	ItemInfo.uid = item.ITID;
+	ItemInfo.setItem(item);
+	return false;
+}
+
+function updateSubpageSkin() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const target = root.querySelector('.subpage');
+	if (!target) {
+		return;
+	}
+	let skin = EnchantAssets.subpage.normal;
+	if (EnchantState.action === 'upgrade' && EnchantAssets.subpage.upgrade) {
+		skin = EnchantAssets.subpage.upgrade;
+	} else if (EnchantState.action === 'reset' && EnchantAssets.subpage.reset) {
+		skin = EnchantAssets.subpage.reset;
+	}
+	if (skin) {
+		target.style.backgroundImage = `url(${skin})`;
+	}
+}
+
+function updateMenuSkin() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const target = root.querySelector('.action_tabs');
+	if (!target) {
+		return;
+	}
+	const skin = EnchantAssets.menuTabs[EnchantState.action] || EnchantAssets.menuTabs.random;
+	if (skin) {
+		target.style.backgroundImage = `url(${skin})`;
+	}
+}
+
+function updateActionButtonSkin(button, enabled) {
+	if (!button) {
+		return;
+	}
+	if (!EnchantAssets.actionButton.normal) {
+		return;
+	}
+	if (!enabled && EnchantAssets.actionButton.disabled) {
+		button.style.backgroundImage = `url(${EnchantAssets.actionButton.disabled})`;
+		return;
+	}
+	button.style.backgroundImage = `url(${EnchantAssets.actionButton.normal})`;
+}
+
+function bindActionButtonSkin() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const button = root.querySelector('.action_btn');
+	if (!button) {
+		return;
+	}
+	button.addEventListener('mouseover', () => {
+		if (!EnchantAssets.actionButton.hover || button.classList.contains('disabled')) {
+			return;
+		}
+		button.style.backgroundImage = `url(${EnchantAssets.actionButton.hover})`;
+	});
+	button.addEventListener('mouseout', () => {
+		if (button.classList.contains('disabled')) {
+			return;
+		}
+		button.style.backgroundImage = `url(${EnchantAssets.actionButton.normal})`;
+	});
+	button.addEventListener('mousedown', () => {
+		if (!EnchantAssets.actionButton.down || button.classList.contains('disabled')) {
+			return;
+		}
+		button.style.backgroundImage = `url(${EnchantAssets.actionButton.down})`;
+	});
+	button.addEventListener('mouseup', () => {
+		if (button.classList.contains('disabled')) {
+			return;
+		}
+		const skin = EnchantAssets.actionButton.hover || EnchantAssets.actionButton.normal;
+		button.style.backgroundImage = `url(${skin})`;
+	});
+}
+
+function applyScrollSkin(up, down, bg, thumb) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const inner = root.querySelector('#Enchant');
+	if (!inner) {
+		return;
+	}
+	inner.style.setProperty('--enchant-scroll-up', `url(${up})`);
+	inner.style.setProperty('--enchant-scroll-down', `url(${down})`);
+	inner.style.setProperty('--enchant-scroll-track', `url(${bg})`);
+	inner.style.setProperty('--enchant-scroll-thumb', `url(${thumb})`);
+}
+
+function ensureEffectOverlay() {
+	if (EnchantEffectState.overlayNode) {
+		return EnchantEffectState.overlayNode;
+	}
+	const overlay = document.createElement('div');
+	overlay.id = 'EnchantEffectOverlay';
+	document.body.appendChild(overlay);
+	EnchantEffectState.overlayNode = overlay;
+	return overlay;
+}
+
+function getEffectAnchorPosition() {
+	if (Camera && Camera.target && Camera.target.position) {
+		return Camera.target.position;
+	}
+	if (Session.Entity && Session.Entity.position) {
+		return Session.Entity.position;
+	}
+	return EnchantEffectState.fallbackPosition;
+}
+
+function ensureEffectRenderCallback() {
+	if (EnchantEffectState.renderCallback) {
+		return;
+	}
+	EnchantEffectState.renderCallback = function (tick, gl) {
+		if (!EnchantEffectState.overlayActive && !EnchantEffectState.activeEffects.length) {
+			return;
+		}
+		if (!gl) {
+			return;
+		}
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+		gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+
+		if (EnchantEffectState.overlayActive) {
+			renderEffectOverlay(gl);
+		}
+		if (EnchantEffectState.activeEffects.length) {
+			renderEnchantEffects(tick, gl);
+		} else {
+			stopEffectRenderIfIdle();
+		}
+	};
+}
+
+function ensureEffectRenderActive() {
+	ensureEffectRenderCallback();
+	if (EnchantEffectState.renderActive) {
+		return;
+	}
+	Renderer.render(EnchantEffectState.renderCallback);
+	EnchantEffectState.renderActive = true;
+}
+
+function stopEffectRenderIfIdle() {
+	if (!EnchantEffectState.renderActive) {
+		return;
+	}
+	if (EnchantEffectState.overlayActive || EnchantEffectState.activeEffects.length) {
+		return;
+	}
+	Renderer.stop(EnchantEffectState.renderCallback);
+	EnchantEffectState.renderActive = false;
+}
+
+function ensureOverlayProgram(gl) {
+	if (EnchantEffectState.overlayProgram && EnchantEffectState.overlayBuffer) {
+		return;
+	}
+	const vertexShader =
+		'\
+#version 300 es\n\
+#pragma vscode_glsllint_stage : vert\n\
+precision highp float;\n\
+in vec2 aPosition;\n\
+void main() {\n\
+	gl_Position = vec4(aPosition, 0.0, 1.0);\n\
+}\n';
+	const fragmentShader =
+		'\
+#version 300 es\n\
+#pragma vscode_glsllint_stage : frag\n\
+precision highp float;\n\
+uniform vec4 uColor;\n\
+out vec4 fragColor;\n\

@@ -1,0 +1,500 @@
+		int32 i;
+		ARR_FIND(0,MAX_PARTY,i,p->data[i].sd);
+		if (i < MAX_PARTY)
+			sd = p->data[i].sd;
+	}
+	if(!sd) return;
+	WBUFW(buf,0)=cmd;
+	WBUFL(buf,2)=((flag&0x01)?2:p->party.exp);
+#if PACKETVER >= 20090603
+	WBUFB(buf,6)=(p->party.item&1)?1:0;
+	WBUFB(buf,7)=(p->party.item&2)?1:0;
+#endif
+	if(flag==0)
+		clif_send(buf,packet_len(cmd),sd,PARTY);
+	else
+		clif_send(buf,packet_len(cmd),sd,SELF);
+}
+
+/**
+ * 0105 <account id>.L <char name>.24B <result>.B (ZC_DELETE_MEMBER_FROM_GROUP).
+ * @param sd Send the notification for this player
+ * @param account_id Account ID of kicked member
+ * @param name Name of kicked member
+ * @param result Party leave result @see PARTY_MEMBER_WITHDRAW
+ * @param target Send target
+ **/
+void clif_party_withdraw( const map_session_data& sd, uint32 account_id, const char* name, enum e_party_member_withdraw result, enum send_target target ){
+	PACKET_ZC_DELETE_MEMBER_FROM_GROUP p = {};
+
+	p.PacketType = HEADER_ZC_DELETE_MEMBER_FROM_GROUP;
+	p.AID = account_id;
+	safestrncpy( p.characterName, name, sizeof( p.characterName ) );
+	p.result = result;
+
+	clif_send( &p, sizeof( p ), &sd, target );
+}
+
+
+/// Party chat message (ZC_NOTIFY_CHAT_PARTY).
+/// 0109 <packet len>.W <account id>.L <message>.?B
+void clif_party_message( const party_data& party, uint32 account_id, const char* mes, size_t len ){
+	map_session_data* sd = party_getavailablesd( &party );
+
+	if( sd == nullptr ){
+		return;
+	}
+
+	if (len > CHAT_SIZE_MAX) {
+		ShowWarning( "clif_party_message: Truncated message '%s' (len=%" PRIuPTR ", max=%" PRIuPTR ", party_id=%d).\n", mes, len, CHAT_SIZE_MAX, party.party.party_id );
+		len = CHAT_SIZE_MAX;
+	}
+
+	PACKET_ZC_NOTIFY_CHAT_PARTY* p = reinterpret_cast<PACKET_ZC_NOTIFY_CHAT_PARTY*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_NOTIFY_CHAT_PARTY;
+	p->PacketLength = sizeof( *p );
+	p->AID = account_id;
+	safestrncpy( p->chatMsg, mes, len );
+	p->PacketLength += static_cast<decltype(p->PacketLength)>( len );
+
+	clif_send( p, p->PacketLength, sd, PARTY );
+}
+
+
+/// Updates the position of a party member on the minimap (ZC_NOTIFY_POSITION_TO_GROUPM).
+/// 0107 <account id>.L <x>.W <y>.W
+void clif_party_xy( const map_session_data& sd ){
+	PACKET_ZC_NOTIFY_POSITION_TO_GROUPM p = {};
+
+	p.PacketType = HEADER_ZC_NOTIFY_POSITION_TO_GROUPM;
+	p.AID = sd.status.account_id;
+	p.xPos = sd.x;
+	p.yPos = sd.y;
+
+	clif_send( &p, sizeof( p ), &sd, PARTY_SAMEMAP_WOS );
+}
+
+/*==========================================
+ * Sends x/y dot to a single fd. [Skotlex]
+ *------------------------------------------*/
+void clif_party_xy_single( const map_session_data& sd, const map_session_data& tsd ){
+	PACKET_ZC_NOTIFY_POSITION_TO_GROUPM p = {};
+
+	p.PacketType = HEADER_ZC_NOTIFY_POSITION_TO_GROUPM;
+	p.AID = sd.status.account_id;
+	p.xPos = sd.x;
+	p.yPos = sd.y;
+
+	clif_send( &p, sizeof( p ), &tsd, SELF );
+}
+
+/// Updates HP bar of a party member.
+/// 0106 <account id>.L <hp>.W <max hp>.W (ZC_NOTIFY_HP_TO_GROUPM)
+/// 080e <account id>.L <hp>.L <max hp>.L (ZC_NOTIFY_HP_TO_GROUPM_R2)
+void clif_party_hp( const map_session_data& sd ){
+	PACKET_ZC_NOTIFY_HP_TO_GROUPM p = {};
+
+	p.PacketType = HEADER_ZC_NOTIFY_HP_TO_GROUPM;
+	p.AID = sd.status.account_id;
+#if PACKETVER < 20100119
+	// To correctly display the %hp bar. [Skotlex]
+	if( sd.battle_status.max_hp > INT16_MAX ){
+		p.hp = sd.battle_status.hp / ( sd.battle_status.max_hp / 100 );
+		p.maxhp = 100;
+	}else{
+		p.hp = sd.battle_status.hp;
+		p.maxhp = sd.battle_status.max_hp;
+	}
+#else
+	p.hp = sd.battle_status.hp;
+	p.maxhp = sd.battle_status.max_hp;
+#endif
+
+	clif_send( &p, sizeof( p ), &sd, PARTY_AREA_WOS );
+}
+
+/// Notifies the party members of a character's death or revival.
+/// 0AB2 <GID>.L <dead>.B
+void clif_party_dead( const map_session_data& sd ){
+#if PACKETVER_MAIN_NUM >= 20170524 || PACKETVER_RE_NUM >= 20170502 || defined(PACKETVER_ZERO)
+	PACKET_ZC_GROUP_ISALIVE p = {};
+
+	p.packetType = HEADER_ZC_GROUP_ISALIVE;
+	p.AID = sd.status.account_id;
+	p.isDead = pc_isdead( &sd );
+
+	clif_send( &p, sizeof( p ), &sd, PARTY );
+#endif
+}
+
+/// Updates the job and level of a party member
+/// 0abd <account id>.L <job>.W <level>.W
+void clif_party_job_and_level( const map_session_data& sd ){
+#if PACKETVER_MAIN_NUM >= 20170502 || PACKETVER_RE_NUM >= 20170419 || defined(PACKETVER_ZERO)
+	PACKET_ZC_NOTIFY_MEMBERINFO_TO_GROUPM p = {};
+
+	p.PacketType = HEADER_ZC_NOTIFY_MEMBERINFO_TO_GROUPM;
+	p.AID = sd.status.account_id;
+	p.job = sd.status.class_;
+	p.level = sd.status.base_level;
+
+	clif_send( &p, sizeof( p ), &sd, PARTY );
+#endif
+}
+
+/*==========================================
+ * Sends HP bar to a single fd. [Skotlex]
+ *------------------------------------------*/
+void clif_hpmeter_single( const map_session_data& sd, uint32 id, uint32 hp, uint32 maxhp ){
+	PACKET_ZC_NOTIFY_HP_TO_GROUPM p = {};
+
+	p.PacketType = HEADER_ZC_NOTIFY_HP_TO_GROUPM;
+	p.AID = id;
+#if PACKETVER < 20100119
+	// To correctly display the %hp bar. [Skotlex]
+	if( maxhp > INT16_MAX ){
+		p.hp = hp / ( maxhp / 100 );
+		p.maxhp = 100;
+	}else{
+		p.hp = hp;
+		p.maxhp = maxhp;
+	}
+#else
+	p.hp = hp;
+	p.maxhp = maxhp;
+#endif
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Notifies the client, that it's attack target is too far.
+/// 0139 <target id>.L <target x>.W <target y>.W <x>.W <y>.W <atk range>.W (ZC_ATTACK_FAILURE_FOR_DISTANCE)
+void clif_movetoattack( const map_session_data& sd, block_list& bl ){
+	PACKET_ZC_ATTACK_FAILURE_FOR_DISTANCE packet{};
+
+	packet.PacketType = HEADER_ZC_ATTACK_FAILURE_FOR_DISTANCE;
+	packet.targetAID = bl.id;
+	packet.targetXPos = bl.x;
+	packet.targetYPos = bl.y;
+	packet.xPos = sd.x;
+	packet.yPos = sd.y;
+	packet.currentAttRange = sd.battle_status.rhw.range;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies the client about the result of an item produce request.
+/// 018f <result>.W <name id>.W (ZC_ACK_REQMAKINGITEM)
+/// result:
+///     0 = success
+///     1 = failure
+///     2 = success (alchemist)
+///     3 = failure (alchemist)
+void clif_produceeffect( const map_session_data* sd, int32 flag, t_itemid nameid ){
+	if( sd == nullptr ){
+		return;
+	}
+
+	clif_solved_charname( *sd, sd->status.char_id, sd->status.name );
+
+	PACKET_ZC_ACK_REQMAKINGITEM p = {};
+
+	p.packetType = HEADER_ZC_ACK_REQMAKINGITEM;
+	p.result = flag;
+	p.itemId = client_nameid( nameid );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+
+/// Initiates the pet taming process.
+/// 019e (ZC_START_CAPTURE)
+void clif_catch_process( const map_session_data& sd ){
+	PACKET_ZC_START_CAPTURE packet{};
+
+	packet.PacketType = HEADER_ZC_START_CAPTURE;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Displays the result of a pet taming attempt.
+/// 01a0 <result>.B (ZC_TRYCAPTURE_MONSTER)
+///     0 = failure
+///     1 = success
+void clif_pet_roulette( const map_session_data& sd, bool success ){
+	PACKET_ZC_TRYCAPTURE_MONSTER packet{};
+
+	packet.PacketType = HEADER_ZC_TRYCAPTURE_MONSTER;
+	packet.result = success;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Presents a list of pet eggs that can be hatched (ZC_PETEGG_LIST).
+/// 01a6 <packet len>.W { <index>.W }*
+void clif_sendegg( map_session_data* sd)
+{
+	int32 i,n=0,fd;
+
+	nullpo_retv(sd);
+
+	fd=sd->fd;
+	if (battle_config.pet_no_gvg && map_flag_gvg2(sd->m)) { //Disable pet hatching in GvG grounds during Guild Wars [Skotlex]
+		clif_displaymessage(fd, msg_txt(sd,666));
+		return;
+	}
+	WFIFOHEAD(fd, MAX_INVENTORY * 2 + 4);
+	WFIFOW(fd,0)=0x1a6;
+	for(i=0,n=0;i<MAX_INVENTORY;i++){
+		if(sd->inventory.u.items_inventory[i].nameid == 0 || sd->inventory_data[i] == nullptr ||
+		   sd->inventory_data[i]->type != IT_PETEGG ||
+		   sd->inventory.u.items_inventory[i].amount <= 0)
+			continue;
+		WFIFOW(fd,n*2+4)=client_index(i);
+		n++;
+	}
+	WFIFOW(fd,2)=4+n*2;
+	WFIFOSET(fd,WFIFOW(fd,2));
+
+	sd->menuskill_id = SA_TAMINGMONSTER;
+	sd->menuskill_val = -1;
+}
+
+
+/// Sends a specific pet data update.
+/// 01a4 <type>.B <id>.L <data>.L (ZC_CHANGESTATE_PET)
+/// type:
+///     0 = pre-init (data = 0)
+///     1 = intimacy (data = 0~4)
+///     2 = hunger (data = 0~4)
+///     3 = accessory
+///     4 = performance (data = 1~3: normal, 4: special)
+///     5 = hairstyle
+///     6 = close egg selection ui and update egg in inventory (PACKETVER >= 20180704)
+///
+/// If sd is null, the update is sent to nearby objects, otherwise it is sent only to that player.
+void clif_send_petdata( const map_session_data* sd, const pet_data& pd, e_changestate_pet data_type ){
+	int32 value;
+
+	switch( data_type ) {
+		case CHANGESTATEPET_INIT:
+			value = 0;
+			break;
+		case CHANGESTATEPET_INTIMACY:
+			value = pd.pet.intimate;
+			break;
+		case CHANGESTATEPET_HUNGER:
+			value = pd.pet.hungry;
+			break;
+		case CHANGESTATEPET_ACCESSORY:
+			value = pd.vd.look[LOOK_HEAD_BOTTOM];
+			break;
+		case CHANGESTATEPET_PERFORMANCE: {
+			int32 num;
+
+			// data = 1~3: normal, 4: special
+			if (pd.pet.intimate > PET_INTIMATE_LOYAL)
+				num = pd.get_pet_db()->s_perfor ? 4 : 3;
+			else if (pd.pet.intimate > PET_INTIMATE_CORDIAL) //TODO: this is way too high
+				num = 2;
+			else
+				num = 1;
+
+			value = rnd_value(1, num);
+			break;
+		}
+		case CHANGESTATEPET_HAIRSTYLE:
+			value = battle_config.pet_hair_style;
+			break;
+		case CHANGESTATEPET_UPDATE_EGG:
+			value = ( pd.pet.intimate == 1 ) ? 0 : 1;
+			break;
+		default:	// shouldn't happen
+			return;
+	}
+
+	PACKET_ZC_CHANGESTATE_PET packet{};
+
+	packet.PacketType = HEADER_ZC_CHANGESTATE_PET;
+	packet.type = static_cast<decltype(packet.type)>( data_type );
+	packet.GID = pd.id;
+	packet.data = value;
+
+	if (sd != nullptr)
+		clif_send( &packet, sizeof( packet ), sd, SELF );
+	else
+		clif_send( &packet, sizeof( packet ), &pd, AREA );
+}
+
+
+/// Pet's base data.
+/// 01a2 <name>.24B <renamed>.B <level>.W <hunger>.W <intimacy>.W <accessory id>.W <class>.W (ZC_PROPERTY_PET)
+void clif_send_petstatus( const map_session_data& sd, const pet_data& pd ){
+	PACKET_ZC_PROPERTY_PET packet{};
+
+	packet.PacketType = HEADER_ZC_PROPERTY_PET;
+	safestrncpy( packet.szName, pd.pet.name, NAME_LENGTH );
+	packet.bModified = battle_config.pet_rename ? 0 : pd.pet.rename_flag;
+	packet.nLevel = pd.pet.level;
+	packet.nFullness = pd.pet.hungry;
+	packet.nRelationship = pd.pet.intimate;
+	packet.ITID = static_cast<decltype(packet.ITID)>( pd.pet.equip );
+#if PACKETVER >= 20081126
+	packet.job = pd.pet.class_;
+#endif
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notification about a pet's emotion/talk.
+/// 01aa <id>.L <data>.L (ZC_PET_ACT)
+/// data:
+///     @see CZ_PET_ACT.
+void clif_pet_emotion( const pet_data& pd, int32 param ){
+	PACKET_ZC_PET_ACT packet{};
+
+	packet.packetType = HEADER_ZC_PET_ACT;
+	packet.GID = pd.id;
+	packet.data = param;
+
+	clif_send( &packet, sizeof( packet ), &pd, AREA );
+}
+
+
+/// Result of request to feed a pet.
+/// 01a3 <result>.B <name id>.W (ZC_FEED_PET)
+/// result:
+///     0 = failure
+///     1 = success
+void clif_pet_food( const map_session_data& sd, int32 foodid, bool success ){
+	PACKET_ZC_FEED_PET packet{};
+
+	packet.packetType = HEADER_ZC_FEED_PET;
+	packet.result = success;
+	packet.itemId = client_nameid( foodid );
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Send pet auto feed info.
+void clif_pet_autofeed_status( const map_session_data* sd, bool force ) {
+#if PACKETVER >= 20141008
+	nullpo_retv(sd);
+
+	if (force || battle_config.pet_autofeed_always) {
+		// Always send ON or OFF
+		if (sd->pd && battle_config.feature_pet_autofeed) {
+			clif_configuration(sd, CONFIG_PET_AUTOFEED, sd->pd->pet.autofeed);
+		}
+		else {
+			clif_configuration(sd, CONFIG_PET_AUTOFEED, false);
+		}
+	}
+	else {
+		// Only send when enabled
+		if (sd->pd && battle_config.feature_pet_autofeed && sd->pd->pet.autofeed) {
+			clif_configuration(sd, CONFIG_PET_AUTOFEED, true);
+		}
+	}
+#endif
+}
+
+/// Presents a list of skills that can be auto-spelled.
+/// 01cd { <skill id>.L }*7 (ZC_AUTOSPELLLIST)
+void clif_autospell( map_session_data& sd, uint16 skill_lv ){
+	struct s_autospell_requirement{
+		uint16 skill_id;
+		uint16 required_autospell_skill_lv;
+	};
+
+#ifdef RENEWAL
+	 const std::vector<s_autospell_requirement> autospell_skills = {
+		{ MG_FIREBOLT, 0 },
+		{ MG_COLDBOLT, 0 },
+		{ MG_LIGHTNINGBOLT, 0 },
+		{ MG_SOULSTRIKE, 3 },
+		{ MG_FIREBALL, 3 },
+		{ WZ_EARTHSPIKE, 6 },
+		{ MG_FROSTDIVER, 6 },
+		{ MG_THUNDERSTORM, 9 },
+		{ WZ_HEAVENDRIVE, 9 }
+	};
+#else
+	const std::vector<s_autospell_requirement> autospell_skills = {
+		{ MG_NAPALMBEAT, 0 },
+		{ MG_COLDBOLT, 1 },
+		{ MG_FIREBOLT, 1 },
+		{ MG_LIGHTNINGBOLT, 1 },
+		{ MG_SOULSTRIKE, 4 },
+		{ MG_FIREBALL, 7 },
+		{ MG_FROSTDIVER, 9 },
+	};
+#endif
+
+#if PACKETVER_MAIN_NUM >= 20181128 || PACKETVER_RE_NUM >= 20181031
+	PACKET_ZC_AUTOSPELLLIST* p = reinterpret_cast<PACKET_ZC_AUTOSPELLLIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_AUTOSPELLLIST;
+	p->packetLength = sizeof( *p );
+
+	size_t count = 0;
+	for( const s_autospell_requirement& requirement : autospell_skills ){
+		if( skill_lv > requirement.required_autospell_skill_lv && pc_checkskill( &sd, requirement.skill_id ) ){
+			p->skills[count++] = requirement.skill_id;
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->skills[0] ) );
+		}
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+#elif PACKETVER_MAIN_NUM >= 20090406 || defined(PACKETVER_RE) || defined(PACKETVER_ZERO) || PACKETVER_SAK_NUM >= 20080618
+	PACKET_ZC_AUTOSPELLLIST p = {};
+
+	p.packetType = HEADER_ZC_AUTOSPELLLIST;
+
+	size_t count = 0;
+	for( const s_autospell_requirement& requirement : autospell_skills ){
+		if( count == ARRAYLENGTH( p.skills ) ){
+			break;
+		}
+
+		if( skill_lv > requirement.required_autospell_skill_lv && pc_checkskill( &sd, requirement.skill_id ) ){
+			p.skills[count++] = requirement.skill_id;
+		}else{
+			p.skills[count++] = 0;
+		}
+	}
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+
+	sd.menuskill_id = SA_AUTOSPELL;
+	sd.menuskill_val = skill_lv;
+}
+
+
+/// Devotion's visual effect (ZC_DEVOTIONLIST).
+/// 01cf <devoter id>.L { <devotee id>.L }*5 <max distance>.W
+void clif_devotion( const block_list* src, const map_session_data* tsd ) {
+	unsigned char buf[56];
+
+	nullpo_retv(src);
+	memset(buf,0,packet_len(0x1cf));
+
+	WBUFW(buf,0) = 0x1cf;
+	WBUFL(buf,2) = src->id;
+	if( src->type == BL_MER ){
+		const s_mercenary_data *md = static_cast<const s_mercenary_data*>(src);
+		if( md && md->master && md->devotion_flag )
+			WBUFL(buf,6) = md->master->id;
+
+		WBUFW(buf,26) = skill_get_range2(src, ML_DEVOTION, mercenary_checkskill(md, ML_DEVOTION), false);
+	}
+	else
+	{
+		int32 i;

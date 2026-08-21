@@ -1,0 +1,500 @@
+/*****************************************************************************\
+ *  Copyright (c) rAthena Dev Teams - Licensed under GNU GPL                 *
+ *  For more information, see LICENCE in the main folder                     *
+ *                                                                           *
+ *  This file is separated in two sections:                                  *
+ *  (1) public typedefs, enums, unions, structures and defines               *
+ *  (2) public functions                                                     *
+ *                                                                           *
+ *  <B>Notes on the release system:</B>                                      *
+ *  Whenever an entry is removed from the database both the key and the      *
+ *  data are requested to be released.                                       *
+ *  At least one entry is removed when replacing an entry, removing an       *
+ *  entry, clearing the database or destroying the database.                 *
+ *  What is actually released is defined by the release function, the        *
+ *  functions of the database only ask for the key and/or data to be         *
+ *  released.                                                                *
+ *                                                                           *
+ *  TODO:                                                                    *
+ *  - create a custom database allocator                                     *
+ *  - see what functions need or should be added to the database interface   *
+ *                                                                           *
+ *  HISTORY:                                                                 *
+ *    2013/08/25 - Added int64/uint64 support for keys                       *
+ *    2012/03/09 - Added enum for data types (int32, uint32, void*)          *
+ *    2007/11/09 - Added an iterator to the database.                        *
+ *    2.1 (Athena build #???#) - Portability fix                             *
+ *      - Fixed the portability of casting to union and added the functions  *
+ *        {@link DBMap#ensure(DBMap,DBKey,DBCreateData,...)} and             *
+ *        {@link DBMap#clear(DBMap,DBApply,...)}.                            *
+ *    2.0 (Athena build 4859) - Transition version                           *
+ *      - Almost everything recoded with a strategy similar to objects,      *
+ *        database structure is maintained.                                  *
+ *    1.0 (up to Athena build 4706)                                          *
+ *      - Previous database system.                                          *
+ *                                                                           *
+ * @version 2.1 (Athena build #???#) - Portability fix                       *
+ * @author (Athena build 4859) Flavio @ Amazon Project                       *
+ * @author (up to Athena build 4706) Athena Dev Teams                        *
+ * @encoding US-ASCII                                                        *
+ * @see common#db.cpp                                                        *
+\*****************************************************************************/
+#ifndef DB_HPP
+#define DB_HPP
+
+#include <cstdarg>
+#include <utility>
+
+#include "cbasetypes.hpp"
+
+/*****************************************************************************\
+ *  (1) Section with public typedefs, enums, unions, structures and defines. *
+ *  DBRelease    - Enumeration of release options.                           *
+ *  DBType       - Enumeration of database types.                            *
+ *  DBOptions    - Bitfield enumeration of database options.                 *
+ *  DBKey        - Union of used key types.                                  *
+ *  DBDataType   - Enumeration of data types.                                *
+ *  DBData       - Struct for used data types.                               *
+ *  DBApply      - Format of functions applied to the databases.             *
+ *  DBMatcher    - Format of matchers used in DBMap::getall.                 *
+ *  DBComparator - Format of the comparators used by the databases.          *
+ *  DBHasher     - Format of the hashers used by the databases.              *
+ *  DBReleaser   - Format of the releasers used by the databases.            *
+ *  DBIterator   - Database iterator.                                        *
+ *  DBMap        - Database interface.                                       *
+\*****************************************************************************/
+
+/**
+ * Bitfield with what should be released by the releaser function (if the
+ * function supports it).
+ * @public
+ * @see #DBReleaser
+ * @see #db_custom_release(DBRelease)
+ */
+typedef enum DBRelease {
+	DB_RELEASE_NOTHING = 0x0,
+	DB_RELEASE_KEY     = 0x1,
+	DB_RELEASE_DATA    = 0x2,
+	DB_RELEASE_BOTH    = DB_RELEASE_KEY|DB_RELEASE_DATA,
+} DBRelease;
+
+/**
+ * Supported types of database.
+ * See {@link #db_fix_options(DBType,DBOptions)} for restrictions of the
+ * types of databases.
+ * @param DB_INT Uses int's for keys
+ * @param DB_UINT Uses uint32's for keys
+ * @param DB_STRING Uses strings for keys.
+ * @param DB_ISTRING Uses case insensitive strings for keys.
+ * @param DB_INT64 Uses int64's for keys
+ * @param DB_UINT64 Uses uint64's for keys
+ * @public
+ * @see #DBOptions
+ * @see #DBKey
+ * @see #db_fix_options(DBType,DBOptions)
+ * @see #db_default_cmp(DBType)
+ * @see #db_default_hash(DBType)
+ * @see #db_default_release(DBType,DBOptions)
+ * @see #db_alloc(const char *,int32,DBType,DBOptions,uint16)
+ */
+typedef enum DBType {
+	DB_INT,
+	DB_UINT,
+	DB_STRING,
+	DB_ISTRING,
+	DB_INT64,
+	DB_UINT64,
+} DBType;
+
+/**
+ * Bitfield of options that define the behavior of the database.
+ * See {@link #db_fix_options(DBType,DBOptions)} for restrictions of the
+ * types of databases.
+ * @param DB_OPT_BASE Base options: does not duplicate keys, releases nothing
+ *          and does not allow nullptr keys or nullptr data.
+ * @param DB_OPT_DUP_KEY Duplicates the keys internally. If DB_OPT_RELEASE_KEY
+ *          is defined, the real key is freed as soon as the entry is added.
+ * @param DB_OPT_RELEASE_KEY Releases the key.
+ * @param DB_OPT_RELEASE_DATA Releases the data whenever an entry is removed
+ *          from the database.
+ *          WARNING: for functions that return the data (like DBMap::remove),
+ *          a dangling pointer will be returned.
+ * @param DB_OPT_RELEASE_BOTH Releases both key and data.
+ * @param DB_OPT_ALLOW_NULL_KEY Allow nullptr keys in the database.
+ * @param DB_OPT_ALLOW_NULL_DATA Allow nullptr data in the database.
+ * @public
+ * @see #db_fix_options(DBType,DBOptions)
+ * @see #db_default_release(DBType,DBOptions)
+ * @see #db_alloc(const char *,int32,DBType,DBOptions,uint16)
+ */
+typedef enum DBOptions {
+	DB_OPT_BASE            = 0x00,
+	DB_OPT_DUP_KEY         = 0x01,
+	DB_OPT_RELEASE_KEY     = 0x02,
+	DB_OPT_RELEASE_DATA    = 0x04,
+	DB_OPT_RELEASE_BOTH    = DB_OPT_RELEASE_KEY|DB_OPT_RELEASE_DATA,
+	DB_OPT_ALLOW_NULL_KEY  = 0x08,
+	DB_OPT_ALLOW_NULL_DATA = 0x10,
+} DBOptions;
+
+/**
+ * Union of key types used by the database.
+ * @param i Type of key for DB_INT databases
+ * @param ui Type of key for DB_UINT databases
+ * @param str Type of key for DB_STRING and DB_ISTRING databases
+ * @public
+ * @see #DBType
+ * @see DBMap#get
+ * @see DBMap#put
+ * @see DBMap#remove
+ */
+typedef union DBKey {
+	int32 i;
+	uint32 ui;
+	const char *str;
+	int64 i64;
+	uint64 ui64;
+} DBKey;
+
+/**
+ * Supported types of database data.
+ * @param DB_DATA_INT Uses int's for data.
+ * @param DB_DATA_UINT Uses uint32's for data.
+ * @param DB_DATA_PTR Uses void pointers for data.
+ * @public
+ * @see #DBData
+ */
+typedef enum DBDataType {
+	DB_DATA_INT,
+	DB_DATA_UINT,
+	DB_DATA_PTR,
+	DB_DATA_I64
+} DBDataType;
+
+/**
+ * Struct for data types used by the database.
+ * @param type Type of data
+ * @param u Union of available data types
+ * @param u.i Data of int32 type
+ * @param u.ui Data of uint32 type
+ * @param u.ptr Data of void* type
+ * @param u.i64 Data of int64 type
+ * @public
+ */
+typedef struct DBData {
+	DBDataType type;
+	union {
+		int32 i;
+		uint32 ui;
+		void *ptr;
+		int64 i64;
+	} u;
+} DBData;
+
+/**
+ * Format of functions that create the data for the key when the entry doesn't
+ * exist in the database yet.
+ * @param key Key of the database entry
+ * @param args Extra arguments of the function
+ * @return Data identified by the key to be put in the database
+ * @public
+ * @see DBMap#vensure
+ * @see DBMap#ensure
+ */
+typedef DBData (*DBCreateData)(DBKey key, va_list args);
+
+/**
+ * Format of functions to be applied to an unspecified quantity of entries of
+ * a database.
+ * Any function that applies this function to the database will return the sum
+ * of values returned by this function.
+ * @param key Key of the database entry
+ * @param data Data of the database entry
+ * @param args Extra arguments of the function
+ * @return Value to be added up by the function that is applying this
+ * @public
+ * @see DBMap#vforeach
+ * @see DBMap#foreach
+ * @see DBMap#vdestroy
+ * @see DBMap#destroy
+ */
+typedef int32 (*DBApply)(DBKey key, DBData *data, va_list args);
+
+/**
+ * Format of functions that match database entries.
+ * The purpose of the match depends on the function that is calling the matcher.
+ * Returns 0 if it is a match, another number otherwise.
+ * @param key Key of the database entry
+ * @param data Data of the database entry
+ * @param args Extra arguments of the function
+ * @return 0 if a match, another number otherwise
+ * @public
+ * @see DBMap#getall
+ */
+typedef int32 (*DBMatcher)(DBKey key, DBData data, va_list args);
+
+/**
+ * Format of the comparators used internally by the database system.
+ * Compares key1 to key2.
+ * Returns 0 is equal, negative if lower and positive is higher.
+ * @param key1 Key being compared
+ * @param key2 Key we are comparing to
+ * @param maxlen Maximum number of characters used in DB_STRING and DB_ISTRING
+ *          databases.
+ * @return 0 if equal, negative if lower and positive if higher
+ * @public
+ * @see #db_default_cmp(DBType)
+ */
+typedef int32 (*DBComparator)(DBKey key1, DBKey key2, uint16 maxlen);
+
+/**
+ * Format of the hashers used internally by the database system.
+ * Creates the hash of the key.
+ * @param key Key being hashed
+ * @param maxlen Maximum number of characters used in DB_STRING and DB_ISTRING
+ *          databases.
+ * @return Hash of the key
+ * @public
+ * @see #db_default_hash(DBType)
+ */
+typedef uint64 (*DBHasher)(DBKey key, uint16 maxlen);
+
+/**
+ * Format of the releaser used by the database system.
+ * Releases nothing, the key, the data or both.
+ * All standard releasers use aFree to release.
+ * @param key Key of the database entry
+ * @param data Data of the database entry
+ * @param which What is being requested to be released
+ * @public
+ * @see #DBRelease
+ * @see #db_default_releaser(DBType,DBOptions)
+ * @see #db_custom_release(DBRelease)
+ */
+typedef void (*DBReleaser)(DBKey key, DBData data, DBRelease which);
+
+
+
+typedef struct DBIterator DBIterator;
+typedef struct DBMap DBMap;
+
+
+
+/**
+ * Database iterator.
+ * Supports forward iteration, backward iteration and removing entries from the database.
+ * The iterator is initially positioned before the first entry of the database.
+ * While the iterator exists the database is locked internally, so invoke
+ * {@link DBIterator#destroy} as soon as possible.
+ * @public
+ * @see #DBMap
+ */
+struct DBIterator
+{
+
+	/**
+	 * Fetches the first entry in the database.
+	 * Returns the data of the entry.
+	 * Puts the key in out_key, if out_key is not nullptr.
+	 * @param self Iterator
+	 * @param out_key Key of the entry
+	 * @return Data of the entry
+	 * @protected
+	 */
+	DBData* (*first)(DBIterator* self, DBKey* out_key);
+
+	/**
+	 * Fetches the last entry in the database.
+	 * Returns the data of the entry.
+	 * Puts the key in out_key, if out_key is not nullptr.
+	 * @param self Iterator
+	 * @param out_key Key of the entry
+	 * @return Data of the entry
+	 * @protected
+	 */
+	DBData* (*last)(DBIterator* self, DBKey* out_key);
+
+	/**
+	 * Fetches the next entry in the database.
+	 * Returns the data of the entry.
+	 * Puts the key in out_key, if out_key is not nullptr.
+	 * @param self Iterator
+	 * @param out_key Key of the entry
+	 * @return Data of the entry
+	 * @protected
+	 */
+	DBData* (*next)(DBIterator* self, DBKey* out_key);
+
+	/**
+	 * Fetches the previous entry in the database.
+	 * Returns the data of the entry.
+	 * Puts the key in out_key, if out_key is not nullptr.
+	 * @param self Iterator
+	 * @param out_key Key of the entry
+	 * @return Data of the entry
+	 * @protected
+	 */
+	DBData* (*prev)(DBIterator* self, DBKey* out_key);
+
+	/**
+	 * Returns true if the fetched entry exists.
+	 * The databases entries might have nullptr data, so use this to test if
+	 * the iterator is done.
+	 * @param self Iterator
+	 * @return true is the entry exists
+	 * @protected
+	 */
+	bool (*exists)(DBIterator* self);
+
+	/**
+	 * Removes the current entry from the database.
+	 * NOTE: {@link DBIterator#exists} will return false until another entry
+	 *       is fetched
+	 * Puts data of the removed entry in out_data, if out_data is not nullptr.
+	 * @param self Iterator
+	 * @param out_data Data of the removed entry.
+	 * @return 1 if entry was removed, 0 otherwise
+	 * @protected
+	 * @see DBMap#remove
+	 */
+	int32 (*remove)(DBIterator* self, DBData *out_data);
+
+	/**
+	 * Destroys this iterator and unlocks the database.
+	 * @param self Iterator
+	 * @protected
+	 */
+	void (*destroy)(DBIterator* self);
+
+};
+
+/**
+ * Public interface of a database. Only contains functions.
+ * All the functions take the interface as the first argument.
+ * @public
+ * @see #db_alloc(const char*,int32,DBType,DBOptions,uint16)
+ */
+struct DBMap {
+
+	/**
+	 * Returns a new iterator for this database.
+	 * The iterator keeps the database locked until it is destroyed.
+	 * The database will keep functioning normally but will only free internal
+	 * memory when unlocked, so destroy the iterator as soon as possible.
+	 * @param self Database
+	 * @return New iterator
+	 * @protected
+	 */
+	DBIterator* (*iterator)(DBMap* self);
+
+	/**
+	 * Returns true if the entry exists.
+	 * @param self Database
+	 * @param key Key that identifies the entry
+	 * @return true is the entry exists
+	 * @protected
+	 */
+	bool (*exists)(DBMap* self, DBKey key);
+
+	/**
+	 * Get the data of the entry identified by the key.
+	 * @param self Database
+	 * @param key Key that identifies the entry
+	 * @return Data of the entry or nullptr if not found
+	 * @protected
+	 */
+	DBData* (*get)(DBMap* self, DBKey key);
+
+	/**
+	 * Just calls {@link DBMap#vgetall}.
+	 * Get the data of the entries matched by <code>match</code>.
+	 * It puts a maximum of <code>max</code> entries into <code>buf</code>.
+	 * If <code>buf</code> is nullptr, it only counts the matches.
+	 * Returns the number of entries that matched.
+	 * NOTE: if the value returned is greater than <code>max</code>, only the
+	 * first <code>max</code> entries found are put into the buffer.
+	 * @param self Database
+	 * @param buf Buffer to put the data of the matched entries
+	 * @param max Maximum number of data entries to be put into buf
+	 * @param match Function that matches the database entries
+	 * @param ... Extra arguments for match
+	 * @return The number of entries that matched
+	 * @protected
+	 * @see DBMap#vgetall(DBMap*,void **,uint32,DBMatcher,va_list)
+	 */
+	uint32 (*getall)(DBMap* self, DBData** buf, uint32 max, DBMatcher match, ...);
+
+	/**
+	 * Get the data of the entries matched by <code>match</code>.
+	 * It puts a maximum of <code>max</code> entries into <code>buf</code>.
+	 * If <code>buf</code> is nullptr, it only counts the matches.
+	 * Returns the number of entries that matched.
+	 * NOTE: if the value returned is greater than <code>max</code>, only the
+	 * first <code>max</code> entries found are put into the buffer.
+	 * @param self Database
+	 * @param buf Buffer to put the data of the matched entries
+	 * @param max Maximum number of data entries to be put into buf
+	 * @param match Function that matches the database entries
+	 * @param ... Extra arguments for match
+	 * @return The number of entries that matched
+	 * @protected
+	 * @see DBMap#getall(DBMap*,void **,uint32,DBMatcher,...)
+	 */
+	uint32 (*vgetall)(DBMap* self, DBData** buf, uint32 max, DBMatcher match, va_list args);
+
+	/**
+	 * Just calls {@link DBMap#vensure}.
+	 * Get the data of the entry identified by the key.
+	 * If the entry does not exist, an entry is added with the data returned by
+	 * <code>create</code>.
+	 * @param self Database
+	 * @param key Key that identifies the entry
+	 * @param create Function used to create the data if the entry doesn't exist
+	 * @param ... Extra arguments for create
+	 * @return Data of the entry
+	 * @protected
+	 * @see DBMap#vensure(DBMap*,DBKey,DBCreateData,va_list)
+	 */
+	DBData* (*ensure)(DBMap* self, DBKey key, DBCreateData create, ...);
+
+	/**
+	 * Get the data of the entry identified by the key.
+	 * If the entry does not exist, an entry is added with the data returned by
+	 * <code>create</code>.
+	 * @param self Database
+	 * @param key Key that identifies the entry
+	 * @param create Function used to create the data if the entry doesn't exist
+	 * @param args Extra arguments for create
+	 * @return Data of the entry
+	 * @protected
+	 * @see DBMap#ensure(DBMap*,DBKey,DBCreateData,...)
+	 */
+	DBData* (*vensure)(DBMap* self, DBKey key, DBCreateData create, va_list args);
+
+	/**
+	 * Put the data identified by the key in the database.
+	 * Puts the previous data in out_data, if out_data is not nullptr.
+	 * NOTE: Uses the new key, the old one is released.
+	 * @param self Database
+	 * @param key Key that identifies the data
+	 * @param data Data to be put in the database
+	 * @param out_data Previous data if the entry exists
+	 * @return 1 if if the entry already exists, 0 otherwise
+	 * @protected
+	 */
+	int32 (*put)(DBMap* self, DBKey key, DBData data, DBData *out_data);
+
+	/**
+	 * Remove an entry from the database.
+	 * Puts the previous data in out_data, if out_data is not nullptr.
+	 * NOTE: The key (of the database) is released.
+	 * @param self Database
+	 * @param key Key that identifies the entry
+	 * @param out_data Previous data if the entry exists
+	 * @return 1 if if the entry already exists, 0 otherwise
+	 * @protected
+	 */
+	int32 (*remove)(DBMap* self, DBKey key, DBData *out_data);
+
+	/**
+	 * Just calls {@link DBMap#vforeach}.

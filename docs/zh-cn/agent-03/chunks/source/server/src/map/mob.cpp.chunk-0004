@@ -1,0 +1,500 @@
+					cur_distance = distance_blxy(target, su->group->val2 >> 16, su->group->val2 & 0xffff);
+					break;
+				case UNT_DIMENSIONDOOR:
+					// Not used for warp chase as the target coordinates are random
+					return 0;
+				default:
+					// Skill cannot warp
+					return 0;
+			}
+
+			//Pick warp that leads closest to target.
+			if (cur_distance < *min_distance) {
+				*target_warp = su;
+				*min_distance = cur_distance;
+				return 1;
+			}
+		}
+		break;
+	}
+
+	return 0;
+}
+/*==========================================
+ * Processing of slave monsters
+ *------------------------------------------*/
+static int32 mob_ai_sub_hard_slavemob(mob_data *md,t_tick tick)
+{
+	block_list *bl;
+
+	bl=map_id2bl(md->master_id);
+
+	if (!bl || status_isdead(*bl)) {
+		status_kill(md);
+		return 1;
+	}
+	if (bl->prev == nullptr)
+		return 0; //Master not on a map? Could be warping, do not process.
+
+	if(status_has_mode(&md->status,MD_CANMOVE))
+	{	//If the mob can move, follow around. [Check by Skotlex]
+		// Distance with between slave and master is measured.
+		md->master_dist = distance_bl(md, bl);
+
+		if (battle_config.slave_stick_with_master || md->special_state.ai == AI_ABR || md->special_state.ai == AI_BIONIC) {
+			// Teleport to master if further away than 15 cells (official value for AI_ABR and AI_BIONIC)
+			if (bl->m != md->m || md->master_dist > AREA_SIZE+1) {
+				md->master_dist = 0;
+				unit_warp(md, bl->m, bl->x, bl->y, CLR_TELEPORT);
+				return 1;
+			}
+		}
+
+		// Slave is busy with a target.
+		if(md->target_id) {
+			// Player's slave should come back when master's too far, even if it is doing with a target.
+			if (bl->type == BL_PC && md->master_dist > 5) {
+				mob_unlocktarget(md, tick);
+				unit_walktobl(md, bl, MOB_SLAVEDISTANCE, 1);
+				return 1;
+			} else {
+				return 0;
+			}
+		}
+
+		// Approach master if within view range, chase back to Master's area also if standing on top of the master.
+		if ((md->master_dist > MOB_SLAVEDISTANCE || md->master_dist == 0) && unit_can_move(md)) {
+			int16 x = bl->x, y = bl->y;
+
+			if (map_search_freecell(md, bl->m, &x, &y, MOB_SLAVEDISTANCE, MOB_SLAVEDISTANCE, 1)) {
+				if (unit_walktoxy(md, x, y, 0) == 0) { // Slave is too far from master (outside of battle_config.max_walk_path range), stay put
+					unit_stop_walking( md, USW_FIXPOS );
+					return 0; // Fail here so target will be picked back up when in range
+				} else { // Slave will walk back to master if in range
+					unit_stop_attack( md );
+					return 1;
+				}
+			}
+		}
+	} else if (bl->m != md->m && map_flag_gvg2(md->m)) {
+		//Delete the summoned mob if it's in a gvg ground and the master is elsewhere. [Skotlex]
+		status_kill(md);
+		return 1;
+	}
+
+	//Avoid attempting to lock the master's target too often to avoid unnecessary overload. [Skotlex]
+	if (DIFF_TICK(tick, md->last_linktime) >= MIN_MOBLINKTIME && !md->target_id)
+  	{
+		struct unit_data *ud = unit_bl2ud(bl);
+
+		if (ud) {
+			block_list *tbl=nullptr;
+			if (ud->target && ud->state.attack_continue)
+				tbl = map_id2bl(ud->target);
+			else if (ud->target_to && ud->state.attack_continue)
+				tbl = map_id2bl(ud->target_to);
+			else if (ud->skilltarget) {
+				tbl = map_id2bl(ud->skilltarget);
+				//Required check as skilltarget is not always an enemy. [Skotlex]
+				if (tbl && battle_check_target(md, tbl, BCT_ENEMY) <= 0)
+					tbl = nullptr;
+			}
+			else if (bl->type == BL_MOB) {
+				// If master is a monster, it might still have a target after using a skill
+				mob_data& mmd = reinterpret_cast<mob_data&>(*bl);
+				if (mmd.target_id > 0)
+					tbl = map_id2bl(mmd.target_id);
+			}
+
+			if (tbl != nullptr) {
+				md->last_linktime = tick;
+				if (status_check_skilluse(md, tbl, 0, 0)) {
+					md->target_id = tbl->id;
+					return 1;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+/*==========================================
+ * A lock of target is stopped and mob moves to a standby state.
+ * This also triggers idle skill/movement since the AI can get stuck
+ * when trying to pick new targets when the current chosen target is
+ * unreachable.
+ *------------------------------------------*/
+int32 mob_unlocktarget(mob_data *md, t_tick tick)
+{
+	nullpo_ret(md);
+
+	switch (md->state.skillstate) {
+	case MSS_WALK:
+		if (md->ud.walktimer != INVALID_TIMER)
+			break;
+		//Because it is not unset when the mob finishes walking.
+		mob_setstate(*md, MSS_IDLE);
+		[[fallthrough]];
+	case MSS_IDLE:
+		if (md->ud.walktimer == INVALID_TIMER && md->idle_event[0] && npc_event_do_id(md->idle_event, md->id) > 0)
+			md->idle_event[0] = 0;
+		break;
+	case MSS_LOOT:
+		// Looters that lost their target stop after 0.5-1.5 cells moved
+		unit_stop_walking_soon(*md, tick);
+		[[fallthrough]];
+	default:
+		unit_stop_attack( md );
+		mob_setstate(*md, MSS_IDLE);
+		if(battle_config.mob_ai&0x8) //Walk instantly after dropping target
+			md->next_walktime = tick+rnd()%1000;
+		else
+			md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME;
+		break;
+	}
+	if (md->target_id) {
+		md->target_id=0;
+		unit_set_target(&md->ud, 0);
+	}
+	md->ud.state.attack_continue = 0;
+	md->ud.target_to = 0;
+	
+	if (!md->ud.state.ignore_cell_stack_limit && battle_config.official_cell_stack_limit > 0
+		&& (battle_config.mob_ai & 0x8)
+		&& map_count_oncell(md->m, md->x, md->y, BL_CHAR | BL_NPC, 1) > battle_config.official_cell_stack_limit) {
+		unit_walktoxy(md, md->x, md->y, 8);
+	}
+
+	return 0;
+}
+/*==========================================
+ * Random walk
+ *------------------------------------------*/
+int32 mob_randomwalk(mob_data *md,t_tick tick)
+{
+	const int32 d=7;
+	int32 i,r,rdir,dx,dy,max;
+
+	nullpo_ret(md);
+
+	// Initialize next_walktime
+	if (md->next_walktime == INVALID_TIMER) {
+		md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME;
+		return 1;
+	}
+
+	if(DIFF_TICK(md->next_walktime,tick)>0 ||
+	   status_has_mode(&md->status,MD_NORANDOMWALK) ||
+	   !unit_can_move(md) ||
+	   !status_has_mode(&md->status,MD_CANMOVE))
+		return 0;
+
+	// Make sure the monster has no target anymore, otherwise the walkpath will check for it
+	md->ud.state.attack_continue = 0;
+	md->ud.target_to = 0;
+
+	r=rnd();
+	rdir=rnd()%4; // Randomize direction in which we iterate to prevent monster cluttering up in one corner
+	dx=r%(d*2+1)-d;
+	dy=r/(d*2+1)%(d*2+1)-d;
+	max=(d*2+1)*(d*2+1);
+	for(i=0;i<max;i++){	// Search of a movable place
+		int32 x = dx + md->x;
+		int32 y = dy + md->y;
+		if(((x != md->x) || (y != md->y)) && map_getcell(md->m,x,y,CELL_CHKPASS) && unit_walktoxy(md,x,y,0)){
+			break;
+		}
+		// Could not move to cell, try the 7th cell in direction randomly decided by rdir
+		// We don't move step-by-step because this will make monster stick to the walls
+		switch(rdir) {
+		case 0:
+			dx += d;
+			if (dx > d) {
+				dx -= d*2+1;
+				dy += d;
+				if (dy > d) {
+					dy -= d*2+1;
+				}
+			}
+			break;
+		case 1:
+			dx -= d;
+			if (dx < -d) {
+				dx += d*2+1;
+				dy -= d;
+				if (dy < -d) {
+					dy += d*2+1;
+				}
+			}
+			break;
+		case 2:
+			dy += d;
+			if (dy > d) {
+				dy -= d*2+1;
+				dx += d;
+				if (dx > d) {
+					dx -= d*2+1;
+				}
+			}
+			break;
+		case 3:
+			dy -= d;
+			if (dy < -d) {
+				dy += d*2+1;
+				dx -= d;
+				if (dx < -d) {
+					dx += d*2+1;
+				}
+			}
+			break;
+		}
+	}
+	if(i==max){
+		// None of the available cells worked, try again next interval
+		if(battle_config.mob_stuck_warning) {
+			md->move_fail_count++;
+			if(md->move_fail_count>1000){
+				ShowWarning("MOB can't move. random spawn %d, class = %d, at %s (%d,%d)\n",md->id,md->mob_id,map_getmapdata(md->m)->name, md->x, md->y);
+				md->move_fail_count=0;
+				mob_spawn(md);
+			}
+		}
+		return 0;
+	}
+	mob_setstate(*md, MSS_WALK);
+	md->move_fail_count=0;
+	md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME + unit_get_walkpath_time(*md);
+	return 1;
+}
+
+/**
+ * Makes a monster move to the closest warp if corresponding configs are set
+ * @param md: Mob that should move to the warp
+ * @param target: Target the mob should follow
+ * @return 0: Do not warp chase, 1: Do warp chase, 2: Already warp chasing
+ */
+int32 mob_warpchase(mob_data *md, block_list *target)
+{
+	if ((battle_config.mob_ai&0x40) == 0)
+		return 0; // Warp chase disabled
+
+	if (target == nullptr)
+		return 0; // No target
+
+	if (target->m < 0)
+		return 0; // Target isn't on any map
+
+	int32 type = BL_NUL;
+	if (battle_config.mob_warp&1)
+		type |= BL_NPC;
+	if (battle_config.mob_warp&2)
+		type |= BL_SKILL;
+
+	if (type == BL_NUL)
+		return 0; // No warp types to search for
+
+	if (target->m == md->m && check_distance_bl(md, target, AREA_SIZE))
+		return 0; //No need to do a warp chase.
+
+	if (md->ud.walktimer != INVALID_TIMER &&
+		map_getcell(md->m,md->ud.to_x,md->ud.to_y,CELL_CHKNPC))
+		return 2; //Already walking to a warp.
+
+	block_list* warp = nullptr;
+	int32 distance = AREA_SIZE;
+
+	//Search for warps within mob's viewing range.
+	map_foreachinallrange(mob_warpchase_sub, md,
+		md->db->range2, type, target, &warp, &distance);
+
+	if (warp != nullptr && unit_walktobl(md, warp, 0, 0))
+		return 1;
+	return 0;
+}
+
+/**
+ * Sets a mob's state considering the aggressive bit
+ * @param md: Mob to set state on
+ * @param skillstate: Target state of the monster
+ */
+void mob_setstate(mob_data& md, MobSkillState skillstate) {
+	switch (skillstate) {
+		case MSS_BERSERK:
+		case MSS_ANGRY:
+			md.state.skillstate = md.state.aggressive?MSS_ANGRY:MSS_BERSERK;
+			break;
+		case MSS_RUSH:
+		case MSS_FOLLOW:
+			md.state.skillstate = md.state.aggressive?MSS_FOLLOW:MSS_RUSH;
+			break;
+		default:
+			// When going to any state other than BERSERK/RUSH, aggressive should be reset
+			md.state.aggressive = status_has_mode(&md.status, MD_ANGRY)?1:0;
+			md.state.skillstate = skillstate;
+			break;
+	}
+}
+
+/*==========================================
+ * AI of MOB whose is near a Player
+ *------------------------------------------*/
+static bool mob_ai_sub_hard(mob_data *md, t_tick tick)
+{
+	block_list *tbl = nullptr, *abl = nullptr;
+	bool can_move;
+	int32 view_range, mode;
+
+	if(md->prev == nullptr || md->status.hp == 0)
+		return false;
+
+	// Monsters force-walked by script commands should not be searching for targets.
+	if (md->ud.state.force_walk)
+		return false;
+
+	if (DIFF_TICK(tick, md->next_thinktime) < 0)
+		return false;
+
+	// This prevents the lazy AI from being executed at the same time
+	md->next_thinktime = tick;
+
+	if (md->ud.skilltimer != INVALID_TIMER)
+		return false;
+
+	// Abnormalities
+	if(( md->sc.opt1 && md->sc.opt1 != OPT1_STONEWAIT && md->sc.opt1 != OPT1_BURNING ) || status_db.hasSCF(&md->sc, SCF_MOBLOSETARGET)) {//Should reset targets.
+		md->target_id = md->attacked_id = md->norm_attacked_id = 0;
+		return false;
+	}
+
+	// Before a monster processes its AI, it will check for a skill
+	// It it uses a skill it will not process its AI further until the next interval
+	// Until we implement subcell movement, casting while moving still needs to be done in unit.cpp
+	// Dead and Berserk states have special interval rules
+	// TODO: Monster AI for dead state is not implemented at the moment
+	if (md->ud.walktimer == INVALID_TIMER) {
+		bool skill_ready = false;
+		switch (md->state.skillstate) {
+			case MSS_BERSERK:
+				skill_ready = (DIFF_TICK(tick, md->ud.attackabletime) >= 0);
+				break;
+//			case MSS_DEAD:
+//				skill_ready = (DIFF_TICK(tick, md->last_skillcheck) >= 300);
+//				break;
+			default:
+				skill_ready = (DIFF_TICK(tick, md->last_skillcheck) >= MOB_SKILL_INTERVAL);
+				break;
+		}
+		if (skill_ready && mobskill_use(md, tick, -1))
+			return true;
+	}
+
+	// Note: Anything below this point should actually be using a Finite-state machine (FSM)
+	// But we don't have the FSM data in the database at the moment, so we cannot get a fully correct execution order
+
+	if (md->sc.getSCE(SC_BLIND))
+		view_range = 1;
+	else
+		view_range = md->db->range2;
+	mode = status_get_mode(md);
+
+	can_move = (mode&MD_CANMOVE) && unit_can_move(md);
+	if (can_move)
+		md->last_canmove = tick;
+
+	if (md->target_id)
+	{	//Check validity of current target. [Skotlex]
+		tbl = map_id2bl(md->target_id);
+		if (!tbl || tbl->m != md->m ||
+			(md->ud.attacktimer == INVALID_TIMER && !status_check_skilluse(md, tbl, 0, 0)) ||
+			(
+				tbl->type == BL_PC &&
+				((((TBL_PC*)tbl)->state.gangsterparadise && !(mode&MD_STATUSIMMUNE)) ||
+				((TBL_PC*)tbl)->invincible_timer != INVALID_TIMER)
+		)) {	//No valid target
+			if (mob_warpchase(md, tbl) > 0)
+				return true; //Chasing this target.
+			if (tbl && md->ud.walktimer != INVALID_TIMER && (!can_move || md->ud.walkpath.path_pos <= battle_config.mob_chase_refresh))
+				return true; //Walk at least "mob_chase_refresh" cells before dropping the target unless target is non-existent
+			mob_unlocktarget(md, tick); //Unlock target
+			tbl = nullptr;
+		}
+		// Monsters in chase state that are not moving will recheck their target
+		// This usually happens when they used a skill that stopped them or they were hit while chasing
+		// Items are handled later in this function
+		if (tbl != nullptr && tbl->type != BL_ITEM && md->ud.walktimer == INVALID_TIMER && mob_is_chasing(md->state.skillstate)) {
+			// But don't do this if they stopped because target is already in attack range
+			if (!battle_check_range(md, tbl, md->status.rhw.range)) {
+				// If target is no longer visible, target is dropped and the monster waits for next iteration to continue
+				if (!status_check_visibility(md, tbl, true)) {
+					mob_unlocktarget(md, tick);
+					return true;
+				}
+			}
+		}
+	}
+
+	// Check for target change.
+	if( md->attacked_id && mode&MD_CANATTACK )
+	{
+		if( md->attacked_id == md->target_id )
+		{	//Rude attacked check.
+			if( !battle_check_range(md, tbl, md->status.rhw.range)
+			&&  ( //Can't attack back and can't reach back.
+					(!can_move && DIFF_TICK(tick, md->ud.canmove_tick) > 0 && (battle_config.mob_ai&0x2 || md->sc.getSCE(SC_SPIDERWEB)
+						|| md->sc.getSCE(SC_BITE) || md->sc.getSCE(SC_VACUUM_EXTREME) || md->sc.getSCE(SC_THORNSTRAP)
+						|| md->sc.getSCE(SC__MANHOLE) // Not yet confirmed if boss will teleport once it can't reach target.
+						|| md->walktoxy_fail_count > 0)
+					)
+					|| !mob_can_reach(md, tbl, md->db->range3)
+				)
+			&&  ++md->state.attacked_count > RUDE_ATTACKED_COUNT) {
+				mobskill_use(md, tick, MSC_RUDEATTACKED);
+			}
+		}
+		else
+		if( (abl = map_id2bl(md->attacked_id)) && (!tbl || mob_can_changetarget(md, abl, mode)) )
+		{
+			int32 dist;
+			if( md->m != abl->m || abl->prev == nullptr
+				|| (dist = distance_bl(md, abl)) > AREA_SIZE // Attacker longer than visual area
+				|| battle_check_target(md, abl, BCT_ENEMY) <= 0 // Attacker is not enemy of mob
+				|| (battle_config.mob_ai&0x2 && !status_check_skilluse(md, abl, 0, 0)) // Cannot normal attack back to Attacker
+				|| (!battle_check_range(md, abl, md->status.rhw.range) // Not on Melee Range and ...
+				&& ( // Reach check
+					(!can_move && DIFF_TICK(tick, md->ud.canmove_tick) > 0 && (battle_config.mob_ai&0x2 || md->sc.getSCE(SC_SPIDERWEB)
+						|| md->sc.getSCE(SC_BITE) || md->sc.getSCE(SC_VACUUM_EXTREME) || md->sc.getSCE(SC_THORNSTRAP)
+						|| md->sc.getSCE(SC__MANHOLE) // Not yet confirmed if boss will teleport once it can't reach target.
+						|| md->walktoxy_fail_count > 0)
+					)
+					|| !mob_can_reach(md, abl, dist+md->db->range3)
+				   )
+				) )
+			{ // Rude attacked
+				if (abl->id != md->id //Self damage does not cause rude attack
+				&& ++md->state.attacked_count > RUDE_ATTACKED_COUNT) {
+					mobskill_use(md, tick, MSC_RUDEATTACKED);
+				}
+			}
+			else
+			if (!(battle_config.mob_ai&0x2) && !status_check_skilluse(md, abl, 0, 0))
+			{
+				//Can't attack back, but didn't invoke a rude attacked skill...
+			}
+			else
+			{ //Attackable
+				//If a monster can change the target to the attacker, it will change the target
+				md->target_id = md->attacked_id; // set target
+				if (md->state.attacked_count)
+					md->state.attacked_count--; //Should we reset rude attack count?
+				tbl = abl; //Set the new target
+			}
+		}
+
+		//Clear it since it's been checked for already.
+		md->attacked_id = md->norm_attacked_id = 0;
+	}
+
+	bool slave_lost_target = false;
+
+	// Processing of slave monster
+	if (md->master_id > 0) {

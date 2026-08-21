@@ -1,0 +1,500 @@
+		}
+
+		item->weapon_level = lv;
+	} else {
+		if (!exists)
+			item->weapon_level = 0;
+	}
+
+	if( this->nodeExists( node, "ArmorLevel" ) ){
+		uint16 level;
+
+		if( !this->asUInt16( node, "ArmorLevel", level ) ){
+			return 0;
+		}
+
+		if( level > MAX_ARMOR_LEVEL ){
+			this->invalidWarning( node["ArmorLevel"], "Invalid armor level %d, defaulting to 0.\n", level );
+			level = 0;
+		}
+
+		if( item->type != IT_ARMOR ){
+			this->invalidWarning( node["ArmorLevel"], "Item type is not an armor, defaulting to 0.\n" );
+			level = 0;
+		}
+
+		item->armor_level = level;
+	}else{
+		if( !exists ){
+			item->armor_level = 0;
+		}
+	}
+
+	if (this->nodeExists(node, "EquipLevelMin")) {
+		uint16 lv;
+
+		if (!this->asUInt16(node, "EquipLevelMin", lv))
+			return 0;
+
+		if (lv > MAX_LEVEL) {
+			this->invalidWarning(node["EquipLevelMin"], "Minimum equip level %d exceeds MAX_LEVEL (%d), capping to MAX_LEVEL.\n", lv, MAX_LEVEL);
+			lv = MAX_LEVEL;
+		}
+
+		item->elv = lv;
+	} else {
+		if (!exists)
+			item->elv = 0;
+	}
+
+	if (this->nodeExists(node, "EquipLevelMax")) {
+		uint16 lv;
+
+		if (!this->asUInt16(node, "EquipLevelMax", lv))
+			return 0;
+
+		if (lv < item->elv) {
+			this->invalidWarning(node["EquipLevelMax"], "Maximum equip level %d is less than minimum equip level %d, capping to minimum equip level.\n", lv, item->elv);
+			lv = item->elv;
+		}
+
+		if (lv > MAX_LEVEL) {
+			this->invalidWarning(node["EquipLevelMax"], "Maximum equip level %d exceeds MAX_LEVEL (%d), capping to MAX_LEVEL.\n", lv, MAX_LEVEL);
+			lv = MAX_LEVEL;
+		}
+
+		item->elvmax = lv;
+	} else {
+		if (!exists)
+			item->elvmax = MAX_LEVEL;
+	}
+
+	if (this->nodeExists(node, "Refineable")) {
+		bool refine;
+
+		if (!this->asBool(node, "Refineable", refine))
+			return 0;
+
+		item->flag.no_refine = !refine;
+	} else {
+		if (!exists)
+			item->flag.no_refine = true;
+	}
+
+	if (this->nodeExists(node, "Gradable")) {
+		bool gradable;
+
+		if (!this->asBool(node, "Gradable", gradable))
+			return 0;
+
+		item->flag.gradable = gradable;
+	} else {
+		if (!exists)
+			item->flag.gradable = false;
+	}
+
+	if (this->nodeExists(node, "View")) {
+		uint32 look;
+
+		if (!this->asUInt32(node, "View", look))
+			return 0;
+
+		item->look = look;
+	} else {
+		if (!exists)
+			item->look = 0;
+	}
+
+	if (this->nodeExists(node, "AliasName")) {
+		std::string view;
+
+		if (!this->asString(node, "AliasName", view))
+			return 0;
+
+		std::shared_ptr<item_data> view_data = item_db.search_aegisname( view.c_str() );
+
+		if (view_data == nullptr) {
+			this->invalidWarning(node["AliasName"], "Unable to change the alias because %s is an unknown item.\n", view.c_str());
+			return 0;
+		}
+
+		item->view_id = view_data->nameid;
+	} else {
+		if (!exists)
+			item->view_id = 0;
+	}
+
+	if (this->nodeExists(node, "Flags")) {
+		const auto& flagNode = node["Flags"];
+
+		if (this->nodeExists(flagNode, "BuyingStore")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "BuyingStore", active))
+				return 0;
+
+			if (!itemdb_isstackable2(item.get()) && active) {
+				this->invalidWarning(flagNode["BuyingStore"], "Non-stackable item cannot be enabled for buying store.\n");
+				active = false;
+			}
+
+			item->flag.buyingstore = active;
+		} else {
+			if (!exists)
+				item->flag.buyingstore = false;
+		}
+
+		if (this->nodeExists(flagNode, "DeadBranch")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "DeadBranch", active))
+				return 0;
+
+			item->flag.dead_branch = active;
+		} else {
+			if (!exists)
+				item->flag.dead_branch = false;
+		}
+
+		if (this->nodeExists(flagNode, "Container")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "Container", active))
+				return 0;
+
+			item->flag.group = active;
+		} else {
+			if (!exists)
+				item->flag.group = false;
+		}
+
+		if (this->nodeExists(flagNode, "UniqueId")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "UniqueId", active))
+				return 0;
+
+			if (!itemdb_isstackable2(item.get()) && active) {
+				this->invalidWarning(flagNode["UniqueId"], "Non-stackable item cannot be enabled for UniqueId.\n");
+				active = false;
+			}
+
+			item->flag.guid = active;
+		} else {
+			if (!exists)
+				item->flag.guid = false;
+		}
+
+		if (this->nodeExists(flagNode, "BindOnEquip")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "BindOnEquip", active))
+				return 0;
+
+			item->flag.bindOnEquip = active;
+		} else {
+			if (!exists)
+				item->flag.bindOnEquip = false;
+		}
+
+		if (this->nodeExists(flagNode, "DropAnnounce")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "DropAnnounce", active))
+				return 0;
+
+			item->flag.broadcast = active;
+		} else {
+			if (!exists)
+				item->flag.broadcast = false;
+		}
+
+		if (this->nodeExists(flagNode, "NoConsume")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "NoConsume", active))
+				return 0;
+
+			if (active)
+				item->flag.delay_consume |= DELAYCONSUME_NOCONSUME;
+			else
+				item->flag.delay_consume &= ~DELAYCONSUME_NOCONSUME;
+		} else {
+			if (!exists) {
+				if (!(item->flag.delay_consume & DELAYCONSUME_TEMP))
+					item->flag.delay_consume = DELAYCONSUME_NONE;
+			}
+		}
+
+		if (this->nodeExists(flagNode, "DropEffect")) {
+			std::string effect;
+
+			if (!this->asString(flagNode, "DropEffect", effect))
+				return 0;
+
+			std::string effect_constant = "DROPEFFECT_" + effect;
+			int64 constant;
+
+			if (!script_get_constant(effect_constant.c_str(), &constant) || constant < DROPEFFECT_NONE || constant > DROPEFFECT_MAX) {
+				this->invalidWarning(flagNode["DropEffect"], "Invalid item drop effect %s, defaulting to DROPEFFECT_NONE.\n", effect.c_str());
+				constant = DROPEFFECT_NONE;
+			}
+
+			item->flag.dropEffect = static_cast<e_item_drop_effect>(constant);
+		} else {
+			if (!exists)
+				item->flag.dropEffect = DROPEFFECT_NONE;
+		}
+	} else {
+		if (!exists) {
+			item->flag.buyingstore = false;
+			item->flag.dead_branch = false;
+			item->flag.group = false;
+			item->flag.guid = false;
+			item->flag.bindOnEquip = false;
+			item->flag.broadcast = false;
+			if (!(item->flag.delay_consume & DELAYCONSUME_TEMP))
+				item->flag.delay_consume = DELAYCONSUME_NONE;
+			item->flag.dropEffect = DROPEFFECT_NONE;
+		}
+	}
+
+	if (this->nodeExists(node, "Delay")) {
+		const auto& delayNode = node["Delay"];
+
+		if (this->nodeExists(delayNode, "Duration")) {
+			uint32 duration;
+
+			if (!this->asUInt32(delayNode, "Duration", duration))
+				return 0;
+
+			item->delay.duration = duration;
+		} else {
+			if (!exists)
+				item->delay.duration = 0;
+		}
+
+		if (this->nodeExists(delayNode, "Status")) {
+			std::string status;
+
+			if (!this->asString(delayNode, "Status", status))
+				return 0;
+
+			std::string status_constant = "SC_" + status;
+			int64 constant;
+
+			if (!script_get_constant(status_constant.c_str(), &constant) || constant < SC_NONE || constant >= SC_MAX) {
+				this->invalidWarning(delayNode[c4::to_csubstr(status)], "Invalid item delay status %s, defaulting to SC_NONE.\n", status.c_str());
+				constant = SC_NONE;
+			}
+
+			item->delay.sc = static_cast<sc_type>(constant);
+		} else {
+			if (!exists)
+				item->delay.sc = SC_NONE;
+		}
+	} else {
+		if (!exists) {
+			item->delay.duration = 0;
+			item->delay.sc = SC_NONE;
+		}
+	}
+
+	if (this->nodeExists(node, "Stack")) {
+		const auto& stackNode = node["Stack"];
+
+		if (this->nodeExists(stackNode, "Amount")) {
+			uint16 amount;
+
+			if (!this->asUInt16(stackNode, "Amount", amount))
+				return 0;
+
+			if (!itemdb_isstackable2(item.get())) {
+				this->invalidWarning(stackNode["Amount"], "Non-stackable item cannot be enabled for stacking.\n");
+				amount = 0;
+			}
+
+			item->stack.amount = amount;
+		} else {
+			if (!exists)
+				item->stack.amount = 0;
+		}
+
+		if (this->nodeExists(stackNode, "Inventory")) {
+			bool active;
+
+			if (!this->asBool(stackNode, "Inventory", active))
+				return 0;
+
+			item->stack.inventory = active;
+		} else {
+			if (!exists)
+				item->stack.inventory = false;
+		}
+
+		if (this->nodeExists(stackNode, "Cart")) {
+			bool active;
+
+			if (!this->asBool(stackNode, "Cart", active))
+				return 0;
+
+			item->stack.cart = active;
+		} else {
+			if (!exists)
+				item->stack.cart = false;
+		}
+
+		if (this->nodeExists(stackNode, "Storage")) {
+			bool active;
+
+			if (!this->asBool(stackNode, "Storage", active))
+				return 0;
+
+			item->stack.storage = active;
+		} else {
+			if (!exists)
+				item->stack.storage = false;
+		}
+
+		if (this->nodeExists(stackNode, "GuildStorage")) {
+			bool active;
+
+			if (!this->asBool(stackNode, "GuildStorage", active))
+				return 0;
+
+			item->stack.guild_storage = active;
+		} else {
+			if (!exists)
+				item->stack.guild_storage = false;
+		}
+	} else {
+		if (!exists) {
+			item->stack.amount = 0;
+			item->stack.inventory = false;
+			item->stack.cart = false;
+			item->stack.storage = false;
+			item->stack.guild_storage = false;
+		}
+	}
+	
+	if (this->nodeExists(node, "NoUse")) {
+		const auto& nouseNode = node["NoUse"];
+
+		if (this->nodeExists(nouseNode, "Override")) {
+			uint16 override;
+
+			if (!this->asUInt16(nouseNode, "Override", override))
+				return 0;
+
+			if (override > 100) {
+				this->invalidWarning(nouseNode["Override"], "Item no use override level %d exceeds 100, capping to 100.\n", override);
+				override = 100;
+			}
+
+			item->item_usage.override = override;
+		} else {
+			if (!exists)
+				item->item_usage.override = 100;
+		}
+
+		if (this->nodeExists(nouseNode, "Sitting")) {
+			bool active;
+
+			if (!this->asBool(nouseNode, "Sitting", active))
+				return 0;
+
+			item->item_usage.sitting = active;
+		} else {
+			if (!exists)
+				item->item_usage.sitting = false;
+		}
+	} else {
+		if (!exists) {
+			item->item_usage.override = 100;
+			item->item_usage.sitting = false;
+		}
+	}
+
+	if (this->nodeExists(node, "Trade")) {
+		const auto& tradeNode = node["Trade"];
+
+		if (this->nodeExists(tradeNode, "Override")) {
+			uint16 override;
+
+			if (!this->asUInt16(tradeNode, "Override", override))
+				return 0;
+
+			if (override > 100) {
+				this->invalidWarning(tradeNode["Override"], "Item trade override level %d exceeds 100, capping to 100.\n", override);
+				override = 100;
+			}
+
+			item->gm_lv_trade_override = override;
+		} else {
+			if (!exists)
+				item->gm_lv_trade_override = 100;
+		}
+
+		if (this->nodeExists(tradeNode, "NoDrop")) {
+			bool active;
+
+			if (!this->asBool(tradeNode, "NoDrop", active))
+				return 0;
+
+			item->flag.trade_restriction.drop = active;
+		} else {
+			if (!exists)
+				item->flag.trade_restriction.drop = false;
+		}
+
+		if (this->nodeExists(tradeNode, "NoTrade")) {
+			bool active;
+
+			if (!this->asBool(tradeNode, "NoTrade", active))
+				return 0;
+
+			item->flag.trade_restriction.trade = active;
+		} else {
+			if (!exists)
+				item->flag.trade_restriction.trade = false;
+		}
+
+		if (this->nodeExists(tradeNode, "TradePartner")) {
+			bool active;
+
+			if (!this->asBool(tradeNode, "TradePartner", active))
+				return 0;
+
+			item->flag.trade_restriction.trade_partner = active;
+		} else {
+			if (!exists)
+				item->flag.trade_restriction.trade_partner = false;
+		}
+
+		if (this->nodeExists(tradeNode, "NoSell")) {
+			bool active;
+
+			if (!this->asBool(tradeNode, "NoSell", active))
+				return 0;
+
+			item->flag.trade_restriction.sell = active;
+		} else {
+			if (!exists)
+				item->flag.trade_restriction.sell = false;
+		}
+
+		if (this->nodeExists(tradeNode, "NoCart")) {
+			bool active;
+
+			if (!this->asBool(tradeNode, "NoCart", active))
+				return 0;
+
+			item->flag.trade_restriction.cart = active;
+		} else {
+			if (!exists)
+				item->flag.trade_restriction.cart = false;
+		}
+
+		if (this->nodeExists(tradeNode, "NoStorage")) {
+			bool active;
+

@@ -1,0 +1,500 @@
+			if( sd->mail.inbox.full || sd->mail.inbox.unchecked > 0 )
+				intif_Mail_requestinbox(sd->status.char_id, 1, type); // Free space is available for new mails
+		}
+	}
+
+	return 1;
+}
+
+/*------------------------------------------
+ * Return Message
+ *------------------------------------------*/
+
+/**
+ * Request to return a mail to his sender
+ * @param char_id : player asking to return
+ * @param mail_id : mail to return
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_Mail_return(uint32 char_id, int32 mail_id)
+{
+	if (CheckForCharServer())
+		return 0;
+
+	WFIFOHEAD(inter_fd,10);
+	WFIFOW(inter_fd,0) = 0x304c;
+	WFIFOL(inter_fd,2) = char_id;
+	WFIFOL(inter_fd,6) = mail_id;
+	WFIFOSET(inter_fd,10);
+
+	return 1;
+}
+
+/**
+ * Received a returned mail
+ * @param fd
+ * @return 
+ */
+int32 intif_parse_Mail_return(int32 fd)
+{
+	map_session_data *sd = map_charid2sd(RFIFOL(fd,2));
+	int32 mail_id = RFIFOL(fd,6);
+	int16 fail = RFIFOB(fd,10);
+
+	if( sd == nullptr )
+	{
+		ShowError("intif_parse_Mail_return: char not found %d\n",RFIFOL(fd,2));
+		return 1;
+	}
+
+	if( !fail )
+	{
+		int32 i;
+		ARR_FIND(0, MAIL_MAX_INBOX, i, sd->mail.inbox.msg[i].id == mail_id);
+		if( i < MAIL_MAX_INBOX )
+		{
+			enum mail_inbox_type type = sd->mail.inbox.msg[i].type;
+			memset(&sd->mail.inbox.msg[i], 0, sizeof(struct mail_message));
+			sd->mail.inbox.amount--;
+
+			if( sd->mail.inbox.full )
+				intif_Mail_requestinbox(sd->status.char_id, 1, type); // Free space is available for new mails
+		}
+	}
+
+	clif_Mail_return(sd->fd, mail_id, fail);
+	return 1;
+}
+
+/*------------------------------------------
+ * Send Mail
+ *------------------------------------------*/
+
+/**
+ * Request to send a mail
+ * @param account_id
+ * @param msg : mail struct
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_Mail_send(uint32 account_id, struct mail_message *msg)
+{
+	int32 len = sizeof(struct mail_message) + 8;
+
+	if (CheckForCharServer())
+		return 0;
+
+	WFIFOHEAD(inter_fd,len);
+	WFIFOW(inter_fd,0) = 0x304d;
+	WFIFOW(inter_fd,2) = len;
+	WFIFOL(inter_fd,4) = account_id;
+	memcpy(WFIFOP(inter_fd,8), msg, sizeof(struct mail_message));
+	WFIFOSET(inter_fd,len);
+
+	return 1;
+}
+
+/**
+ * Received the ack of a mail send request
+ * @param fd L char-serv link
+ */
+static void intif_parse_Mail_send(int32 fd)
+{
+	struct mail_message msg;
+	map_session_data *sd;
+	bool fail;
+
+	if( RFIFOW(fd,2) - 4 != sizeof(struct mail_message) )
+	{
+		ShowError("intif_parse_Mail_send: data size error %d %" PRIuPTR "\n", RFIFOW(fd,2) - 4, sizeof(struct mail_message));
+		return;
+	}
+
+	memcpy(&msg, RFIFOP(fd,4), sizeof(struct mail_message));
+	fail = (msg.id == 0);
+
+	// notify sender
+	sd = map_charid2sd(msg.send_id);
+	if( sd != nullptr )
+	{
+		if( fail )
+			mail_deliveryfail(sd, &msg);
+		else
+		{
+			clif_Mail_send(sd, WRITE_MAIL_SUCCESS);
+			if( save_settings&CHARSAVE_MAIL )
+				chrif_save(sd, CSAVE_INVENTORY);
+		}
+	}
+}
+
+/**
+ * Received a new mail notification
+ * @param fd : char-link serv
+ */
+static void intif_parse_Mail_new(int32 fd)
+{
+	map_session_data *sd = map_charid2sd(RFIFOL(fd,2));
+	int32 mail_id = RFIFOL(fd,6);
+	const char* sender_name = RFIFOCP(fd,10);
+	const char* title = RFIFOCP(fd,34);
+
+	if( sd == nullptr )
+		return;
+	sd->mail.changed = true;
+	sd->mail.inbox.unread++;
+	clif_Mail_new(sd, mail_id, sender_name, title);
+#if PACKETVER >= 20150513
+	// Make sure the window gets refreshed when its open
+	intif_Mail_requestinbox(sd->status.char_id, 1, static_cast<mail_inbox_type>(RFIFOB(fd,74)));
+#endif
+}
+
+static void intif_parse_Mail_receiver( int32 fd ){
+	map_session_data *sd;
+
+	sd = map_charid2sd( RFIFOL( fd, 2 ) );
+
+	// Only f the player is online
+	if( sd ){
+		clif_Mail_Receiver_Ack( sd, RFIFOL( fd, 6 ), RFIFOW( fd, 10 ), RFIFOW( fd, 12 ), RFIFOCP( fd, 14 ) );
+		sd->mail.dest_id = RFIFOL(fd, 6);
+	}
+}
+
+bool intif_mail_checkreceiver( map_session_data* sd, char* name ){
+	map_session_data *tsd;
+
+	tsd = map_nick2sd( name, false );
+	sd->mail.dest_id = 0;
+
+	// If the target player is online on this map-server
+	if( tsd != nullptr ){
+		clif_Mail_Receiver_Ack( sd, tsd->status.char_id, tsd->status.class_, tsd->status.base_level, name );
+		sd->mail.dest_id = tsd->status.char_id;
+		return true;
+	}
+
+	if( CheckForCharServer() )
+		return false;
+
+	WFIFOHEAD(inter_fd, 6 + NAME_LENGTH);
+	WFIFOW(inter_fd, 0) = 0x304e;
+	WFIFOL(inter_fd, 2) = sd->status.char_id;
+	safestrncpy(WFIFOCP(inter_fd, 6), name, NAME_LENGTH);
+	WFIFOSET(inter_fd, 6 + NAME_LENGTH);
+
+	return true;
+}
+
+/*==========================================
+ * AUCTION SYSTEM
+ * By Zephyrus
+ *==========================================*/
+
+/**
+ * Request a list of auction matching criteria
+ * @param char_id : player searching auction
+ * @param type : see clif_parse_Auction_search type
+ * @param price : min price for search
+ * @param searchtext : contain item name
+ * @param page : in case of huge result list display 5 entry per page, (kinda suck that we redo the request atm)
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_Auction_requestlist(uint32 char_id, int16 type, int32 price, const char* searchtext, int16 page)
+{
+	int32 len = NAME_LENGTH + 16;
+
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,len);
+	WFIFOW(inter_fd,0) = 0x3050;
+	WFIFOW(inter_fd,2) = len;
+	WFIFOL(inter_fd,4) = char_id;
+	WFIFOW(inter_fd,8) = type;
+	WFIFOL(inter_fd,10) = price; //min price for search
+	WFIFOW(inter_fd,14) = page;
+	safestrncpy(WFIFOCP(inter_fd,16), searchtext, NAME_LENGTH);
+	WFIFOSET(inter_fd,len);
+
+	return 1;
+}
+
+/**
+ * Received a list of auction, display them
+ * @param fd : Char-serv link
+ */
+static void intif_parse_Auction_results(int32 fd)
+{
+	map_session_data *sd = map_charid2sd(RFIFOL(fd,4));
+	int16 count = RFIFOW(fd,8);
+	int16 pages = RFIFOW(fd,10);
+	uint8* data = RFIFOP(fd,12);
+
+	if( sd == nullptr )
+		return;
+
+	clif_Auction_results(sd, count, pages, data);
+}
+
+/**
+ * Register an auction to char-serv
+ * @param auction : tmp auction to register
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_Auction_register(struct auction_data *auction)
+{
+	int32 len = sizeof(struct auction_data) + 4;
+
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,len);
+	WFIFOW(inter_fd,0) = 0x3051;
+	WFIFOW(inter_fd,2) = len;
+	memcpy(WFIFOP(inter_fd,4), auction, sizeof(struct auction_data));
+	WFIFOSET(inter_fd,len);
+
+	return 1;
+}
+
+/**
+ * Receive a auction available from char-serv
+ * @param fd : char-serv link
+ */
+static void intif_parse_Auction_register(int32 fd)
+{
+	map_session_data *sd;
+	struct auction_data auction;
+
+	if( RFIFOW(fd,2) - 4 != sizeof(struct auction_data) )
+	{
+		ShowError("intif_parse_Auction_register: data size error %d %" PRIuPTR "\n", RFIFOW(fd,2) - 4, sizeof(struct auction_data));
+		return;
+	}
+
+	memcpy(&auction, RFIFOP(fd,4), sizeof(struct auction_data));
+	if( (sd = map_charid2sd(auction.seller_id)) == nullptr )
+		return;
+
+	if( auction.auction_id > 0 )
+	{
+		clif_Auction_message(sd->fd, 1); // Confirmation Packet ??
+		if( save_settings&CHARSAVE_AUCTION )
+			chrif_save(sd, CSAVE_INVENTORY);
+	}
+	else
+	{
+		int32 zeny = auction.hours*battle_config.auction_feeperhour;
+
+		clif_Auction_message(sd->fd, 4);
+		pc_additem(sd, &auction.item, auction.item.amount, LOG_TYPE_AUCTION);
+
+		pc_getzeny(sd, zeny, LOG_TYPE_AUCTION);
+	}
+}
+
+/**
+ * Inform char-serv that the auction is cancelled
+ * @param char_id : player that has cancel the auction
+ * @param auction_id : auction to cancel
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_Auction_cancel(uint32 char_id, uint32 auction_id)
+{
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,10);
+	WFIFOW(inter_fd,0) = 0x3052;
+	WFIFOL(inter_fd,2) = char_id;
+	WFIFOL(inter_fd,6) = auction_id;
+	WFIFOSET(inter_fd,10);
+
+	return 1;
+}
+
+/**
+ * Receive a notification that the auction was cancelled
+ * @param fd : char-serv link
+ */
+static void intif_parse_Auction_cancel(int32 fd)
+{
+	map_session_data *sd = map_charid2sd(RFIFOL(fd,2));
+	int32 result = RFIFOB(fd,6);
+
+	if( sd == nullptr )
+		return;
+
+	switch( result )
+	{
+	case 0: clif_Auction_message(sd->fd, 2); break;
+	case 1: clif_Auction_close(sd->fd, 2); break;
+	case 2: clif_Auction_close(sd->fd, 1); break;
+	case 3: clif_Auction_message(sd->fd, 3); break;
+	}
+}
+
+/**
+ * Inform the char-serv that the auction has ended
+ * @param char_id : player that stop the auction
+ * @param auction_id : auction to stop
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_Auction_close(uint32 char_id, uint32 auction_id)
+{
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,10);
+	WFIFOW(inter_fd,0) = 0x3053;
+	WFIFOL(inter_fd,2) = char_id;
+	WFIFOL(inter_fd,6) = auction_id;
+	WFIFOSET(inter_fd,10);
+
+	return 1;
+}
+
+/**
+ * Receive a notification that the auction has ended
+ * @param fd : char-serv link
+ */
+static void intif_parse_Auction_close(int32 fd)
+{
+	map_session_data *sd = map_charid2sd(RFIFOL(fd,2));
+	unsigned char result = RFIFOB(fd,6);
+
+	if( sd == nullptr )
+		return;
+
+	clif_Auction_close(sd->fd, result);
+	if( result == 0 )
+	{
+		// FIXME: Leeching off a parse function
+		clif_parse_Auction_cancelreg(fd, sd);
+		intif_Auction_requestlist(sd->status.char_id, 6, 0, "", 1);
+	}
+}
+
+/**
+ * Bid for an auction
+ * @param char_id
+ * @param name
+ * @param auction_id
+ * @param bid
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_Auction_bid(uint32 char_id, const char* name, uint32 auction_id, int32 bid)
+{
+	int32 len = 16 + NAME_LENGTH;
+
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,len);
+	WFIFOW(inter_fd,0) = 0x3055;
+	WFIFOW(inter_fd,2) = len;
+	WFIFOL(inter_fd,4) = char_id;
+	WFIFOL(inter_fd,8) = auction_id;
+	WFIFOL(inter_fd,12) = bid;
+	safestrncpy(WFIFOCP(inter_fd,16), name, NAME_LENGTH);
+	WFIFOSET(inter_fd,len);
+
+	return 1;
+}
+
+/**
+ * Get back the money from biding auction, 
+ * (someone else have bid it over)
+ * @param fd : char-serv link
+ */
+static void intif_parse_Auction_bid(int32 fd)
+{
+	map_session_data *sd = map_charid2sd(RFIFOL(fd,2));
+	int32 bid = RFIFOL(fd,6);
+	unsigned char result = RFIFOB(fd,10);
+
+	if( sd == nullptr )
+		return;
+
+	clif_Auction_message(sd->fd, result);
+	if( bid > 0 )
+	{
+		pc_getzeny(sd, bid, LOG_TYPE_AUCTION);
+	}
+	if( result == 1 )
+	{ // To update the list, display your buy list
+		clif_parse_Auction_cancelreg(fd, sd);
+		intif_Auction_requestlist(sd->status.char_id, 7, 0, "", 1);
+	}
+}
+
+/**
+ * Used to send 'You have won the auction' and 'You failed to won the auction' messages
+ * @param fd : char-serv link
+ */
+static void intif_parse_Auction_message(int32 fd)
+{
+	map_session_data *sd = map_charid2sd(RFIFOL(fd,2));
+	unsigned char result = RFIFOB(fd,6);
+
+	if( sd == nullptr )
+		return;
+
+	clif_Auction_message(sd->fd, result);
+}
+
+/*==========================================
+ * Mercenary's System
+ *------------------------------------------*/
+
+/**
+ * Request to create/register a mercenary on char-serv
+ * @param merc : Tmp mercenary data
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_mercenary_create(struct s_mercenary *merc)
+{
+	int32 size = sizeof(struct s_mercenary) + 4;
+
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,size);
+	WFIFOW(inter_fd,0) = 0x3070;
+	WFIFOW(inter_fd,2) = size;
+	memcpy(WFIFOP(inter_fd,4), merc, sizeof(struct s_mercenary));
+	WFIFOSET(inter_fd,size);
+	return 1;
+}
+
+/**
+ * Ack of a load or create request
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_mercenary_received(int32 fd)
+{
+	int32 len = RFIFOW(fd,2) - 5;
+	if( sizeof(struct s_mercenary) != len )
+	{
+		if( battle_config.etc_log )
+			ShowError("intif: create mercenary data size error %" PRIuPTR " != %d\n", sizeof(struct s_mercenary), len);
+		return 0;
+	}
+
+	mercenary_recv_data((struct s_mercenary*)RFIFOP(fd,5), RFIFOB(fd,4) > 0);
+	return 1;
+}
+
+/**
+ * Request mercenary data from char-serv
+ * @param merc_id : mercenary id to load
+ * @param char_id : player cid requesting data
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_mercenary_request(int32 merc_id, uint32 char_id)
+{
+	if (CheckForCharServer())
+		return 0;
+

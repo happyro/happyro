@@ -1,0 +1,500 @@
+		if (mob_ai_sub_hard_slavemob(md, tick) == 1)
+			return true;
+		slave_lost_target = true;
+	}
+
+	// Scan area for targets
+
+	// Scan area for items to loot, avoid trying to loot if the mob is full and can't consume the items.
+	if (can_move && mode&MD_LOOTER && md->lootitems && DIFF_TICK(tick, md->ud.canact_tick) > 0 &&
+		(md->lootitem_count < LOOTITEM_SIZE || battle_config.monster_loot_type != 1))
+	{
+		if (tbl == nullptr) {
+			// Search for items in loot range
+			map_foreachinshootrange(mob_ai_sub_hard_lootsearch, md, battle_config.loot_range, BL_ITEM, md, &tbl);
+		}
+		else if (tbl->type == BL_ITEM && battle_config.monster_loot_search_type == 0) {
+			// Looter already has a target item, but we want to check if there is an item that's closer
+			int16 dist = distance_bl(md, tbl) - 1;
+			if (dist > 0)
+				map_foreachinshootrange(mob_ai_sub_hard_lootsearch, md, dist, BL_ITEM, md, &tbl);
+		}
+	}
+
+	if ((mode&MD_AGGRESSIVE && (!tbl || slave_lost_target)) || md->state.skillstate == MSS_FOLLOW)
+	{
+		int32 prev_id = md->target_id;
+		map_foreachinallrange (mob_ai_sub_hard_activesearch, md, view_range, DEFAULT_ENEMY_TYPE(md), md, &tbl, mode);
+		// If a monster finds a new target that is already in attack range it immediately switches to rush mode
+		// This behavior overrides even angry mode and other mode-specific behavior
+		if (tbl != nullptr && prev_id != md->target_id && battle_check_range(md, tbl, md->status.rhw.range)) {
+			md->state.aggressive = 0;
+			mob_setstate(*md, MSS_RUSH);
+		}
+	}
+	else
+	if (mode&MD_CHANGECHASE && (md->state.skillstate == MSS_RUSH || md->state.skillstate == MSS_FOLLOW))
+	{
+		int32 search_size;
+		search_size = view_range<md->status.rhw.range ? view_range:md->status.rhw.range;
+		map_foreachinallrange (mob_ai_sub_hard_changechase, md, search_size, DEFAULT_ENEMY_TYPE(md), md, &tbl);
+	}
+
+	if (!tbl) { //No targets available.
+		/* bg guardians follow allies when no targets nearby */
+		if( md->bg_id && mode&MD_CANATTACK ) {
+			if( md->ud.walktimer != INVALID_TIMER )
+				return true;/* we are already moving */
+			map_foreachinallrange (mob_ai_sub_hard_bg_ally, md, view_range, BL_PC, md, &tbl, mode);
+			if( tbl ) {
+				if( distance_blxy(md, tbl->x, tbl->y) <= 3 || unit_walktobl(md, tbl, 1, 1) )
+					return true;/* we're moving or close enough don't unlock the target. */
+			}
+		}
+
+		// Make sure target is unlocked
+		mob_unlocktarget(md, tick);
+
+		// Random walk
+		if (!md->master_id &&
+			DIFF_TICK(md->next_walktime, tick) <= 0 &&
+			!mob_randomwalk(md, tick)) {
+			// Delay next random walk when this one failed
+			if (md->next_walktime < md->ud.canmove_tick)
+				md->next_walktime = md->ud.canmove_tick;
+			else
+				md->next_walktime = tick + rnd()%1000;
+		}
+
+		return true;
+	}
+
+	//Target exists, attack or loot as applicable.
+	if (tbl->type == BL_ITEM)
+	{	//Loot time.
+		flooritem_data *fitem;
+		int32 loot_range = 0;
+		if (md->ud.walktimer != INVALID_TIMER) {
+			// Ready to loot
+			if (md->ud.getx(tick) == tbl->x && md->ud.gety(tick) == tbl->y)
+				loot_range = 1;
+			// Already moving to target item
+			else if (md->ud.target == tbl->id)
+				return true;
+		}
+		if (md->lootitems == nullptr)
+		{	//Can't loot...
+			mob_unlocktarget(md, tick);
+			return true;
+		}
+		if (!check_distance_bl(md, tbl, loot_range))
+		{	//Still not within loot range.
+			if (!(mode&MD_CANMOVE))
+			{	//A looter that can't move? Real smart.
+				mob_unlocktarget(md, tick);
+				return true;
+			}
+			if (!can_move) //Stuck. Wait before walking.
+				return true;
+			mob_setstate(*md, MSS_LOOT);
+			if (!unit_walktobl(md, tbl, 0, 0))
+				mob_unlocktarget(md, tick); //Can't loot...
+			else
+				unit_set_target(&md->ud, tbl->id); //Remember current loot target
+			return true;
+		}
+		//Within looting range.
+		if (md->ud.attacktimer != INVALID_TIMER)
+			return true; //Busy attacking?
+
+		fitem = (flooritem_data *)tbl;
+		//Logs items, taken by (L)ooter Mobs [Lupus]
+		log_pick_mob(md, LOG_TYPE_LOOT, fitem->item.amount, &fitem->item);
+
+		if (md->lootitem_count < LOOTITEM_SIZE) {
+			memcpy (&md->lootitems[md->lootitem_count].item, &fitem->item, sizeof(md->lootitems[0].item));
+			md->lootitems[md->lootitem_count].mob_id = fitem->mob_id;
+			md->lootitem_count++;
+		} else {	//Destroy first looted item...
+			if (md->lootitems[0].item.card[0] == CARD0_PET)
+				intif_delete_petdata(MakeDWord(md->lootitems[0].item.card[1],md->lootitems[0].item.card[2]));
+			memmove(&md->lootitems[0], &md->lootitems[1], (LOOTITEM_SIZE-1)*sizeof(md->lootitems[0]));
+			memcpy (&md->lootitems[LOOTITEM_SIZE-1].item, &fitem->item, sizeof(md->lootitems[0].item));
+			md->lootitems[LOOTITEM_SIZE-1].mob_id = fitem->mob_id;
+		}
+
+		if (pcdb_checkid(md->vd->look[LOOK_BASE]))
+		{	//Give them walk act/delay to properly mimic players. [Skotlex]
+			clif_takeitem(*md,*tbl);
+			md->ud.canact_tick = tick + md->status.amotion;
+			unit_set_walkdelay(md, tick, md->status.amotion, 1);
+		}
+		//Clear item.
+		map_clearflooritem(tbl);
+		mob_unlocktarget(md, tick);
+		return true;
+	}
+
+	// At this point we know the target is attackable, attempt to attack
+
+	// Normal attack / berserk skill is only used when target is in range
+	if (battle_check_range(md, tbl, md->status.rhw.range))
+	{
+		int32 stop_flag = USW_FIXPOS|USW_RELEASE_TARGET;
+
+		// Source may die due to reflect damage
+		FreeBlockLock freeLock;
+
+		// Hiding is a special case because it prevents normal attacks but allows skill usage
+		// TODO: Some other states also have this behavior and should be investigated
+		// TODO: EFST_AUTOCOUNTER, EFST_BLADESTOP, NPC_SR_CURSEDCIRCLE
+		if (!(md->sc.option&OPTION_HIDE)) {
+			// Target within range and potentially able to use normal attack, engage
+			if (md->ud.target != tbl->id || md->ud.attacktimer == INVALID_TIMER)
+			{ //Only attack if no more attack delay left
+				stop_flag = unit_attack(md, tbl->id, 1);
+			}
+		}
+		else {
+			// These status changes pretend the attack was successful without attempting it
+			// This results in the monster going into an attack state despite not attacking
+			mob_setstate(*md, MSS_BERSERK);
+		}
+
+		// Stop and make sure there is no chase target when attack was not skipped
+		if (stop_flag != USW_NONE)
+			unit_stop_walking(md, stop_flag);
+
+		//Target still in attack range, no need to chase the target
+		return true;
+	}
+
+	//Only update target cell / drop target after having moved at least "mob_chase_refresh" cells
+	if(md->ud.walktimer != INVALID_TIMER && (!can_move || md->ud.walkpath.path_pos <= battle_config.mob_chase_refresh)
+		&& mob_is_chasing(md->state.skillstate))
+		return true;
+
+	// Out of range
+	if (!(mode&MD_CANMOVE) || (!can_move && (md->sc.cant.move || DIFF_TICK(tick, md->ud.canmove_tick) > 0)))
+	{	// Can't chase. Immobile and trapped mobs will use idle skills and unlock their target after a while
+		if (md->ud.attacktimer == INVALID_TIMER)
+		{ // Only switch mode if no more attack delay left
+			if (DIFF_TICK(tick, md->last_canmove) > battle_config.mob_unlock_time) {
+				// Unlock target
+				mob_unlocktarget(md, tick);
+			}
+			else {
+				// Set to use idle skill next interval but keep target for now
+				mob_setstate(*md, MSS_IDLE);
+			}
+		}
+		return true;
+	}
+
+	// Officially we can stop here if monster is still chasing its target.
+	// If setting to update the chase path is set, we continue if current target tile not within attack range.
+	// In this case, we should also stop updating the chase path when target no longer in chase range.
+	if (md->ud.walktimer != INVALID_TIMER && md->ud.target_to == tbl->id &&
+		(
+			!(battle_config.mob_ai&0x1) ||
+			check_distance_blxy(tbl, md->ud.to_x, md->ud.to_y, md->status.rhw.range) ||
+			!check_distance_bl(md, tbl, md->db->range3)
+	))
+		return true;
+
+	// Follow up if possible.
+
+	// Monsters in Angry state only start chasing when target is in chase range
+	if (md->state.skillstate == MSS_ANGRY && !mob_can_reach(md, tbl, md->db->range3)) {
+		mob_unlocktarget(md, tick);
+		return true;
+	}
+
+	if(!unit_walktobl(md, tbl, md->status.rhw.range, 2))
+		mob_unlocktarget(md, tick);
+
+	return true;
+}
+
+/**
+ * End of attack timer event
+ * This is so we can call the mob AI at the end of an attack timer and don't need to wait until the next AI interval
+ * Also, mob AI checks that are triggered at the end of attack delay are currently handled here
+ * @param md Monster to execute the AI for
+ * @param tick Current tick
+ * @return Whether the AI was executed (true) or the attack should be cancelled (false)
+ */
+bool mob_ai_sub_hard_attacktimer(mob_data &md, t_tick tick)
+{
+	block_list* target = map_id2bl(md.ud.target);
+
+	// No target anymore
+	if (target == nullptr)
+		return false;
+
+	// Check for warp chase
+	if (mob_warpchase(&md, target) > 0)
+		return true;
+
+	// Monsters have a special visibility check at the end of their attack delay
+	// If they still have a target, but it is not visible, they drop the target
+	if (!status_check_visibility(&md, target, true))
+		return false;
+
+	// Go through the whole monster AI
+	mob_ai_sub_hard(&md, tick);
+	return true;
+}
+
+/**
+ * Sets attacked ID based on bl type of attacker
+ * Then calls the mob AI to process it immediately
+ * @param src_id: ID of attacker
+ * @param target_id: ID of attacked monster
+ * @param tick: Current tick
+ * @param is_norm_attacked: When true, sets a special normal attacked ID to trigger a target change in attack state
+ */
+void mob_set_attacked_id(int32 src_id, int32 target_id, t_tick tick, bool is_norm_attacked) {
+	block_list* src = map_id2bl(src_id);
+	if (src == nullptr)
+		return;
+
+	mob_data* md = map_id2md(target_id);
+	if (md == nullptr)
+		return;
+
+	switch (src->type)
+	{
+		case BL_PET:
+		{
+			pet_data& pd = *reinterpret_cast<pet_data*>(src);
+			if (pd.master)
+			{
+				// Let mobs retaliate against the pet's master
+				md->attacked_id = pd.master->id;
+			}
+			break;
+		}
+		case BL_MOB:
+		{
+			mob_data& md2 = *reinterpret_cast<mob_data*>(src);
+			// Config to decide whether to retaliate versus the master or the mob
+			if (md2.master_id && battle_config.retaliate_to_master)
+				md->attacked_id = md2.master_id;
+			else
+				md->attacked_id = src->id;
+			break;
+		}
+		default:
+			// Retaliate against attacker
+			md->attacked_id = src->id;
+			break;
+	}
+
+	if (is_norm_attacked)
+		md->norm_attacked_id = md->attacked_id;
+
+	// As it was attacked, monster leaves aggressive mode
+	md->state.aggressive = 0;
+
+	// Need to call mob AI routine immediately, otherwise the attacked ID might get overwritten before it is processed
+	mob_ai_sub_hard(md, tick);
+}
+
+/**
+ * Timer that triggers after walk delay when a monster was attacked by skills or from outside [attack range+1]
+ * Sets attacked ID and calls the mob AI to process it immediately
+ * @param tid: Timer ID
+ * @param tick: Current tick
+ * @param id: ID of attacked monster
+ * @param data: ID of attacker
+ * @return 0
+ */
+TIMER_FUNC(mob_attacked) {
+	mob_set_attacked_id(static_cast<int32>(data), id, tick, false);
+	return 0;
+}
+
+/**
+ * Timer that triggers after walk delay when a berserk-state monster was attacked by a normal attack from within [attack range+1]
+ * Same as mob_attacked, but sets a special normal attacked ID to trigger a target change in attack state
+ * @param tid: Timer ID
+ * @param tick: Current tick
+ * @param id: ID of attacked monster
+ * @param data: ID of attacker
+ * @return 0
+ */
+TIMER_FUNC(mob_norm_attacked) {
+	mob_set_attacked_id(static_cast<int32>(data), id, tick, true);
+	return 0;
+}
+
+static int32 mob_ai_sub_hard_timer(block_list *bl,va_list ap)
+{
+	mob_data *md = (mob_data*)bl;
+	uint32 char_id = va_arg(ap, uint32);
+	t_tick tick = va_arg(ap, t_tick);
+	mob_add_spotted(md, char_id);
+	if (mob_ai_sub_hard(md, tick))
+	{	//Hard AI triggered.
+		md->last_pcneartime = tick;
+	}
+	return 0;
+}
+
+/*==========================================
+ * Serious processing for mob in PC field of view (foreachclient)
+ *------------------------------------------*/
+static int32 mob_ai_sub_foreachclient(map_session_data *sd,va_list ap)
+{
+	t_tick tick=va_arg(ap,t_tick);
+	map_foreachinallrange(mob_ai_sub_hard_timer,sd, AREA_SIZE+ACTIVE_AI_RANGE, BL_MOB, sd->status.char_id, tick);
+
+	return 0;
+}
+
+/*==========================================
+ * Negligent mode MOB AI (PC is not in near)
+ *------------------------------------------*/
+static int32 mob_ai_sub_lazy(mob_data *md, va_list args)
+{
+	nullpo_ret(md);
+
+	if(md->prev == nullptr)
+		return 0;
+
+	// Monsters force-walked by script commands should not be searching for targets.
+	if (md->ud.state.force_walk)
+		return false;
+
+	t_tick tick = va_arg(args,t_tick);
+
+	if (battle_config.mob_ai&0x20 && map_getmapdata(md->m)->users>0)
+		return (int32)mob_ai_sub_hard(md, tick);
+
+	if (md->prev==nullptr || md->status.hp == 0)
+		return 1;
+
+	if(battle_config.mob_active_time &&
+		md->last_pcneartime &&
+ 		!status_has_mode(&md->status,MD_STATUSIMMUNE) &&
+		DIFF_TICK(tick,md->next_thinktime) > 0) // No need to trigger on the same tick again
+	{
+		if (DIFF_TICK(tick,md->last_pcneartime) < battle_config.mob_active_time)
+			return (int32)mob_ai_sub_hard(md, tick);
+		md->last_pcneartime = 0;
+	}
+
+	if(battle_config.boss_active_time &&
+		md->last_pcneartime &&
+		status_has_mode(&md->status,MD_STATUSIMMUNE) &&
+		DIFF_TICK(tick,md->next_thinktime) > 0) // No need to trigger on the same tick again
+	{
+		if (DIFF_TICK(tick,md->last_pcneartime) < battle_config.boss_active_time)
+			return (int32)mob_ai_sub_hard(md, tick);
+		md->last_pcneartime = 0;
+	}
+
+	//Clean the spotted log
+	mob_clean_spotted(md);
+
+	// Don't continue if the hard AI was executed recently
+	// We use twice the hard AI interval to account for lag
+	if (DIFF_TICK(tick, md->next_thinktime) < MIN_MOBTHINKTIME*2)
+		return 0;
+
+	// Don't continue if skills cannot be used yet
+	if (DIFF_TICK(tick, md->last_skillcheck) < MOB_SKILL_INTERVAL)
+		return 0;
+
+	// Check for warp chase if there's still a target
+	if (md->target_id > 0) {
+		block_list* tbl = map_id2bl(md->target_id);
+		if (tbl != nullptr && mob_warpchase(md, tbl) > 0)
+			return 0;
+	}
+
+	if (md->master_id) {
+		if (!mob_is_spotted(md)) {
+			if (battle_config.slave_active_with_master == 0)
+				return 0;
+			// Get mob data of master
+			mob_data* mmd = map_id2md(md->master_id);
+			// If neither master nor slave have been spotted we don't have to execute the slave AI
+			if (mmd != nullptr && !mob_is_spotted(mmd))
+				return 0;
+		}
+		mob_ai_sub_hard_slavemob (md,tick);
+		return 0;
+	}
+
+	// Remove target and set to idle state when movement was finished
+	// This also triggers the idle NPC event
+	mob_unlocktarget(md, tick);
+
+	if( DIFF_TICK(md->next_walktime,tick) < 0 && status_has_mode(&md->status,MD_CANMOVE) && unit_can_move(md) )
+	{
+		// Move probability for mobs away from players
+		// In Aegis, this is 100% for mobs that have been activated by players and none otherwise.
+		if( mob_is_spotted(md) &&
+			((!status_has_mode(&md->status,MD_STATUSIMMUNE) && rnd()%100 < battle_config.mob_nopc_move_rate) ||
+			(status_has_mode(&md->status,MD_STATUSIMMUNE) && rnd()%100 < battle_config.boss_nopc_move_rate)))
+			mob_randomwalk(md, tick);
+	}
+	else if( md->ud.walktimer == INVALID_TIMER )
+	{
+		// Probability for mobs far from players from doing their IDLE skill.
+		// In Aegis, this is 100% for mobs that have been activated by players and none otherwise.
+		if( mob_is_spotted(md) &&
+			((!status_has_mode(&md->status,MD_STATUSIMMUNE) && rnd()%100 < battle_config.mob_nopc_idleskill_rate) ||
+			(status_has_mode(&md->status,MD_STATUSIMMUNE) && rnd()%100 < battle_config.boss_nopc_idleskill_rate)))
+			mobskill_use(md, tick, -1);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * Negligent processing for mob outside PC field of view   (interval timer function)
+ *------------------------------------------*/
+static TIMER_FUNC(mob_ai_lazy){
+	map_foreachmob(mob_ai_sub_lazy,tick);
+	return 0;
+}
+
+/*==========================================
+ * Serious processing for mob in PC field of view   (interval timer function)
+ *------------------------------------------*/
+static TIMER_FUNC(mob_ai_hard){
+
+	if (battle_config.mob_ai&0x20)
+		map_foreachmob(mob_ai_sub_lazy,tick);
+	else
+		map_foreachpc(mob_ai_sub_foreachclient,tick);
+
+	return 0;
+}
+
+/**
+ * Set random option for item when dropped from monster
+ * @param item: Item data
+ * @param mobdrop: Drop data
+ * @author [Cydh]
+ **/
+void mob_setdropitem_option( item& item, const std::shared_ptr<s_mob_drop>& mobdrop ){
+	std::shared_ptr<s_random_opt_group> group = random_option_group.find( mobdrop->randomopt_group );
+
+	if (group != nullptr) {
+		group->apply( item );
+	}
+}
+
+/*==========================================
+ * Initializes the delay drop structure for mob-dropped items.
+ *------------------------------------------*/
+static std::shared_ptr<s_item_drop> mob_setdropitem( const std::shared_ptr<s_mob_drop>& mobdrop, int32 qty, uint16 mob_id ){
+	std::shared_ptr<s_item_drop> drop = std::make_shared<s_item_drop>();
+
+	drop->item_data = { 0 };
+	drop->item_data.nameid = mobdrop->nameid;
+	drop->item_data.amount = qty;

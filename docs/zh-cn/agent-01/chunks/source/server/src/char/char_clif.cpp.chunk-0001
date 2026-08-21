@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "char_clif.hpp"
+
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
+#include <common/malloc.hpp>
+#include <common/mapindex.hpp>
+#include <common/mmo.hpp>
+#include <common/packets.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/sql.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "char.hpp"
+#include "char_logif.hpp"
+#include "char_mapif.hpp"
+#include "inter.hpp"
+
+using namespace rathena;
+
+std::vector<struct s_point_str> accessible_maps{
+	s_point_str{ MAP_PRONTERA, 116, 73 },
+	s_point_str{ MAP_PAYON, 162, 58 },
+	s_point_str{ MAP_GEFFEN, 121, 37 },
+	s_point_str{ MAP_ALDEBARAN, 167, 112 },
+	s_point_str{ MAP_MORROC, 157, 45 },
+	s_point_str{ MAP_COMODO, 179, 152 },
+	s_point_str{ MAP_VEINS, 204, 103 },
+	s_point_str{ MAP_AYOTHAYA, 218, 187 },
+	s_point_str{ MAP_LIGHTHALZEN, 159, 95 },
+#ifdef RENEWAL
+	s_point_str{ MAP_MORA, 57, 143 }
+#endif
+};
+
+void chclif_block_character( int fd, char_session_data& sd );
+#if PACKETVER_SUPPORTS_PINCODE
+bool pincode_allowed( char* pincode );
+#endif
+
+//------------------------------------------------
+//Add On system
+//------------------------------------------------
+// reason
+// 0: success
+// 1: failed
+void chclif_moveCharSlotReply( int32 fd, char_session_data& sd, uint16 index, int16 reason ){
+	PACKET_HC_ACK_CHANGE_CHARACTER_SLOT p = {};
+
+	p.packetType = HEADER_HC_ACK_CHANGE_CHARACTER_SLOT;
+	p.packetLength = sizeof( p );
+	p.reason = reason;
+	p.moves = sd.char_moves[index];
+
+	socket_send( fd, p );
+}
+
+/*
+ * Client is requesting to move a charslot
+ */
+bool chclif_parse_moveCharSlot( int32 fd, char_session_data& sd ){
+	const PACKET_CH_REQ_CHANGE_CHARACTER_SLOT* p = reinterpret_cast<PACKET_CH_REQ_CHANGE_CHARACTER_SLOT*>( RFIFOP( fd, 0 ) );
+
+	uint16 from = p->slot_before;
+	uint16 to = p->slot_after;
+
+	// Bounds check
+	if( from >= MAX_CHARS ){
+		chclif_moveCharSlotReply( fd, sd, from, 1 );
+		return 1;
+	}
+
+	// Have we changed too often or is it disabled?
+	if( (charserv_config.charmove_config.char_move_enabled)==0
+	|| ( (charserv_config.charmove_config.char_moves_unlimited)==0 && sd.char_moves[from] <= 0 ) ){
+		chclif_moveCharSlotReply( fd, sd, from, 1 );
+		return true;
+	}
+
+	// Check if there is a character on this slot
+	if( sd.found_char[from] <= 0 ){
+		chclif_moveCharSlotReply( fd, sd, from, 1 );
+		return true;
+	}
+
+	// Bounds check
+	if( to >= MAX_CHARS ){
+		chclif_moveCharSlotReply( fd, sd, from, 1 );
+		return 1;
+	}
+
+	// Check maximum allowed char slot for this account
+	if( to >= sd.char_slots ){
+		chclif_moveCharSlotReply( fd, sd, from, 1 );
+		return 1;
+	}
+
+	if( sd.found_char[to] > 0 ){
+		// We want to move to a used position
+		if( charserv_config.charmove_config.char_movetoused ){ // TODO: check if the target is in deletion process
+			// Admin is friendly and uses triangle exchange
+			if( SQL_ERROR == Sql_QueryStr(sql_handle, "START TRANSACTION")
+				|| SQL_ERROR == Sql_Query(sql_handle, "UPDATE `%s` SET `char_num`='%d' WHERE `char_id` = '%d'",schema_config.char_db, to, sd.found_char[from] )
+				|| SQL_ERROR == Sql_Query(sql_handle, "UPDATE `%s` SET `char_num`='%d' WHERE `char_id` = '%d'", schema_config.char_db, from, sd.found_char[to] )
+				|| SQL_ERROR == Sql_QueryStr(sql_handle, "COMMIT")
+				){
+				chclif_moveCharSlotReply( fd, sd, from, 1 );
+				Sql_ShowDebug(sql_handle);
+				Sql_QueryStr(sql_handle,"ROLLBACK");
+				return true;
+			}
+		}else{
+			// Admin doesn't allow us to
+			chclif_moveCharSlotReply( fd, sd, from, 1 );
+			return true;
+		}
+	}else if( SQL_ERROR == Sql_Query(sql_handle, "UPDATE `%s` SET `char_num`='%d' WHERE `char_id`='%d'", schema_config.char_db, to, sd.found_char[from] ) ){
+		Sql_ShowDebug(sql_handle);
+		chclif_moveCharSlotReply( fd, sd, from, 1 );
+		return true;
+	}
+
+	if( (charserv_config.charmove_config.char_moves_unlimited)==0 ){
+		sd.char_moves[from]--;
+		Sql_Query(sql_handle, "UPDATE `%s` SET `moves`='%d' WHERE `char_id`='%d'", schema_config.char_db, sd.char_moves[from], sd.found_char[from] );
+	}
+
+	// We successfully moved the char - time to notify the client
+	chclif_moveCharSlotReply( fd, sd, from, 0 );
+	chclif_mmo_char_send(fd, sd);
+
+	return true;
+}
+
+#if PACKETVER_SUPPORTS_PINCODE
+/* pincode_sendstate transmist the pincode state to client
+ * S 08b9 <seed>.L <aid>.L <state>.W (HC_SECOND_PASSWD_LOGIN)
+ * state :
+ *   0 = disabled / pin is correct
+ *   1 = ask for pin - client sends 0x8b8
+ *   2 = create new pin - client sends 0x8ba
+ *   3 = pin must be changed - client 0x8be
+ *   4 = create new pin - client sends 0x8ba
+ *   5 = client shows msgstr(1896)
+ *   6 = client shows msgstr(1897) Unable to use your KSSN number
+ *   7 = char select window shows a button - client sends 0x8c5
+ *   8 = pincode was incorrect
+*/
+void chclif_pincode_sendstate( int32 fd, char_session_data& sd, enum pincode_state state ){
+	PACKET_HC_SECOND_PASSWD_LOGIN p = {};
+
+	p.packetType = HEADER_HC_SECOND_PASSWD_LOGIN;
+	p.seed = sd.pincode_seed = rnd() % 0xFFFF;
+	p.AID = sd.account_id;
+	p.result = state;
+
+	socket_send( fd, p );
+}
+
+/*
+ * Client just entering charserv from login, send him pincode confirmation
+ */
+bool chclif_parse_reqpincode_window( int32 fd, char_session_data& sd ){
+	const PACKET_CH_AVAILABLE_SECOND_PASSWD* p = reinterpret_cast<PACKET_CH_AVAILABLE_SECOND_PASSWD*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd.account_id ){
+		return false;
+	}
+
+	if( charserv_config.pincode_config.pincode_enabled == 0 ){
+		return true;
+	}
+
+	if( strlen( sd.pincode ) <= 0 ){
+		chclif_pincode_sendstate( fd, sd, PINCODE_NEW );
+	}else{
+		chclif_pincode_sendstate( fd, sd, PINCODE_ASK );
+	}
+
+	return true;
+}
+
+/*
+ * Client as anwsered pincode questionning, checking if valid anwser
+ */
+bool chclif_parse_pincode_check( int32 fd, char_session_data& sd ){
+	const PACKET_CH_SECOND_PASSWD_ACK* p = reinterpret_cast<PACKET_CH_SECOND_PASSWD_ACK*>( RFIFOP( fd, 0 ) );
+
+	if( charserv_config.pincode_config.pincode_enabled == 0 ){
+		set_eof(fd);
+		return false;
+	}
+
+	if( p->AID != sd.account_id ){
+		set_eof(fd);
+		return false;
+	}
+
+	char pin[PINCODE_LENGTH + 1];
+
+	safestrncpy( pin, p->pin, PINCODE_LENGTH + 1 );
+
+	if (!char_pincode_decrypt(sd.pincode_seed, pin )) {
+		set_eof(fd);
+		return false;
+	}
+
+	if( char_pincode_compare( fd, sd, pin ) ){
+		sd.pincode_correct = true;
+		chclif_pincode_sendstate( fd, sd, PINCODE_PASSED );
+	}
+
+	return true;
+}
+
+/*
+ * Helper function to check if a new pincode contains illegal characters or combinations
+ */
+bool pincode_allowed( char* pincode ){
+	int32 i;
+	char c, n, compare[PINCODE_LENGTH+1];
+
+	memset( compare, 0, PINCODE_LENGTH+1);
+
+	// Sanity check for bots to prevent errors
+	for( i = 0; i < PINCODE_LENGTH; i++ ){
+		c = pincode[i];
+
+		if( c < '0' || c > '9' ){
+			return false;
+		}
+	}
+
+	// Is it forbidden to use only the same character?
+	if( !charserv_config.pincode_config.pincode_allow_repeated ){
+		c = pincode[0];
+
+		// Check if the first character equals the rest of the input
+		for( i = 0; i < PINCODE_LENGTH; i++ ){
+			compare[i] = c;
+		}
+
+		if( strncmp( pincode, compare, PINCODE_LENGTH + 1 ) == 0 ){
+			return false;
+		}
+	}
+
+	// Is it forbidden to use a sequential combination of numbers?
+	if( !charserv_config.pincode_config.pincode_allow_sequential ){
+		c = pincode[0];
+
+		// Check if it is an ascending sequence
+		for( i = 0; i < PINCODE_LENGTH; i++ ){
+			n = c + i;
+
+			if( n > '9' ){
+				compare[i] = '0' + ( n - '9' ) - 1;
+			}else{
+				compare[i] = n;
+			}
+		}
+
+		if( strncmp( pincode, compare, PINCODE_LENGTH + 1 ) == 0 ){
+			return false;
+		}
+
+		// Check if it is an descending sequence
+		for( i = 0; i < PINCODE_LENGTH; i++ ){
+			n = c - i;
+
+			if( n < '0' ){
+				compare[i] = '9' - ( '0' - n ) + 1;
+			}else{
+				compare[i] = n;
+			}
+		}
+
+		if( strncmp( pincode, compare, PINCODE_LENGTH + 1 ) == 0 ){
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/*
+ * Client request to change pincode
+ */
+bool chclif_parse_pincode_change( int32 fd, char_session_data& sd ){
+	const PACKET_CH_EDIT_SECOND_PASSWD* p = reinterpret_cast<PACKET_CH_EDIT_SECOND_PASSWD*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd.account_id ){
+		set_eof(fd);
+		return false;
+	}
+
+	if( charserv_config.pincode_config.pincode_enabled == 0 ){
+		set_eof(fd);
+		return false;
+	}
+
+	char oldpin[PINCODE_LENGTH + 1];
+	char newpin[PINCODE_LENGTH + 1];
+
+	safestrncpy( oldpin, p->old_pin, PINCODE_LENGTH + 1 );
+	safestrncpy( newpin, p->new_pin, PINCODE_LENGTH + 1 );
+
+	if (!char_pincode_decrypt(sd.pincode_seed,oldpin) || !char_pincode_decrypt(sd.pincode_seed,newpin)) {
+		set_eof(fd);
+		return 1;
+	}
+
+	if( !char_pincode_compare( fd, sd, oldpin ) ){
+		return true;
+	}
+
+	if( !pincode_allowed( newpin ) ){
+		chclif_pincode_sendstate( fd, sd, PINCODE_ILLEGAL );
+
+		return true;
+	}
+
+	chlogif_pincode_notifyLoginPinUpdate( sd.account_id, newpin );
+	sd.pincode_correct = true;
+
+	safestrncpy( sd.pincode, newpin, sizeof( sd.pincode ) );
+
+	ShowInfo( "Pincode changed for AID: %u\n", sd.account_id );
+		
+	chclif_pincode_sendstate( fd, sd, PINCODE_PASSED );
+
+	return true;
+}
+
+/*
+ * activate PIN system and set first PIN
+ */
+bool chclif_parse_pincode_setnew( int32 fd, char_session_data& sd ){
+	const PACKET_CH_MAKE_SECOND_PASSWD* p = reinterpret_cast<PACKET_CH_MAKE_SECOND_PASSWD*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd.account_id ){
+		set_eof(fd);
+		return false;
+	}
+
+	if( charserv_config.pincode_config.pincode_enabled == 0 ){
+		set_eof(fd);
+		return false;
+	}
+
+	char newpin[PINCODE_LENGTH + 1];
+
+	safestrncpy( newpin, p->pin, PINCODE_LENGTH + 1 );
+
+	if( !char_pincode_decrypt( sd.pincode_seed, newpin ) ){
+		set_eof(fd);
+		return 1;
+	}
+
+	if( !pincode_allowed( newpin ) ){
+		chclif_pincode_sendstate( fd, sd, PINCODE_ILLEGAL );
+
+		return true;
+	}
+
+	chlogif_pincode_notifyLoginPinUpdate( sd.account_id, newpin );
+
+	safestrncpy( sd.pincode, newpin, sizeof( sd.pincode ) );
+
+	ShowInfo( "Pincode added for AID: %u\n", sd.account_id );
+
+	sd.pincode_correct = true;
+	chclif_pincode_sendstate( fd, sd, PINCODE_PASSED );
+
+	return true;
+}
+#endif
+
+//----------------------------------------
+// Tell client how many pages, kRO sends 17 (Yommy)
+//----------------------------------------
+void chclif_charlist_notify( int32 fd, struct char_session_data* sd ){
+	PACKET_HC_CHARLIST_NOTIFY p = {};
+
+	p.packetType = HEADER_HC_CHARLIST_NOTIFY;
+	p.total = std::max( sd->char_slots / 3, 1 );
+#if PACKETVER_RE_NUM >= 20151001 && PACKETVER_RE_NUM < 20180103
+	p.slots = sd->char_slots;
+#endif
+
+	socket_send( fd, p );
+}
+
+//----------------------------------------
+// Function to send characters to a player
+//----------------------------------------
+int32 chclif_mmo_send006b( int32 fd, struct char_session_data& sd ){
+	if (charserv_config.save_log)
+		ShowInfo( "Loading Char Data (" CL_BOLD "%d" CL_RESET ")\n", sd.account_id );
+
+	PACKET_HC_ACCEPT_ENTER* p = reinterpret_cast<PACKET_HC_ACCEPT_ENTER*>( packet_buffer );
+
+	p->packetType = HEADER_HC_ACCEPT_ENTER;
+	p->packetLength = sizeof( *p );
+#if PACKETVER >= 20100413
+	// Max slots.
+	p->total = MAX_CHARS;
+	// Available slots. (PremiumStartSlot)
+	p->premium_start = MIN_CHARS;
+	// Premium slots. (Any existent chars past sd->char_slots but within MAX_CHARS will show a 'Premium Service' in red)
+	p->premium_end = MIN_CHARS + sd.chars_vip;
+#endif
+	safestrncpy( p->extension, "", sizeof( p->extension ) );
+	p->packetLength += char_mmo_chars_fromsql( sd, p->characters );
+
+	socket_send( fd, p );
+
+	return 0;
+}
+
+//----------------------------------------
+// Notify client about charselect window data [Ind]
+//----------------------------------------
+void chclif_mmo_send082d( int32 fd, char_session_data& sd){
+	if (charserv_config.save_log)
+		ShowInfo( "Loading Char Data (" CL_BOLD "%d" CL_RESET ")\n", sd.account_id );
+
+	PACKET_HC_ACCEPT_ENTER2* p = reinterpret_cast<PACKET_HC_ACCEPT_ENTER2*>( packet_buffer );
+
+	p->packetType = HEADER_HC_ACCEPT_ENTER2;
+	p->packetLength = sizeof( *p );
+	p->normal = MIN_CHARS; // normal_slot
+	p->premium = sd.chars_vip; // premium_slot
+	p->billing = sd.chars_billing; // billing_slot
+	p->producible = sd.char_slots; // producible_slot
+	p->total = MAX_CHARS; // valid_slot
+	safestrncpy( p->extension, "", sizeof( p->extension ) );
+
+	socket_send( fd, p );
+}
+
+void chclif_mmo_send099d( int32 fd, struct char_session_data& sd ){
+	uint8 count = 0;
+
+	PACKET_HC_ACK_CHARINFO_PER_PAGE* p = reinterpret_cast<PACKET_HC_ACK_CHARINFO_PER_PAGE*>( packet_buffer );
+
+	p->packetType = HEADER_HC_ACK_CHARINFO_PER_PAGE;
+	p->packetLength = sizeof( *p );
+	p->packetLength += char_mmo_chars_fromsql( sd, p->characters, &count );
+
+	socket_send( fd, p );
+
+	// This is something special Gravity came up with.
+	// The client triggers some finalization code only if count is != 3.
+	if( count == 3 ){
+		p->packetLength = sizeof( *p );
+
+		socket_send( fd, p );
+	}
+}
+
+
+/*
+ * Function to choose which kind of charlist to send to client depending on his version
+ */
+void chclif_mmo_char_send( int32 fd, char_session_data& sd ){
+#if PACKETVER >= 20130000
+	chclif_mmo_send082d(fd, sd);
+	chclif_mmo_send006b(fd, sd);
+	chclif_charlist_notify( fd, &sd );
+#else
+	chclif_mmo_send006b(fd,sd);
+	//@FIXME dump from kro doesn't show 6b transmission
+#endif
+
+#if PACKETVER >= 20060819
+ 	chclif_block_character(fd,sd);
+#endif
+}
+
+/*
+ * Transmit auth result to client
+ * <result>.B ()
+ * result :
+ *  1 : Server closed
+ *  2 : Someone has already logged in with this id
+ *  3 : Time gap between client and server
+ *  4 : Server is overpopulated
+ *  5 : You are underaged and cannot join this server

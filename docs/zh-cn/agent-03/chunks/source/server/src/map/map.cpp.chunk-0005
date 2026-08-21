@@ -1,0 +1,500 @@
+ * @param mob_id: Monster ID if dropped by monster
+ * @param canShowEffect: enable pillar effect on the dropped item (if set in the database)
+ * @param dir: where the item should drop around the target (DIR_MAX: random cell around center)
+ * @param type: types of block the item should not stack on
+ * @return 0:failure, x:item_gid [MIN_FLOORITEM;MAX_FLOORITEM]==[2;START_ACCOUNT_NUM]
+ *------------------------------------------*/
+int32 map_addflooritem(struct item *item, int32 amount, int16 m, int16 x, int16 y, int32 first_charid, int32 second_charid, int32 third_charid, int32 flags, uint16 mob_id, bool canShowEffect, enum directions dir, int32 type)
+{
+	flooritem_data *fitem = nullptr;
+
+	nullpo_ret(item);
+
+	if (!(flags&4) && battle_config.item_onfloor && (itemdb_traderight(item->nameid).trade))
+		return 0; //can't be dropped
+
+	if (dir > DIR_CENTER && dir < DIR_MAX) {
+		x += dirx[dir];
+		y += diry[dir];
+	}
+	// If cell occupied and not center cell, drop item around the drop target cell
+	if (dir == DIR_MAX || (dir != DIR_CENTER && !map_cell_free(m, x, y, type))) {
+		if (!map_search_freecell_dist(m, &x, &y, 1, (flags&2)?2:1, type)) {
+			// Only stop here if BL_ITEM shall not stack, otherwise drop on original target cell
+			if (type&BL_ITEM)
+				return 0;
+		}
+	}
+
+	CREATE(fitem, flooritem_data, 1);
+	fitem->type=BL_ITEM;
+	fitem->prev = fitem->next = nullptr;
+	fitem->m=m;
+	fitem->x=x;
+	fitem->y=y;
+	fitem->id = map_get_new_object_id();
+	if (fitem->id==0) {
+		aFree(fitem);
+		return 0;
+	}
+
+	// If item is flagged as MVP item or dropped by bosses, it is protected for longer
+	bool extend_protection = (flags&1);
+	if (!extend_protection && mob_id > 0) {
+		// Boss and MVP drops both have prelonged loot protection
+		if (auto mob = mob_db.find(mob_id); mob != nullptr && mob->get_bosstype() != BOSSTYPE_NONE)
+			extend_protection = true;
+	}
+	fitem->first_get_charid = first_charid;
+	fitem->second_get_charid = second_charid;
+	fitem->third_get_charid = third_charid;
+	if (extend_protection) {
+		fitem->first_get_tick = gettick() + battle_config.mvp_item_first_get_time;
+		fitem->second_get_tick = fitem->first_get_tick + battle_config.mvp_item_second_get_time;
+		fitem->third_get_tick = fitem->second_get_tick + battle_config.mvp_item_third_get_time;
+	}
+	else {
+		fitem->first_get_tick = gettick() + battle_config.item_first_get_time;
+		fitem->second_get_tick = fitem->first_get_tick + battle_config.item_second_get_time;
+		fitem->third_get_tick = fitem->second_get_tick + battle_config.item_third_get_time;
+	}
+	fitem->mob_id = mob_id;
+
+	memcpy(&fitem->item,item,sizeof(*item));
+	fitem->item.amount = amount;
+	fitem->subx = rnd_value(1, 4) * 3;
+	fitem->suby = rnd_value(1, 4) * 3;
+	fitem->cleartimer = add_timer(gettick()+battle_config.flooritem_lifetime,map_clearflooritem_timer,fitem->id,0);
+
+	map_addiddb(fitem);
+	if (map_addblock(fitem))
+		return 0;
+	clif_dropflooritem(fitem,canShowEffect);
+
+	return fitem->id;
+}
+
+/**
+ * @see DBCreateData
+ */
+static DBData create_charid2nick(DBKey key, va_list args)
+{
+	struct charid2nick *p;
+	CREATE(p, struct charid2nick, 1);
+	return db_ptr2data(p);
+}
+
+/// Adds(or replaces) the nick of charid to nick_db and fulfils pending requests.
+/// Does nothing if the character is online.
+void map_addnickdb(int32 charid, const char* nick)
+{
+	struct charid2nick* p;
+	
+	if( map_charid2sd(charid) )
+		return;// already online
+
+	p = (struct charid2nick*)idb_ensure(nick_db, charid, create_charid2nick);
+	safestrncpy(p->nick, nick, sizeof(p->nick));
+
+	while( p->requests ) {
+		map_session_data* sd;
+		struct charid_request* req;
+		req = p->requests;
+		p->requests = req->next;
+		sd = map_charid2sd(req->charid);
+		if( sd != nullptr )
+			clif_solved_charname( *sd, charid, p->nick );
+		aFree(req);
+	}
+}
+
+/// Removes the nick of charid from nick_db.
+/// Sends name to all pending requests on charid.
+void map_delnickdb(int32 charid, const char* name)
+{
+	struct charid2nick* p;
+	DBData data;
+
+	if (!nick_db->remove(nick_db, db_i2key(charid), &data) || (p = (struct charid2nick*)db_data2ptr(&data)) == nullptr)
+		return;
+
+	while( p->requests ) {
+		struct charid_request* req;
+		map_session_data* sd;
+		req = p->requests;
+		p->requests = req->next;
+		sd = map_charid2sd(req->charid);
+		if( sd != nullptr )
+			clif_solved_charname( *sd, charid, name );
+		aFree(req);
+	}
+	aFree(p);
+}
+
+/// Notifies sd of the nick of charid.
+/// Uses the name in the character if online.
+/// Uses the name in nick_db if offline.
+void map_reqnickdb(map_session_data * sd, int32 charid)
+{
+	struct charid2nick* p;
+	struct charid_request* req;
+	map_session_data* tsd;
+
+	nullpo_retv(sd);
+
+	tsd = map_charid2sd(charid);
+	if( tsd != nullptr )
+	{
+		clif_solved_charname( *sd, charid, tsd->status.name );
+		return;
+	}
+
+	p = (struct charid2nick*)idb_ensure(nick_db, charid, create_charid2nick);
+	if( *p->nick )
+	{
+		clif_solved_charname( *sd, charid, p->nick );
+		return;
+	}
+	// not in cache, request it
+	CREATE(req, struct charid_request, 1);
+	req->next = p->requests;
+	p->requests = req;
+	chrif_searchcharid(charid);
+}
+
+/*==========================================
+ * add bl to id_db
+ *------------------------------------------*/
+void map_addiddb(block_list *bl)
+{
+	nullpo_retv(bl);
+
+	if( bl->type == BL_PC )
+	{
+		TBL_PC* sd = (TBL_PC*)bl;
+		idb_put(pc_db,sd->id,sd);
+		uidb_put(charid_db,sd->status.char_id,sd);
+	}
+	else if( bl->type == BL_MOB )
+	{
+		TBL_MOB* md = (TBL_MOB*)bl;
+		idb_put(mobid_db,bl->id,bl);
+
+		if( md->state.boss )
+			idb_put(bossid_db, bl->id, bl);
+	}
+
+	if( bl->type & BL_REGEN )
+		idb_put(regen_db, bl->id, bl);
+
+	idb_put(id_db,bl->id,bl);
+}
+
+/*==========================================
+ * remove bl from id_db
+ *------------------------------------------*/
+void map_deliddb(block_list *bl)
+{
+	nullpo_retv(bl);
+
+	if( bl->type == BL_PC )
+	{
+		TBL_PC* sd = (TBL_PC*)bl;
+		idb_remove(pc_db,sd->id);
+		uidb_remove(charid_db,sd->status.char_id);
+	}
+	else if( bl->type == BL_MOB )
+	{
+		idb_remove(mobid_db,bl->id);
+		idb_remove(bossid_db,bl->id);
+	}
+
+	if( bl->type & BL_REGEN )
+		idb_remove(regen_db,bl->id);
+
+	idb_remove(id_db,bl->id);
+}
+
+/*==========================================
+ * Standard call when a player connection is closed.
+ *------------------------------------------*/
+int32 map_quit(map_session_data *sd) {
+	int32 i;
+
+	if (sd->state.keepshop == false) { // Close vending/buyingstore
+		if (sd->state.vending)
+			vending_closevending(sd);
+		else if (sd->state.buyingstore)
+			buyingstore_close(sd);
+	}
+
+	if(!sd->state.active) { //Removing a player that is not active.
+		struct auth_node *node = chrif_search(sd->status.account_id);
+		if (node && node->char_id == sd->status.char_id &&
+			node->state != ST_LOGOUT)
+			//Except when logging out, clear the auth-connect data immediately.
+			chrif_auth_delete(node->account_id, node->char_id, node->state);
+		//Non-active players should not have loaded any data yet (or it was cleared already) so no additional cleanups are needed.
+		return 0;
+	}
+
+	if (sd->expiration_tid != INVALID_TIMER)
+		delete_timer(sd->expiration_tid, pc_expiration_timer);
+
+	if (sd->npc_timer_id != INVALID_TIMER) //Cancel the event timer.
+		npc_timerevent_quit(sd);
+
+	if (sd->autotrade_tid != INVALID_TIMER)
+		delete_timer(sd->autotrade_tid, pc_autotrade_timer);
+
+	if (sd->npc_id)
+		npc_event_dequeue(sd);
+
+	if (sd->bg_id)
+		bg_team_leave(sd, true, true);
+
+	if (sd->bg_queue_id > 0)
+		bg_queue_leave(sd, false);
+
+	if( sd->status.clan_id )
+		clan_member_left( *sd );
+
+	pc_itemcd_do(sd,false);
+
+	npc_script_event( *sd, NPCE_LOGOUT );
+
+	//Unit_free handles clearing the player related data,
+	//map_quit handles extra specific data which is related to quitting normally
+	//(changing map-servers invokes unit_free but bypasses map_quit)
+	if( !sd->sc.empty() ) {
+		for (const auto &it : status_db) {
+			std::bitset<SCF_MAX> &flag = it.second->flag;
+
+			//No need to save infinite status
+			if (flag[SCF_NOSAVEINFINITE] && sd->sc.getSCE(it.first) && (sd->sc.getSCE(it.first)->val4 > 0 || sd->sc.getSCE(it.first)->timer == INVALID_TIMER)) {
+				status_change_end(sd, static_cast<sc_type>(it.first));
+				continue;
+			}
+
+			//Status that are not saved
+			if (flag[SCF_NOSAVE]) {
+				status_change_end(sd, static_cast<sc_type>(it.first));
+				continue;
+			}
+			//Removes status by config
+			if (battle_config.debuff_on_logout&1 && flag[SCF_DEBUFF] || //Removes debuffs
+				(battle_config.debuff_on_logout&2 && !(flag[SCF_DEBUFF]))) //Removes buffs
+			{
+				status_change_end(sd, static_cast<sc_type>(it.first));
+				continue;
+			}
+		}
+	}
+
+	for (i = 0; i < EQI_MAX; i++) {
+		if (sd->equip_index[i] >= 0)
+			if( pc_isequip( sd, sd->equip_index[i] ) != ITEM_EQUIP_ACK_OK ){
+				pc_unequipitem(sd,sd->equip_index[i],2);
+			}
+	}
+
+	// Return loot to owner
+	if( sd->pd != nullptr ){
+		pet_lootitem_drop( *sd->pd, sd );
+	}
+
+	if (sd->ed) // Remove effects here rather than unit_remove_map_pc so we don't clear on Teleport/map change.
+		elemental_clean_effect(sd->ed);
+
+	if (sd->state.permanent_speed == 1) sd->state.permanent_speed = 0; // Remove lock so speed is set back to normal at login.
+
+	struct map_data *mapdata = map_getmapdata(sd->m);
+
+	if( mapdata->instance_id > 0 )
+		instance_delusers(mapdata->instance_id);
+
+	unit_remove_map_pc(sd,CLR_RESPAWN);
+
+	if (sd->state.vending)
+		idb_remove(vending_getdb(), sd->status.char_id);
+
+	if (sd->state.buyingstore)
+		idb_remove(buyingstore_getdb(), sd->status.char_id);
+
+	party_booking_delete(sd); // Party Booking [Spiria]
+	pc_makesavestatus(sd);
+	pc_clean_skilltree(sd);
+	pc_crimson_marker_clear(sd);
+	pc_macro_detector_disconnect(*sd);
+	chrif_save(sd, CSAVE_QUIT|CSAVE_INVENTORY|CSAVE_CART);
+	unit_free_pc(sd);
+	return 0;
+}
+
+/*==========================================
+ * Lookup, id to session (player,mob,npc,homon,merc..)
+ *------------------------------------------*/
+map_session_data * map_id2sd(int32 id){
+	if (id <= 0) return nullptr;
+	return (map_session_data*)idb_get(pc_db,id);
+}
+
+mob_data * map_id2md(int32 id){
+	if (id <= 0) return nullptr;
+	return (mob_data*)idb_get(mobid_db,id);
+}
+
+npc_data * map_id2nd(int32 id){
+	block_list* bl = map_id2bl(id);
+	return BL_CAST(BL_NPC, bl);
+}
+
+homun_data* map_id2hd(int32 id){
+	block_list* bl = map_id2bl(id);
+	return BL_CAST(BL_HOM, bl);
+}
+
+s_mercenary_data* map_id2mc(int32 id){
+	block_list* bl = map_id2bl(id);
+	return BL_CAST(BL_MER, bl);
+}
+
+pet_data* map_id2pd(int32 id){
+	block_list* bl = map_id2bl(id);
+	return BL_CAST(BL_PET, bl);
+}
+
+s_elemental_data* map_id2ed(int32 id) {
+	block_list* bl = map_id2bl(id);
+	return BL_CAST(BL_ELEM, bl);
+}
+
+chat_data* map_id2cd(int32 id){
+	block_list* bl = map_id2bl(id);
+	return BL_CAST(BL_CHAT, bl);
+}
+
+/// Returns the nick of the target charid or nullptr if unknown (requests the nick to the char server).
+const char* map_charid2nick(int32 charid)
+{
+	struct charid2nick *p;
+	map_session_data* sd;
+
+	sd = map_charid2sd(charid);
+	if( sd )
+		return sd->status.name;// character is online, return it's name
+
+	p = (struct charid2nick*)idb_ensure(nick_db, charid, create_charid2nick);
+	if( *p->nick )
+		return p->nick;// name in nick_db
+
+	chrif_searchcharid(charid);// request the name
+	return nullptr;
+}
+
+/// Returns the map_session_data of the charid or nullptr if the char is not online.
+map_session_data* map_charid2sd(int32 charid)
+{
+	return (map_session_data*)uidb_get(charid_db, charid);
+}
+
+/*==========================================
+ * Search session data from a nick name
+ * (without sensitive case if necessary)
+ * return map_session_data pointer or nullptr
+ *------------------------------------------*/
+map_session_data * map_nick2sd(const char *nick, bool allow_partial)
+{
+	map_session_data* sd;
+	map_session_data* found_sd;
+	struct s_mapiterator* iter;
+	size_t nicklen;
+	int32 qty = 0;
+
+	if( nick == nullptr )
+		return nullptr;
+
+	nicklen = strlen(nick);
+	iter = mapit_getallusers();
+
+	found_sd = nullptr;
+	for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if( allow_partial && battle_config.partial_name_scan )
+		{// partial name search
+			if( strnicmp(sd->status.name, nick, nicklen) == 0 )
+			{
+				found_sd = sd;
+
+				if( strcmp(sd->status.name, nick) == 0 )
+				{// Perfect Match
+					qty = 1;
+					break;
+				}
+
+				qty++;
+			}
+		}
+		else if( strcasecmp(sd->status.name, nick) == 0 )
+		{// exact search only
+			found_sd = sd;
+			qty = 1;
+			break;
+		}
+	}
+	mapit_free(iter);
+
+	if( battle_config.partial_name_scan && qty != 1 )
+		found_sd = nullptr;
+
+	return found_sd;
+}
+
+/*==========================================
+ * Looksup id_db DBMap and returns BL pointer of 'id' or nullptr if not found
+ *------------------------------------------*/
+block_list * map_id2bl(int32 id) {
+	return (block_list*)idb_get(id_db,id);
+}
+
+/**
+ * Same as map_id2bl except it only checks for its existence
+ **/
+bool map_blid_exists( int32 id ) {
+	return (idb_exists(id_db,id));
+}
+
+/*==========================================
+ * Convex Mirror
+ *------------------------------------------*/
+mob_data * map_getmob_boss(int16 m)
+{
+	DBIterator* iter;
+	mob_data *md = nullptr;
+	bool found = false;
+
+	iter = db_iterator(bossid_db);
+	for( md = (mob_data*)dbi_first(iter); dbi_exists(iter); md = (mob_data*)dbi_next(iter) )
+	{
+		if( md->m == m )
+		{
+			found = true;
+			break;
+		}
+	}
+	dbi_destroy(iter);
+
+	return (found)? md : nullptr;
+}
+
+mob_data * map_id2boss(int32 id)
+{
+	if (id <= 0) return nullptr;
+	return (mob_data*)idb_get(bossid_db,id);
+}
+
+/// Applies func to all the players in the db.
+/// Stops iterating if func returns -1.
+void map_foreachpc(int32 (*func)(map_session_data* sd, va_list args), ...)
+{
+	DBIterator* iter;

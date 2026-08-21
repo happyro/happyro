@@ -1,0 +1,500 @@
+
+/// Give the client information about the recipient, if available
+/// 0a14 <char id>.L <class>.W <base level>.W (ZC_CHECK_RECEIVE_CHARACTER_NAME)
+/// 0a51 <char id>.L <class>.W <base level>.W <name>.24B (ZC_CHECK_RECEIVE_CHARACTER_NAME2)
+void clif_Mail_Receiver_Ack( const map_session_data* sd, uint32 char_id, int16 class_, uint32 level, const char* name ){
+#if PACKETVER >= 20141119
+	PACKET_ZC_CHECKNAME p = { 0 };
+
+	p.PacketType = HEADER_ZC_CHECKNAME;
+	p.CharId = char_id;
+	p.Class = class_;
+	p.BaseLevel = level;
+#if PACKETVER >= 20160302
+	strncpy(p.Name, name, NAME_LENGTH);
+#endif
+	clif_send(&p, sizeof(p), sd, SELF);
+#endif
+}
+
+/// Request information about the recipient
+/// 0a13 <name>.24B (CZ_CHECK_RECEIVE_CHARACTER_NAME)
+void clif_parse_Mail_Receiver_Check(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20140423
+#if PACKETVER_MAIN_NUM >= 20201104 || PACKETVER_RE_NUM >= 20211103 || PACKETVER_ZERO_NUM >= 20201118
+	const PACKET_CZ_CHECKNAME2* p = reinterpret_cast<PACKET_CZ_CHECKNAME2*>( RFIFOP( fd, 0 ) );
+#else
+	const PACKET_CZ_CHECKNAME1* p = reinterpret_cast<PACKET_CZ_CHECKNAME1*>( RFIFOP( fd, 0 ) );
+#endif
+	static char name[NAME_LENGTH];
+
+	if( mail_invalid_operation( sd ) ){
+		return;
+	}
+
+	safestrncpy(name, p->Name, NAME_LENGTH);
+
+	intif_mail_checkreceiver(sd, name);
+#endif
+}
+
+/// Request to receive mail's attachment.
+/// 0244 <mail id>.L (CZ_MAIL_GET_ITEM)
+/// 09f1 <mail id>.Q <mail tab>.B (CZ_REQ_ZENY_FROM_MAIL)
+/// 09f3 <mail id>.Q <mail tab>.B (CZ_REQ_ITEM_FROM_MAIL)
+void clif_parse_Mail_getattach( int32 fd, map_session_data *sd ){
+	int32 i;
+	struct mail_message* msg;
+#if PACKETVER < 20150513
+	int32 mail_id = RFIFOL(fd, packet_db[RFIFOW(fd, 0)].pos[0]);
+	int32 attachment = MAIL_ATT_ALL;
+#else
+	uint16 packet_id = RFIFOW(fd, 0);
+	int32 mail_id = (int32)RFIFOQ(fd, 2);
+	//int32 openType = RFIFOB(fd, 10);
+	int32 attachment = packet_id == 0x9f1 ? MAIL_ATT_ZENY : packet_id == 0x9f3 ? MAIL_ATT_ITEM : MAIL_ATT_NONE;
+#endif
+
+	if( !chrif_isconnected() )
+		return;
+	if( mail_id <= 0 )
+		return;
+	if( mail_invalid_operation(sd) )
+		return;
+
+	ARR_FIND(0, MAIL_MAX_INBOX, i, sd->mail.inbox.msg[i].id == mail_id);
+	if( i == MAIL_MAX_INBOX )
+		return;
+
+	msg = &sd->mail.inbox.msg[i];
+
+	if( attachment&MAIL_ATT_ZENY && msg->zeny < 1 ){
+		attachment &= ~MAIL_ATT_ZENY;
+	}
+	
+	if( attachment&MAIL_ATT_ITEM ){
+		ARR_FIND(0, MAIL_MAX_ITEM, i, msg->item[i].nameid > 0 || msg->item[i].amount > 0);
+
+		// No items were found
+		if( i == MAIL_MAX_ITEM ){
+			attachment &= ~MAIL_ATT_ITEM;
+		}
+	}
+
+	// Either no attachment requested at all or there are no zeny or items in the mail
+	if( attachment == MAIL_ATT_NONE ){
+		return;
+	}
+
+	if( attachment&MAIL_ATT_ZENY ){
+		if( ( msg->zeny + sd->status.zeny + sd->mail.pending_zeny ) > MAX_ZENY ){
+			clif_mail_getattachment(sd, msg, 1, MAIL_ATT_ZENY); //too many zeny
+			return;
+		}else{
+			// Store the pending zeny (required for the "retrieve all" feature)
+			sd->mail.pending_zeny += msg->zeny;
+
+			// To make sure another request fails
+			msg->zeny = 0;
+		}
+	}
+
+	if( attachment&MAIL_ATT_ITEM ){
+		int32 slots = 0, totalweight = 0;
+
+		for( i = 0; i < MAIL_MAX_ITEM; i++ ){
+			struct item* item = &msg->item[i];
+
+			if( item->nameid > 0 && item->amount > 0 ){
+				std::shared_ptr<item_data> data = item_db.find(item->nameid);
+
+				if(data == nullptr)
+					continue;
+
+				switch( pc_checkadditem(sd, item->nameid, item->amount) ){
+					case CHKADDITEM_NEW:
+						slots += data->inventorySlotNeeded( item->amount );
+						break;
+					case CHKADDITEM_OVERAMOUNT:
+						clif_mail_getattachment(sd, msg, 2, MAIL_ATT_ITEM);
+						return;
+				}
+
+				totalweight += data->weight * item->amount;
+			}
+		}
+
+		if( ( totalweight + sd->weight + sd->mail.pending_weight ) > sd->max_weight ){
+			clif_mail_getattachment(sd, msg, 2, MAIL_ATT_ITEM);
+			return;
+		}else if( pc_inventoryblank(sd) < ( slots + sd->mail.pending_slots ) ){
+			clif_mail_getattachment(sd, msg, 2, MAIL_ATT_ITEM);
+			return;
+		}
+
+		// To make sure another request fails
+		memset(msg->item, 0, MAIL_MAX_ITEM*sizeof(struct item));
+
+		// Store the pending weight (required for the "retrieve all" feature)
+		sd->mail.pending_weight += totalweight;
+		// Store the pending slots (required for the "retrieve all" feature)
+		sd->mail.pending_slots += slots;
+	}
+
+	intif_mail_getattach(sd,msg, (enum mail_attachment_type)attachment);
+}
+
+
+/// Request to delete a mail.
+/// 0243 <mail id>.L (CZ_MAIL_DELETE)
+/// 09f5 <mail tab>.B <mail id>.Q (CZ_REQ_DELETE_MAIL)
+void clif_parse_Mail_delete(int32 fd, map_session_data *sd){
+#if PACKETVER < 20150513
+	int32 mail_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+#else
+	//int32 openType = RFIFOB(fd, 2);
+	int32 mail_id = (int32)RFIFOQ(fd, 3);
+#endif
+	int32 i, j;
+
+	if( !chrif_isconnected() )
+		return;
+	if( mail_id <= 0 )
+		return;
+	if( mail_invalid_operation(sd) )
+		return;
+
+	ARR_FIND(0, MAIL_MAX_INBOX, i, sd->mail.inbox.msg[i].id == mail_id);
+	if (i < MAIL_MAX_INBOX) {
+		struct mail_message *msg = &sd->mail.inbox.msg[i];
+
+		// can't delete mail without removing zeny first
+		if( msg->zeny > 0 ){
+			clif_mail_delete(sd, msg, false);
+			return;
+		}
+
+		// can't delete mail without removing attachment(s) first
+		for( j = 0; j < MAIL_MAX_ITEM; j++ ){
+			if( msg->item[j].nameid > 0 && msg->item[j].amount > 0 ){
+				clif_mail_delete(sd, msg, false);
+				return;
+			}
+		}
+
+		if( intif_Mail_delete(sd->status.char_id, mail_id) && msg->status == MAIL_UNREAD ){
+			sd->mail.inbox.unread--;
+			clif_Mail_new(sd,0,nullptr,nullptr);
+		}
+	}
+}
+
+
+/// Request to return a mail.
+/// 0273 <mail id>.L <receive name>.24B (CZ_REQ_MAIL_RETURN)
+void clif_parse_Mail_return(int32 fd, map_session_data *sd){
+#if PACKETVER_MAIN_NUM >= 20201104 || PACKETVER_RE_NUM >= 20211103 || PACKETVER_ZERO_NUM >= 20201118
+	const PACKET_CZ_RODEX_RETURN* p = reinterpret_cast<PACKET_CZ_RODEX_RETURN*>( RFIFOP( fd, 0 ) );
+
+	//ShowDump( p, sizeof( p ) );
+
+	int32 mail_id = p->msgId;
+
+	// not supported for now
+	return;
+#else
+	int32 mail_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+#endif
+	//char *rec_name = RFIFOP(fd,packet_db[RFIFOW(fd,0)].pos[1]);
+	int32 i;
+
+	if( mail_id <= 0 )
+		return;
+	if( mail_invalid_operation(sd) )
+		return;
+
+	ARR_FIND(0, MAIL_MAX_INBOX, i, sd->mail.inbox.msg[i].id == mail_id);
+	if( i < MAIL_MAX_INBOX && sd->mail.inbox.msg[i].send_id != 0 )
+		intif_Mail_return(sd->status.char_id, mail_id);
+	else
+		clif_Mail_return(sd->fd, mail_id, 1);
+}
+
+
+/// Request to add an item or Zeny to mail.
+/// 0247 <index>.W <amount>.L (CZ_MAIL_ADD_ITEM)
+/// 0a04 <index>.W <amount>.W (CZ_REQ_ADD_ITEM_TO_MAIL)
+void clif_parse_Mail_setattach(int32 fd, map_session_data *sd){
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	uint16 idx = RFIFOW(fd,info->pos[0]);
+#if PACKETVER < 20150513
+	int32 amount = RFIFOL(fd,info->pos[1]);
+#else
+	int32 amount = RFIFOW(fd,info->pos[1]);
+#endif
+	unsigned char flag;
+
+	if( !chrif_isconnected() )
+		return;
+	if (amount < 0 || server_index(idx) >= MAX_INVENTORY)
+		return;
+
+	if (sd->inventory_data[server_index(idx)] == nullptr)
+		return;
+
+	if( mail_invalid_operation( sd ) ){
+		return;
+	}
+
+	flag = mail_setitem(sd, idx, amount);
+
+	if( flag == MAIL_ATTACH_EQUIPSWITCH ){
+		clif_msg( *sd, MSI_SWAP_EQUIPITEM_UNREGISTER_FIRST );
+	}else{
+		clif_Mail_setattachment(sd,idx,amount,flag);
+	}
+}
+
+/// Remove an item from a mail
+/// 0a07 <result>.B <index>.W <amount>.W <weight>.W
+void clif_mail_removeitem( const map_session_data* sd, bool success, int32 index, int32 amount ){
+	PACKET_ZC_ACK_REMOVE_ITEM_MAIL p = { 0 };
+
+	p.PacketType = rodexremoveitem;
+	p.result = success;
+	p.index = index;
+	p.cnt = amount;
+
+	int32 total = 0;
+	for( int32 i = 0; i < MAIL_MAX_ITEM; i++ ){
+		if( sd->mail.item[i].nameid == 0 ){
+			break;
+		}
+
+		if( sd->mail.item[i].index < 0 || sd->mail.item[i].index >= MAX_INVENTORY ){
+			continue;
+		}
+
+		item_data* id = sd->inventory_data[sd->mail.item[i].index];
+
+		if( id == nullptr ){
+			continue;
+		}
+
+		total += sd->mail.item[i].amount * ( id->weight / 10 );
+	}
+
+	p.weight = total;
+	clif_send(&p, sizeof(p), sd, SELF);
+}
+
+/// Request to reset mail item and/or Zeny
+/// 0246 <type>.W (CZ_MAIL_RESET_ITEM)
+/// type:
+///     0 = reset all
+///     1 = remove item
+///     2 = remove zeny
+/// 0a06 <index>.W <amount>.W (CZ_REQ_REMOVE_ITEM_MAIL)
+void clif_parse_Mail_winopen(int32 fd, map_session_data *sd)
+{
+#if PACKETVER < 20150513
+	int32 type = RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+
+	if (type == 0 || type == 1)
+		mail_removeitem(sd, 0, sd->mail.item[0].index, sd->mail.item[0].amount);
+	if (type == 0 || type == 2)
+		mail_removezeny(sd, false);
+#else
+	uint16 index = RFIFOW(fd, 2);
+	uint16 count = RFIFOW(fd, 4);
+
+	mail_removeitem(sd,0,index,count);
+#endif
+}
+
+/// Request to send mail
+/// 0248 <packet len>.W <recipient>.24B <title>.40B <body len>.B <body>.?B (CZ_MAIL_SEND)
+/// 09ec <packet len>.W <recipient>.24B <sender>.24B <zeny>.Q <title length>.W <body length>.W <title>.?B <body>.?B (CZ_REQ_WRITE_MAIL)
+/// 0a6e <packet len>.W <recipient>.24B <sender>.24B <zeny>.Q <title length>.W <body length>.W <char id>.L <title>.?B <body>.?B (CZ_REQ_WRITE_MAIL2)
+void clif_parse_Mail_send(int32 fd, map_session_data *sd){
+#if PACKETVER < 20150513
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+
+	if( !chrif_isconnected() )
+		return;
+
+	if( RFIFOW(fd,info->pos[0]) < 69 ) {
+		ShowWarning("Invalid Msg Len from account %d.\n", sd->status.account_id);
+		return;
+	}
+
+	mail_send(sd, RFIFOCP(fd,info->pos[1]), RFIFOCP(fd,info->pos[2]), RFIFOCP(fd,info->pos[4]), RFIFOB(fd,info->pos[3]));
+#else
+	uint16 length = RFIFOW(fd, 2);
+#if PACKETVER <= 20160330
+	constexpr uint16 headerLength = 64;
+#else
+	constexpr uint16 headerLength = 68;
+#endif
+
+	if( length < headerLength ){
+		ShowWarning("Too short...\n");
+		clif_Mail_send(sd, WRITE_MAIL_FAILED);
+		return;
+	}
+
+	if( mail_invalid_operation( sd ) ){
+		return;
+	}
+
+	// Forged request without a begin writing packet?
+	if( !sd->state.mail_writing ){
+		return; // Ignore it
+	}
+
+	char receiver[NAME_LENGTH];
+
+	safestrncpy(receiver, RFIFOCP(fd, 4), NAME_LENGTH);
+
+//	char sender[NAME_LENGTH];
+
+//	safestrncpy(sender, RFIFOCP(fd, 28), NAME_LENGTH);
+
+	uint64 zeny = RFIFOQ(fd, 52);
+	uint16 titleLength = RFIFOW(fd, 60);
+	uint16 textLength = RFIFOW(fd, 62);
+
+	if( titleLength > length - headerLength || textLength > length - headerLength - titleLength ){
+		ShowWarning("Invalid Rodex mail content length from account %d.\n", sd->status.account_id);
+		clif_Mail_send(sd, WRITE_MAIL_FAILED);
+		return;
+	}
+
+	uint16 realTitleLength = min(titleLength, MAIL_TITLE_LENGTH);
+	uint16 realTextLength = min(textLength, MAIL_BODY_LENGTH);
+
+	char title[MAIL_TITLE_LENGTH];
+	char text[MAIL_BODY_LENGTH];
+
+	safestrncpy(title, RFIFOCP(fd, headerLength), realTitleLength);
+	safestrncpy(text, RFIFOCP(fd, headerLength + titleLength), realTextLength);
+
+	if( zeny > 0 ){
+		if( mail_setitem(sd,0,(uint32)zeny) != MAIL_ATTACH_SUCCESS ){
+			clif_Mail_send(sd,WRITE_MAIL_FAILED);
+			return;
+		}
+	}
+
+	mail_send(sd, receiver, title, text, realTextLength);
+#endif
+}
+
+
+/// AUCTION SYSTEM
+/// By Zephyrus
+///
+
+/// Opens/closes the auction window (ZC_AUCTION_WINDOWS).
+/// 025f <type>.L
+/// type:
+///     0 = open
+///     1 = close
+void clif_Auction_openwindow( const map_session_data* sd )
+{
+	int32 fd = sd->fd;
+
+	if( sd->state.storage_flag || sd->state.vending || sd->state.buyingstore || sd->state.trading )
+		return;
+
+	if( !battle_config.feature_auction )
+		return;
+
+	WFIFOHEAD(fd,packet_len(0x25f));
+	WFIFOW(fd,0) = 0x25f;
+	WFIFOL(fd,2) = 0;
+	WFIFOSET(fd,packet_len(0x25f));
+}
+
+
+/// Returns auction item search results (ZC_AUCTION_ITEM_REQ_SEARCH).
+/// 0252 <packet len>.W <pages>.L <count>.L { <auction id>.L <seller name>.24B <name id>.W <type>.L <amount>.W <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W <now price>.L <max price>.L <buyer name>.24B <delete time>.L }*
+void clif_Auction_results( const map_session_data* sd, int16 count, int16 pages, uint8* buf )
+{
+	int32 i, fd = sd->fd, len = sizeof(struct auction_data);
+	struct auction_data auction;
+
+	WFIFOHEAD(fd,12 + (count * 83));
+	WFIFOW(fd,0) = 0x252;
+	WFIFOW(fd,2) = 12 + (count * 83);
+	WFIFOL(fd,4) = pages;
+	WFIFOL(fd,8) = count;
+
+	for( i = 0; i < count; i++ ) {
+		int32 k = 12 + (i * 83);
+		memcpy(&auction, RBUFP(buf,i * len), len);
+
+		WFIFOL(fd,k) = auction.auction_id;
+		safestrncpy(WFIFOCP(fd,4+k), auction.seller_name, NAME_LENGTH);			
+		WFIFOW(fd,28+k) = client_nameid( auction.item.nameid );
+		WFIFOL(fd,30+k) = auction.type;
+		WFIFOW(fd,34+k) = auction.item.amount; // Always 1
+		WFIFOB(fd,36+k) = auction.item.identify;
+		WFIFOB(fd,37+k) = auction.item.attribute;
+		WFIFOB(fd,38+k) = auction.item.refine;
+		WFIFOW(fd,39+k) = auction.item.card[0];
+		WFIFOW(fd,41+k) = auction.item.card[1];
+		WFIFOW(fd,43+k) = auction.item.card[2];
+		WFIFOW(fd,45+k) = auction.item.card[3];
+		WFIFOL(fd,47+k) = auction.price;
+		WFIFOL(fd,51+k) = auction.buynow;
+		safestrncpy(WFIFOCP(fd,55+k), auction.buyer_name, NAME_LENGTH);
+		WFIFOL(fd,79+k) = (uint32)auction.timestamp;
+	}
+	WFIFOSET(fd,WFIFOW(fd,2));
+}
+
+
+/// Result from request to add an item (ZC_ACK_AUCTION_ADD_ITEM).
+/// 0256 <index>.W <result>.B
+/// result:
+///     0 = success
+///     1 = failure
+static void clif_Auction_setitem(int32 fd, int32 index, bool fail)
+{
+	WFIFOHEAD(fd,packet_len(0x256));
+	WFIFOW(fd,0) = 0x256;
+	WFIFOW(fd,2) = index;
+	WFIFOB(fd,4) = fail;
+	WFIFOSET(fd,packet_len(0x256));
+}
+
+
+/// Request to initialize 'new auction' data (CZ_AUCTION_CREATE).
+/// 024b <type>.W
+/// type:
+///     0 = create (any other action in auction window)
+///     1 = cancel (cancel pressed on register tab)
+///     ? = junk, uninitialized value (ex. when switching between list filters)
+void clif_parse_Auction_cancelreg(int32 fd, map_session_data *sd){
+	//int32 type = RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	if( sd->auction.amount > 0 )
+		clif_additem(sd, sd->auction.index, sd->auction.amount, 0);
+
+	sd->auction.amount = 0;
+}
+
+
+/// Request to add an item to the action (CZ_AUCTION_ADD_ITEM).
+/// 024c <index>.W <count>.L
+void clif_parse_Auction_setitem(int32 fd, map_session_data *sd){
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	int32 idx = RFIFOW(fd,info->pos[0]) - 2;
+	int32 amount = RFIFOL(fd,info->pos[1]); // Always 1
+
+	if( !battle_config.feature_auction )
+		return;
+
+	if( sd->auction.amount > 0 )
+		sd->auction.amount = 0;
+

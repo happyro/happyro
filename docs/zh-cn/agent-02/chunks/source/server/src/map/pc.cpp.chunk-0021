@@ -1,0 +1,500 @@
+	    && !sd->sc.cant.deathpenalty
+		&& !mapdata->getMapFlag(MF_NOEXPPENALTY) && !mapdata_flag_gvg2(mapdata))
+	{
+		t_exp base_penalty = 0;
+		t_exp job_penalty = 0;
+		uint32 zeny_penalty = 0;
+
+		if (pc_isvip(sd)) { // EXP penalty for VIP
+			base_penalty = battle_config.vip_exp_penalty_base;
+			job_penalty = battle_config.vip_exp_penalty_job;
+			zeny_penalty = battle_config.vip_zeny_penalty;
+		} else {
+			base_penalty = battle_config.death_penalty_base;
+			job_penalty = battle_config.death_penalty_job;
+			zeny_penalty = battle_config.zeny_penalty;
+		}
+
+		if ((battle_config.death_penalty_maxlv&1 || !pc_is_maxbaselv(sd)) && base_penalty > 0) {
+			switch (battle_config.death_penalty_type) {
+				case 1: base_penalty = (t_exp) ( pc_nextbaseexp(sd) * ( base_penalty / 10000. ) ); break;
+				case 2: base_penalty = (t_exp) ( sd->status.base_exp * ( base_penalty / 10000. ) ); break;
+			}
+			if (base_penalty){ //recheck after altering to speedup
+				if (battle_config.pk_mode && src && src->type==BL_PC)
+					base_penalty *= 2;
+				base_penalty = u64min(sd->status.base_exp, base_penalty);
+			}
+		}
+		else 
+			base_penalty = 0;
+
+		if ((battle_config.death_penalty_maxlv&2 || !pc_is_maxjoblv(sd)) && job_penalty > 0) {
+			switch (battle_config.death_penalty_type) {
+				case 1: job_penalty = (uint32) ( pc_nextjobexp(sd) * ( job_penalty / 10000. ) ); break;
+				case 2: job_penalty = (uint32) ( sd->status.job_exp * ( job_penalty /10000. ) ); break;
+			}
+			if (job_penalty) {
+				if (battle_config.pk_mode && src && src->type==BL_PC)
+					job_penalty *= 2;
+				job_penalty = u64min(sd->status.job_exp, job_penalty);
+			}
+		}
+		else
+			job_penalty = 0;
+
+		if (base_penalty || job_penalty) {
+			int16 insurance_idx = pc_search_inventory(sd, ITEMID_NEW_INSURANCE);
+			if (insurance_idx < 0 || pc_delitem(sd, insurance_idx, 1, 0, 1, LOG_TYPE_CONSUME) != 0)
+				pc_lostexp(sd, base_penalty, job_penalty);
+		}
+
+		if( zeny_penalty > 0 && !mapdata->getMapFlag(MF_NOZENYPENALTY)) {
+			zeny_penalty = (uint32)( sd->status.zeny * ( zeny_penalty / 10000. ) );
+			if(zeny_penalty)
+				pc_payzeny(sd, zeny_penalty, LOG_TYPE_PICKDROP_PLAYER);
+		}
+	}
+
+	if( mapdata->getMapFlag(MF_PVP_NIGHTMAREDROP) ) { // Moved this outside so it works when PVP isn't enabled and during pk mode [Ancyker]
+		for (const auto &it : mapdata->drop_list) {
+			int32 id = it.drop_id, per = it.drop_per;
+			enum e_nightmare_drop_type type = it.drop_type;
+
+			if(id == 0)
+				continue;
+			if(id == -1){
+				int32 eq_num=0,eq_n[MAX_INVENTORY];
+				memset(eq_n,0,sizeof(eq_n));
+				for(i=0;i<MAX_INVENTORY;i++) {
+					if( sd->inventory.u.items_inventory[i].nameid == 0 ){
+						continue;
+					}
+
+					if( !pc_candrop( sd, &sd->inventory.u.items_inventory[i] ) ){
+						continue;
+					}
+
+					if( (type&NMDT_INVENTORY && !sd->inventory.u.items_inventory[i].equip)
+						|| (type&NMDT_EQUIP && sd->inventory.u.items_inventory[i].equip)
+						||  type == NMDT_ALL)
+					{
+						eq_n[eq_num++] = i;
+					}
+				}
+				if(eq_num > 0){
+					if(rnd()%10000 < per) {
+						int32 n = eq_n[rnd() % eq_num];
+
+						if(sd->inventory.u.items_inventory[n].equip)
+							pc_unequipitem(sd,n,3);
+						pc_dropitem(sd,n,1);
+					}
+				}
+			}
+			else if(id > 0) {
+				for(i=0;i<MAX_INVENTORY;i++){
+					if(sd->inventory.u.items_inventory[i].nameid == id
+						&& pc_candrop( sd, &sd->inventory.u.items_inventory[i] )
+						&& rnd()%10000 < per
+						&& ((type&NMDT_INVENTORY && !sd->inventory.u.items_inventory[i].equip)
+							|| (type&NMDT_EQUIP && sd->inventory.u.items_inventory[i].equip)
+							|| type == NMDT_ALL) ){
+						if(sd->inventory.u.items_inventory[i].equip)
+							pc_unequipitem(sd,i,3);
+						pc_dropitem(sd,i,1);
+						break;
+					}
+				}
+			}
+		}
+	}
+	// pvp
+	// disable certain pvp functions on pk_mode [Valaris]
+	if( !battle_config.pk_mode && mapdata->getMapFlag(MF_PVP) && !mapdata->getMapFlag(MF_PVP_NOCALCRANK) ) {
+		sd->pvp_point -= 5;
+		sd->pvp_lost++;
+		if( src && src->type == BL_PC ) {
+			map_session_data *ssd = (map_session_data *)src;
+			ssd->pvp_point++;
+			ssd->pvp_won++;
+		}
+		if( sd->pvp_point < 0 ) {
+			sd->respawn_tid = add_timer(tick+1000, pc_respawn_timer,sd->id,0);
+			return 1|8;
+		}
+	}
+	//GvG
+	if( mapdata_flag_gvg2(mapdata) ) {
+		sd->respawn_tid = add_timer(tick+1000, pc_respawn_timer, sd->id, 0);
+		return 1|8;
+	}
+	else if( sd->bg_id ) {
+		std::shared_ptr<s_battleground_data> bg = util::umap_find(bg_team_db, sd->bg_id);
+
+		if (bg) {
+			if (bg->cemetery.map > 0) { // Respawn by BG
+				sd->respawn_tid = add_timer(tick + 1000, pc_respawn_timer, sd->id, 0);
+				return 1|8;
+			}
+		}
+	}
+
+	//Reset "can log out" tick.
+	if( battle_config.prevent_logout )
+		sd->canlog_tick = gettick() - battle_config.prevent_logout;
+	return 1;
+}
+
+void pc_revive(map_session_data *sd,uint32 hp, uint32 sp, uint32 ap) {
+	if(hp) clif_updatestatus(*sd,SP_HP);
+	if(sp) clif_updatestatus(*sd,SP_SP);
+	if(ap) clif_updatestatus(*sd,SP_AP);
+
+	pc_setstand(sd, true);
+	pc_setinvincibletimer( *sd );
+
+	if (sd->state.gmaster_flag && sd->guild) {
+		guild_guildaura_refresh(sd,GD_LEADERSHIP,guild_checkskill(sd->guild->guild,GD_LEADERSHIP));
+		guild_guildaura_refresh(sd,GD_GLORYWOUNDS,guild_checkskill(sd->guild->guild,GD_GLORYWOUNDS));
+		guild_guildaura_refresh(sd,GD_SOULCOLD,guild_checkskill(sd->guild->guild,GD_SOULCOLD));
+		guild_guildaura_refresh(sd,GD_HAWKEYES,guild_checkskill(sd->guild->guild,GD_HAWKEYES));
+	}
+}
+
+bool pc_revive_item(map_session_data *sd) {
+	nullpo_retr(false, sd);
+
+	if (!pc_isdead(sd) || sd->respawn_tid != INVALID_TIMER)
+		return false;
+
+	if (sd->sc.getSCE(SC_HELLPOWER)) // Cannot resurrect while under the effect of SC_HELLPOWER.
+		return false;
+
+	int16 item_position = itemdb_group.item_exists_pc(sd, IG_TOKEN_OF_SIEGFRIED);
+	uint8 hp = 100, sp = 100;
+
+	if (item_position < 0) {
+		if (sd->sc.getSCE(SC_LIGHT_OF_REGENE)) {
+			hp = sd->sc.getSCE(SC_LIGHT_OF_REGENE)->val2;
+			sp = 0;
+		}
+		else
+			return false;
+	}
+
+	if (!status_revive(sd, hp, sp))
+		return false;
+
+	if (item_position < 0)
+		status_change_end(sd, SC_LIGHT_OF_REGENE);
+	else
+		pc_delitem(sd, item_position, 1, 0, 1, LOG_TYPE_CONSUME);
+
+	clif_skill_nodamage(sd, *sd, ALL_RESURRECTION, 4);
+
+	return true;
+}
+
+// script
+//
+/*==========================================
+ * script reading pc status registry
+ *------------------------------------------*/
+int64 pc_readparam( const map_session_data* sd, int64 type )
+{
+	int64 val = 0;
+
+	nullpo_ret(sd);
+
+	switch(type) {
+		case SP_SKILLPOINT:      val = sd->status.skill_point; break;
+		case SP_STATUSPOINT:     val = sd->status.status_point; break;
+		case SP_TRAITPOINT:      val = sd->status.trait_point; break;
+		case SP_ZENY:            val = sd->status.zeny; break;
+		case SP_BASELEVEL:       val = sd->status.base_level; break;
+		case SP_JOBLEVEL:        val = sd->status.job_level; break;
+		case SP_CLASS:           val = sd->status.class_; break;
+		case SP_BASESECOND:      val = pc_mapid2jobid(sd->class_&MAPID_SECONDMASK, sd->status.sex); break; //Base job, extracting upper type.
+		case SP_UPPER:           val = sd->class_&JOBL_UPPER?1:(sd->class_&JOBL_BABY?2:0); break;
+		case SP_BASEFIRST:       val = pc_mapid2jobid(sd->class_&MAPID_FIRSTMASK, sd->status.sex); break; //Extract base class tree. [Skotlex]
+		case SP_SEX:             val = sd->status.sex; break;
+		case SP_WEIGHT:          val = sd->weight; break;
+		case SP_MAXWEIGHT:       val = sd->max_weight; break;
+		case SP_BASEEXP:         val = u64min(sd->status.base_exp, MAX_EXP); break;
+		case SP_JOBEXP:          val = u64min(sd->status.job_exp, MAX_EXP); break;
+		case SP_NEXTBASEEXP:     val = u64min(pc_nextbaseexp(sd), MAX_EXP); break;
+		case SP_NEXTJOBEXP:      val = u64min(pc_nextjobexp(sd), MAX_EXP); break;
+		case SP_HP:              val = sd->battle_status.hp; break;
+		case SP_MAXHP:           val = sd->battle_status.max_hp; break;
+		case SP_SP:              val = sd->battle_status.sp; break;
+		case SP_MAXSP:           val = sd->battle_status.max_sp; break;
+		case SP_AP:              val = sd->battle_status.ap; break;
+		case SP_MAXAP:           val = sd->battle_status.max_ap; break;
+		case SP_STR:             val = sd->status.str; break;
+		case SP_AGI:             val = sd->status.agi; break;
+		case SP_VIT:             val = sd->status.vit; break;
+		case SP_INT:             val = sd->status.int_; break;
+		case SP_DEX:             val = sd->status.dex; break;
+		case SP_LUK:             val = sd->status.luk; break;
+		case SP_POW:             val = sd->status.pow; break;
+		case SP_STA:             val = sd->status.sta; break;
+		case SP_WIS:             val = sd->status.wis; break;
+		case SP_SPL:             val = sd->status.spl; break;
+		case SP_CON:             val = sd->status.con; break;
+		case SP_CRT:             val = sd->status.crt; break;
+		case SP_KARMA:           val = sd->status.karma; break;
+		case SP_MANNER:          val = sd->status.manner; break;
+		case SP_FAME:            val = sd->status.fame; break;
+		case SP_KILLERRID:       val = sd->killerrid; break;
+		case SP_KILLEDRID:       val = sd->killedrid; break;
+		case SP_KILLEDGID:       val = sd->killedgid; break;
+		case SP_SITTING:         val = pc_issit(sd)?1:0; break;
+		case SP_CHARMOVE:		 val = sd->status.character_moves; break;
+		case SP_CHARRENAME:		 val = sd->status.rename; break;
+		case SP_CHARFONT:		 val = sd->status.font; break;
+		case SP_BANK_VAULT:      val = sd->bank_vault; break;
+		case SP_CASHPOINTS:      val = sd->cashPoints; break;
+		case SP_KAFRAPOINTS:     val = sd->kafraPoints; break;
+		case SP_ROULETTE_BRONZE: val = sd->roulette_point.bronze; break;
+		case SP_ROULETTE_SILVER: val = sd->roulette_point.silver; break;
+		case SP_ROULETTE_GOLD:   val = sd->roulette_point.gold; break;
+		case SP_PCDIECOUNTER:    val = sd->die_counter; break;
+		case SP_COOKMASTERY:     val = sd->cook_mastery; break;
+		case SP_ACHIEVEMENT_LEVEL: val = sd->achievement_data.level; break;
+		case SP_CRITICAL:        val = sd->battle_status.cri/10; break;
+		case SP_ASPD:            val = (AMOTION_ZERO_ASPD-sd->battle_status.amotion)/AMOTION_INTERVAL; break;
+		case SP_BASE_ATK:
+#ifdef RENEWAL
+			val = sd->bonus.eatk;
+#else
+			val = sd->battle_status.batk;
+#endif
+			break;
+		case SP_DEF1:		     val = sd->battle_status.def; break;
+		case SP_DEF2:		     val = sd->battle_status.def2; break;
+		case SP_MDEF1:		     val = sd->battle_status.mdef; break;
+		case SP_MDEF2:		     val = sd->battle_status.mdef2; break;
+		case SP_HIT:		     val = sd->battle_status.hit; break;
+		case SP_FLEE1:		     val = sd->battle_status.flee; break;
+		case SP_FLEE2:		     val = sd->battle_status.flee2; break;
+		case SP_PATK:		     val = sd->battle_status.patk; break;
+		case SP_SMATK:		     val = sd->battle_status.smatk; break;
+		case SP_RES:		     val = sd->battle_status.res; break;
+		case SP_MRES:		     val = sd->battle_status.mres; break;
+		case SP_HPLUS:		     val = sd->battle_status.hplus; break;
+		case SP_CRATE:		     val = sd->battle_status.crate; break;
+		case SP_DEFELE:		     val = sd->battle_status.def_ele; break;
+		case SP_MAXHPRATE:	     val = sd->hprate; break;
+		case SP_MAXSPRATE:	     val = sd->sprate; break;
+		case SP_MAXAPRATE:	     val = sd->aprate; break;
+		case SP_SPRATE:		     val = sd->dsprate; break;
+		case SP_SPEED_RATE:	     val = sd->bonus.speed_rate; break;
+		case SP_SPEED_ADDRATE:   val = sd->bonus.speed_add_rate; break;
+		case SP_ASPD_RATE:
+#ifndef RENEWAL_ASPD
+			val = sd->battle_status.aspd_rate;
+#else
+			val = sd->battle_status.aspd_rate2;
+#endif
+			break;
+		case SP_HP_RECOV_RATE:   val = sd->hprecov_rate; break;
+		case SP_SP_RECOV_RATE:   val = sd->sprecov_rate; break;
+		case SP_CRITICAL_DEF:    val = sd->bonus.critical_def; break;
+		case SP_NEAR_ATK_DEF:    val = sd->bonus.near_attack_def_rate; break;
+		case SP_LONG_ATK_DEF:    val = sd->bonus.long_attack_def_rate; break;
+		case SP_DOUBLE_RATE:     val = sd->bonus.double_rate; break;
+		case SP_DOUBLE_ADD_RATE: val = sd->bonus.double_add_rate; break;
+		case SP_MATK_RATE:       val = sd->matk_rate; break;
+		case SP_ATK_RATE:
+#ifdef RENEWAL
+			val = sd->bonus.atk_rate;
+#else
+			ShowError( "pc_readparam: %s is not supported in Pre-Renewal mode.\n", QUOTE( SP_ATK_RATE ) );
+#endif
+			break;
+		case SP_MAGIC_ATK_DEF:   val = sd->bonus.magic_def_rate; break;
+		case SP_MISC_ATK_DEF:    val = sd->bonus.misc_def_rate; break;
+		case SP_PERFECT_HIT_RATE:val = sd->bonus.perfect_hit; break;
+		case SP_PERFECT_HIT_ADD_RATE: val = sd->bonus.perfect_hit_add; break;
+		case SP_CRITICAL_RATE:   val = sd->critical_rate; break;
+		case SP_HIT_RATE:        val = sd->hit_rate; break;
+		case SP_FLEE_RATE:       val = sd->flee_rate; break;
+		case SP_FLEE2_RATE:      val = sd->flee2_rate; break;
+		case SP_DEF_RATE:        val = sd->def_rate; break;
+		case SP_DEF2_RATE:       val = sd->def2_rate; break;
+		case SP_MDEF_RATE:       val = sd->mdef_rate; break;
+		case SP_MDEF2_RATE:      val = sd->mdef2_rate; break;
+		case SP_PATK_RATE:       val = sd->patk_rate; break;
+		case SP_SMATK_RATE:      val = sd->smatk_rate; break;
+		case SP_RES_RATE:        val = sd->res_rate; break;
+		case SP_MRES_RATE:       val = sd->mres_rate; break;
+		case SP_HPLUS_RATE:      val = sd->hplus_rate; break;
+		case SP_CRATE_RATE:      val = sd->crate_rate; break;
+		case SP_RESTART_FULL_RECOVER: val = sd->special_state.restart_full_recover?1:0; break;
+		case SP_NO_CASTCANCEL:   val = sd->special_state.no_castcancel?1:0; break;
+		case SP_NO_CASTCANCEL2:  val = sd->special_state.no_castcancel2?1:0; break;
+		case SP_NO_SIZEFIX:      val = sd->special_state.no_sizefix?1:0; break;
+		case SP_NO_MAGIC_DAMAGE: val = sd->special_state.no_magic_damage; break;
+		case SP_NO_WEAPON_DAMAGE:val = sd->special_state.no_weapon_damage; break;
+		case SP_NO_MISC_DAMAGE:  val = sd->special_state.no_misc_damage; break;
+		case SP_NO_GEMSTONE:     val = sd->special_state.no_gemstone?1:0; break;
+		case SP_INTRAVISION:     val = sd->special_state.intravision?1:0; break;
+		case SP_NO_KNOCKBACK:    val = sd->special_state.no_knockback?1:0; break;
+		case SP_NO_MADO_FUEL:    val = sd->special_state.no_mado_fuel?1:0; break;
+		case SP_NO_WALK_DELAY:   val = sd->special_state.no_walk_delay?1:0; break;
+		case SP_SPLASH_RANGE:    val = sd->bonus.splash_range; break;
+		case SP_SPLASH_ADD_RANGE:val = sd->bonus.splash_add_range; break;
+		case SP_SHORT_WEAPON_DAMAGE_RETURN: val = sd->bonus.short_weapon_damage_return; break;
+		case SP_LONG_WEAPON_DAMAGE_RETURN: val = sd->bonus.long_weapon_damage_return; break;
+		case SP_MAGIC_DAMAGE_RETURN: val = sd->bonus.magic_damage_return; break;
+		case SP_REDUCE_DAMAGE_RETURN: val = sd->bonus.reduce_damage_return; break;
+		case SP_PERFECT_HIDE:    val = sd->special_state.perfect_hiding?1:0; break;
+		case SP_UNBREAKABLE:     val = sd->bonus.unbreakable; break;
+		case SP_UNBREAKABLE_WEAPON: val = (sd->bonus.unbreakable_equip&EQP_WEAPON)?1:0; break;
+		case SP_UNBREAKABLE_ARMOR: val = (sd->bonus.unbreakable_equip&EQP_ARMOR)?1:0; break;
+		case SP_UNBREAKABLE_HELM: val = (sd->bonus.unbreakable_equip&EQP_HELM)?1:0; break;
+		case SP_UNBREAKABLE_SHIELD: val = (sd->bonus.unbreakable_equip&EQP_SHIELD)?1:0; break;
+		case SP_UNBREAKABLE_GARMENT: val = (sd->bonus.unbreakable_equip&EQP_GARMENT)?1:0; break;
+		case SP_UNBREAKABLE_SHOES: val = (sd->bonus.unbreakable_equip&EQP_SHOES)?1:0; break;
+		case SP_CLASSCHANGE:     val = sd->bonus.classchange; break;
+		case SP_SKILL_RATIO:     val = sd->bonus.skill_ratio; break;
+		case SP_SHORT_ATK_RATE:  val = sd->bonus.short_attack_atk_rate; break;
+		case SP_LONG_ATK_RATE:   val = sd->bonus.long_attack_atk_rate; break;
+		case SP_NON_CRIT_ATK_RATE:  val = sd->bonus.non_crit_atk_rate; break;
+		case SP_BREAK_WEAPON_RATE: val = sd->bonus.break_weapon_rate; break;
+		case SP_BREAK_ARMOR_RATE: val = sd->bonus.break_armor_rate; break;
+		case SP_ADD_STEAL_RATE:  val = sd->bonus.add_steal_rate; break;
+		case SP_DELAYRATE:       val = sd->bonus.delayrate; break;
+		case SP_CRIT_ATK_RATE:   val = sd->bonus.crit_atk_rate; break;
+		case SP_UNSTRIPABLE_WEAPON: val = (sd->bonus.unstripable_equip&EQP_WEAPON)?1:0; break;
+		case SP_UNSTRIPABLE:
+		case SP_UNSTRIPABLE_ARMOR:
+			val = (sd->bonus.unstripable_equip&EQP_ARMOR)?1:0;
+			break;
+		case SP_UNSTRIPABLE_HELM: val = (sd->bonus.unstripable_equip&EQP_HELM)?1:0; break;
+		case SP_UNSTRIPABLE_SHIELD: val = (sd->bonus.unstripable_equip&EQP_SHIELD)?1:0; break;
+		case SP_SP_GAIN_VALUE:   val = sd->bonus.sp_gain_value; break;
+		case SP_HP_GAIN_VALUE:   val = sd->bonus.hp_gain_value; break;
+		case SP_LONG_SP_GAIN_VALUE:   val = sd->bonus.long_sp_gain_value; break;
+		case SP_LONG_HP_GAIN_VALUE:   val = sd->bonus.long_hp_gain_value; break;
+		case SP_MAGIC_SP_GAIN_VALUE: val = sd->bonus.magic_sp_gain_value; break;
+		case SP_MAGIC_HP_GAIN_VALUE: val = sd->bonus.magic_hp_gain_value; break;
+		case SP_ADD_HEAL_RATE:   val = sd->bonus.add_heal_rate; break;
+		case SP_ADD_HEAL2_RATE:  val = sd->bonus.add_heal2_rate; break;
+		case SP_ADD_ITEM_HEAL_RATE: val = sd->bonus.itemhealrate2; break;
+		case SP_EMATK:           val = sd->bonus.ematk; break;
+		case SP_EMATK_HIDDEN:    val = sd->bonus.ematk_hidden; break;
+		case SP_FIXCASTRATE:     val = sd->bonus.fixcastrate; break;
+		case SP_ADD_FIXEDCAST:   val = sd->bonus.add_fixcast; break;
+		case SP_ADD_VARIABLECAST:  val = sd->bonus.add_varcast; break;
+		case SP_CASTRATE:
+		case SP_VARCASTRATE:
+#ifdef RENEWAL_CAST
+			val = sd->bonus.varcastrate; break;
+#else
+			val = sd->castrate; break;
+#endif
+		case SP_CRIT_DEF_RATE: val = sd->bonus.crit_def_rate; break;
+		case SP_ADD_ITEM_SPHEAL_RATE: val = sd->bonus.itemsphealrate2; break;
+		default:
+			ShowError("pc_readparam: Attempt to read unknown parameter '%lld'.\n", type);
+			return -1;
+	}
+
+	return val;
+}
+
+/*==========================================
+ * script set pc status registry
+ *------------------------------------------*/
+bool pc_setparam(map_session_data *sd,int64 type,int64 val_tmp)
+{
+	nullpo_retr(false,sd);
+
+	int32 val = static_cast<uint32>(val_tmp);
+
+	switch(type){
+	case SP_BASELEVEL:
+		if (val > pc_maxbaselv(sd)) //Capping to max
+			val = pc_maxbaselv(sd);
+		if (val > sd->status.base_level) {
+			for( int32 i = 0; i < (int32)( val - sd->status.base_level ); i++ ){
+				sd->status.status_point += statpoint_db.pc_gets_status_point( sd->status.base_level + i );
+				sd->status.trait_point += statpoint_db.pc_gets_trait_point( sd->status.base_level + i );
+			}
+		}
+		sd->status.base_level = val;
+		sd->status.base_exp = 0;
+		// clif_updatestatus(*sd, SP_BASELEVEL);  // Gets updated at the bottom
+		clif_updatestatus(*sd, SP_NEXTBASEEXP);
+		clif_updatestatus(*sd, SP_STATUSPOINT);
+		clif_updatestatus(*sd, SP_TRAITPOINT);
+		clif_updatestatus(*sd, SP_BASEEXP);
+		status_calc_pc(sd, SCO_FORCE);
+		if(sd->status.party_id)
+			party_send_levelup(sd);
+		break;
+	case SP_JOBLEVEL:
+		if (val >= sd->status.job_level) {
+			if (val > pc_maxjoblv(sd)) val = pc_maxjoblv(sd);
+			sd->status.skill_point += val - sd->status.job_level;
+			clif_updatestatus(*sd, SP_SKILLPOINT);
+		}
+		sd->status.job_level = val;
+		sd->status.job_exp = 0;
+		// clif_updatestatus(*sd, SP_JOBLEVEL);  // Gets updated at the bottom
+		clif_updatestatus(*sd, SP_NEXTJOBEXP);
+		clif_updatestatus(*sd, SP_JOBEXP);
+		status_calc_pc(sd, SCO_FORCE);
+		break;
+	case SP_SKILLPOINT:
+		sd->status.skill_point = val;
+		break;
+	case SP_STATUSPOINT:
+		sd->status.status_point = val;
+		break;
+	case SP_TRAITPOINT:
+		sd->status.trait_point = val;
+		break;
+	case SP_ZENY:
+		if( val < 0 )
+			return false;// can't set negative zeny
+		log_zeny(*sd, LOG_TYPE_SCRIPT, sd->status.char_id, -(sd->status.zeny - cap_value(val, 0, MAX_ZENY)));
+		sd->status.zeny = cap_value(val, 0, MAX_ZENY);
+		break;
+	case SP_BASEEXP:
+		val_tmp = cap_value(val_tmp, 0, pc_is_maxbaselv(sd) ? MAX_LEVEL_BASE_EXP : MAX_EXP);
+		if (val_tmp < sd->status.base_exp) // Lost
+			pc_lostexp(sd, sd->status.base_exp - val_tmp, 0);
+		else // Gained
+			pc_gainexp(sd, nullptr, val_tmp - sd->status.base_exp, 0, 2);
+		return true;
+	case SP_JOBEXP:
+		val_tmp = cap_value(val_tmp, 0, pc_is_maxjoblv(sd) ? MAX_LEVEL_JOB_EXP : MAX_EXP);
+		if (val_tmp < sd->status.job_exp) // Lost
+			pc_lostexp(sd, 0, sd->status.job_exp - val_tmp);
+		else // Gained
+			pc_gainexp(sd, nullptr, 0, val_tmp - sd->status.job_exp, 2);
+		return true;
+	case SP_SEX:
+		sd->status.sex = val ? SEX_MALE : SEX_FEMALE;
+		break;
+	case SP_WEIGHT:
+		sd->weight = val;
+		break;
+	case SP_MAXWEIGHT:
+		sd->max_weight = val;
+		break;
+	case SP_HP:
+		sd->battle_status.hp = cap_value(val, 1, (int32)sd->battle_status.max_hp);
+		break;
+	case SP_MAXHP:
+		if (sd->status.base_level < 100)
+			sd->battle_status.max_hp = cap_value(val, 1, battle_config.max_hp_lv99);
+		else if (sd->status.base_level < 151)
+			sd->battle_status.max_hp = cap_value(val, 1, battle_config.max_hp_lv150);
+		else
+			sd->battle_status.max_hp = cap_value(val, 1, battle_config.max_hp);
+
+		if( sd->battle_status.max_hp < sd->battle_status.hp )

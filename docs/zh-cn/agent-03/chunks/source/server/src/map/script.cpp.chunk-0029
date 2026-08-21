@@ -1,0 +1,500 @@
+
+	nd = (TBL_NPC*)map_id2nd(st->oid);
+	if( nd == nullptr ) {
+		ShowError("script:flagemblem: npc %d not found\n", st->oid);
+	} else if( nd->subtype != NPCTYPE_SCRIPT ) {
+		ShowError("script:flagemblem: unexpected subtype %d for npc %d '%s'\n", nd->subtype, st->oid, nd->exname);
+	} else {
+		bool changed = ( nd->u.scr.guild_id != g_id )?true:false;
+		nd->u.scr.guild_id = g_id;
+		clif_guild_emblem_area(nd);
+		/* guild flag caching */
+		if( g_id ) /* adding a id */
+			guild_flag_add(nd);
+		else if( changed ) /* removing a flag */
+			guild_flag_remove(nd);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getcastlename)
+{
+	const char* mapname = mapindex_getmapname(script_getstr(st,2),nullptr);
+	std::shared_ptr<guild_castle> gc = castle_db.mapname2gc(mapname);
+	const char* name = (gc) ? gc->castle_name : "";
+	script_pushstrcopy(st,name);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getcastledata)
+{
+	const char *mapname = mapindex_getmapname(script_getstr(st,2),nullptr);
+	int32 index = script_getnum(st,3);
+	std::shared_ptr<guild_castle> gc = castle_db.mapname2gc(mapname);
+
+	if (gc == nullptr) {
+		script_pushint(st,0);
+		ShowWarning("buildin_getcastledata: guild castle for map '%s' not found\n", mapname);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	switch (index) {
+		case CD_GUILD_ID:
+			script_pushint(st,gc->guild_id); break;
+		case CD_CURRENT_ECONOMY:
+			script_pushint(st,gc->economy); break;
+		case CD_CURRENT_DEFENSE:
+			script_pushint(st,gc->defense); break;
+		case CD_INVESTED_ECONOMY:
+			script_pushint(st,gc->triggerE); break;
+		case CD_INVESTED_DEFENSE:
+			script_pushint(st,gc->triggerD); break;
+		case CD_NEXT_TIME:
+			script_pushint(st,gc->nextTime); break;
+		case CD_PAY_TIME:
+			script_pushint(st,gc->payTime); break;
+		case CD_CREATE_TIME:
+			script_pushint(st,gc->createTime); break;
+		case CD_ENABLED_KAFRA:
+			script_pushint(st,gc->visibleC); break;
+		default:
+			if (index >= CD_ENABLED_GUARDIAN00 && index < CD_MAX) {
+				script_pushint(st,gc->guardian[index - CD_ENABLED_GUARDIAN00].visible);
+				break;
+			}
+			script_pushint(st,0);
+			ShowWarning("buildin_getcastledata: index = '%d' is out of allowed range\n", index);
+			return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(setcastledata)
+{
+	const char *mapname = mapindex_getmapname(script_getstr(st,2),nullptr);
+	int32 index = script_getnum(st,3);
+	int32 value = script_getnum(st,4);
+	std::shared_ptr<guild_castle> gc = castle_db.mapname2gc(mapname);
+
+	if (gc == nullptr) {
+		ShowWarning("buildin_setcastledata: guild castle for map '%s' not found\n", mapname);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (index <= CD_NONE || index >= CD_MAX) {
+		ShowWarning("buildin_setcastledata: index = '%d' is out of allowed range\n", index);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	guild_castledatasave(gc->castle_id, index, value);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/* =====================================================================
+ * ---------------------------------------------------------------------*/
+BUILDIN_FUNC(requestguildinfo)
+{
+	int32 guild_id=script_getnum(st,2);
+	const char *event=nullptr;
+
+	if( script_hasdata(st,3) ){
+		event=script_getstr(st,3);
+		check_event(st, event);
+	}
+
+	if(guild_id>0)
+		guild_npc_request_info(guild_id,event);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the number of cards that have been compounded onto the specified equipped item.
+/// getequipcardcnt(<equipment slot>);
+BUILDIN_FUNC(getequipcardcnt)
+{
+	int32 i=-1,j,num;
+	TBL_PC *sd;
+	int32 count;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	num=script_getnum(st,2);
+	if (equip_index_check(num))
+		i=pc_checkequip(sd,equip_bitmask[num]);
+
+	if (i < 0 || !sd->inventory_data[i]) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if(itemdb_isspecial(sd->inventory.u.items_inventory[i].card[0]))
+	{
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	count = 0;
+	for( j = 0; j < sd->inventory_data[i]->slots; j++ )
+		if( sd->inventory.u.items_inventory[i].card[j] && itemdb_type(sd->inventory.u.items_inventory[i].card[j]) == IT_CARD )
+			count++;
+
+	script_pushint(st,count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Removes all cards from the item found in the specified equipment slot of the invoking character,
+/// and give them to the character. If any cards were removed in this manner, it will also show a success effect.
+/// successremovecards <slot>;
+BUILDIN_FUNC(successremovecards) {
+	int32 i=-1,c,cardflag=0;
+
+	map_session_data* sd;
+	int32 num;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	num = script_getnum(st,2);
+
+	if (equip_index_check(num))
+		i=pc_checkequip(sd,equip_bitmask[num]);
+
+	if (i < 0 || !sd->inventory_data[i]) {
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if(itemdb_isspecial(sd->inventory.u.items_inventory[i].card[0]))
+		return SCRIPT_CMD_SUCCESS;
+
+	for( c = sd->inventory_data[i]->slots - 1; c >= 0; --c ) {
+		if( sd->inventory.u.items_inventory[i].card[c] && itemdb_type(sd->inventory.u.items_inventory[i].card[c]) == IT_CARD ) {// extract this card from the item
+			item item_tmp = {};
+
+			cardflag = 1;
+			item_tmp.nameid   = sd->inventory.u.items_inventory[i].card[c];
+			item_tmp.identify = 1;
+
+			e_additem_result flag = pc_additem( sd, &item_tmp, 1, LOG_TYPE_SCRIPT );
+
+			// get back the card in inventory
+			if( flag != ADDITEM_SUCCESS ){
+				clif_additem(sd,0,0,flag);
+				ShowError( "buildin_successremovecards: Failed to add the item to player.\n" );
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+	}
+
+	// if card was removed, replace item with no card
+	if(cardflag == 1) {
+		item item_tmp = {};
+
+		item_tmp.nameid      = sd->inventory.u.items_inventory[i].nameid;
+		item_tmp.identify    = 1;
+		item_tmp.refine      = sd->inventory.u.items_inventory[i].refine;
+		item_tmp.attribute   = sd->inventory.u.items_inventory[i].attribute;
+		item_tmp.expire_time = sd->inventory.u.items_inventory[i].expire_time;
+		item_tmp.bound       = sd->inventory.u.items_inventory[i].bound;
+		item_tmp.enchantgrade = sd->inventory.u.items_inventory[i].enchantgrade;
+
+		for (int32 j = sd->inventory_data[i]->slots; j < MAX_SLOTS; j++)
+			item_tmp.card[j]=sd->inventory.u.items_inventory[i].card[j];
+		
+		for (int32 j = 0; j < MAX_ITEM_RDM_OPT; j++){
+			item_tmp.option[j].id=sd->inventory.u.items_inventory[i].option[j].id;
+			item_tmp.option[j].value=sd->inventory.u.items_inventory[i].option[j].value;
+			item_tmp.option[j].param=sd->inventory.u.items_inventory[i].option[j].param;
+		}
+
+		pc_delitem(sd,i,1,0,3,LOG_TYPE_SCRIPT);
+
+		e_additem_result flag = pc_additem( sd, &item_tmp, 1, LOG_TYPE_SCRIPT );
+
+		// get back the card in inventory
+		if( flag != ADDITEM_SUCCESS ){
+			clif_additem(sd,0,0,flag);
+			ShowError( "buildin_successremovecards: Failed to add the item to player.\n" );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		clif_misceffect( *sd, NOTIFYEFFECT_REFINE_SUCCESS );
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Removes all cards from the item found in the specified equipment slot of the invoking character.
+/// failedremovecards <slot>, <type>;
+/// <type>=0 : will destroy both the item and the cards.
+/// <type>=1 : will keep the item, but destroy the cards.
+/// <type>=2 : will keep the cards, but destroy the item.
+/// <type>=? : will just display the failure effect.
+BUILDIN_FUNC(failedremovecards) {
+	int32 i=-1,c,cardflag=0;
+
+	map_session_data* sd;
+	int32 num;
+	int32 typefail;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	num = script_getnum(st,2);
+	typefail = script_getnum(st,3);
+
+	if (equip_index_check(num))
+		i=pc_checkequip(sd,equip_bitmask[num]);
+
+	if (i < 0 || !sd->inventory_data[i])
+		return SCRIPT_CMD_SUCCESS;
+
+	if(itemdb_isspecial(sd->inventory.u.items_inventory[i].card[0]))
+		return SCRIPT_CMD_SUCCESS;
+
+	for( c = sd->inventory_data[i]->slots - 1; c >= 0; --c ) {
+		if( sd->inventory.u.items_inventory[i].card[c] && itemdb_type(sd->inventory.u.items_inventory[i].card[c]) == IT_CARD ) {
+			cardflag = 1;
+
+			if(typefail == 2) {// add cards to inventory, clear
+				item item_tmp = {};
+
+				item_tmp.nameid   = sd->inventory.u.items_inventory[i].card[c];
+				item_tmp.identify = 1;
+
+				e_additem_result flag = pc_additem( sd, &item_tmp, 1, LOG_TYPE_SCRIPT );
+
+				if( flag != ADDITEM_SUCCESS ){
+					clif_additem(sd,0,0,flag);
+					ShowError( "failedremovecards: Failed to add the item to player.\n" );
+					return SCRIPT_CMD_FAILURE;
+				}
+			}
+		}
+	}
+
+	if(cardflag == 1) {
+		if(typefail == 0 || typefail == 2){	// destroy the item
+			pc_delitem(sd,i,1,0,2,LOG_TYPE_SCRIPT);
+		}else if(typefail == 1){ // destroy the card
+			item item_tmp = {};
+
+			item_tmp.nameid      = sd->inventory.u.items_inventory[i].nameid;
+			item_tmp.identify    = 1;
+			item_tmp.refine      = sd->inventory.u.items_inventory[i].refine;
+			item_tmp.attribute   = sd->inventory.u.items_inventory[i].attribute;
+			item_tmp.expire_time = sd->inventory.u.items_inventory[i].expire_time;
+			item_tmp.bound       = sd->inventory.u.items_inventory[i].bound;
+			item_tmp.enchantgrade = sd->inventory.u.items_inventory[i].enchantgrade;
+
+			for (int32 j = sd->inventory_data[i]->slots; j < MAX_SLOTS; j++)
+				item_tmp.card[j]=sd->inventory.u.items_inventory[i].card[j];
+			
+			for (int32 j = 0; j < MAX_ITEM_RDM_OPT; j++){
+				item_tmp.option[j].id=sd->inventory.u.items_inventory[i].option[j].id;
+				item_tmp.option[j].value=sd->inventory.u.items_inventory[i].option[j].value;
+				item_tmp.option[j].param=sd->inventory.u.items_inventory[i].option[j].param;
+			}
+
+			pc_delitem(sd,i,1,0,2,LOG_TYPE_SCRIPT);
+
+			e_additem_result flag = pc_additem( sd, &item_tmp, 1, LOG_TYPE_SCRIPT );
+
+			if( flag != ADDITEM_SUCCESS ){
+				clif_additem(sd,0,0,flag);
+				ShowError( "failedremovecards: Failed to add the item to player.\n" );
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+		clif_misceffect( *sd, NOTIFYEFFECT_REFINE_FAILURE );
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/* ================================================================
+ * mapwarp "<from map>","<to map>",<x>,<y>,<type>,<ID for Type>;
+ * type: 0=everyone, 1=guild, 2=party;	[Reddozen]
+ * improved by [Lance]
+ * ================================================================*/
+BUILDIN_FUNC(mapwarp)	// Added by RoVeRT
+{
+	int32 x,y,m,check_val=0,check_ID=0,i=0;
+	std::shared_ptr<MapGuild> g;
+	struct party_data *p = nullptr;
+	const char *str;
+	const char *mapname;
+	uint32 index;
+	mapname=script_getstr(st,2);
+	str=script_getstr(st,3);
+	x=script_getnum(st,4);
+	y=script_getnum(st,5);
+	if(script_hasdata(st,7)){
+		check_val=script_getnum(st,6);
+		check_ID=script_getnum(st,7);
+	}
+
+	if((m=map_mapname2mapid(mapname))< 0)
+		return SCRIPT_CMD_SUCCESS;
+
+	if(!(index=mapindex_name2id(str)))
+		return SCRIPT_CMD_SUCCESS;
+
+	switch(check_val){
+		case 1:
+			g = guild_search(check_ID);
+			if (g){
+				for( i=0; i < g->guild.max_member; i++)
+				{
+					if(g->guild.member[i].sd && g->guild.member[i].sd->m==m){
+						pc_setpos(g->guild.member[i].sd,index,x,y,CLR_TELEPORT);
+					}
+				}
+			}
+			break;
+		case 2:
+			p = party_search(check_ID);
+			if(p){
+				for(i=0;i<MAX_PARTY; i++){
+					if(p->data[i].sd && p->data[i].sd->m == m){
+						pc_setpos(p->data[i].sd,index,x,y,CLR_TELEPORT);
+					}
+				}
+			}
+			break;
+		default:
+			map_foreachinmap(buildin_areawarp_sub,m,BL_PC,index,x,y,0,0);
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+static int32 buildin_mobcount_sub(block_list *bl,va_list ap)	// Added by RoVeRT
+{
+	char *event=va_arg(ap,char *);
+	mob_data *md = ((mob_data *)bl);
+	if( md->status.hp > 0 && (!event || strcmp(event,md->npc_event) == 0) )
+		return 1;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mobcount)	// Added by RoVeRT
+{
+	const char *mapname,*event;
+	int16 m;
+	mapname=script_getstr(st,2);
+	event=script_getstr(st,3);
+
+	if( strcmp(event, "all") == 0 )
+		event = nullptr;
+	else
+		check_event(st, event);
+
+	if( strcmp(mapname, "this") == 0 ) {
+		map_session_data *sd;
+		if( script_rid2sd(sd) )
+			m = sd->m;
+		else {
+			script_pushint(st,-1);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+	else if( (m = map_mapname2mapid(mapname)) < 0 ) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	script_pushint(st,map_foreachinmap(buildin_mobcount_sub, m, BL_MOB, event));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(marriage)
+{
+	TBL_PC *sd;
+	TBL_PC *p_sd;
+
+	if(!script_rid2sd(sd) || !(p_sd=map_nick2sd(script_getstr(st,2),false)) || !pc_marriage(sd,p_sd)){
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(wedding_effect)
+{
+	TBL_PC *sd;
+	block_list *bl;
+
+	if(!script_rid2sd(sd)) {
+		bl=map_id2bl(st->oid);
+	} else
+		bl=sd;
+	clif_wedding_effect( *bl );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * divorce({<char_id>})
+ **/
+BUILDIN_FUNC(divorce)
+{
+	TBL_PC *sd;
+
+	if (!script_charid2sd(2,sd) || !pc_divorce(sd)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * ispartneron({<char_id>})
+ **/
+BUILDIN_FUNC(ispartneron)
+{
+	TBL_PC *sd;
+
+	if (!script_charid2sd(2,sd) || !pc_ismarried(sd) ||
+		map_charid2sd(sd->status.partner_id) == nullptr)
+	{
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * getpartnerid({<char_id>})
+ **/
+BUILDIN_FUNC(getpartnerid)
+{
+	TBL_PC *sd;
+
+	if (!script_charid2sd(2,sd)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st,sd->status.partner_id);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * getchildid({<char_id>})
+ **/
+BUILDIN_FUNC(getchildid)
+{
+	TBL_PC *sd;
+
+	if (!script_charid2sd(2,sd)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st,sd->status.child);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * getmotherid({<char_id>})

@@ -1,0 +1,500 @@
+	// it's the only member left, no need to do anything other than delete the array data
+	if( sa->size == 1 ) {
+		script_array_delete(src,sa);
+		return;
+	}
+
+	sa->members[idx] = UINT_MAX;
+
+	for(i = 0, cursor = 0; i < sa->size; i++) {
+		if( sa->members[i] == UINT_MAX )
+			continue;
+		if( i != cursor )
+			sa->members[cursor] = sa->members[i];
+		cursor++;
+	}
+
+	sa->size = cursor;
+}
+
+/**
+ * Appends a new array index to the list in script_array
+ *
+ * @param idx the index of the array member being inserted
+ **/
+void script_array_add_member(struct script_array *sa, uint32 idx)
+{
+	RECREATE(sa->members, uint32, ++sa->size);
+
+	sa->members[sa->size - 1] = idx;
+}
+
+/**
+ * Obtains the source of the array database for this type and scenario
+ * Initializes such database when not yet initialized.
+ **/
+struct reg_db *script_array_src(struct script_state *st, map_session_data *sd, const char *name, struct reg_db *ref)
+{
+	struct reg_db *src = nullptr;
+
+	switch( name[0] ) {
+		// from player
+		default:  // char reg
+		case '@': // temp char reg
+		case '#': // account reg
+			src = &sd->regs;
+			break;
+		case '$': // map reg
+			src = &regs;
+			break;
+		case '.': // npc/script
+			if (ref)
+				src = ref;
+			else
+				src = (name[1] == '@') ? &st->stack->scope : &st->script->local;
+			break;
+		case '\'': // instance
+			{
+				if (ref)
+					src = ref;
+				else {
+					std::shared_ptr<s_instance_data> idata = util::umap_find(instances, script_instancegetid(st));
+
+					if (idata)
+						src = &idata->regs;
+				}
+				break;
+			}
+	}
+
+	if( src ) {
+		if( !src->arrays )
+			src->arrays = idb_alloc(DB_OPT_BASE);
+		return src;
+	}
+
+	return nullptr;
+}
+
+/**
+ * Processes a array member modification, and update data accordingly
+ *
+ * @param src[in,out] Variable source database. If the array database doesn't exist, it is created.
+ * @param num[in]     Variable ID
+ * @param empty[in]   Whether the modified member is empty (needs to be removed)
+ **/
+void script_array_update(struct reg_db *src, int64 num, bool empty)
+{
+	struct script_array *sa = nullptr;
+	int32 id = script_getvarid(num);
+	uint32 index = script_getvaridx(num);
+
+	if (!src->arrays) {
+		src->arrays = idb_alloc(DB_OPT_BASE);
+	} else {
+		sa = static_cast<script_array *>(idb_get(src->arrays, id));
+	}
+
+	if( sa ) {
+		uint32 i;
+
+		// search
+		for(i = 0; i < sa->size; i++) {
+			if( sa->members[i] == index )
+				break;
+		}
+
+		// if existent
+		if( i != sa->size ) {
+			// if empty, we gotta remove it
+			if( empty ) {
+				script_array_remove_member(src, sa, i);
+			}
+		} else if( !empty ) { /* new entry */
+			script_array_add_member(sa,index);
+			// we do nothing if its empty, no point in modifying array data for a new empty member
+		}
+	} else if ( !empty ) { // we only move to create if not empty
+		sa = ers_alloc(array_ers, struct script_array);
+		sa->id = id;
+		sa->members = nullptr;
+		sa->size = 0;
+		script_array_add_member(sa,index);
+		idb_put(src->arrays, id, sa);
+	}
+}
+
+/**
+ * Stores the value of a script variable
+ *
+ * @param st:    current script state.
+ * @param sd:    current character data.
+ * @param num:   variable identifier.
+ * @param name:  variable name.
+ * @param value: new value.
+ * @param ref:   variable container, in case of a npc/scope variable reference outside the current scope.
+ * @return: 0 failure, 1 success.
+ *
+ * TODO: return values are screwed up, have been for some time (reaad: years), e.g. some functions return 1 failure and success.
+ *------------------------------------------*/
+bool set_reg_str( struct script_state* st, map_session_data* sd, int64 num, const char* name, const char* value, struct reg_db *ref ){
+	char prefix = name[0];
+	size_t vlen = 0;
+
+	if( !script_check_RegistryVariableLength( 0, name, &vlen ) ){
+		ShowError( "set_reg: Variable name length is too long (aid: %d, cid: %d): '%s' sz=%" PRIuPTR "\n", sd ? sd->status.account_id : -1, sd ? sd->status.char_id : -1, name, vlen );
+		return false;
+	}
+
+	if( !is_string_variable( name ) ){
+		// integer variable
+		return false;
+	}
+
+	switch( prefix ){
+		case '@':
+			pc_setregstr( sd, num, value );
+			return true;
+		case '$':
+			return mapreg_setregstr( num, value );
+		case '#':
+			return ( name[1] == '#' ) ? pc_setaccountreg2str( sd, num, value ) : pc_setaccountregstr( sd, num, value );
+		case '.': {
+				struct reg_db *n = ( ref ) ? ref : ( name[1] == '@' ) ? &st->stack->scope : &st->script->local;
+
+				if( n ){
+					if( value[0] ){
+						i64db_put( n->vars, num, aStrdup( value ) );
+
+						if( script_getvaridx( num ) ){
+							script_array_update( n, num, false );
+						}
+					}else{
+						i64db_remove( n->vars, num );
+
+						if( script_getvaridx( num ) ){
+							script_array_update( n, num, true );
+						}
+					}
+				}
+			}
+			return true;
+		case '\'': {
+				struct reg_db *src = nullptr;
+
+				if( ref ){
+					src = ref;
+				}else{
+					std::shared_ptr<s_instance_data> idata = util::umap_find(instances, script_instancegetid(st));
+
+					if (idata)
+						src = &idata->regs;
+				}
+
+				if( src ){
+					bool empty;
+
+					if( value[0] ){
+						i64db_put( src->vars, num, aStrdup( value ) );
+						empty = false;
+					}else{
+						i64db_remove( src->vars, num );
+						empty = true;
+					}
+
+					if( script_getvaridx( num ) != 0 ){
+						script_array_update( src, num, empty );
+					}
+				}else{
+					ShowError( "script_set_reg: cannot write instance variable '%s', NPC not in a instance!\n", name );
+					script_reportsrc( st );
+				}
+
+				return true;
+			}
+		default:
+			return pc_setglobalreg_str( sd, num, value );
+	}
+}
+
+bool set_reg_num( struct script_state* st, map_session_data* sd, int64 num, const char* name, int64 value, struct reg_db *ref ){
+	char prefix = name[0];
+	size_t vlen = 0;
+
+	if( !script_check_RegistryVariableLength( 0, name, &vlen ) ){
+		ShowError( "set_reg: Variable name length is too long (aid: %d, cid: %d): '%s' sz=%" PRIuPTR "\n", sd ? sd->status.account_id : -1, sd ? sd->status.char_id : -1, name, vlen );
+		return false;
+	}
+
+	if( is_string_variable( name ) ){
+		// string variable
+		return false;
+	}
+
+	if( str_data[script_getvarid(num)].type == C_PARAM ){
+		if( pc_setparam( sd, str_data[script_getvarid(num)].val, value ) == 0 ){
+			if( st != nullptr ) {
+				ShowError( "script_set_reg: failed to set param '%s' to %" PRId64 ".\n", name, value );
+				script_reportsrc( st );
+				st->state = END;
+			}
+
+			return false;
+		}
+
+		return true;
+	}
+
+	switch( prefix ){
+		case '@':
+			pc_setreg( sd, num, value );
+			return true;
+		case '$':
+			return mapreg_setreg( num, value );
+		case '#':
+			return ( name[1] == '#' ) ? pc_setaccountreg2(sd, num, value) :	pc_setaccountreg( sd, num, value );
+		case '.': {
+				struct reg_db *n = ( ref ) ? ref : ( name[1] == '@' ) ? &st->stack->scope : &st->script->local;
+
+				if( n ){
+					if( value != 0 ){
+						i64db_i64put( n->vars, num, value );
+
+						if( script_getvaridx( num ) ){
+							script_array_update( n, num, false );
+						}
+					}else{
+						i64db_remove( n->vars, num );
+
+						if( script_getvaridx( num ) ){
+							script_array_update( n, num, true );
+						}
+					}
+				}
+			}
+			return true;
+		case '\'': {
+				struct reg_db *src = nullptr;
+
+				if( ref ){
+					src = ref;
+				}else{
+					std::shared_ptr<s_instance_data> idata = util::umap_find(instances, script_instancegetid(st));
+
+					if (idata)
+						src = &idata->regs;
+				}
+
+				if( src ){
+					bool empty;
+
+					if( value != 0 ){
+						i64db_i64put( src->vars, num, value );
+						empty = false;
+					}else{
+						i64db_remove( src->vars, num );
+						empty = true;
+					}
+
+					if( script_getvaridx( num ) != 0 ){
+						script_array_update( src, num, empty );
+					}
+				}else{
+					ShowError( "script_set_reg: cannot write instance variable '%s', NPC not in a instance!\n", name );
+					script_reportsrc( st );
+				}
+
+				return true;
+			}
+		default:
+			return pc_setglobalreg( sd, num, value );
+	}
+}
+
+bool set_var_str( map_session_data* sd, const char* name, const char* val ){
+	return set_reg_str( nullptr, sd, reference_uid( add_str( name ), 0 ), name, val, nullptr );
+}
+
+bool clear_reg( struct script_state* st, map_session_data* sd, int64 num, const char* name, struct reg_db *ref ){
+	if( is_string_variable( name ) ){
+		return set_reg_str( st, sd, num, name, "", ref );
+	}else{
+		return set_reg_num( st, sd, num, name, 0, ref );
+	}
+}
+
+void setd_sub_num( struct script_state* st, map_session_data* sd, const char* varname, int32 elem, int64 value, struct reg_db* ref ){
+	set_reg_num( st, sd, reference_uid( add_str( varname ), elem ), varname, value, ref );
+}
+
+void setd_sub_str( struct script_state* st, map_session_data* sd, const char* varname, int32 elem, const char* value, struct reg_db* ref ){
+	set_reg_str( st, sd, reference_uid( add_str( varname ), elem ), varname, value, ref );
+}
+
+/**
+ * Converts the data to a string
+ * @param st
+ * @param data
+ * @param sd
+ */
+const char* conv_str_(struct script_state* st, struct script_data* data, map_session_data *sd)
+{
+	char* p;
+
+	get_val_(st, data, sd);
+	if( data_isstring(data) )
+	{// nothing to convert
+	}
+	else if( data_isint(data) )
+	{// int32 -> string
+		CREATE(p, char, ITEM_NAME_LENGTH);
+		snprintf(p, ITEM_NAME_LENGTH, "%" PRId64 "", data->u.num);
+		p[ITEM_NAME_LENGTH-1] = '\0';
+		data->type = C_STR;
+		data->u.str = p;
+	}
+	else if( data_isreference(data) )
+	{// reference -> string
+		//##TODO when does this happen (check get_val) [FlavioJS] -- at getd!!
+		data->type = C_CONSTSTR;
+		data->u.str = reference_getname(data);
+	}
+	else
+	{// unsupported data type
+		ShowError("script:conv_str: cannot convert to string, defaulting to \"\"\n");
+		script_reportdata(data);
+		script_reportsrc(st);
+		data->type = C_CONSTSTR;
+		data->u.str = const_cast<char *>("");
+	}
+	return data->u.str;
+}
+
+const char* conv_str(struct script_state* st, struct script_data* data)
+{
+	return conv_str_(st, data, nullptr);
+}
+
+/**
+ * Converts the data to an int32
+ * @param st
+ * @param data
+ * @param sd
+ */
+int64 conv_num_(struct script_state* st, struct script_data* data, map_session_data *sd)
+{
+	get_val_(st, data, sd);
+	if( data_isint(data) )
+	{// nothing to convert
+	}
+	else if( data_isstring(data) )
+	{// string -> int32
+		// the result does not overflow or underflow, it is capped instead
+		// ex: 999999999999 is capped to INT_MAX (2147483647)
+		char* p = data->u.str;
+		int64 num;
+		bool error;
+
+		errno = 0;
+		num = strtoll(data->u.str, nullptr, 10);// change radix to 0 to support octal numbers "o377" and hex numbers "0xFF"
+		error = (errno == ERANGE);
+
+		if( num < SCRIPT_INT_MIN || ( error && num == INT64_MIN ) ){
+			num = SCRIPT_INT_MIN;
+			ShowError( "script:conv_num: underflow detected, capping value to %" PRId64 "", SCRIPT_INT_MIN );
+			script_reportdata(data);
+			script_reportsrc(st);
+		}else if( num > SCRIPT_INT_MAX || ( error && num == INT64_MAX ) ){
+			num = SCRIPT_INT_MAX;
+			ShowError( "script:conv_num: overflow detected, capping value to %" PRId64 "", SCRIPT_INT_MAX );
+			script_reportdata(data);
+			script_reportsrc(st);
+		}
+
+		if( data->type == C_STR )
+			aFree(p);
+		data->type = C_INT;
+		data->u.num = num;
+	}
+#if 0
+	// FIXME this function is being used to retrieve the position of labels and
+	// probably other stuff [FlavioJS]
+	else
+	{// unsupported data type
+		ShowError("script:conv_num: cannot convert to number, defaulting to 0\n");
+		script_reportdata(data);
+		script_reportsrc(st);
+		data->type = C_INT;
+		data->u.num = 0;
+	}
+#endif
+	return data->u.num;
+}
+
+int64 conv_num64(struct script_state* st, struct script_data* data)
+{
+	return conv_num_(st, data, nullptr);
+}
+
+int32 conv_num(struct script_state* st, struct script_data* data)
+{
+	return static_cast<int32>(conv_num_(st, data, nullptr));
+}
+
+//
+// Stack operations
+//
+
+/// Increases the size of the stack
+void stack_expand(struct script_stack* stack)
+{
+	stack->sp_max += 64;
+	stack->stack_data = (struct script_data*)aRealloc(stack->stack_data,
+			stack->sp_max * sizeof(stack->stack_data[0]) );
+	memset(stack->stack_data + (stack->sp_max - 64), 0,
+			64 * sizeof(stack->stack_data[0]) );
+}
+
+/// Pushes a value into the stack
+#define push_val(stack,type,val) push_val2(stack, type, val, nullptr)
+
+/// Pushes a value into the stack (with reference)
+struct script_data* push_val2(struct script_stack* stack, enum c_op type, int64 val, struct reg_db *ref)
+{
+	if( stack->sp >= stack->sp_max )
+		stack_expand(stack);
+	stack->stack_data[stack->sp].type  = type;
+	stack->stack_data[stack->sp].u.num = val;
+	stack->stack_data[stack->sp].ref   = ref;
+	stack->sp++;
+	return &stack->stack_data[stack->sp-1];
+}
+
+/// Pushes a string into the stack
+struct script_data* push_str(struct script_stack* stack, enum c_op type, char* str)
+{
+	if( stack->sp >= stack->sp_max )
+		stack_expand(stack);
+	stack->stack_data[stack->sp].type  = type;
+	stack->stack_data[stack->sp].u.str = str;
+	stack->stack_data[stack->sp].ref   = nullptr;
+	stack->sp++;
+	return &stack->stack_data[stack->sp-1];
+}
+
+/// Pushes a retinfo into the stack
+struct script_data* push_retinfo(struct script_stack* stack, struct script_retinfo* ri, struct reg_db *ref)
+{
+	if( stack->sp >= stack->sp_max )
+		stack_expand(stack);
+	stack->stack_data[stack->sp].type = C_RETINFO;
+	stack->stack_data[stack->sp].u.ri = ri;
+	stack->stack_data[stack->sp].ref  = ref;
+	stack->sp++;
+	return &stack->stack_data[stack->sp-1];
+}
+
+/// Pushes a copy of the target position into the stack
+struct script_data* push_copy(struct script_stack* stack, int32 pos)
+{
+	switch( stack->stack_data[pos].type ) {

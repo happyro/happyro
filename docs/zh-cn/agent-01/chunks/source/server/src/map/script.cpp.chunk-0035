@@ -1,0 +1,500 @@
+	}
+
+	id->flag.autoequip = flag>0?1:0;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Set the value of a given battle config
+ * setbattleflag "<battle flag>",<value>{,<reload>};
+ */
+BUILDIN_FUNC(setbattleflag)
+{
+	const char *flag, *value;
+
+	flag = script_getstr(st,2);
+	value = script_getstr(st,3);  // HACK: Retrieve number as string (auto-converted) for battle_set_value
+
+	if (battle_set_value(flag, value) == 0)
+		ShowWarning("buildin_setbattleflag: unknown battle_config flag '%s'\n",flag);
+	else {
+		ShowInfo("buildin_setbattleflag: battle_config flag '%s' is now set to '%s'.\n",flag,value);
+
+		if (script_hasdata(st, 4) && script_getnum(st, 4)) { // Only attempt to reload monster data if told to
+			const char *expdrop_flags[] = { // Only certain flags require a reload, check for those types
+				"base_exp_rate", "job_exp_rate", "mvp_exp_rate", "quest_exp_rate", "heal_exp", "resurrection_exp",
+				"item_rate_common", "item_rate_common_boss", "item_rate_common_mvp", "item_drop_common_min", "item_drop_common_max",
+				"item_rate_heal", "item_rate_heal_boss", "item_rate_heal_mvp", "item_rate_heal_min", "item_rate_heal_max",
+				"item_rate_use", "item_rate_use_boss", "item_rate_use_mvp", "item_rate_use_min", "item_rate_use_max",
+				"item_rate_equip", "item_rate_equip_boss", "item_rate_equip_mvp", "item_rate_equip_min", "item_rate_equip_max",
+				"item_rate_card", "item_rate_card_boss", "item_rate_card_mvp", "item_rate_card_min", "item_rate_card_max",
+				"item_rate_mvp", "item_rate_mvp_min", "item_rate_mvp_max", "item_rate_mvp_mode",
+				"item_rate_treasure", "item_rate_treasure_min", "item_rate_treasure_max",
+				"item_logarithmic_drops", "drop_rate0item", "drop_rateincrease",
+			};
+			uint8 i;
+
+			for (i = 0; i < ARRAYLENGTH(expdrop_flags); i++) {
+				if (!strcmpi(flag, expdrop_flags[i])) {
+					mob_reload();
+					break;
+				}
+			}
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Get the value of a given battle config
+ * getbattleflag("<battle flag>")
+ */
+BUILDIN_FUNC(getbattleflag)
+{
+	const char *flag = script_getstr(st,2);
+
+	script_pushint(st,battle_get_value(flag));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// strlen [Valaris]
+//-------------------------------------------------------
+BUILDIN_FUNC(getstrlen)
+{
+
+	const char *str = script_getstr(st,2);
+	int32 len = (str) ? (int32)strlen(str) : 0;
+
+	script_pushint(st,len);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// isalpha [Valaris]
+//-------------------------------------------------------
+BUILDIN_FUNC(charisalpha)
+{
+	const char *str=script_getstr(st,2);
+	int32 pos=script_getnum(st,3);
+
+	int32 val = ( str && pos >= 0 && (uint32)pos < strlen(str) ) ? ISALPHA( str[pos] ) != 0 : 0;
+
+	script_pushint(st,val);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// charisupper <str>, <index>
+//-------------------------------------------------------
+BUILDIN_FUNC(charisupper)
+{
+	const char *str = script_getstr(st,2);
+	int32 pos = script_getnum(st,3);
+
+	int32 val = ( str && pos >= 0 && (uint32)pos < strlen(str) ) ? ISUPPER( str[pos] ) : 0;
+
+	script_pushint(st,val);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// charislower <str>, <index>
+//-------------------------------------------------------
+BUILDIN_FUNC(charislower)
+{
+	const char *str = script_getstr(st,2);
+	int32 pos = script_getnum(st,3);
+
+	int32 val = ( str && pos >= 0 && (uint32)pos < strlen(str) ) ? ISLOWER( str[pos] ) : 0;
+
+	script_pushint(st,val);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// charat <str>, <index>
+//-------------------------------------------------------
+BUILDIN_FUNC(charat) {
+	const char *str = script_getstr(st,2);
+	int32 pos = script_getnum(st,3);
+
+	if( pos >= 0 && (uint32)pos < strlen(str) ) {
+		char output[2];
+		output[0] = str[pos];
+		output[1] = '\0';
+		script_pushstrcopy(st, output);
+	} else
+		script_pushconststr(st, "");
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// setchar <string>, <char>, <index>
+//-------------------------------------------------------
+BUILDIN_FUNC(setchar)
+{
+	const char *str = script_getstr(st,2);
+	const char *c = script_getstr(st,3);
+	int32 index = script_getnum(st,4);
+	char *output = aStrdup(str);
+
+	if(index >= 0 && index < strlen(output))
+		output[index] = *c;
+
+	script_pushstr(st, output);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// insertchar <string>, <char>, <index>
+//-------------------------------------------------------
+BUILDIN_FUNC(insertchar)
+{
+	const char *str = script_getstr(st,2);
+	const char *c = script_getstr(st,3);
+	size_t index = script_getnum( st, 4 );
+	char *output;
+	size_t len = strlen(str);
+
+	if(index < 0)
+		index = 0;
+	else if(index > len)
+		index = len;
+
+	output = (char*)aMalloc(len + 2);
+
+	memcpy(output, str, index);
+	output[index] = c[0];
+	memcpy(&output[index+1], &str[index], len - index);
+	output[len+1] = '\0';
+
+	script_pushstr(st, output);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// delchar <string>, <index>
+//-------------------------------------------------------
+BUILDIN_FUNC(delchar)
+{
+	const char *str = script_getstr(st,2);
+	int32 index = script_getnum(st,3);
+	char *output;
+	size_t len = strlen(str);
+
+	if(index < 0 || index > len) {
+		//return original
+		output = aStrdup(str);
+		script_pushstr(st, output);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	output = (char*)aMalloc(len);
+
+	memcpy(output, str, index);
+	memcpy(&output[index], &str[index+1], len - index);
+
+	script_pushstr(st, output);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// strtoupper <str>
+//-------------------------------------------------------
+BUILDIN_FUNC(strtoupper)
+{
+	const char *str = script_getstr(st,2);
+	char *output = aStrdup(str);
+	char *cursor = output;
+
+	while (*cursor != '\0') {
+		*cursor = TOUPPER(*cursor);
+		cursor++;
+	}
+
+	script_pushstr(st, output);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// strtolower <str>
+//-------------------------------------------------------
+BUILDIN_FUNC(strtolower)
+{
+	const char *str = script_getstr(st,2);
+	char *output = aStrdup(str);
+	char *cursor = output;
+
+	while (*cursor != '\0') {
+		*cursor = TOLOWER(*cursor);
+		cursor++;
+	}
+
+	script_pushstr(st, output);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// substr <str>, <start>, <end>
+//-------------------------------------------------------
+BUILDIN_FUNC(substr)
+{
+	const char *str = script_getstr(st,2);
+	char *output;
+	int32 start = script_getnum(st,3);
+	int32 end = script_getnum(st,4);
+	int32 len = 0;
+
+	if(start >= 0 && end < strlen(str) && start <= end) {
+		len = end - start + 1;
+		output = (char*)aMalloc(len + 1);
+		memcpy(output, &str[start], len);
+	} else
+		output = (char*)aMalloc(1);
+
+	output[len] = '\0';
+
+	script_pushstr(st, output);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// explode <dest_string_array>, <str>, <delimiter>
+// Note: delimiter is limited to 1 char
+//-------------------------------------------------------
+BUILDIN_FUNC(explode)
+{
+	struct script_data* data = script_getdata(st, 2);
+	const char *str = script_getstr(st,3);
+	const char delimiter = script_getstr(st, 4)[0];
+	int32 id;
+	size_t len = strlen(str);
+	int32 i = 0, j = 0;
+	int32 start;
+	char *temp;
+	const char* name;
+	TBL_PC* sd = nullptr;
+
+	temp = (char*)aMalloc(len + 1);
+
+	if( !data_isreference(data) ) {
+		ShowError("script:explode: not a variable\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	id = reference_getid(data);
+	start = reference_getindex(data);
+	name = reference_getname(data);
+
+	if( !is_string_variable(name) ) {
+		ShowError("script:explode: not string array\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// data type mismatch
+	}
+
+	if( not_server_variable(*name) ) {
+		if( !script_rid2sd(sd) )
+			return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	while(str[i] != '\0') {
+		if(str[i] == delimiter && start < SCRIPT_MAX_ARRAYSIZE-1) { //break at delimiter but ignore after reaching last array index
+			temp[j] = '\0';
+			set_reg_str( st, sd, reference_uid( id, start++ ), name, temp, reference_getref( data ) );
+			j = 0;
+			++i;
+		} else {
+			temp[j++] = str[i++];
+		}
+	}
+
+	//set last string
+	temp[j] = '\0';
+	set_reg_str( st, sd, reference_uid( id, start ), name, temp, reference_getref( data ) );
+
+	aFree(temp);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// implode <string_array>
+// implode <string_array>, <glue>
+//-------------------------------------------------------
+BUILDIN_FUNC(implode)
+{
+	struct script_data* data = script_getdata(st, 2);
+
+	if( !data_isreference(data) ) {
+		ShowError("script:implode: not a variable\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	uint32 id = reference_getid( data );
+	const char* name = reference_getname( data );
+
+	if( !is_string_variable(name) ) {
+		ShowError("script:implode: not string array\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// data type mismatch
+	}
+	
+	map_session_data* sd = nullptr;
+
+	if( not_server_variable(*name) && !script_rid2sd(sd) ) {
+		return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	//count chars
+	const uint32 array_size = script_array_highest_key( st, sd, name, reference_getref( data ) );
+
+	if(array_size == 0) {
+		ShowWarning("script:implode: array length = 0\n");
+		script_pushstrcopy( st, "NULL" );
+	} else {
+		const char *glue = nullptr, *temp;
+		size_t len = 0, glue_len = 0, k = 0;
+
+		for( uint32 i = 0; i < array_size; ++i ){
+			temp = get_val2_str( st, reference_uid( id, i ), reference_getref( data ) );
+			len += strlen(temp);
+			// Remove stack entry from get_val2_str
+			script_removetop( st, -1, 0 );
+		}
+
+		//allocate mem
+		if( script_hasdata(st,3) ) {
+			glue = script_getstr(st,3);
+			glue_len = strlen(glue);
+			len += glue_len * (size_t)( array_size - 1 );
+		}
+
+		char* output = (char*)aMalloc( len + 1 );
+
+		//build output
+		for( uint32 i = 0; i < array_size - 1; ++i ){
+			temp = get_val2_str( st, reference_uid( id, i ), reference_getref( data ) );
+			len = strlen(temp);
+			memcpy(&output[k], temp, len);
+			k += len;
+			// Remove stack entry from get_val2_str
+			script_removetop( st, -1, 0 );
+
+			if(glue_len != 0) {
+				memcpy(&output[k], glue, glue_len);
+				k += glue_len;
+			}
+		}
+
+		temp = get_val2_str( st, reference_uid( id, array_size - 1), reference_getref( data ) );
+		len = strlen(temp);
+		memcpy(&output[k], temp, len);
+		k += len;
+		output[k] = '\0';
+		// Remove stack entry from get_val2_str
+		script_removetop( st, -1, 0 );
+
+		script_pushstr( st, output );
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// sprintf(<format>, ...);
+// Implements C sprintf, except format %n. The resulting string is
+// returned, instead of being saved in variable by reference.
+//-------------------------------------------------------
+BUILDIN_FUNC(sprintf)
+{
+	uint32 argc = 0, arg = 0;
+	size_t buf2_len = 0;
+	const char* format;
+	char* p;
+	char* q;
+	char* buf  = nullptr;
+	char* buf2 = nullptr;
+	struct script_data* data;
+	StringBuf final_buf;
+
+	// Fetch init data
+	format = script_getstr(st, 2);
+	argc = script_lastdata(st)-2;
+	size_t len = strlen( format );
+
+	// Skip parsing, where no parsing is required.
+	if(len == 0) {
+		script_pushconststr(st,"");
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	// Pessimistic alloc
+	CREATE(buf, char, len+1);
+
+	// Need not be parsed, just solve stuff like %%.
+	if(argc == 0) {
+		memcpy(buf,format,len+1);
+		script_pushstrcopy(st, buf);
+		aFree(buf);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	safestrncpy(buf, format, len+1);
+
+	// Issue sprintf for each parameter
+	StringBuf_Init(&final_buf);
+	q = buf;
+	while((p = strchr(q, '%')) != nullptr) {
+		if(p != q) {
+			len = p - q + 1;
+
+			if(buf2_len < len) {
+				RECREATE(buf2, char, len);
+				buf2_len = len;
+			}
+
+			safestrncpy(buf2, q, len);
+			StringBuf_AppendStr(&final_buf, buf2);
+			q = p;
+		}
+
+		p = q + 1;
+
+		if(*p == '%') {  // %%
+			StringBuf_AppendStr(&final_buf, "%");
+			q+=2;
+			continue;
+		}
+
+		if(*p == 'n') {  // %n
+			ShowWarning("buildin_sprintf: Format %%n not supported! Skipping...\n");
+			script_reportsrc(st);
+			q+=2;
+			continue;
+		}
+
+		if(arg >= argc) {
+			ShowError("buildin_sprintf: Not enough arguments passed!\n");
+			if(buf) aFree(buf);
+			if(buf2) aFree(buf2);
+			script_pushconststr(st,"");
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if((p = strchr(q+1, '%')) == nullptr)
+			p = strchr(q, 0);  // EOS
+
+		len = p - q + 1;
+
+		if(buf2_len < len) {
+			RECREATE(buf2, char, len);
+			buf2_len = len;
+		}
+

@@ -1,0 +1,500 @@
+	map_session_data* sd;
+	int32 guild_id;
+
+	if (!script_rid2sd(sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st, 2))
+		guild_id = script_getnum(st, 2);
+	else
+		guild_id = sd->status.guild_id;
+
+	auto guild_data = guild_search(guild_id);
+	if (guild_data)
+		script_pushint(st, (guild_data->guild.member[0].char_id == sd->status.char_id));
+	else
+		script_pushint(st, false);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(is_party_leader)
+{
+	map_session_data* sd;
+	struct party_data* p_data;
+	int32 p_id, i = 0;
+
+	if (!script_rid2sd(sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st, 2))
+		p_id = script_getnum(st, 2);
+	else
+		p_id = sd->status.party_id;
+
+	p_data = party_search(p_id);
+	if (p_data) {
+		ARR_FIND( 0, MAX_PARTY, i, p_data->data[i].sd == sd );
+		if (i < MAX_PARTY){
+			script_pushint(st, p_data->party.member[i].leader);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+	script_pushint(st, false);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC( camerainfo ){
+#if PACKETVER < 20160525
+	ShowError("buildin_camerainfo: This command requires PACKETVER 2016-05-25 or newer.\n");
+	return SCRIPT_CMD_FAILURE;
+#else
+	map_session_data* sd;
+
+	if( !script_charid2sd( 5, sd ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_camerainfo( sd, false, script_getnum( st, 2 ) / 100.0f, script_getnum( st, 3 ) / 100.0f, script_getnum( st, 4 ) / 100.0f );
+
+	return SCRIPT_CMD_SUCCESS;
+#endif
+}
+
+// This function is only meant to be used inside of achievement conditions
+BUILDIN_FUNC(achievement_condition){
+	// Push what we get from the script
+	script_pushint( st, 2 );
+
+	// Otherwise the script is freed afterwards
+	st->state = RERUNLINE;
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns a reference to a variable of the specific instance ID.
+/// Returns 0 if an error occurs.
+///
+/// getinstancevar(<variable>, <instance ID>) -> <reference>
+BUILDIN_FUNC(getinstancevar)
+{
+	struct script_data* data = script_getdata(st, 2);
+
+	if (!data_isreference(data)) {
+		ShowError("buildin_getinstancevar: %s is not a variable.\n", script_getstr(st, 2));
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	const char* name = reference_getname(data);
+
+	if (*name != '\'') {
+		ShowError("buildin_getinstancevar: Invalid scope. %s is not an instance variable.\n", name);
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 instance_id = script_getnum(st, 3);
+
+	if (instance_id <= 0) {
+		ShowError("buildin_getinstancevar: Invalid instance ID %d.\n", instance_id);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	std::shared_ptr<s_instance_data> im = util::umap_find(instances, instance_id);
+
+	if (im->state != INSTANCE_BUSY) {
+		ShowError("buildin_getinstancevar: Unknown instance ID %d.\n", instance_id);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!im->regs.vars)
+		im->regs.vars = i64db_alloc(DB_OPT_RELEASE_DATA);
+
+	push_val2(st->stack, C_NAME, reference_getuid(data), &im->regs);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets the value of an instance variable.
+///
+/// setinstancevar(<variable>,<value>,<instance ID>)
+BUILDIN_FUNC(setinstancevar)
+{
+	const char *command = script_getfuncname(st);
+	struct script_data* data = script_getdata(st, 2);
+
+	if (!data_isreference(data)) {
+		ShowError("buildin_%s: %s is not a variable.\n", command, script_getstr(st, 2));
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	const char* name = reference_getname(data);
+
+	if (*name != '\'') {
+		ShowError("buildin_%s: Invalid scope. %s is not an instance variable.\n", command, name);
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 instance_id = script_getnum(st, 4);
+
+	if (instance_id <= 0) {
+		ShowError("buildin_%s: Invalid instance ID %d.\n", command, instance_id);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	std::shared_ptr<s_instance_data> im = util::umap_find(instances, instance_id);
+
+	if (im->state != INSTANCE_BUSY) {
+		ShowError("buildin_%s: Unknown instance ID %d.\n", command, instance_id);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushcopy(st, 2);
+
+	map_session_data* sd = nullptr;
+
+	if( is_string_variable(name) )
+		set_reg_str( st, sd, reference_getuid(data), name, script_getstr( st, 3 ), &im->regs );
+	else
+		set_reg_num( st, sd, reference_getuid(data), name, script_getnum64( st, 3 ), &im->regs );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*
+  convertpcinfo(<char_id>,<type>)
+  convertpcinfo(<account_id>,<type>)
+  convertpcinfo(<player_name>,<type>)
+*/
+BUILDIN_FUNC(convertpcinfo) {
+	TBL_PC *sd;
+
+	if (script_isstring(st, 2))
+		sd = map_nick2sd(script_getstr(st, 2),false);
+	else {
+		int32 id = script_getnum(st, 2);
+		sd = map_id2sd(id);
+		if (!sd)
+			sd = map_charid2sd(id);
+	}
+
+	int32 type = script_getnum(st, 3);
+
+	switch (type) {
+	case CPC_NAME:
+	case CPC_CHAR:
+	case CPC_ACCOUNT:
+		break;
+	default:
+		ShowError("buildin_convertpcinfo: Unknown type %d.\n", type);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!sd) {
+		if (type == CPC_NAME)
+			script_pushstrcopy(st, "");
+		else
+			script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch (type) {
+	case CPC_NAME:
+		script_pushstrcopy(st, sd->status.name);
+		break;
+	case CPC_CHAR:
+		script_pushint(st, sd->status.char_id);
+		break;
+	case CPC_ACCOUNT:
+		script_pushint(st, sd->status.account_id);
+		break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(isnpccloaked)
+{
+	npc_data *nd;
+
+	if (script_hasdata(st, 2))
+		nd = npc_name2id(script_getstr(st, 2));
+	else
+		nd = map_id2nd(st->oid);
+
+	if (!nd) {
+		if (script_hasdata(st, 2))
+			ShowError("buildin_isnpccloaked: %s is a non-existing NPC.\n", script_getstr(st, 2));
+		else
+			ShowError("buildin_isnpccloaked: non-existing NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	map_session_data* sd;
+
+	if (!script_charid2sd(3, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	script_pushint(st, npc_is_cloaked(nd, sd));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(refineui){
+#if PACKETVER < 20161012
+	ShowError( "buildin_refineui: This command requires packet version 2016-10-12 or newer.\n" );
+	return SCRIPT_CMD_FAILURE;
+#else
+	map_session_data* sd;
+
+	if( !script_charid2sd(2,sd) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !battle_config.feature_refineui ){
+		ShowError( "buildin_refineui: This command is disabled via configuration.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !sd->state.refineui_open ){
+		clif_refineui_open(sd);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+#endif
+}
+
+BUILDIN_FUNC(getenchantgrade){
+	map_session_data *sd;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 index, position;
+
+	if (script_hasdata(st, 2))
+		position = script_getnum(st, 2);
+	else
+		position = EQI_COMPOUND_ON;
+
+	if (position == EQI_COMPOUND_ON)
+		index = current_equip_item_index;
+	else if (equip_index_check(position))
+		index = pc_checkequip(sd, equip_bitmask[position]);
+	else {
+		ShowError( "buildin_getenchantgrade: Unknown equip index '%d'\n", position );
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (index < 0 || index >= MAX_INVENTORY || sd->inventory.u.items_inventory[index].nameid == 0)
+		script_pushint(st, -1);
+	else
+		script_pushint(st, sd->inventory.u.items_inventory[index].enchantgrade);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(naviregisterwarp) {
+#ifdef MAP_GENERATOR
+	TBL_NPC* nd;
+	int32 x, y, m;
+	const char *warpname, *mapname=nullptr;
+
+	struct navi_link link;
+
+	nd = map_id2nd(st->oid);
+	if (!nd) {
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	warpname = script_getstr(st, 2);
+	mapname = script_getstr(st, 3);
+	x = script_getnum(st,4);
+	y = script_getnum(st,5);
+	m = map_mapname2mapid(mapname);
+
+	link.npc = nd;
+	link.id = 0;
+	link.pos = nd->navi.pos;
+	link.warp_dest = {m, x, y};
+	link.name = warpname;
+	link.hidden = nd->navi.hidden;
+
+	nd->links.push_back(link);
+	
+#endif
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * mob_setidleevent( <monster game ID>, "<event label>" )
+ *------------------------------------------*/
+BUILDIN_FUNC(mob_setidleevent){
+	block_list* bl;
+
+	if( !script_rid2bl( 2, bl ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( bl->type != BL_MOB ){
+		ShowError( "buildin_mob_setidleevent: the target GID was not a monster.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	mob_data* md = (mob_data*)bl;
+	if (md == nullptr)
+		return SCRIPT_CMD_FAILURE;
+
+	const char* idle_event = script_getstr( st, 3 );
+
+	check_event( st, idle_event );
+	safestrncpy( md->idle_event, idle_event, EVENT_NAME_LENGTH );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC( openstylist ){
+#if PACKETVER >= 20151104
+	if( !battle_config.feature_stylist ){
+		ShowError( "buildin_openstylist: stylist is disabled.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	map_session_data* sd;
+
+	if( !script_charid2sd( 2, sd ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_ui_open( *sd, OUT_UI_STYLIST, 0 );
+
+	return SCRIPT_CMD_SUCCESS;
+#else
+	ShowError( "buildin_openstylist: This command requires packet version 2015-11-04 or newer.\n" );
+	return SCRIPT_CMD_FAILURE;
+#endif
+}
+
+BUILDIN_FUNC(navihide) {
+#ifdef MAP_GENERATOR
+	TBL_NPC *nd;
+
+	nd = map_id2nd(st->oid);
+	if (!nd) {
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	nd->navi.hidden = true;
+	for (auto &link : nd->links) {
+		link.hidden = true;
+	}
+#endif
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getitempos) {
+	map_session_data* sd;
+
+	if ( !script_rid2sd(sd) ){
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( current_equip_item_index == -1 ){
+		ShowError( "buildin_getitempos: Invalid usage detected. This command should only be used inside item scripts.\n" );
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st, sd->inventory.u.items_inventory[current_equip_item_index].equip);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC( laphine_synthesis ){
+	map_session_data* sd;
+
+	if( !script_rid2sd( sd ) ){
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	t_itemid item_id;
+
+	if( script_hasdata( st, 2 ) ){
+		if( script_isstring( st, 2 ) ){
+			const char* item_name = script_getstr( st, 2 );
+
+			std::shared_ptr<item_data> item = item_db.searchname( item_name );
+
+			if( item == nullptr ){
+				ShowError("buildin_laphine_synthesis: Item \"%s\" does not exist.\n", item_name );
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			item_id = item->nameid;
+		}else{
+			item_id = script_getnum( st, 2 );
+
+			if( !item_db.exists( item_id ) ){
+				ShowError( "buildin_laphine_synthesis: Item ID %u does not exist.\n", item_id );
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+	}else{
+		if( sd->itemid == 0 ){
+			ShowError( "buildin_laphine_synthesis: Called outside of an item script without item id.\n" );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if( sd->inventory_data[sd->itemindex]->flag.delay_consume == 0 ){
+			ShowError( "buildin_laphine_synthesis: Called from item %u, which is not a consumed delayed.\n", sd->itemid );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		item_id = sd->itemid;
+	}
+
+	if( sd->state.laphine_synthesis != 0 ){
+		ShowError( "buildin_laphine_synthesis: Laphine Synthesis window was already open. Player %s (AID: %u, CID: %u) with item id %u.\n", sd->status.name, sd->status.account_id, sd->status.char_id, sd->itemid );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	std::shared_ptr<s_laphine_synthesis> synthesis = laphine_synthesis_db.find( item_id );
+
+	if( synthesis == nullptr ){
+		ShowError( "buildin_laphine_synthesis: %u is not a valid Laphine Synthesis item.\n", item_id );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_laphine_synthesis_open( sd, synthesis );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC( laphine_upgrade ){
+	map_session_data* sd;
+
+	if( !script_rid2sd( sd ) ){

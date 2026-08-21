@@ -1,0 +1,500 @@
+			if (sc->getSCE(SC_INTFOOD) && sc->getSCE(SC_INTFOOD)->val1 > val1)
+				return false;
+			break;
+		case SC_FOOD_DEX_CASH:
+			if (sc->getSCE(SC_DEXFOOD) && sc->getSCE(SC_DEXFOOD)->val1 > val1)
+				return false;
+			break;
+		case SC_FOOD_LUK_CASH:
+			if (sc->getSCE(SC_LUKFOOD) && sc->getSCE(SC_LUKFOOD)->val1 > val1)
+				return false;
+			break;
+		case SC_CAMOUFLAGE:
+			if( sd && pc_checkskill(sd, RA_CAMOUFLAGE) < 3 && !skill_check_camouflage(bl,nullptr) )
+				return false;
+			break;
+		case SC__STRIPACCESSORY:
+			if( sd ) {
+				int16 i = -1;
+				if( !(sd->bonus.unstripable_equip&EQP_ACC_L) ) {
+					i = sd->equip_index[EQI_ACC_L];
+					if( i >= 0 && sd->inventory_data[i] && sd->inventory_data[i]->type == IT_ARMOR )
+						pc_unequipitem(sd,i,3); // Left-Accessory
+				}
+				if( !(sd->bonus.unstripable_equip&EQP_ACC_R) ) {
+					i = sd->equip_index[EQI_ACC_R];
+					if( i >= 0 && sd->inventory_data[i] && sd->inventory_data[i]->type == IT_ARMOR )
+						pc_unequipitem(sd,i,3); // Right-Accessory
+				}
+				if( i < 0 )
+					return false;
+			}
+			if (tick == 1) return true; // Minimal duration: Only strip without causing the SC
+			break;
+		case SC_C_MARKER:
+			if (src == bl)
+				return false;
+			else {
+				status_change *tsc = status_get_sc(bl);
+				// Failed if the target is already marked and the new marker that isn't same marker
+				if (tsc && tsc->getSCE(type) && tsc->getSCE(type)->val2 != src->id)
+					return false;
+			}
+			break;
+		case SC_MADNESSCANCEL:
+			if (sc->getSCE(type)) { // Toggle the status but still consume requirements.
+				status_change_end(bl, type);
+				return false;
+			}
+			break;
+		case SC_TOXIN:
+		case SC_PARALYSE:
+		case SC_VENOMBLEED:
+		case SC_MAGICMUSHROOM:
+		case SC_DEATHHURT:
+		case SC_PYREXIA:
+		case SC_OBLIVIONCURSE:
+		case SC_LEECHESEND:
+			if (val3 == 0) // Don't display icon on self
+				flag |= SCSTART_NOICON;
+			for (int32 i = SC_TOXIN; i <= SC_LEECHESEND; i++) {
+				if (sc->getSCE(i) && sc->getSCE(i)->val3 == 1) // It doesn't stack or even renew on the target
+					return false;
+				else if (sc->getSCE(i) && sc->getSCE(i)->val3 == 0)
+					status_change_end(bl, static_cast<sc_type>(i)); // End the bonus part on the caster
+			}
+			break;
+		case SC_SPIRIT:
+			if( sd ){
+				uint64 target_class = 0;
+				uint64 mask = MAPID_SECONDMASK;
+
+				switch( val2 ){
+					case SL_ALCHEMIST:
+						target_class = MAPID_ALCHEMIST;
+						break;
+					case SL_ASSASIN:
+						target_class = MAPID_ASSASSIN;
+						break;
+					case SL_BARDDANCER:
+						target_class = MAPID_BARDDANCER;
+						break;
+					case SL_BLACKSMITH:
+						target_class = MAPID_BLACKSMITH;
+						break;
+					case SL_CRUSADER:
+						target_class = MAPID_CRUSADER;
+						break;
+					case SL_HUNTER:
+						target_class = MAPID_HUNTER;
+						break;
+					case SL_KNIGHT:
+						target_class = MAPID_KNIGHT;
+						break;
+					case SL_MONK:
+						target_class = MAPID_MONK;
+						break;
+					case SL_PRIEST:
+						target_class = MAPID_PRIEST;
+						break;
+					case SL_ROGUE:
+						target_class = MAPID_ROGUE;
+						break;
+					case SL_SAGE:
+						target_class = MAPID_SAGE;
+						break;
+					case SL_SOULLINKER:
+						target_class = MAPID_SOUL_LINKER;
+						break;
+					case SL_STAR:
+						target_class = MAPID_STAR_GLADIATOR;
+						break;
+					case SL_SUPERNOVICE:
+						target_class = MAPID_SUPER_NOVICE;
+						break;
+					case SL_WIZARD:
+						target_class = MAPID_WIZARD;
+						break;
+					case SL_HIGH:
+						if( sd->status.base_level >= 70 ){
+							return false;
+						}
+
+						switch (sd->class_) {
+							case MAPID_SWORDMAN_HIGH:
+							case MAPID_MAGE_HIGH:
+							case MAPID_ARCHER_HIGH:
+							case MAPID_ACOLYTE_HIGH:
+							case MAPID_MERCHANT_HIGH:
+							case MAPID_THIEF_HIGH:
+								// Only these classes are allowed.
+								break;
+							default:
+								return false;
+						}
+
+						// Set these to pass the check below.
+						mask = sd->class_;
+						target_class = sd->class_;
+						break;
+					default:
+						ShowError( "Unknown skill id %d for SC_SPIRIT.\n", val2 );
+						return false;
+				}
+
+				if( ( sd->class_ & mask ) != target_class ){
+					return false;
+				}
+			}else{
+				// Status change is only applicable for players
+				return false;
+			}
+			break;
+		case SC_SOULGOLEM:
+		case SC_SOULSHADOW:
+		case SC_SOULFALCON:
+		case SC_SOULFAIRY:
+			if( sd == nullptr ){
+				// Status change is only applicable for players
+				return false;
+			}
+			break;
+	}
+
+	std::shared_ptr<s_status_change_db> scdb = status_db.find(type);
+
+	// Check for OPT1 stacking
+	if (sc->opt1 > OPT1_NONE && scdb->opt1 > OPT1_NONE) {
+		for (const auto &status_it : status_db) {
+			sc_type opt1_type = status_it.second->type;
+
+			if (sc->getSCE(opt1_type) && status_it.second->opt1 > OPT1_NONE)
+				status_change_end(bl, opt1_type);
+		}
+	}
+
+	// Before overlapping fail, one must check for status cured.
+	std::vector<sc_type> endlist;
+
+	if (type == SC_BERSERK && val3 == SC__BLOODYLUST) //There is some reasons that using SC_BERSERK first before SC__BLOODYLUST itself on Akinari's fix
+		endlist = status_db.getEndOnStart(SC__BLOODYLUST);
+	else
+		endlist = scdb->endonstart;
+
+	// End the SCs from the list
+	if (!endlist.empty()) {
+		for (const auto &it : endlist) {
+			sc_type rem_sc = it;
+
+			if (sc->getSCE(rem_sc)) {
+				switch (rem_sc) {
+					case SC_BERSERK:
+					case SC_SATURDAYNIGHTFEVER:
+						sc->getSCE(rem_sc)->val2 = 0; // Mark to not lose hp
+						[[fallthrough]];
+					default:
+						status_change_end(bl, rem_sc);
+						break;
+				}
+			}
+		}
+	}
+
+	// List of hardcoded status cured.
+	switch (type) {
+		case SC_BLESSING:
+			if (bl->type == BL_PC) {
+				// Remove Curse first, Stone is only removed if the target is not cursed
+				if (sc->getSCE(SC_CURSE)) {
+					status_change_end(bl, SC_CURSE);
+					return true; // End Curse and do not give stat boost
+				} else if (sc->getSCE(SC_STONE)) {
+					status_change_end(bl, SC_STONE);
+					return true; // End Stone and do not give stat boost
+				}
+			}
+			if(sc->getSCE(SC_SPIRIT) && sc->getSCE(SC_SPIRIT)->val2 == SL_HIGH)
+				status_change_end(bl, SC_SPIRIT);
+			break;
+		case SC_INCREASEAGI:
+			if(sc->getSCE(SC_SPIRIT) && sc->getSCE(SC_SPIRIT)->val2 == SL_HIGH)
+				status_change_end(bl, SC_SPIRIT);
+			break;
+		case SC_DELUGE:
+			if (sc->getSCE(SC_FOGWALL) && sc->getSCE(SC_BLIND))
+				status_change_end(bl, SC_BLIND);
+			break;
+		case SC_SILENCE:
+			if (sc->getSCE(SC_GOSPEL) && sc->getSCE(SC_GOSPEL)->val4 == BCT_SELF)
+				status_change_end(bl, SC_GOSPEL);
+			break;
+		case SC_IMPOSITIO:
+			if (sc->getSCE(SC_IMPOSITIO) && sc->getSCE(SC_IMPOSITIO)->val1 > val1) //Replace higher level effect for lower.
+				status_change_end(bl,SC_IMPOSITIO);
+			break;
+		case SC_ENDURE:
+			if (sd && sd->special_state.no_walk_delay)
+				return true;
+			break;
+		case SC_MADOGEAR:
+			status_db.removeByStatusFlag(bl, { SCF_MADOCANCEL });
+			if (sd)
+				pc_bonus_script_clear(sd, BSF_REM_ON_MADOGEAR);
+			break;
+		default:
+			break;
+	}
+
+	// Check for overlapping fails
+	if (status_change_entry* sce = sc->getSCE(type); sce != nullptr) {
+		switch( type ) {
+			case SC_MERC_FLEEUP:
+			case SC_MERC_ATKUP:
+			case SC_MERC_HPUP:
+			case SC_MERC_SPUP:
+			case SC_MERC_HITUP:
+				if( sce->val1 > val1 )
+					val1 = sce->val1;
+				break;
+			case SC_ADRENALINE:
+			case SC_ADRENALINE2:
+			case SC_WEAPONPERFECTION:
+			case SC_OVERTHRUST:
+				if (sce->val2 > val2)
+					return false;
+				break;
+			case SC_GOSPEL:
+				 // Must not override a casting gospel char.
+				if(sce->val4 == BCT_SELF)
+					return false;
+				if(sce->val1 > val1)
+					return true;
+				break;
+			case SC_ENDURE:
+				if(sce->val4 && !val4)
+					return true; // Don't let you override infinite endure.
+				if(sce->val1 > val1)
+					return true;
+				break;
+			case SC_JAILED:
+				// When a player is already jailed, do not edit the jail data.
+				val2 = sce->val2;
+				val3 = sce->val3;
+				val4 = sce->val4;
+				break;
+			case SC_SHAPESHIFT:
+			case SC_PROPERTYWALK:
+				break;
+			case SC_LEADERSHIP:
+			case SC_GLORYWOUNDS:
+			case SC_SOULCOLD:
+			case SC_HAWKEYES:
+				if( sce->val4 && !val4 ) // You cannot override master guild aura
+					return false;
+				break;
+			case SC_JOINTBEAT:
+				if (sc && sc->getSCE(type)->val2 & BREAK_NECK)
+					return false; // BREAK_NECK cannot be stacked with new breaks until the status is over.
+				val2 |= sce->val2; // Stackable ailments
+				[[fallthrough]];
+			default:
+				if (scdb->flag[SCF_OVERLAPIGNORELEVEL])
+					break;
+				if(sce->val1 > val1)
+					return true; // Return true to not mess up skill animations. [Skotlex]
+		}
+	}
+
+	view_data* vd = status_get_viewdata(bl);
+	std::bitset<SCB_MAX> calc_flag = scdb->calc_flag;
+	int32 tick_time = 0;
+
+	if(!(flag&SCSTART_LOADED)) // &4 - Do not parse val settings when loading SCs
+	switch(type)
+	{
+		/* Permanent effects */
+		case SC_AETERNA:
+		case SC_MODECHANGE:
+		case SC_WEIGHT50:
+		case SC_WEIGHT90:
+		case SC_BROKENWEAPON:
+		case SC_BROKENARMOR:
+		case SC_READYSTORM:
+		case SC_READYDOWN:
+		case SC_READYCOUNTER:
+		case SC_READYTURN:
+		case SC_DODGE:
+		case SC_PUSH_CART:
+		case SC_SPRITEMABLE:
+		case SC_CLAN_INFO:
+		case SC_DAILYSENDMAILCNT:
+		case SC_SOULATTACK:
+			tick = INFINITE_TICK;
+			break;
+
+		case SC_KEEPING:
+		case SC_BARRIER:
+			if (unit_data* ud = unit_bl2ud(bl); ud != nullptr) {
+				t_tick endtick = gettick() + tick;
+				ud->attackabletime = endtick;
+				ud->canact_tick = endtick;
+				ud->canmove_tick = endtick;
+				ud->endure_tick = endtick;
+			}
+			break;
+		case SC_DECREASEAGI:
+		case SC_INCREASEAGI:
+		case SC_ADORAMUS:
+			if (type == SC_ADORAMUS) {
+				// 1000% base chance to blind, but still can be resisted
+				sc_start(src, bl, SC_BLIND, 1000, val1, skill_get_time(scdb->skill_id, val1));
+				if (sc->getSCE(SC_ADORAMUS))
+					return false; //Adoramus can't refresh itself, but it can cause blind again
+			}
+			val2 = 2 + val1; // Agi change
+			break;
+		case SC_ENDURE:
+			val2 = 7; // Hit-count [Celest]
+			if( !(flag&SCSTART_NOAVOID) && (bl->type&(BL_PC|BL_MER)) && !map_flag_gvg2(bl->m) && !map_getmapflag(bl->m, MF_BATTLEGROUND) && !val4 ) {
+				map_session_data *tsd;
+				if( sd ) {
+					int32 i;
+					for( i = 0; i < MAX_DEVOTION; i++ ) {
+						if( sd->devotion[i] && (tsd = map_id2sd(sd->devotion[i])) )
+							status_change_start(src,tsd, type, 10000, val1, val2, val3, val4, tick, SCSTART_NOAVOID|SCSTART_NOICON);
+					}
+				}
+				else if( bl->type == BL_MER && ((TBL_MER*)bl)->devotion_flag && (tsd = ((TBL_MER*)bl)->master) )
+					status_change_start(src,tsd, type, 10000, val1, val2, val3, val4, tick, SCSTART_NOAVOID|SCSTART_NOICON);
+			}
+			if( val4 )
+				tick = INFINITE_TICK;
+			break;
+		case SC_AUTOBERSERK:
+			tick_time = 100; // Check to start/end provoke every interval
+			tick = INFINITE_TICK;
+			break;
+		case SC_SIGNUMCRUCIS:
+			val2 = 10 + 4*val1; // Def reduction
+			tick = INFINITE_TICK;
+			clif_emotion( *bl, ET_SWEAT );
+			break;
+		case SC_MAXIMIZEPOWER:
+			if (bl->type&BL_CONSUME) {
+				tick_time = val2 = tick>0?tick:10000; // SP consumption interval
+				tick = INFINITE_TICK; // Duration sent to the client should be infinite
+			}
+			else {
+				// If unit cannot consume SP, the duration is fixed to 10 seconds
+				tick = 10000;
+			}
+			break;
+		case SC_EDP:
+			val2 = (val1 + 1) / 2 + 2; // Chance to Poison enemies.
+#ifndef RENEWAL
+			val3 = 50*(val1+1); // Damage increase (+50 +50*lv%)
+#endif
+			if (sd) {
+				uint16 poison_level = pc_checkskill(sd, GC_RESEARCHNEWPOISON);
+
+				if (poison_level > 0) {
+					tick += 30000; // Base of 30 seconds
+					tick += poison_level * 15 * 1000; // Additional 15 seconds per level
+				}
+			}
+			break;
+		case SC_POISONREACT:
+			val2 = val1 / 2; // Number of Envenom autocasts
+			val3 = 50; // Chance to autocast Envenom on hit / Poison chance of attack after block
+			val4 = 0; // 0: Poison Block Mode; 1: Damage Boost Mode
+			break;
+		case SC_MAGICROD:
+			val2 = val1*20; // SP gained
+			break;
+		case SC_KYRIE:
+			if( val4 ) { // Formulas for Praefatio
+				val2 = (status->max_hp * (val1 * 2 + 10) / 100) + val4 * 2; //%Max HP to absorb
+				val3 = 6 + val1; //Hits
+			} else { // Formulas for Kyrie Eleison
+				val2 = status->max_hp * (val1 * 2 + 10) / 100;
+				val3 = (val1 / 2 + 5);
+			}
+			break;
+		case SC_MAGICPOWER:
+			val3 = 5 * val1; // Matk% increase
+#ifndef RENEWAL
+			val2 = 1; // Lasts 1 invocation
+			val4 = 0; // 0 = ready to be used, 1 = activated and running
+#endif
+			break;
+		case SC_SACRIFICE:
+			val2 = 5; // Lasts 5 hits
+			tick = INFINITE_TICK;
+			break;
+		case SC_ENCPOISON:
+			val2= 250+50*val1; // Poisoning Chance (2.5+0.5%) in 1/10000 rate
+			break;
+		case SC_ELEMENTALCHANGE:
+			// val1 : Element Lvl (if called by skill lvl 1, takes random value between 1 and 4)
+			// val2 : Element (When no element, random one is picked)
+			// val3 : 0 = called by skill 1 = called by script (fixed level)
+			if( !val2 ) val2 = rnd()%ELE_ALL;
+
+			if( val1 == 1 && val3 == 0 )
+				val1 = 1 + rnd()%4;
+			else if( val1 > 4 )
+				val1 = 4; // Max Level
+			val3 = 0; // Not need to keep this info.
+			break;
+		case SC_PROVIDENCE:
+			val2 = val1*5; // Race/Ele resist
+			break;
+		case SC_REFLECTSHIELD:
+			val2 = 10+val1*3; // %Dmg reflected
+			// val4 used to mark if reflect shield is an inheritance bonus from Devotion
+			if( !(flag&SCSTART_NOAVOID) && (bl->type&(BL_PC|BL_MER)) ) {
+				map_session_data *tsd;
+				if( sd ) {
+					int32 i;
+					for( i = 0; i < MAX_DEVOTION; i++ ) {
+						if( sd->devotion[i] && (tsd = map_id2sd(sd->devotion[i])) )
+							status_change_start(src,tsd, type, 10000, val1, val2, 0, 1, tick, SCSTART_NOAVOID|SCSTART_NOICON);
+					}
+				}
+				else if( bl->type == BL_MER && ((TBL_MER*)bl)->devotion_flag && (tsd = ((TBL_MER*)bl)->master) )
+					status_change_start(src,tsd, type, 10000, val1, val2, 0, 1, tick, SCSTART_NOAVOID|SCSTART_NOICON);
+			}
+			break;
+		case SC_STRIPWEAPON:
+			if (!sd) // Watk reduction
+				val2 = 25;
+			break;
+		case SC_STRIPSHIELD:
+			if (!sd) // Def reduction
+				val2 = 15;
+			break;
+		case SC_STRIPARMOR:
+			if (!sd) // Vit reduction
+				val2 = 40;
+			break;
+		case SC_STRIPHELM:
+			if (!sd) // Int reduction
+				val2 = 40;
+			break;
+		case SC_AUTOSPELL:
+			// Val1 Skill LV of Autospell
+			// Val2 Skill ID to cast
+			// Val3 Max Lv to cast
+#ifdef RENEWAL
+			val4 = val1 * 2; // Chance of casting
+#else
+			val4 = 5 + val1*2; // Chance of casting
+#endif
+			break;
+		case SC_VOLCANO:
+			{
+				int8 enchant_eff[] = { 10, 14, 17, 19, 20 }; // Enchant addition
+				uint8 i = max((val1-1)%5, 0);
+
+#ifdef RENEWAL
+				val2 = 5 + val1 * 5; // ATK/MATK increase

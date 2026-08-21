@@ -1,0 +1,500 @@
+
+
+/// Notifies clients in a guild about updated member position assignments.
+/// 0156 <packet len>.W { <account id>.L <char id>.L <position id>.L }* (ZC_ACK_REQ_CHANGE_MEMBERS)
+void clif_guild_memberpositionchanged(const struct mmo_guild &g, int32 idx)
+{
+	// FIXME: This packet is intended to update the clients after a
+	// commit of member position assignment changes, not sending one
+	// packet per position.
+	map_session_data *sd = guild_getavailablesd(g);
+
+	if(sd == nullptr){
+		return;
+	}
+
+	PACKET_ZC_ACK_REQ_CHANGE_MEMBERS* p = reinterpret_cast<PACKET_ZC_ACK_REQ_CHANGE_MEMBERS*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_ACK_REQ_CHANGE_MEMBERS;
+	p->packetLength = sizeof(*p);
+
+	PACKET_ZC_ACK_REQ_CHANGE_MEMBERS_sub& member = p->members[0];
+
+	member.accId = g.member[idx].account_id;
+	member.charId = g.member[idx].char_id;
+	member.positionID = g.member[idx].position;
+	p->packetLength += static_cast<decltype(p->packetLength)>(sizeof(member));
+
+	clif_send(p,p->packetLength,sd,GUILD);
+}
+
+
+/// Sends emblems bitmap data to the client that requested it.
+/// 0152 <packet len>.W <guild id>.L <emblem id>.L <emblem data>.?B (ZC_GUILD_EMBLEM_IMG)
+void clif_guild_emblem( const map_session_data &sd, const struct mmo_guild &g )
+{
+	int32 fd = sd.fd;
+	if( g.emblem_len <= 0 )
+		return;
+
+	WFIFOHEAD(fd,g.emblem_len+12);
+	WFIFOW(fd,0)=0x152;
+	WFIFOW(fd,2)=g.emblem_len+12;
+	WFIFOL(fd,4)=g.guild_id;
+	WFIFOL(fd,8)=g.emblem_id;
+	memcpy(WFIFOP(fd,12),g.emblem_data,g.emblem_len);
+	WFIFOSET(fd,WFIFOW(fd,2));
+}
+
+
+/// Sends update of the guild id/emblem id to everyone in the area.
+/// 01b4 <id>.L <guild id>.L <emblem id>.W (ZC_CHANGE_GUILD)
+/// 0b1f <guild id>.L <version>.L <AID>.L (ZC_NEW_EMBLEM_DOWNLOAD)
+/// 0b47 <guild id>.L <version>.L <AID>.L (ZC_ACK_ADD_NEW_EMBLEM)
+void clif_guild_emblem_area( const block_list* bl )
+{
+	// TODO this packet doesn't force the update of ui components that have the emblem visible
+	//      (emblem in the flag npcs and emblem over the head in agit maps) [FlavioJS]
+	PACKET_ZC_CHANGE_GUILD p{};
+
+	p.packetType = HEADER_ZC_CHANGE_GUILD;
+	p.guild_id = status_get_guild_id(bl);
+	p.emblem_id = status_get_emblem_id(bl);
+	p.AID = bl->id;
+
+	clif_send(&p, sizeof(p), bl, AREA);
+}
+
+
+/// Sends guild skills.
+/// 0162 <packet len>.W <skill points>.W { <skill id>.W <type>.L <level>.W <sp cost>.W <atk range>.W <skill name>.24B <upgradable>.B }* (ZC_GUILD_SKILLINFO)
+void clif_guild_skillinfo( const map_session_data& sd ){
+	auto& g = sd.guild;
+
+	if( g == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_GUILD_SKILLINFO* p = reinterpret_cast<PACKET_ZC_GUILD_SKILLINFO*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_GUILD_SKILLINFO;
+	p->PacketLength = sizeof( *p );
+	p->skillPoint = g->guild.skill_point;
+
+	for( size_t i = 0, c = 0; i < MAX_GUILDSKILL; i++ ){
+		if( g->guild.skill[i].id <= 0 ){
+			continue;
+		}
+
+		if( !guild_check_skill_require( g->guild, g->guild.skill[i].id ) ){
+			continue;
+		}
+
+		GUILD_SKILLDATA& gs = p->skillInfo[c];
+		int32 skill_id = g->guild.skill[i].id;
+
+		gs.id = skill_id;
+		gs.inf = skill_get_inf(skill_id);
+		gs.level = g->guild.skill[i].lv;
+		if( g->guild.skill[i].lv > 0 ){
+			gs.sp = skill_get_sp( skill_id, g->guild.skill[i].lv );
+			gs.range2 = skill_get_range( skill_id, g->guild.skill[i].lv );
+		}else{
+			gs.sp = 0;
+			gs.range2 = 0;
+		}
+		safestrncpy( gs.name, skill_get_name( skill_id ), sizeof( gs.name ) );
+		gs.upFlag = ( g->guild.skill[i].lv < guild_skill_get_max( skill_id ) && &sd == g->guild.member[0].sd ) ? 1 : 0;
+
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( sizeof( gs ) );
+		c++;
+	}
+
+	clif_send( p, p->PacketLength, &sd, SELF );
+}
+
+
+/// Sends guild notice to client.
+/// 016f <subject>.60B <notice>.120B (ZC_GUILD_NOTICE)
+void clif_guild_notice( const map_session_data& sd ){
+	auto& g = sd.guild;
+
+	if( g == nullptr ){
+		return;
+	}
+
+	if( g->guild.mes1[0] == '\0' && g->guild.mes2[0] == '\0' ){
+		return;
+	}
+
+	PACKET_ZC_GUILD_NOTICE p = {};
+
+	p.packetType = HEADER_ZC_GUILD_NOTICE;
+	safestrncpy( p.subject, g->guild.mes1, sizeof( p.subject ) );
+	safestrncpy( p.notice, g->guild.mes2, sizeof( p.notice ) );
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Guild invite.
+/// 016a <guild id>.L <guild name>.24B (ZC_REQ_JOIN_GUILD)
+void clif_guild_invite( const map_session_data& sd, const struct mmo_guild& g ){
+	PACKET_ZC_REQ_JOIN_GUILD p = {};
+
+	p.packetType = HEADER_ZC_REQ_JOIN_GUILD;
+	p.guild_id = g.guild_id;
+	safestrncpy( p.guild_name, g.name, sizeof( p.guild_name ) );
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Reply to invite request.
+/// 0169 <answer>.B (ZC_ACK_REQ_JOIN_GUILD)
+/// answer:
+///     0 = Already in guild.
+///     1 = Offer rejected.
+///     2 = Offer accepted.
+///     3 = Guild full.
+void clif_guild_inviteack( const map_session_data& sd, int32 flag ){
+	PACKET_ZC_ACK_REQ_JOIN_GUILD p = {};
+
+	p.packetType = HEADER_ZC_ACK_REQ_JOIN_GUILD;
+	p.result = static_cast<decltype(p.result)>( flag );
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Notifies clients of a guild of a leaving member.
+/// 015a <char name>.24B <reason>.40B (ZC_ACK_LEAVE_GUILD)
+/// 0a83 <CID>.L <reason>.40B (ZC_ACK_LEAVE_GUILD_DELNAME)
+void clif_guild_leave( const map_session_data& sd, const char* name, uint32 char_id, const char* mes ){
+	PACKET_ZC_ACK_LEAVE_GUILD p = {};
+
+	p.packetType = guildLeave;
+#if PACKETVER_MAIN_NUM >= 20161019 || PACKETVER_RE_NUM >= 20160921 || defined(PACKETVER_ZERO)
+	p.GID = char_id;
+#else
+	safestrncpy( p.name, name, sizeof( p.name ) );
+#endif
+	safestrncpy( p.reason, mes, sizeof( p.reason ) );
+
+	clif_send( &p, sizeof( p ), &sd, GUILD_NOBG );
+}
+
+
+/// Notifies clients of a guild of an expelled member.
+/// 015c <char name>.24B <reason>.40B <account name>.24B (ZC_ACK_BAN_GUILD)
+/// 0839 <char name>.24B <reason>.40B (ZC_ACK_BAN_GUILD_SSO)
+/// 0a82 <CID>.L <reason>.40B (ZC_ACK_BAN_GUILD_DELNAME)
+void clif_guild_expulsion( const map_session_data& sd, const char* name, uint32 char_id, const char* mes ){
+	PACKET_ZC_ACK_BAN_GUILD p = {};
+
+	p.packetType = guildExpulsion;
+#if PACKETVER_MAIN_NUM >= 20161019 || PACKETVER_RE_NUM >= 20160921 || defined(PACKETVER_ZERO)
+	p.GID = char_id;
+#else
+	safestrncpy( p.name, name, sizeof( p.name ) );
+#endif
+	safestrncpy( p.reason, mes, sizeof( p.reason ) );
+#if PACKETVER < 20100803
+	// account name is not sent for security reasons
+	safestrncpy( p.account_name, "", sizeof( p.account_name ) );
+#endif
+
+	clif_send( &p, sizeof( p ), &sd, GUILD_NOBG );
+}
+
+
+/// Guild expulsion list 
+/// 0163 <packet len>.W { <char name>.24B <account name>.24B <reason>.40B }* (ZC_BAN_LIST)
+/// 0163 <packet len>.W { <char name>.24B <reason>.40B }* (PACKETVER >= 20100803) (ZC_BAN_LIST)
+/// 0a87 <packet len>.W { <charid>.L <reason>.40B }* (ZC_BAN_LIST2)
+/// 0b7c <packet len>.W { <charid>.L <reason>.40B <char name>.24B }* (ZC_BAN_LIST3)
+static void clif_guild_expulsionlist( const map_session_data& sd ){
+
+	auto &g = sd.guild;
+	if (!g)
+		return;
+
+	PACKET_ZC_BAN_LIST* p = reinterpret_cast<PACKET_ZC_BAN_LIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_BAN_LIST;
+	p->packetLen = sizeof(*p);
+
+	for( size_t i = 0, c = 0; i < MAX_GUILDEXPULSION; i++ ){
+		struct guild_expulsion& e = g->guild.expulsion[i];
+
+		if( e.account_id == 0 ){
+			continue;
+		}
+
+		PACKET_ZC_BAN_LIST_sub& banned = p->chars[c];
+
+#if PACKETVER >= 20161019
+		banned.char_id = e.char_id;
+#elif PACKETVER < 20100803
+		// account name (not used for security reasons)
+		safestrncpy(banned.account_name, "", sizeof(banned.account_name)); 
+#endif
+
+#if PACKETVER >= 20200902 || PACKETVER < 20161019
+		safestrncpy(banned.char_name, e.name, sizeof(banned.char_name));
+#endif
+
+		safestrncpy(banned.message, e.mes, sizeof(banned.message));
+		p->packetLen += static_cast<decltype(p->packetLen)>(sizeof(banned));
+		c++;
+	}
+
+	clif_send(p,p->packetLen,&sd,SELF);
+}
+
+
+/// Guild chat message 
+/// 017f <packet len>.W <message>.?B (ZC_GUILD_CHAT)
+void clif_guild_message( const struct mmo_guild& g, const char* mes, size_t len ){
+	PACKET_ZC_GUILD_CHAT *p = reinterpret_cast<PACKET_ZC_GUILD_CHAT*>( packet_buffer );
+	// -1 for null terminator
+	static const size_t max_len = CHAT_SIZE_MAX - sizeof( *p ) - 1;
+
+	map_session_data* sd = guild_getavailablesd(g);
+
+	// Ignore this message, if no guildmember is available
+	if (sd == nullptr)
+		return;
+
+	if( len == 0 ){
+		return;
+	} else if( len > max_len ){
+		ShowWarning("clif_guild_message: Truncated message '%s' (len=%" PRIuPTR ", max=%" PRIuPTR ", guild_id=%u).\n", mes, len, max_len, g.guild_id);
+		len = max_len;
+	}
+	p->packetType = HEADER_ZC_GUILD_CHAT;
+	p->packetLength = sizeof(*p);
+
+	safestrncpy(p->message, mes, len+1);
+	p->packetLength += static_cast<decltype(p->packetLength)>( len + 1 );
+
+	clif_send(p, p->packetLength, sd, GUILD_NOBG);
+}
+
+/// Request for guild alliance 
+/// 0171 <inviter account id>.L <guild name>.24B (ZC_REQ_ALLY_GUILD).
+void clif_guild_reqalliance( const map_session_data& sd,uint32 account_id,const char* name)
+{
+	PACKET_ZC_REQ_ALLY_GUILD p{};
+
+	p.packetType = HEADER_ZC_REQ_ALLY_GUILD;
+	p.inviterId = account_id;
+	safestrncpy(p.inviterGuildName,name,sizeof(p.inviterGuildName));
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Notifies the client about the result of a alliance request.
+/// 0173 <answer>.B (ZC_ACK_REQ_ALLY_GUILD)
+/// answer:
+///     0 = Already allied.
+///     1 = You rejected the offer.
+///     2 = You accepted the offer.
+///     3 = They have too any alliances.
+///     4 = You have too many alliances.
+///     5 = Alliances are disabled.
+void clif_guild_allianceack( const map_session_data& sd, uint8 flag ){
+
+	PACKET_ZC_ACK_REQ_ALLY_GUILD p{};
+
+	p.packetType = HEADER_ZC_ACK_REQ_ALLY_GUILD;
+	p.flag = flag;
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Notifies the client that a alliance or opposition has been removed.
+/// 0184 <other guild id>.L <relation>.L (ZC_DELETE_RELATED_GUILD)
+/// relation:
+///     0 = Ally
+///     1 = Enemy
+void clif_guild_delalliance( const map_session_data& sd, uint32 guild_id, uint32 flag )
+{
+
+	PACKET_ZC_DELETE_RELATED_GUILD p{};
+
+	p.packetType = HEADER_ZC_DELETE_RELATED_GUILD;
+	p.allyID = guild_id;
+	p.flag = flag;
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Notifies the client about the result of a opposition request. 
+/// 0181 <result>.B (ZC_ACK_REQ_HOSTILE_GUILD)
+/// result:
+///     0 = Antagonist has been set.
+///     1 = Guild has too many Antagonists.
+///     2 = Already set as an Antagonist.
+///     3 = Antagonists are disabled.
+void clif_guild_oppositionack( const map_session_data& sd, uint8 flag ){
+
+	PACKET_ZC_ACK_REQ_HOSTILE_GUILD p{};
+
+	p.packetType = HEADER_ZC_ACK_REQ_HOSTILE_GUILD;
+	p.flag = flag;
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Adds alliance or opposition (ZC_ADD_RELATED_GUILD).
+/// 0185 <relation>.L <guild id>.L <guild name>.24B
+/*
+void clif_guild_allianceadded(struct guild *g,int32 idx)
+{
+	unsigned char buf[64];
+	WBUFW(buf,0)=0x185;
+	WBUFL(buf,2)=g->alliance[idx].opposition;
+	WBUFL(buf,6)=g->alliance[idx].guild_id;
+	safestrncpy(WBUFP(buf,10),g->alliance[idx].name,NAME_LENGTH);
+	clif_send(buf,packet_len(0x185),guild_getavailablesd(g),GUILD);
+}
+*/
+
+
+/// Notifies the client about the result of a guild break.
+/// 015e <reason>.L (ZC_ACK_DISORGANIZE_GUILD_RESULT)
+///     0 = success
+///     1 = invalid key (guild name, @see clif_parse_GuildBreak)
+///     2 = there are still members in the guild
+void clif_guild_broken( const map_session_data& sd, int32 flag ){
+	PACKET_ZC_ACK_DISORGANIZE_GUILD_RESULT p = {};
+
+	p.packetType = HEADER_ZC_ACK_DISORGANIZE_GUILD_RESULT;
+	p.result = flag;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+void clif_guild_position_selected( const map_session_data& sd )
+{
+#if PACKETVER_MAIN_NUM >= 20180605 || PACKETVER_RE_NUM >= 20180605 || PACKETVER_ZERO_NUM >= 20180605
+	PACKET_ZC_GUILD_POSITION* p = reinterpret_cast<PACKET_ZC_GUILD_POSITION*>(packet_buffer);
+
+	p->packetType = HEADER_ZC_GUILD_POSITION;
+	p->packetLength = sizeof( PACKET_ZC_GUILD_POSITION );
+	p->AID = sd.id;
+
+	if( sd.guild != nullptr ){
+		const auto& g = sd.guild->guild;
+
+		if( int ps = guild_getposition( sd ); ps != -1 ){
+			safestrncpy( p->position, g.position[ps].name, NAME_LENGTH );
+			p->packetLength += static_cast<decltype(p->packetLength)>( NAME_LENGTH );
+		}
+	}
+
+	clif_send( p, p->packetLength, &sd, AREA );
+#else
+	clif_name_area(&sd);
+#endif
+}
+
+
+/// Displays emotion on an object.
+/// 00c0 <id>.L <type>.B (ZC_EMOTION)
+/// type:
+///     enum emotion_type
+void clif_emotion( const block_list& bl, emotion_type type ){
+	PACKET_ZC_EMOTION p{};
+
+	p.packetType = HEADER_ZC_EMOTION;
+	p.GID = bl.id;
+	p.type = static_cast<decltype(p.type)>( type );
+
+	clif_send( &p, sizeof(p), &bl, AREA );
+}
+
+
+/// Displays the contents of a talkiebox trap.
+/// 0191 <id>.L <contents>.80B (ZC_TALKBOX_CHATCONTENTS)
+void clif_talkiebox( const block_list* bl, const char* talkie ){
+	nullpo_retv( bl );
+	nullpo_retv( talkie );
+
+	PACKET_ZC_TALKBOX_CHATCONTENTS p = {};
+
+	p.PacketType = HEADER_ZC_TALKBOX_CHATCONTENTS;
+	p.aid = bl->id;
+	safestrncpy( p.message, talkie, TALKBOX_MESSAGE_SIZE );
+
+	clif_send( &p, sizeof( PACKET_ZC_TALKBOX_CHATCONTENTS ), bl, AREA );
+}
+
+
+/// Displays wedding effect centered on an object.
+/// 01ea <id>.L (ZC_CONGRATULATION)
+void clif_wedding_effect( const block_list& bl ){
+	PACKET_ZC_CONGRATULATION p{};
+
+	p.packetType = HEADER_ZC_CONGRATULATION;
+	p.GID = bl.id;
+
+	clif_send( &p, sizeof(p), &bl, AREA );
+}
+
+
+/// Notifies the client of the name of the partner character (ZC_COUPLENAME).
+/// 01e6 <partner name>.24B
+void clif_callpartner( const map_session_data& sd )
+{
+	PACKET_ZC_COUPLENAME p = { 0 };
+
+	p.packetType = HEADER_ZC_COUPLENAME;
+
+	if( sd.status.partner_id ) {
+		map_session_data *p_sd = pc_get_partner(&sd);
+		if (p_sd != nullptr && !p_sd->state.autotrade)
+			safestrncpy(p.name, p_sd->status.name, NAME_LENGTH);
+		else
+			p.name[0] = 0;
+	} else {// Send zero-length name if no partner, to initialize the client buffer.
+		p.name[0] = 0;
+	}
+
+	clif_send(&p, sizeof(p), &sd, AREA);
+}
+
+
+/// Initiates the partner "taming" process [DracoRPG] (ZC_START_COUPLE).
+/// 01e4
+/// This packet while still implemented by the client is no longer being officially used.
+/*
+void clif_marriage_process(map_session_data *sd)
+{
+	int32 fd;
+	nullpo_retv(sd);
+
+	fd=sd->fd;
+	WFIFOHEAD(fd,packet_len(0x1e4));
+	WFIFOW(fd,0)=0x1e4;
+	WFIFOSET(fd,packet_len(0x1e4));
+}
+*/
+
+
+/// Notice of divorce.
+/// 0205 <partner name>.24B (ZC_DIVORCE)
+void clif_divorced( const map_session_data& sd, const char* name ){
+	PACKET_ZC_DIVORCE p{};
+
+	p.packetType = HEADER_ZC_DIVORCE;
+	safestrncpy( p.name, name, NAME_LENGTH );
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+

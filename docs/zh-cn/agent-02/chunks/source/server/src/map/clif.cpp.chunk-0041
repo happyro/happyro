@@ -1,0 +1,500 @@
+#if PACKETVER_MAIN_NUM >= 20190403 || PACKETVER_RE_NUM >= 20190320 || PACKETVER_ZERO_NUM >= 20190410
+	nullpo_retv( sd );
+
+	PACKET_ZC_NOTIFY_ACTORINIT p = {};
+
+	p.packetType = HEADER_ZC_NOTIFY_ACTORINIT;
+
+	clif_send( &p, sizeof(p), sd, SELF );
+
+	clif_instance_info( *sd );
+#endif
+}
+
+/// unknown usage (CZ_BLOCKING_PLAY_CANCEL)
+/// 0447
+void clif_parse_blocking_playcancel( int32 fd, map_session_data *sd ){
+	clif_loadConfirm( sd );
+	
+	int32 mf = map_getmapflag(sd->m, MF_SPECIALPOPUP);
+
+	if (mf > 0) {
+		clif_specialpopup(*sd, mf);
+	}
+}
+
+/// req world info (CZ_CLIENT_VERSION)
+/// 044A <version>.L
+void clif_parse_client_version(int32 fd, map_session_data *sd) {
+	//if(sd)
+	;
+}
+
+/// Ranking list
+
+/// ranking pointlist  { <name>.24B }*10 { <point>.L }*10
+void clif_sub_ranklist( RANKLIST& ranklist, e_rank rankingtype ){
+	struct fame_list* list;
+	size_t i;
+	size_t size = std::min<size_t>( ARRAYLENGTH( ranklist.names ), MAX_FAME_LIST );
+
+	switch( rankingtype ){
+		case RANK_BLACKSMITH:
+			list = smith_fame_list;
+			break;
+		case RANK_ALCHEMIST:
+			list = chemist_fame_list;
+			break;
+		case RANK_TAEKWON:
+			list = taekwon_fame_list;
+			break;
+		case RANK_KILLER:
+			// Currently not supported
+			list = nullptr;
+			size = 0;
+			break;
+		default:
+			ShowError( "clif_sub_ranklist: Unsupported ranking type '%d'. Please report this.\n", rankingtype );
+			return;
+	}
+
+	for( i = 0; i < size; i++ ){
+		ranklist.points[i] = list[i].fame;
+
+		if( list[i].id == 0 ){
+			safestrncpy( ranklist.names[i], "None", sizeof( ranklist.names[0] ) );
+			continue;
+		}
+
+		if( strcmp( list[i].name, "-" ) != 0 ){
+			safestrncpy( ranklist.names[i], list[i].name, sizeof( ranklist.names[0] ) );
+			continue;
+		}
+
+		const char* name = map_charid2nick( list[i].id );
+
+		if( name != nullptr ){
+			safestrncpy( ranklist.names[i], name, sizeof( ranklist.names[0] ) );
+		}else{
+			safestrncpy( ranklist.names[i], list[i].name, sizeof( ranklist.names[0] ) );
+		}
+	}
+
+	size = ARRAYLENGTH( ranklist.names );
+
+	for( ; i < size; i++ ){
+		safestrncpy( ranklist.names[i], "Unavailable", sizeof( ranklist.names[0] ) );
+		ranklist.points[i] = 0;
+	}
+}
+
+/// 0219 { <name>.24B }*10 { <point>.L }*10 (ZC_BLACKSMITH_RANK)
+/// 021a { <name>.24B }*10 { <point>.L }*10 (ZC_ALCHEMIST_RANK)
+/// 0226 { <name>.24B }*10 { <point>.L }*10 (ZC_TAEKWON_RANK)
+/// 0238 { <name>.24B }*10 { <point>.L }*10 (ZC_KILLER_RANK)
+/// 097d <RankingType>.W { <name>.24B }*10 { <point>.L }*10 <mypoint>L (ZC_ACK_RANKING)
+/// 0af6 <RankingType>.W { <CID>.L }*10 { <point>.L }*10 <mypoint>L (ZC_ACK_RANKING2)
+void clif_ranklist( map_session_data& sd, e_rank rankingtype ){
+#if PACKETVER_MAIN_NUM >= 20190731 || PACKETVER_RE_NUM >= 20190703 || PACKETVER_ZERO_NUM >= 20190724
+	PACKET_ZC_ACK_RANKING2 p = {};
+
+	p.packetType = HEADER_ZC_ACK_RANKING2;
+	p.type = rankingtype;
+
+	struct fame_list* list;
+	size_t i;
+	size_t size = std::min<size_t>( ARRAYLENGTH( p.CIDs ), MAX_FAME_LIST );
+
+	switch( rankingtype ){
+		case RANK_BLACKSMITH:
+			list = smith_fame_list;
+			break;
+		case RANK_ALCHEMIST:
+			list = chemist_fame_list;
+			break;
+		case RANK_TAEKWON:
+			list = taekwon_fame_list;
+			break;
+		case RANK_KILLER:
+			// Currently not supported
+			list = nullptr;
+			size = 0;
+			break;
+		default:
+			ShowError( "clif_sub_ranklist: Unsupported ranking type '%d'. Please report this.\n", rankingtype );
+			return;
+	}
+
+	for( i = 0; i < size; i++ ){
+		p.CIDs[i] = list[i].id;
+		p.points[i] = list[i].fame;
+	}
+
+	size = ARRAYLENGTH( p.CIDs );
+
+	for( ; i < size; i++ ){
+		p.CIDs[i] = 0;
+		p.points[i] = 0;
+	}
+
+	switch( sd.class_&MAPID_SECONDMASK ){
+		case MAPID_BLACKSMITH:
+		case MAPID_ALCHEMIST:
+		case MAPID_TAEKWON:
+			p.mypoints = sd.status.fame;
+			break;
+		default:
+			p.mypoints = 0;
+			break;			
+	}
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#elif PACKETVER_MAIN_NUM >= 20130605 || PACKETVER_RE_NUM >= 20130529 || defined(PACKETVER_ZERO)
+	PACKET_ZC_ACK_RANKING p = {};
+
+	p.packetType = HEADER_ZC_ACK_RANKING;
+	p.type = rankingtype;
+	clif_sub_ranklist( p.list, rankingtype );
+
+	switch( sd.class_&MAPID_SECONDMASK ){
+		case MAPID_BLACKSMITH:
+		case MAPID_ALCHEMIST:
+		case MAPID_TAEKWON:
+			p.mypoints = sd.status.fame;
+			break;
+		default:
+			p.mypoints = 0;
+			break;			
+	}
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#else
+	switch( rankingtype ){
+		case RANK_BLACKSMITH: {
+#if PACKETVER >= 20041108
+			PACKET_ZC_BLACKSMITH_RANK p = {};
+
+			p.packetType = HEADER_ZC_BLACKSMITH_RANK;
+			clif_sub_ranklist( p.list, RANK_BLACKSMITH );
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		case RANK_ALCHEMIST: {
+#if PACKETVER >= 20041108
+			PACKET_ZC_ALCHEMIST_RANK p = {};
+
+			p.packetType = HEADER_ZC_ALCHEMIST_RANK;
+			clif_sub_ranklist( p.list, RANK_ALCHEMIST );
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		case RANK_TAEKWON: {
+#if PACKETVER >= 20050328
+			PACKET_ZC_TAEKWON_RANK p = {};
+
+			p.packetType = HEADER_ZC_TAEKWON_RANK;
+			clif_sub_ranklist( p.list, RANK_TAEKWON );
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		case RANK_KILLER: {
+#if PACKETVER >= 20050328
+			PACKET_ZC_KILLER_RANK p = {};
+
+			p.packetType = HEADER_ZC_KILLER_RANK;
+			clif_sub_ranklist( p.list, RANK_KILLER );
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		default:
+			ShowError( "clif_ranklist: Unsupported ranking type '%d'. Please report this.\n", rankingtype );
+			return;
+	}
+#endif
+}
+
+/// Request for the blacksmith ranklist.
+/// /blacksmith command sends this packet to the server.
+/// 0217 (CZ_BLACKSMITH_RANK)
+void clif_parse_ranklist_blacksmith( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20041108
+	const PACKET_CZ_BLACKSMITH_RANK* p = reinterpret_cast<PACKET_CZ_BLACKSMITH_RANK*>( RFIFOP( fd, 0 ) );
+
+	clif_ranklist( *sd, RANK_BLACKSMITH );
+#endif
+}
+
+/// Request for the alchemist ranklist.
+/// /alchemist command sends this packet to the server.
+/// 0218 (CZ_ALCHEMIST_RANK)
+void clif_parse_ranklist_alchemist( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20041108
+	const PACKET_CZ_ALCHEMIST_RANK* p = reinterpret_cast<PACKET_CZ_ALCHEMIST_RANK*>( RFIFOP( fd, 0 ) );
+
+	clif_ranklist( *sd, RANK_ALCHEMIST );
+#endif
+}
+
+/// Request for the taekwon ranklist.
+/// /taekwon command sends this packet to the server.
+/// 0225 (CZ_TAEKWON_RANK)
+void clif_parse_ranklist_taekwon( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20050328
+	const PACKET_CZ_TAEKWON_RANK* p = reinterpret_cast<PACKET_CZ_TAEKWON_RANK*>( RFIFOP( fd, 0 ) );
+
+	clif_ranklist( *sd, RANK_TAEKWON );
+#endif
+}
+
+/// Request for the killer ranklist.
+/// /pk command sends this packet to the server.
+/// 0237 (CZ_KILLER_RANK)
+void clif_parse_ranklist_killer( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20050530
+	const PACKET_CZ_KILLER_RANK* p = reinterpret_cast<PACKET_CZ_KILLER_RANK*>( RFIFOP( fd, 0 ) );
+
+	clif_ranklist( *sd, RANK_KILLER );
+#endif
+}
+
+///
+/// 097c <type>.W (CZ_REQ_RANKING)
+/// type
+///		0: /blacksmith
+///		1: /alchemist
+///		2: /taekwon
+///		3: /pk
+void clif_parse_ranklist( int fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20120503 || PACKETVER_RE_NUM >= 20120502
+	const PACKET_CZ_REQ_RANKING* p = reinterpret_cast<PACKET_CZ_REQ_RANKING*>( RFIFOP( fd, 0 ) );
+
+	switch( p->type ){
+		case RANK_BLACKSMITH:
+		case RANK_ALCHEMIST:
+		case RANK_TAEKWON:
+		case RANK_KILLER:
+			break;
+		default:
+			return;
+	}
+
+	clif_ranklist( *sd, static_cast<e_rank>( p->type ) );
+#endif
+}
+
+/// Updates the fame rank points for the given ranking.
+/// 021b <points>.L <total points>.L (ZC_BLACKSMITH_POINT)
+/// 021c <points>.L <total points>.L (ZC_ALCHEMIST_POINT)
+/// 0224 <points>.L <total points>.L (ZC_TAEKWON_POINT)
+/// 0236 <points>.L <total points>.L (ZC_KILLER_POINT)
+/// 097e <RankingType>.W <point>.L <TotalPoint>.L (ZC_UPDATE_RANKING_POINT)
+void clif_update_rankingpoint( const map_session_data& sd, e_rank rankingtype, uint32 point ){
+#if PACKETVER_MAIN_NUM >= 20120503 || PACKETVER_RE_NUM >= 20120502
+	PACKET_ZC_UPDATE_RANKING_POINT p = {};
+
+	p.packetType = HEADER_ZC_UPDATE_RANKING_POINT;
+	p.type = rankingtype;
+	p.points = point;
+	p.points_total = sd.status.fame;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#else
+	switch(rankingtype){
+		case RANK_BLACKSMITH: {
+#if PACKETVER >= 20041108
+			PACKET_ZC_BLACKSMITH_POINT p = {};
+
+			p.packetType = HEADER_ZC_BLACKSMITH_POINT;
+			p.points = point;
+			p.points_total = sd.status.fame;
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		case RANK_ALCHEMIST: {
+#if PACKETVER >= 20041108
+			PACKET_ZC_ALCHEMIST_POINT p = {};
+
+			p.packetType = HEADER_ZC_ALCHEMIST_POINT;
+			p.points = point;
+			p.points_total = sd.status.fame;
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		case RANK_TAEKWON: {
+#if PACKETVER >= 20050328
+			PACKET_ZC_TAEKWON_POINT p = {};
+
+			p.packetType = HEADER_ZC_TAEKWON_POINT;
+			p.points = point;
+			p.points_total = sd.status.fame;
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		case RANK_KILLER: {
+#if PACKETVER >= 20050530
+			PACKET_ZC_KILLER_POINT p = {};
+
+			p.packetType = HEADER_ZC_KILLER_POINT;
+			p.points = point;
+			p.points_total = sd.status.fame;
+
+			clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+			} break;
+		default:
+			ShowError( "clif_update_rankingpoint: Unsupported ranking type '%d'. Please report this.\n", rankingtype );
+			return;
+	}
+#endif
+}
+
+/**
+ * Transmit personal information to player. (rates)
+ * 0x08cb <packet len>.W <exp>.W <death>.W <drop>.W <DETAIL_EXP_INFO>7B (ZC_PERSONAL_INFOMATION)
+ * <InfoType>.B <Exp>.W <Death>.W <Drop>.W (DETAIL_EXP_INFO 0x08cb)
+ * 0x097b <packet len>.W <exp>.L <death>.L <drop>.L <DETAIL_EXP_INFO>13B (ZC_PERSONAL_INFOMATION2)
+ * 0x0981 <packet len>.W <exp>.W <death>.W <drop>.W <activity rate>.W <DETAIL_EXP_INFO>13B (ZC_PERSONAL_INFOMATION_CHN)
+ * <InfoType>.B <Exp>.L <Death>.L <Drop>.L (DETAIL_EXP_INFO 0x97b|0981)
+ * FIXME!
+ * - Find/decide for details of EXP, Drop, and Death penalty rates
+ * - For now, we're assuming values for DETAIL_EXP_INFO are:
+ *   0 - map adjustment (bexp mapflag), 1 - Premium/VIP adjustment, 2 - Server rate adjustment, 3 - None
+*/
+#ifdef VIP_ENABLE
+void clif_display_pinfo( map_session_data& sd ){
+#if PACKETVER_MAIN_NUM >= 20110627 || PACKETVER_RE_NUM >= 20110628 || defined(PACKETVER_ZERO)
+	// TODO: Whoever wants to take the blame, fix this crappy logic below - and yes I know indentation is wrong, but CANT TOUCH THIS! *sings* [Lemongrass]
+		int32 details_bexp[PINFO_MAX], details_drop[PINFO_MAX], details_penalty[PINFO_MAX];
+
+		/**
+		 * EXP
+		 */
+		//0:PCRoom
+		details_bexp[PINFO_BASIC] = map_getmapflag( sd.m, MF_BEXP );
+		if (details_bexp[PINFO_BASIC] == 100 || !details_bexp[PINFO_BASIC])
+			details_bexp[PINFO_BASIC] = 0;
+		else {
+			if (details_bexp[PINFO_BASIC] < 100) {
+				details_bexp[PINFO_BASIC] = 100 - details_bexp[PINFO_BASIC];
+				details_bexp[PINFO_BASIC] = 0 - details_bexp[PINFO_BASIC];
+			} else
+				details_bexp[PINFO_BASIC] = details_bexp[PINFO_BASIC] - 100;
+		}
+
+		//1:Premium
+		if( pc_isvip( &sd ) ){
+			details_bexp[PINFO_PREMIUM] = battle_config.vip_base_exp_increase * battle_config.base_exp_rate / 100;
+			if (details_bexp[PINFO_PREMIUM] < 0)
+				details_bexp[PINFO_PREMIUM] = 0 - details_bexp[PINFO_PREMIUM];
+		} else
+			details_bexp[PINFO_PREMIUM] = 0;
+
+		//2:Server
+		details_bexp[PINFO_SERVER] = battle_config.base_exp_rate;
+		if (details_bexp[PINFO_SERVER] == 100)
+			details_bexp[PINFO_SERVER] = 0;
+		else {
+			if (details_bexp[PINFO_SERVER] < 100) {
+				details_bexp[PINFO_SERVER] = 100 - details_bexp[PINFO_SERVER];
+				details_bexp[PINFO_SERVER] = 0 - details_bexp[PINFO_SERVER];
+			} else
+				details_bexp[PINFO_SERVER] = details_bexp[PINFO_SERVER] - 100;
+		}
+
+		//3:TPLUS
+		details_bexp[PINFO_CAFE] = 0;
+
+		/**
+		 * Drop rate
+		 */
+		//0:PCRoom
+		details_drop[PINFO_BASIC] = 0;
+
+		//1:Premium
+		if( pc_isvip( &sd ) ){
+			details_drop[PINFO_PREMIUM] = (battle_config.vip_drop_increase * battle_config.item_rate_common) / 100;
+			if (details_drop[PINFO_PREMIUM] < 0)
+				details_drop[PINFO_PREMIUM] = 0 - details_drop[PINFO_PREMIUM];
+		} else
+			details_drop[PINFO_PREMIUM] = 0;
+
+		//2:Server
+		details_drop[PINFO_SERVER] = battle_config.item_rate_common;
+		if (details_drop[PINFO_SERVER] == 100)
+			details_drop[PINFO_SERVER] = 0;
+		else {
+			if (details_drop[PINFO_SERVER] < 100) {
+				details_drop[PINFO_SERVER] = 100 - details_drop[PINFO_SERVER];
+				details_drop[PINFO_SERVER] = 0 - details_drop[PINFO_SERVER];
+			} else
+				details_drop[PINFO_SERVER] = details_drop[PINFO_SERVER] - 100;
+		}
+
+		//3:TPLUS
+		details_drop[PINFO_CAFE] = 0;
+
+		/**
+		 * Penalty rate
+		 */
+		//! FIXME: Current penalty system makes this announcement unable to give info on + or - rate
+		//0:PCRoom
+		details_penalty[PINFO_BASIC] = 0;
+
+		//1:Premium
+		if( pc_isvip( &sd ) ){
+			details_penalty[PINFO_PREMIUM] = battle_config.vip_exp_penalty_base;
+			if (details_penalty[PINFO_PREMIUM] == 100)
+				details_penalty[PINFO_PREMIUM] = 0;
+			else {
+				if (details_penalty[PINFO_PREMIUM] < 100) {
+					details_penalty[PINFO_PREMIUM] = 100 - details_penalty[PINFO_PREMIUM];
+					details_penalty[PINFO_PREMIUM] = 0 - details_penalty[PINFO_PREMIUM];
+				} else
+					details_penalty[PINFO_PREMIUM] = details_penalty[PINFO_PREMIUM] - 100;
+			}
+			if (battle_config.death_penalty_base > battle_config.vip_exp_penalty_base)
+				details_penalty[PINFO_PREMIUM] = battle_config.vip_exp_penalty_base - battle_config.death_penalty_base;
+		} else
+			details_penalty[PINFO_PREMIUM] = 0;
+
+		//2:Server
+		details_penalty[PINFO_SERVER] = battle_config.death_penalty_base;
+		if (details_penalty[PINFO_SERVER] == 100)
+			details_penalty[PINFO_SERVER] = 0;
+		else {
+			if (details_penalty[PINFO_SERVER] < 100) {
+				details_penalty[PINFO_SERVER] = 100 - details_penalty[PINFO_SERVER];
+				details_penalty[PINFO_SERVER] = 0 - details_penalty[PINFO_SERVER];
+			} else
+				details_penalty[PINFO_SERVER] = details_penalty[PINFO_SERVER] - 100;
+		}
+
+		//3:TPLUS
+		details_penalty[PINFO_CAFE] = 0;
+
+	PACKET_ZC_PERSONAL_INFOMATION* p = reinterpret_cast<PACKET_ZC_PERSONAL_INFOMATION*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_PERSONAL_INFOMATION;
+	p->length = sizeof( *p );
+#if PACKETVER_MAIN_NUM >= 20120503 || PACKETVER_RE_NUM >= 20120502 || defined(PACKETVER_ZERO)
+	p->total_exp = 100 * 1000;
+	p->total_death = 100 * 1000;
+	p->total_drop = 100 * 1000;
+#else
+	p->total_exp = 100;
+	p->total_death = 100;
+	p->total_drop = 100;
+#endif
+
+	for( int32 i = PINFO_BASIC; i < PINFO_MAX; i++ ){
+		p->details[i].type = i; // infotype 0 PCRoom, 1 Premium, 2 Server, 3 TPlus
+
+#if PACKETVER_MAIN_NUM >= 20120503 || PACKETVER_RE_NUM >= 20120502 || defined(PACKETVER_ZERO)
+		p->details[i].exp = details_bexp[i] * 1000;

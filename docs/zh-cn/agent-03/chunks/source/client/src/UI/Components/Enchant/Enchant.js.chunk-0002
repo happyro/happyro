@@ -1,0 +1,500 @@
+void main() {\n\
+	fragColor = uColor;\n\
+}\n';
+	EnchantEffectState.overlayProgram = WebGL.createShaderProgram(gl, vertexShader, fragmentShader);
+	EnchantEffectState.overlayBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER, EnchantEffectState.overlayBuffer);
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+}
+
+function renderEffectOverlay(gl) {
+	ensureOverlayProgram(gl);
+	const program = EnchantEffectState.overlayProgram;
+	if (!program) {
+		return;
+	}
+	gl.useProgram(program);
+	gl.bindBuffer(gl.ARRAY_BUFFER, EnchantEffectState.overlayBuffer);
+	gl.enableVertexAttribArray(program.attribute.aPosition);
+	gl.vertexAttribPointer(program.attribute.aPosition, 2, gl.FLOAT, false, 0, 0);
+	gl.uniform4fv(program.uniform.uColor, ENCHANT_OVERLAY_COLOR);
+	gl.disable(gl.DEPTH_TEST);
+	gl.enable(gl.BLEND);
+	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	gl.drawArrays(gl.TRIANGLES, 0, 6);
+}
+
+function renderEnchantEffects(tick, gl) {
+	if (!EnchantEffectState.activeEffects.length) {
+		return;
+	}
+	if (!StrEffect.ready) {
+		StrEffect.init(gl);
+	}
+	gl.disable(gl.DEPTH_TEST);
+	StrEffect.beforeRender(gl, Camera.modelView, Camera.projection, EnchantEffectFog, tick);
+	const anchor = getEffectAnchorPosition();
+	const remaining = [];
+	EnchantEffectState.activeEffects.forEach(function (effect) {
+		if (!effect) {
+			return;
+		}
+		if (!effect.ready) {
+			effect.init(gl);
+		}
+		effect.position = anchor;
+		effect.render(gl, tick);
+		if (!effect.needCleanUp) {
+			remaining.push(effect);
+		}
+	});
+	EnchantEffectState.activeEffects = remaining;
+	StrEffect.afterRender(gl);
+	gl.enable(gl.DEPTH_TEST);
+	stopEffectRenderIfIdle();
+}
+
+function spawnEnchantEffect(effectId) {
+	if (!effectId) {
+		return;
+	}
+	const effectList = EffectDB[effectId];
+	if (!effectList || !effectList.length) {
+		return;
+	}
+	const anchor = getEffectAnchorPosition();
+	const startTick = Renderer && Renderer.tick ? Renderer.tick : Date.now();
+	effectList.forEach(function (effect) {
+		if (!effect || effect.type !== 'STR' || !effect.file) {
+			return;
+		}
+		const filename = 'data/texture/effect/' + effect.file + '.str';
+		const texturePath = effect.texturePath || '';
+		const strEffect = new StrEffect(filename, anchor, startTick, texturePath);
+		EnchantEffectState.activeEffects.push(strEffect);
+	});
+	ensureEffectRenderActive();
+}
+
+function ensureEffectStyle() {
+	if (_effectStyleNode) {
+		return;
+	}
+	_effectStyleNode = document.createElement('style');
+	_effectStyleNode.textContent =
+		'#EnchantEffectOverlay{position:fixed;top:0;left:0;width:100%;height:100%;background:transparent;z-index:1000;display:none;}' +
+		'body.enchant-effect-active>*:not(canvas):not(.cursor):not(#EnchantEffectOverlay){filter:brightness(0.6);}';
+	document.head.appendChild(_effectStyleNode);
+}
+
+function showEffectOverlay() {
+	ensureEffectStyle();
+	const overlay = ensureEffectOverlay();
+	if (EnchantEffectState.overlayActive) {
+		overlay.style.display = 'block';
+		return;
+	}
+	overlay.style.display = 'block';
+	EnchantEffectState.overlayActive = true;
+	document.body.classList.add('enchant-effect-active');
+	ensureEffectRenderActive();
+}
+
+function hideEffectOverlay() {
+	if (EnchantEffectState.overlayTimer) {
+		clearTimeout(EnchantEffectState.overlayTimer);
+		EnchantEffectState.overlayTimer = null;
+	}
+	if (!EnchantEffectState.overlayActive) {
+		return;
+	}
+	if (Renderer && Renderer.canvas && EnchantEffectState.canvasStyles) {
+		Renderer.canvas.style.zIndex = EnchantEffectState.canvasStyles.zIndex;
+		Renderer.canvas.style.opacity = EnchantEffectState.canvasStyles.opacity;
+		Renderer.canvas.style.pointerEvents = EnchantEffectState.canvasStyles.pointerEvents;
+	}
+	if (EnchantEffectState.overlayNode) {
+		EnchantEffectState.overlayNode.style.display = 'none';
+	}
+	EnchantEffectState.overlayActive = false;
+	document.body.classList.remove('enchant-effect-active');
+	stopEffectRenderIfIdle();
+}
+
+function scheduleEffectOverlayHide(delay) {
+	if (EnchantEffectState.overlayTimer) {
+		clearTimeout(EnchantEffectState.overlayTimer);
+	}
+	const timeout = Math.max(Number(delay) || 0, 0);
+	EnchantEffectState.overlayTimer = setTimeout(() => {
+		hideEffectOverlay();
+	}, timeout);
+}
+
+function getEffectGroup(action) {
+	if (action === 'upgrade') {
+		return 'upgrade';
+	}
+	if (action === 'reset') {
+		return 'reset';
+	}
+	return 'enchant';
+}
+
+function cacheEffectDuration(effectId) {
+	if (Object.prototype.hasOwnProperty.call(EnchantEffectDurations, effectId)) {
+		return;
+	}
+	const effectList = EffectDB[effectId];
+	if (!effectList || !effectList.length) {
+		EnchantEffectDurations[effectId] = DEFAULT_INTRO_DURATION_MS;
+		return;
+	}
+	const effect = effectList[0];
+	if (!effect || effect.type !== 'STR' || !effect.file) {
+		EnchantEffectDurations[effectId] = DEFAULT_INTRO_DURATION_MS;
+		return;
+	}
+	const filename = 'data/texture/effect/' + effect.file + '.str';
+	const texturePath = effect.texturePath || '';
+	Client.loadFile(
+		filename,
+		function (strFile) {
+			let duration = DEFAULT_INTRO_DURATION_MS;
+			if (strFile && strFile.fps) {
+				duration = Math.ceil((strFile.maxKey / strFile.fps) * 1000);
+			}
+			EnchantEffectDurations[effectId] = duration;
+		},
+		null,
+		{ texturePath: texturePath }
+	);
+}
+
+function preloadEnchantEffectDurations() {
+	Object.keys(EnchantEffectGroups).forEach(key => {
+		const group = EnchantEffectGroups[key];
+		cacheEffectDuration(group.intro);
+		cacheEffectDuration(group.success);
+		cacheEffectDuration(group.fail);
+	});
+}
+
+function getEffectDuration(effectId) {
+	return EnchantEffectDurations[effectId] || DEFAULT_INTRO_DURATION_MS;
+}
+
+function playEffect(effectId) {
+	if (!effectId) {
+		return;
+	}
+	spawnEnchantEffect(effectId);
+}
+
+function playIntroEffect(action) {
+	const group = getEffectGroup(action);
+	const effects = EnchantEffectGroups[group];
+	if (!effects || !effects.intro) {
+		return;
+	}
+	if (EnchantEffectState.resultTimer) {
+		clearTimeout(EnchantEffectState.resultTimer);
+		EnchantEffectState.resultTimer = null;
+	}
+	showEffectOverlay();
+	cacheEffectDuration(effects.intro);
+	playEffect(effects.intro);
+	EnchantEffectState.introEndAt = Date.now() + getEffectDuration(effects.intro);
+	scheduleEffectOverlayHide(getEffectDuration(effects.intro) + DEFAULT_INTRO_DURATION_MS);
+}
+
+function playResultEffect(action, success) {
+	const group = getEffectGroup(action);
+	const effects = EnchantEffectGroups[group];
+	if (!effects) {
+		return;
+	}
+	const effectId = success ? effects.success : effects.fail;
+	if (!effectId) {
+		return;
+	}
+	cacheEffectDuration(effectId);
+	const delay = Math.max(EnchantEffectState.introEndAt - Date.now(), 0);
+	if (EnchantEffectState.resultTimer) {
+		clearTimeout(EnchantEffectState.resultTimer);
+	}
+	if (delay > 0) {
+		EnchantEffectState.resultTimer = setTimeout(() => {
+			playEffect(effectId);
+		}, delay);
+	} else {
+		playEffect(effectId);
+		EnchantEffectState.resultTimer = null;
+	}
+	scheduleEffectOverlayHide(delay + getEffectDuration(effectId));
+	EnchantEffectState.introEndAt = 0;
+}
+
+function loadItemIcon(target, itemId, isIdentified) {
+	const it = DB.getItemInfo(itemId);
+	if (!it) {
+		return;
+	}
+	const name = isIdentified !== false ? it.identifiedResourceName : it.unidentifiedResourceName;
+	if (!name) {
+		return;
+	}
+	Client.loadFile(DB.INTERFACE_PATH + 'item/' + name + '.bmp', data => {
+		target.style.backgroundImage = `url(${data})`;
+	});
+}
+
+function loadItemCollection(target, itemId, isIdentified) {
+	const it = DB.getItemInfo(itemId);
+	if (!it) {
+		return;
+	}
+	const name = isIdentified !== false ? it.identifiedResourceName : it.unidentifiedResourceName;
+	if (!name) {
+		return;
+	}
+	Client.loadFile(
+		DB.INTERFACE_PATH + 'collection/' + name + '.bmp',
+		data => {
+			target.style.backgroundImage = `url(${data})`;
+		},
+		() => {
+			loadItemIcon(target, itemId, isIdentified);
+		}
+	);
+}
+
+function loadGradeIcon(target, grade) {
+	if (!target) {
+		return;
+	}
+	if (!grade || grade <= 0) {
+		target.style.backgroundImage = '';
+		return;
+	}
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/grade_icon' + grade + '.bmp', data => {
+		target.style.backgroundImage = `url(${data})`;
+	});
+}
+
+function getItemDisplayName(itemId, fallback) {
+	const info = DB.getItemInfo(itemId);
+	if (info && info.identifiedDisplayName) {
+		return info.identifiedDisplayName;
+	}
+	return fallback || 'Unknown';
+}
+
+function resolveMaterialId(material) {
+	if (material && material.id) {
+		return material.id;
+	}
+	if (material && material.base) {
+		return DB.getItemIdfromBase(material.base) || 0;
+	}
+	return 0;
+}
+
+function hasEnoughZeny(zeny) {
+	const cost = Number(zeny) || 0;
+	if (cost <= 0) {
+		return true;
+	}
+	return Session.zeny >= cost;
+}
+
+function hasEnoughMaterials(materials) {
+	if (!materials || !materials.length) {
+		return true;
+	}
+	const inventoryUI = Inventory.getUI && Inventory.getUI();
+	if (!inventoryUI || !inventoryUI.getItemById) {
+		return false;
+	}
+	for (let i = 0; i < materials.length; i++) {
+		const mat = materials[i];
+		const required = Number(mat.count) || 0;
+		if (required <= 0) {
+			continue;
+		}
+		const matId = resolveMaterialId(mat);
+		if (!matId) {
+			return false;
+		}
+		const inventoryItem = inventoryUI.getItemById(matId);
+		const current = inventoryItem ? inventoryItem.count : 0;
+		if (current < required) {
+			return false;
+		}
+	}
+	return true;
+}
+
+function canAffordCost(zeny, materials) {
+	return hasEnoughZeny(zeny) && hasEnoughMaterials(materials);
+}
+
+function renderMaterials(materials) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const list = root.querySelector('.material_list');
+	if (!list) {
+		return;
+	}
+	list.innerHTML = '';
+	if (!materials || !materials.length) {
+		return;
+	}
+	const inventoryUI = Inventory.getUI && Inventory.getUI();
+	materials.forEach(mat => {
+		const entry = document.createElement('div');
+		entry.className = 'material';
+		const icon = document.createElement('div');
+		icon.className = 'icon';
+		const nameEl = document.createElement('div');
+		nameEl.className = 'name';
+		const count = document.createElement('div');
+		count.className = 'count';
+		const matId = resolveMaterialId(mat);
+		const label = matId ? getItemDisplayName(matId, mat.base) : mat.base || 'Unknown';
+		let current = 0;
+		const required = Number(mat.count) || 0;
+		if (matId && inventoryUI && inventoryUI.getItemById) {
+			const inventoryItem = inventoryUI.getItemById(matId);
+			current = inventoryItem ? inventoryItem.count : 0;
+		}
+		nameEl.textContent = label;
+		if (mat.count != null) {
+			count.textContent = matId ? current + '/' + required : 'x' + required;
+		}
+		entry.dataset.background =
+			matId && current >= required ? 'enchantui/bg_enc_on.bmp' : 'enchantui/bg_enc_off.bmp';
+		entry.appendChild(icon);
+		entry.appendChild(nameEl);
+		entry.appendChild(count);
+		list.appendChild(entry);
+		GUIComponent.processDataAttrs(entry);
+		icon.dataset.name = label;
+		if (matId) {
+			icon.dataset.itid = matId;
+			loadItemIcon(icon, matId, true);
+		}
+	});
+}
+
+function renderEnchantList(entries, selectedKey) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const list = root.querySelector('.enchant_list');
+	if (!list) {
+		return;
+	}
+	list.innerHTML = '';
+	if (!entries || !entries.length) {
+		return;
+	}
+	entries.forEach(entry => {
+		const row = document.createElement('div');
+		row.className = 'enchant_entry';
+		const icon = document.createElement('div');
+		icon.className = 'entry_icon';
+		const text = document.createElement('div');
+		text.className = 'entry_text';
+		const name = document.createElement('div');
+		name.className = 'entry_name';
+		const itid = entry.id || (entry.base ? DB.getItemIdfromBase(entry.base) : 0);
+		name.textContent = entry.label || '';
+		text.appendChild(name);
+		if (entry.subLabel) {
+			const sub = document.createElement('div');
+			sub.className = 'entry_sub';
+			sub.textContent = entry.subLabel;
+			text.appendChild(sub);
+		}
+		row.dataset.key = entry.key;
+		row.dataset.itid = itid || 0;
+		row.dataset.name = entry.label || '';
+		row.dataset.background = 'enchantui/btn_enc_item.bmp';
+		row.dataset.hover = 'enchantui/btn_enc_item_over.bmp';
+		row.dataset.down = 'enchantui/btn_enc_item_press.bmp';
+		row.dataset.active = 'enchantui/btn_enc_item_press.bmp';
+		row.classList.toggle('disabled', !!entry.disabled);
+		row.classList.toggle('active', selectedKey != null && String(entry.key) === String(selectedKey));
+		row.appendChild(icon);
+		row.appendChild(text);
+		list.appendChild(row);
+		GUIComponent.processDataAttrs(row);
+		if (itid) {
+			loadItemIcon(icon, itid, true);
+		}
+	});
+}
+
+function renderItemList() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const list = root.querySelector('.item_list');
+	if (!list) {
+		return;
+	}
+	list.innerHTML = '';
+
+	if (!EnchantState.group) {
+		const empty = document.createElement('div');
+		empty.className = 'item_list_empty';
+		empty.textContent = 'Enchant data missing.';
+		list.appendChild(empty);
+		return;
+	}
+
+	const inventoryUI = Inventory.getUI && Inventory.getUI();
+	const items = inventoryUI && inventoryUI.list ? inventoryUI.list : [];
+	let selectedIndex = EnchantState.item ? EnchantState.item.index : 0;
+	let selectedValid = false;
+	const candidates = [];
+
+	items.forEach(item => {
+		const result = validateItem(item);
+		if (!result.ok) {
+			return;
+		}
+		candidates.push(item);
+		if (selectedIndex && item.index === selectedIndex) {
+			selectedValid = true;
+		}
+	});
+
+	if (selectedIndex && !selectedValid) {
+		EnchantState.item = null;
+		EnchantState.itemIndex = 0;
+		EnchantState.selectedPerfect = null;
+		EnchantState.selectedSlot = null;
+		EnchantState.selectedUpgradeSlot = null;
+		selectedIndex = 0;
+	}
+
+	if (!candidates.length) {
+		const empty = document.createElement('div');
+		empty.className = 'item_list_empty';
+		empty.textContent = 'No enchantable items.';
+		list.appendChild(empty);
+		return;
+	}
+
+	candidates.forEach(item => {
+		const entry = document.createElement('button');
+		entry.className = 'item_entry';
+		const slot = document.createElement('div');
+		slot.className = 'item_slot';
+		const info = document.createElement('div');

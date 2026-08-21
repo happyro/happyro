@@ -1,0 +1,500 @@
+			break;
+		case 5:
+			Equipment.getUI().setCostumeConfig(pkt.Value);
+			break;
+		default:
+			console.error('[PACKET_ZC_CONFIG] Unknown Config Type %d (value:%d)', pkt.Config, pkt.Value);
+	}
+}
+
+/**
+ * Show some system configs
+ *
+ * @param {object} pkt - PACKET_ZC_CONFIG_NOTIFY
+ */
+function onConfigNotify(pkt) {
+	if (typeof pkt.show_eq_flag !== 'undefined') {
+		Equipment.getUI().setEquipConfig(pkt.show_eq_flag);
+		ChatBox.addText(DB.getMessage(1358 + (pkt.show_eq_flag ? 1 : 0)), ChatBox.TYPE.INFO, ChatBox.FILTER.PUBLIC_LOG);
+	}
+	if (typeof pkt.pet_autofeeding_flag !== 'undefined') {
+		PetInformations.setFeedConfig(pkt.pet_autofeeding_flag);
+		ChatBox.addText(
+			DB.getMessage(2579 + (pkt.pet_autofeeding_flag ? 0 : 1)),
+			ChatBox.TYPE.INFO,
+			ChatBox.FILTER.PUBLIC_LOG
+		);
+	}
+	if (typeof pkt.call_flag !== 'undefined') {
+		Session.Entity.call_flag = pkt.call_flag;
+		ChatBox.addText(DB.getMessage(2978 + (pkt.call_flag ? 0 : 1)), ChatBox.TYPE.INFO, ChatBox.FILTER.PUBLIC_LOG);
+	}
+	if (typeof pkt.homunculus_autofeeding_flag !== 'undefined') {
+		HomunInformations.setFeedConfig(pkt.homunculus_autofeeding_flag);
+		ChatBox.addText(
+			DB.getMessage(3282 + (pkt.homunculus_autofeeding_flag ? 0 : 1)),
+			ChatBox.TYPE.INFO,
+			ChatBox.FILTER.PUBLIC_LOG
+		);
+	}
+}
+
+/**
+ * Server update our account id
+ *
+ * @param {object} pkt - PACKET.ZC.AID
+ */
+function onReceiveAccountID(pkt) {
+	Session.AID = pkt.AID;
+	Session.Entity.GID = pkt.AID;
+}
+
+/**
+ * Map accept us to enter the map
+ *
+ * @param {object} pkt - PACKET.ZC.ACCEPT_ENTER
+ */
+function onConnectionAccepted(pkt) {
+	Session.Entity.onWalkEnd = onWalkEnd;
+
+	if ('sex' in pkt && pkt.sex < 2) {
+		Session.Entity.sex = pkt.sex;
+	}
+
+	// Reset
+	Session.petId = 0;
+	Session.hasParty = false;
+	Session.isPartyLeader = false;
+	Session.hasGuild = false;
+	Session.guildRight = 0;
+
+	Session.homunId = 0;
+
+	// clevel is already populated by Entity.set() in the Player constructor
+
+	Session.mapState = {
+		property: 0,
+		type: 0,
+		flag: 0,
+		isPVPZone: false,
+		isAgitZone: false,
+		isPVP: false,
+		isGVG: false,
+		isSiege: false,
+		isNoLockOn: false,
+		showPVPCounter: false,
+		showBFCounter: false,
+		isBattleField: false
+	};
+
+	if (PACKETVER.value >= 20200520) {
+		BasicInfo.selectUIVersionWithJob(DB.getJobClass(Session.Entity.job));
+		BasicInfo.getUI().prepare();
+	}
+
+	BasicInfo.getUI().update('blvl', Session.Entity.clevel);
+	BasicInfo.getUI().update('jlvl', Session.Entity.joblevel);
+	BasicInfo.getUI().update('zeny', Session.Entity.money);
+	BasicInfo.getUI().update('name', Session.Entity.display.name);
+	BasicInfo.getUI().update('job', Session.Entity.job);
+
+	// Fix http://forum.robrowser.com/?topic=32177.0
+	onMapChange({
+		xPos: pkt.PosDir[0],
+		yPos: pkt.PosDir[1],
+		mapName: _mapName
+	});
+}
+
+/**
+ * onConnectionRefused
+ *
+ * @param {object} pkt - PACKET.ZC.REFUSE_ENTER
+ */
+function onConnectionRefused(pkt) {
+	UIManager.showErrorBox(DB.getMessage(9)); // MSI_ACCESS_DENIED = Rejected from Server.
+}
+
+/**
+ * Changing map, loading new map
+ *
+ * @param {object} pkt - PACKET.ZC.NPCACK_MAPMOVE
+ */
+function onMapChange(pkt) {
+	MapRenderer.onLoad = () => {
+		Session.Entity.set({
+			PosDir: [pkt.xPos, pkt.yPos, 0],
+			// Use Session.AID rather than Session.Entity.GID here:
+			// EntityManager removes Session.Entity during map transition, which
+			// triggers Entity.clean() and sets this.GID = -1. Reading the GID
+			// back from the entity at this point would produce -1.
+			// Session.AID (account ID) equals the player's entity GID on the
+			// map server and is never mutated by entity cleanup.
+			GID: Session.AID
+		});
+		EntityManager.add(Session.Entity);
+		if (Session.Entity.effectState & StatusConst.EffectState.FALCON) {
+			if (!Session.Entity.falcon) {
+				Session.Entity.falcon = new Entity();
+			}
+
+			Session.Entity.falcon.set({
+				objecttype: Session.Entity.falcon.constructor.TYPE_FALCON,
+				GID: Session.Entity.GID + '_FALCON',
+				PosDir: [Session.Entity.position[0], Session.Entity.position[1], 0],
+				job: Session.Entity._job + '_FALCON',
+				speed: Math.max(Session.Entity.walk.speed - 50, 1),
+				name: '',
+				hp: -1,
+				maxhp: -1,
+				hideShadow: true
+			});
+			EntityManager.add(Session.Entity.falcon);
+		}
+		if (Session.Entity.effectState & StatusConst.EffectState.WUG) {
+			if (!Session.Entity.wug) {
+				Session.Entity.wug = new Entity();
+			}
+
+			Session.Entity.wug.set({
+				objecttype: Session.Entity.wug.constructor.TYPE_WUG,
+				GID: Session.Entity.GID + '_WUG',
+				PosDir: [Session.Entity.position[0], Session.Entity.position[1], 0],
+				job: Session.Entity._job + '_WUG',
+				speed: Math.max(Session.Entity.walk.speed - 50, 1),
+				name: '',
+				hp: -1,
+				maxhp: -1
+			});
+			EntityManager.add(Session.Entity.wug);
+		}
+		// free and load aura so it loads in new map
+		Session.Entity.aura.free();
+		Session.Entity.aura.load(EffectManager);
+
+		// Spawn all signboards for the current map
+		const mapName = MapRenderer.currentMap.replace('.gat', '').toLowerCase();
+		const signboards = DB.getAllSignboardsForMap(mapName);
+
+		if (signboards) {
+			for (const x in signboards) {
+				for (const y in signboards[x]) {
+					const signboardData = signboards[x][y];
+					SignboardManager.add(parseInt(x), parseInt(y), signboardData);
+				}
+			}
+		}
+
+		// Initialize camera
+		Camera.setTarget(Session.Entity);
+		Camera.init();
+
+		// Add Game UI
+		MiniMap.getUI().append();
+		MiniMap.getUI().setMap(MapRenderer.currentMap);
+		if (Configs.get('enableMapName')) {
+			MapName.setMap(MapRenderer.currentMap);
+			MapName.append();
+		}
+		ChatBox.append();
+		ChatBoxSettings.append();
+		BasicInfo.getUI().append();
+		Escape.append();
+		Inventory.getUI().append();
+		CartItems.append();
+		Vending.append();
+		ChangeCart.append();
+		CartDecoration.append();
+		Equipment.getUI().append();
+		ShortCuts.append();
+		StatusIcons.append();
+		ShortCut.append();
+		ChatRoomCreate.append();
+		Emoticons.append();
+		SkillList.getUI().append();
+		FPS.append();
+		PartyFriends.getUI().append();
+		Guild.append();
+		WorldMap.append();
+		SkillListMH.homunculus.append();
+		SkillListMH.mercenary.append();
+		MobileUI.append();
+		JoystickUI.append();
+		Navigation.append();
+		Roulette.append();
+		if (Configs.get('enableAchievements') && PACKETVER.value >= 20150513) {
+			Achievement.append();
+		}
+
+		if (Session.PCGoldTimer) {
+			PCGoldTimer.append();
+		}
+
+		WinStats.getUI().append();
+
+		Quest.getUI().append();
+
+		if (Configs.get('enableCashShop')) {
+			CashShopIcon.append();
+		}
+
+		if (Configs.get('enableCheckAttendance') && PACKETVER.value >= 20180307) {
+			CheckAttendance.append();
+		}
+
+		// Reload plugins
+		PluginManager.init();
+
+		// Map loaded
+		Network.sendPacket(new PACKET.CZ.NOTIFY_ACTORINIT());
+
+		// Rates Info
+		if (Session.ratesInfo) {
+			Announce.append();
+			Announce.set(Session.ratesInfo, '#FFFF00', true);
+		}
+
+		// Request cash shop items
+		if (PACKETVER.value >= 20130320 && Session.requestCashShop) {
+			Network.sendPacket(new PACKET.CZ.PC_CASH_POINT_ITEMLIST());
+			Session.requestCashShop = false;
+		}
+
+		// send request blocking play cancel
+		if (PACKETVER.value >= 20130320) {
+			Network.sendPacket(new PACKET.CZ.BLOCKING_PLAY_CANCEL());
+		}
+	};
+
+	MapRenderer.setMap(pkt.mapName);
+}
+
+/**
+ * Change zone server
+ *
+ * @param {object} pkt - PACKET.ZC.NPCACK_SERVERMOVE
+ */
+function onServerChange(pkt) {
+	MapEngine.init(pkt.addr.ip, pkt.addr.port, pkt.mapName);
+}
+
+/**
+ * Ask the server to disconnect
+ */
+function onExitRequest() {
+	const pkt = new PACKET.CZ.REQUEST_QUIT();
+	Network.sendPacket(pkt);
+
+	// Wait a second, if no answer from the server, then close it.
+	Events.setTimeout(() => {
+		onExitSuccess();
+	}, 1000);
+}
+
+/**
+ * Server don't want us to disconnect yet
+ *
+ * @param {object} pkt - PACKET.ZC.REFUSE_QUIT
+ */
+function onExitFail(pkt) {
+	ChatBox.addText(DB.getMessage(502), ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+}
+
+/**
+ * Server accept to disconnect us
+ *
+ * @param {object} pkt - PACKET.ZC.REFUSE_QUIT
+ */
+function onExitSuccess() {
+	if (PACKETVER.value >= 20170315 && Session.WebToken) {
+		ShortCut.saveToServer();
+	}
+
+	WhisperBox.clearAll();
+	UIManager.removeComponents();
+	Network.close();
+	Renderer.stop();
+	MapRenderer.free();
+	SoundManager.stop();
+	BGM.stop();
+	import('Engine/GameEngine.js').then(m => m.default.reload());
+}
+
+/**
+ * Try to return to char-server
+ */
+function onRestartRequest() {
+	const pkt = new PACKET.CZ.RESTART();
+	pkt.type = 1;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Go back to save point request
+ */
+function onReturnSavePointRequest() {
+	const pkt = new PACKET.CZ.RESTART();
+	pkt.type = 0;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Resurection feature
+ */
+function onResurectionRequest() {
+	const pkt = new PACKET.CZ.STANDING_RESURRECTION();
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Does the server want you to return to char-server ?
+ *
+ * @param {object} pkt - PACKET.ZC.RESTART_ACK
+ */
+function onRestartAnswer(pkt) {
+	if (!pkt.type) {
+		// Have to wait 10sec
+		ChatBox.addText(DB.getMessage(502), ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+	} else {
+		WhisperBox.clearAll();
+		GuildEngine.guild_id = 0;
+		BasicInfo.getUI().remove();
+		PlayerViewEquip.getUI().remove();
+		StatusIcons.clean();
+		ChatBox.clean();
+		ShortCut.clean();
+		Quest.getUI().clean();
+		PartyFriends.getUI().clean();
+		CashShop.clean();
+		Session.Achievement = null;
+		Mouse.intersect = false;
+		MapRenderer.free();
+		Renderer.stop();
+		onRestart();
+	}
+}
+
+/**
+ * Response from server to disconnect
+ * @param pkt - {object}
+ */
+function onDisconnectAnswer(pkt) {
+	switch (pkt.result) {
+		// Disconnect
+		case 0:
+			WhisperBox.clearAll();
+			BasicInfo.getUI().remove();
+			PlayerViewEquip.getUI().remove();
+			StatusIcons.clean();
+			ChatBox.clean();
+			ShortCut.clean();
+			Quest.getUI().clean();
+			PartyFriends.getUI().clean();
+			Renderer.stop();
+			onExitSuccess();
+			break;
+
+		case 1:
+			// Have to wait 10 sec
+			ChatBox.addText(DB.getMessage(502), ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+			break;
+
+		default:
+	}
+}
+
+/**
+ * ChatBox talk
+ *
+ * @param {string} user
+ * @param {string} text
+ * @param {number} target
+ */
+function onRequestTalk(user, text, target) {
+	let pkt;
+	const flag_party = text[0] === '%' || KEYS.CTRL;
+	const flag_guild =
+		text[0] === '$' ||
+		(KEYS.ALT &&
+			!(
+				KEYS[0] ||
+				KEYS[1] ||
+				KEYS[2] ||
+				KEYS[3] ||
+				KEYS[4] ||
+				KEYS[5] ||
+				KEYS[6] ||
+				KEYS[7] ||
+				KEYS[8] ||
+				KEYS[9]
+			));
+
+	text = text.replace(/^(\$|%)/, '');
+
+	// Private messages
+	if (user && user.length) {
+		pkt = new PACKET.CZ.WHISPER();
+		pkt.receiver = user;
+		pkt.msg = text;
+		Network.sendPacket(pkt);
+		ChatBox.PrivateMessageStorage.nick = user;
+		ChatBox.PrivateMessageStorage.msg = text;
+		return;
+	}
+
+	// Set off/on flags
+	if (flag_party) {
+		target = (target & ~ChatBox.TYPE.PARTY) | (~target & ChatBox.TYPE.PARTY);
+	}
+
+	if (flag_guild) {
+		target = (target & ~ChatBox.TYPE.GUILD) | (~target & ChatBox.TYPE.GUILD);
+	}
+
+	// Get packet
+	if (target & ChatBox.TYPE.PARTY) {
+		pkt = new PACKET.CZ.REQUEST_CHAT_PARTY();
+	} else if (target & ChatBox.TYPE.GUILD) {
+		pkt = new PACKET.CZ.GUILD_CHAT();
+	} else if (target & ChatBox.TYPE.CLAN) {
+		pkt = new PACKET.CZ.CLAN_CHAT();
+	} else {
+		pkt = new PACKET.CZ.REQUEST_CHAT();
+		chatLines++;
+	}
+
+	// send packet
+	pkt.msg = Session.Entity.display.name + ' : ' + text;
+	Network.sendPacket(pkt);
+
+	//Super Novice Chant
+	if (chatLines > 7 && DB.isSuperNovice(Session.Entity._job)) {
+		if (Math.floor((BasicInfo.getUI().base_exp / BasicInfo.getUI().base_exp_next) * 1000.0) % 100 == 0) {
+			if (text == DB.getMessage(790)) {
+				snCounter = 1;
+			} else if (
+				snCounter == 1 &&
+				text == DB.getMessage(791) + ' ' + Session.Entity.display.name + ' ' + DB.getMessage(792)
+			) {
+				snCounter = 2;
+			} else if (snCounter == 2 && text == DB.getMessage(793)) {
+				snCounter = 3;
+			} else if (snCounter == 3) {
+				snCounter = 0;
+				pkt = new PACKET.CZ.CHOPOKGI();
+				Network.sendPacket(pkt);
+			} else {
+				snCounter = 0;
+			}
+		}
+	}
+}
+
+/**
+ * Remove cart/peco/falcon
+ */
+function onRemoveOption() {
+	const pkt = new PACKET.CZ.REQ_CARTOFF();
+	Network.sendPacket(pkt);
+}
+

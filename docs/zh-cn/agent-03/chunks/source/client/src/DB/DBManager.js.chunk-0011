@@ -1,0 +1,500 @@
+				onEnd(true);
+			}
+		})
+		.catch(error => {
+			if (typeof onEnd === 'function') {
+				onEnd(false);
+			}
+		});
+}
+
+/**
+ * Attempt to load files sequentially (Recursive - Fallback).
+ * Stop immediately on the first success.
+ *
+ * @param {Function} loaderFunc
+ * @param {Array<String>} file name aliases array.
+ * @param {Function} dataCallback - Callback to process the loaded data (the original `callback`, e.g., the one that receives the `json` from mapInfo).
+ * @param {Function} onEnd - Called when the entire process finishes (success or total failure).
+ * @param {Bool} try load all aliases
+ */
+function tryLoadLuaAliases(rFunc, files, callBack, onEnd, loadAll = false) {
+	const totalFiles = files.length;
+	if (totalFiles === 0) {
+		if (typeof onEnd === 'function') {
+			onEnd();
+		}
+		return;
+	}
+
+	let finishedCount = 0;
+	let failedCount = 0;
+	const trackedOnEnd = isSuccess => {
+		finishedCount++;
+		if (!isSuccess) {
+			failedCount++;
+		}
+
+		if (finishedCount === totalFiles || (isSuccess && !loadAll)) {
+			if (failedCount === totalFiles) {
+				console.error(
+					`[tryLoadLuaAliases] ERROR: All ${totalFiles} tryes to find ${files[0]} failed. Verify your ${files[0]} filename.`
+				);
+			}
+			if (typeof onEnd === 'function') {
+				onEnd();
+			}
+		}
+	};
+
+	function tryNext(index) {
+		if (index >= totalFiles) {
+			return;
+		}
+
+		if (
+			files[index].indexOf('System/') !== 0 &&
+			files[index].indexOf('SystemEN/') !== 0 &&
+			files[index].indexOf('System\\') !== 0 &&
+			files[index].indexOf('SystemEN\\') !== 0
+		) {
+			files[index] = 'System/' + files[index];
+		}
+
+		rFunc(files[index], callBack, isSuccess => {
+			trackedOnEnd(isSuccess); //await last lua parsing
+			if ((isSuccess && loadAll) || !isSuccess) {
+				tryNext(index + 1);
+			}
+		});
+	}
+	tryNext(0);
+}
+
+/* Load ItemInfo file to object
+ *
+ * @param {string} filename to load
+ * @param {function} onEnd to run once the file is loaded
+ *
+ * @author alisonrag
+ */
+function loadItemInfo(filename, callback, onEnd) {
+	const loadPromise = new Promise((resolve, reject) => {
+		Client.loadFile(filename, resolve, reject);
+	});
+
+	loadPromise
+		.then(async file => {
+			let wasSuccessful = false;
+			try {
+				console.log('Loading file "' + filename + '"...');
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+				// get context, a proxy. It will be used to interact with lua conveniently
+				const ctx = lua.ctx;
+
+				// create itemInfo required functions in context
+				ctx.AddItem = (
+					ItemID,
+					unidentifiedDisplayName,
+					unidentifiedResourceName,
+					identifiedDisplayName,
+					identifiedResourceName,
+					slotCount,
+					ClassNum
+				) => {
+					ItemTable[ItemID] = {
+						...(typeof ItemTable[ItemID] === 'object' && ItemTable[ItemID]),
+						unidentifiedDisplayName: userStringDecoder.decode(unidentifiedDisplayName, userCharpage),
+						unidentifiedResourceName: userStringDecoder.decode(unidentifiedResourceName),
+						identifiedDisplayName: userStringDecoder.decode(identifiedDisplayName, userCharpage),
+						identifiedResourceName: userStringDecoder.decode(identifiedResourceName),
+						unidentifiedDescriptionName: [],
+						identifiedDescriptionName: [],
+						EffectID: null,
+						costume: null,
+						PackageID: null,
+						slotCount: slotCount,
+						ClassNum: ClassNum
+					};
+					return 1;
+				};
+				ctx.AddItemUnidentifiedDesc = (ItemID, v) => {
+					ItemTable[ItemID].unidentifiedDescriptionName.push(userStringDecoder.decode(v, userCharpage));
+					return 1;
+				};
+				ctx.AddItemIdentifiedDesc = (ItemID, v) => {
+					ItemTable[ItemID].identifiedDescriptionName.push(userStringDecoder.decode(v, userCharpage));
+					return 1;
+				};
+				ctx.AddItemEffectInfo = (ItemID, EffectID) => {
+					ItemTable[ItemID].EffectID = EffectID;
+					return 1;
+				};
+				ctx.AddItemIsCostume = (ItemID, costume) => {
+					ItemTable[ItemID].costume = costume;
+					return 1;
+				};
+				ctx.AddItemPackageID = (ItemID, PackageID) => {
+					ItemTable[ItemID].PackageID = PackageID;
+					return 1;
+				};
+				// mount file
+				lua.mountFile(filename, buffer);
+				// execute file
+				await lua.doFile(filename);
+				// create and execute our own main function
+				// this is necessary because some servers has main function on itemInfo.lub and others load it from itemInfo_f.lub
+				// doing this way we avoid to have to load the other file
+				// on my tests dont care if the main() is on itemInfo.lub or itemInfo_f.lub the content is always the same
+				lua.doStringSync(`
+						function main_item()
+							_processedItems = _processedItems or {} 
+							for ItemID, DESC in pairs(tbl) do
+								if not _processedItems[ItemID] and #DESC.identifiedDescriptionName > 0 then
+									_processedItems[ItemID] = true 
+									result, msg = AddItem(ItemID, DESC.unidentifiedDisplayName, DESC.unidentifiedResourceName, DESC.identifiedDisplayName, DESC.identifiedResourceName, DESC.slotCount, DESC.ClassNum)
+									if not result then
+										return false, msg
+									end
+									for k, v in pairs(DESC.unidentifiedDescriptionName) do
+										result, msg = AddItemUnidentifiedDesc(ItemID, v)
+										if not result then
+											return false, msg
+										end
+									end
+									for k, v in pairs(DESC.identifiedDescriptionName) do
+										result, msg = AddItemIdentifiedDesc(ItemID, v)
+										if not result then
+											return false, msg
+										end
+									end
+									if nil ~= DESC.EffectID then
+										result, msg = AddItemEffectInfo(ItemID, DESC.EffectID)
+										if not result then
+											return false, msg
+										end
+									end
+									if nil ~= DESC.costume then
+										result, msg = AddItemIsCostume(ItemID, DESC.costume)
+										if not result then
+											return false, msg
+										end
+									end
+									if nil ~= DESC.PackageID then
+										result, msg = AddItemPackageID(ItemID, DESC.PackageID)
+										if not result then
+											return false, msg
+										end
+									end
+								end
+							end
+							return true, "good"
+							end
+						main_item()
+						`);
+				wasSuccessful = true;
+			} catch (error) {
+				console.error('[loadItemInfo] Error: ', error);
+			} finally {
+				// release file from memmory
+				lua.unmountFile(filename);
+				// call onEnd
+				onEnd(wasSuccessful);
+			}
+		})
+		.catch(error => {
+			if (typeof onEnd === 'function') {
+				onEnd(false);
+			}
+		});
+}
+
+/**
+ * load lapineddukddakbox.lub to array
+ *
+ * @param {string} filename to load
+ * @param {function} callback to run once the file is loaded
+ * @param {function} onEnd to run after the callback
+ *
+ */
+function loadLaphineSysFile(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// get context, a proxy. It will be used to interact with lua conveniently
+				const ctx = lua.ctx;
+
+				// create required functions in context
+				ctx.AddLaphineSysItem = (key, ItemID, NeedCount, NeedRefineMin, NeedRefineMax, NeedSource_String) => {
+					const decoded_key = key && key.length > 1 ? userStringDecoder.decode(key) : null;
+					const decoded_NeedSource_String =
+						NeedSource_String && NeedSource_String.length > 1
+							? userStringDecoder.decode(NeedSource_String, userCharpage)
+							: '';
+					LaphineSysTable[decoded_key] = {
+						ItemID: ItemID,
+						NeedCount: NeedCount,
+						NeedRefineMin: NeedRefineMin,
+						NeedRefineMax: NeedRefineMax,
+						SourceItems: new Array(),
+						NeedSource_String: decoded_NeedSource_String
+					};
+					return 1;
+				};
+
+				ctx.AddLaphineSysSourceItem = (key, name, count, ItemID) => {
+					const decoded_key = key && key.length > 1 ? userStringDecoder.decode(key) : null;
+					const decoded_name = name && name.length > 1 ? userStringDecoder.decode(name) : '';
+					LaphineSysTable[decoded_key].SourceItems.push({
+						name: decoded_name,
+						count: count,
+						id: ItemID
+					});
+					return 1;
+				};
+
+				// mount file
+				lua.mountFile('lapineddukddakbox.lub', buffer);
+
+				// execute file
+				await lua.doFile('lapineddukddakbox.lub');
+
+				// create and execute our own main function
+				lua.doStringSync(`
+						function main_laphynesys()
+                            for key, value in pairs(tblLapineDdukddakBox.sources) do
+                                result, msg = AddLaphineSysItem(key, value.ItemID, value.NeedCount, value.NeedRefineMin, value.NeedRefineMax, value.NeedSource_String)
+                                if not result then
+                                    return false, msg
+                                end
+                                for _, item in ipairs(value.SourceItems) do
+                                    result, msg = AddLaphineSysSourceItem(key, item[1], item[2], item[3])
+                                    if not result then
+                                        return false, msg
+                                    end
+
+                                end
+                            end
+                        end
+                        main_laphynesys()
+					`);
+			} catch (error) {
+				console.error('[loadLaphineSysFile] Error: ', error);
+			} finally {
+				// release file from memmory
+				lua.unmountFile('lapineddukddakbox.lub');
+				// call onEnd
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ *  load LapineUpgradeBox.lub to json object
+ *
+ * @param {string} filename to load
+ * @param {function} callback to run once the file is loaded
+ * @param {function} onEnd to run after the callback
+ *
+ */
+function loadLaphineUpgFile(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// get context, a proxy. It will be used to interact with lua conveniently
+				const ctx = lua.ctx;
+
+				// create required functions in context
+				ctx.AddLaphineUpgradeItem = (
+					key,
+					ItemID,
+					NeedCount,
+					NeedRefineMin,
+					NeedRefineMax,
+					NeedSource_String,
+					NeedOptionNumMin,
+					NotSocketEnchantItem
+				) => {
+					const decoded_key = key && key.length > 1 ? userStringDecoder.decode(key) : null;
+					const decoded_NeedSource_String =
+						NeedSource_String && NeedSource_String.length > 1
+							? userStringDecoder.decode(NeedSource_String, userCharpage)
+							: '';
+
+					LaphineUpgTable[decoded_key] = {
+						ItemID: ItemID,
+						NeedCount: NeedCount,
+						NeedRefineMin: NeedRefineMin,
+						NeedRefineMax: NeedRefineMax,
+						NeedOptionNumMin: NeedOptionNumMin,
+						NotSocketEnchantItem: NotSocketEnchantItem,
+						TargetItems: new Array(),
+						NeedSource_String: decoded_NeedSource_String
+					};
+					return 1;
+				};
+
+				ctx.AddLaphineUpgradeTargetItem = (key, name, ItemID) => {
+					const decoded_key = key && key.length > 1 ? userStringDecoder.decode(key) : null;
+					const decoded_name = name && name.length > 1 ? userStringDecoder.decode(name) : '';
+					LaphineUpgTable[decoded_key].TargetItems.push({
+						name: decoded_name,
+						id: ItemID
+					});
+					return 1;
+				};
+
+				// mount file
+				lua.mountFile('lapineupgradebox.lub', buffer);
+
+				// execute file
+				await lua.doFile('lapineupgradebox.lub');
+
+				// create and execute our own main function
+				lua.doStringSync(`
+						function main_laphyneupg()
+                            for key, value in pairs(tblLapineUpgradeBox.targets) do
+                                result, msg = AddLaphineUpgradeItem(key, value.ItemID, value.NeedCount, value.NeedRefineMin, value.NeedRefineMax, value.NeedSource_String, value.NeedOptionNumMin, value.NotSocketEnchantItem)
+                                if not result then
+                                    return false, msg
+                                end
+                                for _, item in ipairs(value.TargetItems) do
+                                    result, msg = AddLaphineUpgradeTargetItem(key, item[1], item[2])
+                                    if not result then
+                                        return false, msg
+                                    end
+
+                                end
+                            end
+                        end
+                        main_laphyneupg()
+					`);
+			} catch (error) {
+				console.error('[loadLaphineUpgFile] Error: ', error);
+			} finally {
+				// release file from memmory
+				lua.unmountFile('lapineupgradebox.lub');
+				// call onEnd
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ * Loads ItemDBNameTbl.lub which is used in newer UI System (holds ItemDBName and ItemID)
+ *
+ * @param {string} filename - The name of the file to load.
+ * @param {function} callback - The function to invoke with the loaded data.
+ * @param {function} onEnd - The function to invoke when loading is complete.
+ * @return {void}
+ */
+function loadItemDBTable(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// get context, a proxy. It will be used to interact with lua conveniently
+				const ctx = lua.ctx;
+
+				// create required functions in context
+				ctx.AddDBItemName = (baseItem, itemID) => {
+					const decoded_baseItem =
+						baseItem && baseItem.length > 1 ? userStringDecoder.decode(baseItem) : null;
+					ItemDBNameTbl[decoded_baseItem] = itemID;
+					return 1;
+				};
+
+				// mount file
+				lua.mountFile('ItemDBNameTbl.lub', buffer);
+
+				// execute file
+				await lua.doFile('ItemDBNameTbl.lub');
+
+				// create and execute our own main function
+				lua.doStringSync(`
+						function main_itemDBTable()
+                            for key, value in pairs(ItemDBNameTbl) do
+                                result, msg = AddDBItemName(key, value)
+                                if not result then
+                                    return false, msg
+                                end
+                        	end
+						end
+                        main_itemDBTable()
+					`);
+			} catch (error) {
+				console.error('[loadItemDBTable] Error: ', error);
+			} finally {
+				// release file from memmory
+				lua.unmountFile('ItemDBNameTbl.lub');
+				// call onEnd
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ * Loads ItemReformSystem.lub file into json content.
+ *
+ * @param {string} filename - The name of the file to load.
+ * @param {function} callback - The function to call with the processed data.
+ * @param {function} onEnd - The function to call when the loading is complete.
+ * @return {void}
+ */
+function loadItemReformFile(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// get context, a proxy. It will be used to interact with lua conveniently
+				const ctx = lua.ctx;
+
+				// create required functions in context
+				ctx.AddReformInfo = (
+					key,
+					BaseItem,
+					ResultItem,
+					NeedRefineMin,
+					NeedRefineMax,
+					NeedOptionNumMin,
+					IsEmptySocket,
+					ChangeRefineValue,
+					RandomOptionCode,
+					PreserveSocketItem,
+					PreserveGrade
+				) => {
+					const decoded_BaseItem =
+						BaseItem && BaseItem.length > 1 ? userStringDecoder.decode(BaseItem) : null;
+					const decoded_ResultItem =
+						ResultItem && ResultItem.length > 1 ? userStringDecoder.decode(ResultItem) : null;
+					const decoded_RandomOptionCode =
+						RandomOptionCode && RandomOptionCode.length > 1

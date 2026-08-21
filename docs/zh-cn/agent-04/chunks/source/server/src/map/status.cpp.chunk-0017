@@ -1,0 +1,500 @@
+	if(sc->getSCE(SC_ANALYZE))
+		mdef2 -= mdef2 * (14 * sc->getSCE(SC_ANALYZE)->val1) / 100;
+
+#ifdef RENEWAL
+	return (int16)cap_value(mdef2,SHRT_MIN,SHRT_MAX);
+#else
+	return (int16)cap_value(mdef2,1,SHRT_MAX);
+#endif
+}
+
+/**
+ * Adds speed modifications based on status changes
+ * @param bl: Object to change speed [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param speed: Initial speed
+ * @return modified speed with cap_value(speed,10,USHRT_MAX)
+ */
+static uint16 status_calc_speed(block_list *bl, status_change *sc, int32 speed)
+{
+	TBL_PC* sd = BL_CAST(BL_PC, bl);
+	int32 speed_rate = 100;
+
+	if (sc == nullptr || (sd && sd->state.permanent_speed))
+		return (uint16)cap_value(speed, MIN_WALK_SPEED, MAX_WALK_SPEED);
+
+	if (sd && pc_ismadogear(sd)) { // Mado speed is not affected by other statuses
+		int32 val = 0;
+
+		if (pc_checkskill(sd, NC_MADOLICENCE) < 5)
+			val = 50 - 10 * pc_checkskill(sd, NC_MADOLICENCE);
+		else
+			val -= 25;
+		if (sc->getSCE(SC_ACCELERATION))
+			val -= 25;
+		speed += speed * val / 100;
+
+		return (uint16)cap_value(speed, MIN_WALK_SPEED, MAX_WALK_SPEED);
+	}
+
+	if( sd && sd->ud.skilltimer != INVALID_TIMER && (pc_checkskill(sd,SA_FREECAST) > 0 || sd->ud.skill_id == LG_EXEEDBREAK) ) {
+		if( sd->ud.skill_id == LG_EXEEDBREAK )
+			speed_rate = 160 - 10 * sd->ud.skill_lv;
+		else
+			speed_rate = 175 - 5 * pc_checkskill(sd,SA_FREECAST);
+	} else {
+		int32 val = 0;
+
+		// GetMoveHasteValue2()
+		if( sc->getSCE(SC_FUSION) )
+			val = 25;
+		else if( sd ) {
+			if( pc_isriding(sd) || sd->sc.option&OPTION_DRAGON )
+				val = 25; // Same bonus
+			else if( pc_isridingwug(sd) )
+				val = 15 + 5 * pc_checkskill(sd, RA_WUGRIDER);
+			else if( sc->getSCE(SC_ALL_RIDING) )
+				val = battle_config.rental_mount_speed_boost;
+		}
+		speed_rate -= val;
+
+		// GetMoveSlowValue()
+		if( sd && sc->getSCE(SC_HIDING) && pc_checkskill(sd,RG_TUNNELDRIVE) > 0 )
+			val = 120 - 6 * pc_checkskill(sd,RG_TUNNELDRIVE);
+		else if( sd && sc->getSCE(SC_CHASEWALK) && sc->getSCE(SC_CHASEWALK)->val3 < 0 )
+			val = sc->getSCE(SC_CHASEWALK)->val3;
+		else {
+			val = 0;
+			// Longing for Freedom/Special Singer cancels song/dance penalty
+#ifdef RENEWAL
+			if (sc->getSCE(SC_ENSEMBLEFATIGUE))
+				val = max(val, sc->getSCE(SC_ENSEMBLEFATIGUE)->val2);
+#else
+			if( sc->getSCE(SC_LONGING) )
+				val = max( val, 50 - 10 * sc->getSCE(SC_LONGING)->val1 );
+#endif
+			else
+			if( sd && sc->getSCE(SC_DANCING) )
+				val = max( val, 500 - (40 + 10 * (sc->getSCE(SC_SPIRIT) && sc->getSCE(SC_SPIRIT)->val2 == SL_BARDDANCER)) * pc_checkskill(sd,(sd->status.sex?BA_MUSICALLESSON:DC_DANCINGLESSON)) );
+
+			if( sc->getSCE(SC_DECREASEAGI) )
+				val = max( val, 25 );
+			if( sc->getSCE(SC_QUAGMIRE) || sc->getSCE(SC_HALLUCINATIONWALK_POSTDELAY) || (sc->getSCE(SC_GLOOMYDAY) && sc->getSCE(SC_GLOOMYDAY)->val4) )
+				val = max( val, 50 );
+			if( sc->getSCE(SC_DONTFORGETME) )
+				val = max( val, sc->getSCE(SC_DONTFORGETME)->val3 );
+			if( sc->getSCE(SC_CURSE) )
+				val = max( val, 300 );
+			if( sc->getSCE(SC_CHASEWALK) )
+				val = max( val, sc->getSCE(SC_CHASEWALK)->val3 );
+			if( sc->getSCE(SC_WEDDING) )
+				val = max( val, 100 );
+			if( sc->getSCE(SC_JOINTBEAT) && sc->getSCE(SC_JOINTBEAT)->val2&(BREAK_ANKLE|BREAK_KNEE) )
+				val = max( val, (sc->getSCE(SC_JOINTBEAT)->val2&BREAK_ANKLE ? 50 : 0) + (sc->getSCE(SC_JOINTBEAT)->val2&BREAK_KNEE ? 30 : 0) );
+			if( sc->getSCE(SC_CLOAKING) && (sc->getSCE(SC_CLOAKING)->val4&1) == 0 )
+				val = max( val, sc->getSCE(SC_CLOAKING)->val1 < 3 ? 300 : 30 - 3 * sc->getSCE(SC_CLOAKING)->val1 );
+			if( sc->getSCE(SC_GOSPEL) && sc->getSCE(SC_GOSPEL)->val4 == BCT_ENEMY )
+				val = max( val, 75 );
+			if( sc->getSCE(SC_SLOWDOWN) ) // Slow Potion
+				val = max( val, sc->getSCE(SC_SLOWDOWN)->val1 );
+			if( sc->getSCE(SC_GATLINGFEVER) )
+				val = max( val, 100 );
+			if( sc->getSCE(SC_SUITON) )
+				val = max( val, sc->getSCE(SC_SUITON)->val3 );
+			if( sc->getSCE(SC_SWOO) )
+				val = max( val, 300 );
+			if( sc->getSCE(SC_FREEZING) )
+				val = max( val, 30 );
+			if( sc->getSCE(SC_MARSHOFABYSS) )
+				val = max( val, sc->getSCE(SC_MARSHOFABYSS)->val3 );
+			if( sc->getSCE(SC_CAMOUFLAGE) && sc->getSCE(SC_CAMOUFLAGE)->val1 > 2 )
+				val = max( val, 25 * (5 - sc->getSCE(SC_CAMOUFLAGE)->val1) );
+			if( sc->getSCE(SC_STEALTHFIELD) )
+				val = max( val, 20 );
+			if( sc->getSCE(SC__LAZINESS) )
+				val = max( val, 25 );
+			if( sc->getSCE(SC_ROCK_CRUSHER_ATK) )
+				val = max( val, sc->getSCE(SC_ROCK_CRUSHER_ATK)->val2 );
+			if( sc->getSCE(SC_POWER_OF_GAIA) )
+				val = max( val, sc->getSCE(SC_POWER_OF_GAIA)->val2 );
+			if( sc->getSCE(SC_MELON_BOMB) )
+				val = max( val, sc->getSCE(SC_MELON_BOMB)->val2 );
+			if( sc->getSCE(SC_REBOUND) )
+				val = max( val, 25 );
+			if( sc->getSCE(SC_B_TRAP) )
+				val = max( val, sc->getSCE(SC_B_TRAP)->val3 );
+			if (sc->getSCE(SC_CATNIPPOWDER))
+				val = max(val, sc->getSCE(SC_CATNIPPOWDER)->val3);
+			if (sc->getSCE(SC_SP_SHA))
+				val = max(val, sc->getSCE(SC_SP_SHA)->val2);
+			if (sc->getSCE(SC_CREATINGSTAR))
+				val = max(val, 90);
+			if (sc->getSCE(SC_SHIELDCHAINRUSH))
+				val = max(val, 20);
+			if (sc->getSCE(SC_GROUNDGRAVITY))
+				val = max(val, 20);
+
+			if( sd && sd->bonus.speed_rate + sd->bonus.speed_add_rate > 0 ) // Permanent item-based speedup
+				val = max( val, sd->bonus.speed_rate + sd->bonus.speed_add_rate );
+		}
+		speed_rate += val;
+		val = 0;
+
+		if( sc->getSCE(SC_MARSHOFABYSS) && speed_rate > 150 )
+			speed_rate = 150;
+
+		// GetMoveHasteValue1()
+		if (sc->getSCE(SC_AGIUP))
+			val = max(val, sc->getSCE(SC_AGIUP)->val1);
+		if( sc->getSCE(SC_INCREASEAGI) )
+			val = max( val, 25 );
+		if( sc->getSCE(SC_WINDWALK) )
+			val = max( val, 2 * sc->getSCE(SC_WINDWALK)->val1 );
+		if( sc->getSCE(SC_CARTBOOST) )
+			val = max( val, 20 );
+		if( sd && (sd->class_&MAPID_SECONDMASK) == MAPID_ASSASSIN && pc_checkskill(sd,TF_MISS) > 0 )
+			val = max( val, 1 * pc_checkskill(sd,TF_MISS) );
+		if( sc->getSCE(SC_CLOAKING) && (sc->getSCE(SC_CLOAKING)->val4&1) == 1 )
+			val = max( val, sc->getSCE(SC_CLOAKING)->val1 >= 10 ? 25 : 3 * sc->getSCE(SC_CLOAKING)->val1 - 3 );
+		if( sc->getSCE(SC_BERSERK) )
+			val = max( val, 25 );
+		if( sc->getSCE(SC_RUN) )
+			val = max( val, 55 );
+		if( sc->getSCE(SC_AVOID) )
+			val = max( val, sc->getSCE(SC_AVOID)->val2 );
+		if (sc->getSCE(SC_INVINCIBLE))
+			val = max(val, sc->getSCE(SC_INVINCIBLE)->val3);
+		if( sc->getSCE(SC_CLOAKINGEXCEED) )
+			val = max( val, sc->getSCE(SC_CLOAKINGEXCEED)->val3);
+		if (sc->getSCE(SC_PARALYSE) && sc->getSCE(SC_PARALYSE)->val3 == 0)
+			val = max(val, 50);
+		if( sc->getSCE(SC_HOVERING) )
+			val = max( val, 10 );
+		if( sc->getSCE(SC_GN_CARTBOOST) )
+			val = max( val, sc->getSCE(SC_GN_CARTBOOST)->val2 );
+		if( sc->getSCE(SC_SWINGDANCE) )
+			val = max( val, sc->getSCE(SC_SWINGDANCE)->val3 );
+		if( sc->getSCE(SC_WIND_STEP_OPTION) )
+			val = max( val, sc->getSCE(SC_WIND_STEP_OPTION)->val2 );
+		if( sc->getSCE(SC_FULL_THROTTLE) )
+			val = max( val, 25 );
+		if (sc->getSCE(SC_ARCLOUSEDASH))
+			val = max(val, sc->getSCE(SC_ARCLOUSEDASH)->val3);
+		if( sc->getSCE(SC_DORAM_WALKSPEED) )
+			val = max(val, sc->getSCE(SC_DORAM_WALKSPEED)->val1);
+		if (sc->getSCE(SC_RUSHWINDMILL))
+			val = max(val, 25); // !TODO: Confirm bonus movement speed
+		if (sc->getSCE(SC_EMERGENCY_MOVE))
+			val = max(val, sc->getSCE(SC_EMERGENCY_MOVE)->val2);
+		if( sc->getSCE(SC_JAWAII_SERENADE) ){
+			val = max( val, 25 );
+		}
+		if( sc->getSCE(SC_WILD_WALK) != nullptr )
+			val = max( val, sc->getSCE(SC_WILD_WALK)->val2 );
+		if( sc->getSCE( SC_SHADOW_CLOCK ) != nullptr ){
+			val = max( val, 50 );
+		}
+
+		// !FIXME: official items use a single bonus for this [ultramage]
+		if( sd && sd->bonus.speed_rate + sd->bonus.speed_add_rate < 0 ) // Permanent item-based speedup
+			val = max( val, -(sd->bonus.speed_rate + sd->bonus.speed_add_rate) );
+
+		speed_rate -= val;
+
+		if( speed_rate < 40 )
+			speed_rate = 40;
+	}
+
+	// GetSpeed()
+	if( sd && pc_iscarton(sd) )
+		speed += speed * (50 - 5 * pc_checkskill(sd,MC_PUSHCART)) / 100;
+	if( sc->getSCE(SC_PARALYSE) && sc->getSCE(SC_PARALYSE)->val3 == 1 )
+		speed += speed * 50 / 100;
+	if( speed_rate != 100 )
+		speed = speed * speed_rate / 100;
+	if( sc->getSCE(SC_STEELBODY) )
+		speed = 200;
+	if( sc->getSCE(SC_DEFENDER) )
+		speed = max(speed, 200);
+	if (sc->getSCE(SC_ARMOR))
+		speed = max(speed, 200);
+	if( sc->getSCE(SC_WALKSPEED) && sc->getSCE(SC_WALKSPEED)->val1 > 0 ) // ChangeSpeed
+		speed = speed * 100 / sc->getSCE(SC_WALKSPEED)->val1;
+
+	return (uint16)cap_value(speed, MIN_WALK_SPEED, MAX_WALK_SPEED);
+}
+
+#ifdef RENEWAL_ASPD
+/**
+ * Renewal attack speed modifiers based on status changes
+ * This function only affects RENEWAL players and comes after base calculation
+ * @param bl: Object to change aspd [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param fixed: True - fixed value [malufett]
+ *               False - percentage value
+ * @return modified aspd
+ */
+static int16 status_calc_aspd(block_list *bl, status_change *sc, bool fixed)
+{
+	int32 bonus = 0;
+
+	if (sc == nullptr || sc->empty())
+		return 0;
+
+	if (fixed) {
+		enum sc_type sc_val;
+
+		if (!sc->getSCE(SC_QUAGMIRE)) {
+			// !TODO: How does Two-Hand Quicken, Adrenaline Rush, and Spear quick change? (+10%)
+			if (bonus < 7 && (sc->getSCE(SC_TWOHANDQUICKEN) || sc->getSCE(SC_ONEHAND) || sc->getSCE(SC_MERC_QUICKEN) || sc->getSCE(SC_ADRENALINE) || sc->getSCE(SC_SPEARQUICKEN)))
+				bonus = 7;
+			else if (bonus < 6 && sc->getSCE(SC_ADRENALINE2))
+				bonus = 6;
+			else if (bonus < 5 && sc->getSCE(SC_FLEET))
+				bonus = 5;
+		}
+
+		if (sc->getSCE(SC_ASSNCROS) && bonus < sc->getSCE(SC_ASSNCROS)->val2) {
+#ifdef RENEWAL
+			bonus += sc->getSCE(SC_ASSNCROS)->val2;
+#else
+			if (bl->type != BL_PC)
+				bonus += sc->getSCE(SC_ASSNCROS)->val2;
+			else {
+				switch(((TBL_PC*)bl)->status.weapon) {
+					case W_BOW:
+					case W_REVOLVER:
+					case W_RIFLE:
+					case W_GATLING:
+					case W_SHOTGUN:
+					case W_GRENADE:
+						break;
+					default:
+						bonus += sc->getSCE(SC_ASSNCROS)->val2;
+						break;
+				}
+			}
+#endif
+		}
+
+		if (bonus < 20 && sc->getSCE(SC_MADNESSCANCEL))
+			bonus = 20;
+		else if (bonus < 15 && sc->getSCE(SC_BERSERK))
+			bonus = 15;
+
+		if (sc->getSCE(sc_val = SC_ASPDPOTION3) || sc->getSCE(sc_val = SC_ASPDPOTION2) || sc->getSCE(sc_val = SC_ASPDPOTION1) || sc->getSCE(sc_val = SC_ASPDPOTION0))
+			bonus += sc->getSCE(sc_val)->val1;
+	} else {
+		if (bl->type == BL_PC && sc->getSCE(SC_DONTFORGETME))
+			bonus -= sc->getSCE(SC_DONTFORGETME)->val2 / 10;
+#ifdef RENEWAL
+		if (sc->getSCE(SC_ENSEMBLEFATIGUE))
+			bonus -= sc->getSCE(SC_ENSEMBLEFATIGUE)->val2;
+#else
+		if (sc->getSCE(SC_LONGING))
+			bonus -= sc->getSCE(SC_LONGING)->val2 / 10;
+#endif
+		if (sc->getSCE(SC_STEELBODY))
+			bonus -= 25;
+		if (sc->getSCE(SC_DEFENDER))
+			bonus -= sc->getSCE(SC_DEFENDER)->val4 / 10;
+		if (sc->getSCE(SC_GOSPEL) && sc->getSCE(SC_GOSPEL)->val4 == BCT_ENEMY)
+			bonus -= 75;
+#ifndef RENEWAL
+		if (sc->getSCE(SC_GRAVITATION))
+			bonus -= sc->getSCE(SC_GRAVITATION)->val2 / 10; // Needs more info
+#endif
+		if (sc->getSCE(SC_JOINTBEAT)) { // Needs more info
+			if (sc->getSCE(SC_JOINTBEAT)->val2&BREAK_WRIST)
+				bonus -= 25;
+			if (sc->getSCE(SC_JOINTBEAT)->val2&BREAK_KNEE)
+				bonus -= 10;
+		}
+		if (sc->getSCE(SC_FREEZING))
+			bonus -= 30;
+		if (sc->getSCE(SC_HALLUCINATIONWALK_POSTDELAY))
+			bonus -= 50;
+		if (sc->getSCE(SC_PARALYSE) && sc->getSCE(SC_PARALYSE)->val3 == 1)
+			bonus -= 10;
+		if (sc->getSCE(SC__BODYPAINT))
+			bonus -= 5 * sc->getSCE(SC__BODYPAINT)->val1;
+		if (sc->getSCE(SC__INVISIBILITY))
+			bonus -= sc->getSCE(SC__INVISIBILITY)->val2;
+		if (sc->getSCE(SC__GROOMY))
+			bonus -= sc->getSCE(SC__GROOMY)->val2;
+		if (sc->getSCE(SC_SWINGDANCE))
+			bonus += sc->getSCE(SC_SWINGDANCE)->val3;
+		if (sc->getSCE(SC_DANCEWITHWUG))
+			bonus += sc->getSCE(SC_DANCEWITHWUG)->val3;
+		if (sc->getSCE(SC_GLOOMYDAY))
+			bonus -= sc->getSCE(SC_GLOOMYDAY)->val3;
+		if (sc->getSCE(SC_GT_CHANGE))
+			bonus += sc->getSCE(SC_GT_CHANGE)->val3;
+		if (sc->getSCE(SC_MELON_BOMB))
+			bonus -= sc->getSCE(SC_MELON_BOMB)->val3;
+		if (sc->getSCE(SC_GOLDENE_FERSE))
+			bonus += sc->getSCE(SC_GOLDENE_FERSE)->val3;
+		if (sc->getSCE(SC_INCASPDRATE))
+			bonus += sc->getSCE(SC_INCASPDRATE)->val1;
+		if (sc->getSCE(SC_GATLINGFEVER))
+			bonus += sc->getSCE(SC_GATLINGFEVER)->val1;
+		if (sc->getSCE(SC_STAR_COMFORT))
+			bonus += 3 * sc->getSCE(SC_STAR_COMFORT)->val1;
+		if (sc->getSCE(SC_WIND_INSIGNIA) && sc->getSCE(SC_WIND_INSIGNIA)->val1 == 2)
+			bonus += 10;
+		if (sc->getSCE(SC_INCREASEAGI))
+			bonus += sc->getSCE(SC_INCREASEAGI)->val1;
+		if (sc->getSCE(SC_NIBELUNGEN) && sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_ASPDRATE)
+			bonus += 20;
+		if (sc->getSCE(SC_STARSTANCE))
+			bonus += sc->getSCE(SC_STARSTANCE)->val2;
+
+		map_session_data* sd = BL_CAST(BL_PC, bl);
+		uint8 skill_lv;
+
+		if (sd) {
+			if ((skill_lv = pc_checkskill(sd, BA_MUSICALLESSON)) > 0)
+				bonus += skill_lv;
+			if ((skill_lv = pc_checkskill(sd, RG_PLAGIARISM)) > 0)
+				bonus += skill_lv;
+		}
+	}
+
+	return bonus;
+}
+#endif
+
+/**
+ * Modifies ASPD by a number, rather than a percentage (10 = 1 ASPD)
+ * A subtraction reduces the delay, meaning an increase in ASPD
+ * This comes after the percentage changes and is based on status changes
+ * @param bl: Object to change aspd [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param aspd: Object's current ASPD
+ * @return modified aspd
+ */
+static int16 status_calc_fix_aspd(block_list *bl, status_change *sc, int32 aspd)
+{
+	if (sc == nullptr || sc->empty())
+		return cap_value(aspd, 1, MIN_ASPD);
+	if (sc->getSCE(SC_OVERED_BOOST))
+		return cap_value(AMOTION_ZERO_ASPD - sc->getSCE(SC_OVERED_BOOST)->val3 * AMOTION_INTERVAL, 1, MIN_ASPD);
+
+	if ((sc->getSCE(SC_GUST_OPTION) || sc->getSCE(SC_BLAST_OPTION) || sc->getSCE(SC_WILD_STORM_OPTION)))
+		aspd -= 50; // +5 ASPD
+	if (sc->getSCE(SC_FIGHTINGSPIRIT))
+		aspd -= sc->getSCE(SC_FIGHTINGSPIRIT)->val2;
+	if (sc->getSCE(SC_SOULSHADOW))
+		aspd -= 10 * sc->getSCE(SC_SOULSHADOW)->val2;
+	if (sc->getSCE(SC_HEAT_BARREL))
+		aspd -= sc->getSCE(SC_HEAT_BARREL)->val1 * 10;
+	if (sc->getSCE(SC_SINCERE_FAITH))
+		aspd -= 10 * sc->getSCE(SC_SINCERE_FAITH)->val2;
+
+	return cap_value(aspd, 1, MIN_ASPD); // Will be recap for proper bl anyway
+}
+
+/**
+ * Calculates an object's ASPD modifier based on status changes (alters amotion value)
+ * Note: The scale of aspd_rate is 1000 = 100%
+ * Note2: This only affects Homunculus, Mercenaries, and Pre-renewal Players
+ * @param bl: Object to change aspd [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change information
+ * @param aspd_rate: Object's current ASPD
+ * @return modified aspd_rate
+ */
+static int16 status_calc_aspd_rate(block_list *bl, status_change *sc, int32 aspd_rate)
+{
+	int32 i;
+
+	if(sc == nullptr || sc->empty())
+		return cap_value(aspd_rate,0,SHRT_MAX);
+
+	int32 max = 0;
+	if (sc->getSCE(SC_STAR_COMFORT))
+		max = sc->getSCE(SC_STAR_COMFORT)->val2;
+
+	if (sc->getSCE(SC_TWOHANDQUICKEN) &&
+		max < sc->getSCE(SC_TWOHANDQUICKEN)->val2)
+		max = sc->getSCE(SC_TWOHANDQUICKEN)->val2;
+
+	if (sc->getSCE(SC_ONEHAND) &&
+		max < sc->getSCE(SC_ONEHAND)->val2)
+		max = sc->getSCE(SC_ONEHAND)->val2;
+
+	if (sc->getSCE(SC_MERC_QUICKEN) &&
+		max < sc->getSCE(SC_MERC_QUICKEN)->val2)
+		max = sc->getSCE(SC_MERC_QUICKEN)->val2;
+
+	if (sc->getSCE(SC_ADRENALINE2) &&
+		max < sc->getSCE(SC_ADRENALINE2)->val3)
+		max = sc->getSCE(SC_ADRENALINE2)->val3;
+
+	if (sc->getSCE(SC_ADRENALINE) &&
+		max < sc->getSCE(SC_ADRENALINE)->val3)
+		max = sc->getSCE(SC_ADRENALINE)->val3;
+
+	if (sc->getSCE(SC_SPEARQUICKEN) &&
+		max < sc->getSCE(SC_SPEARQUICKEN)->val2)
+		max = sc->getSCE(SC_SPEARQUICKEN)->val2;
+
+	if (sc->getSCE(SC_GATLINGFEVER) &&
+		max < sc->getSCE(SC_GATLINGFEVER)->val2)
+		max = sc->getSCE(SC_GATLINGFEVER)->val2;
+
+	if (sc->getSCE(SC_FLEET) &&
+		max < sc->getSCE(SC_FLEET)->val2)
+		max = sc->getSCE(SC_FLEET)->val2;
+
+	if (sc->getSCE(SC_INVINCIBLE) &&
+		max < sc->getSCE(SC_INVINCIBLE)->val4)
+		max = sc->getSCE(SC_INVINCIBLE)->val4;
+
+	if (sc->getSCE(SC_ASSNCROS) && max < sc->getSCE(SC_ASSNCROS)->val2) {
+		if (bl->type != BL_PC)
+			max = sc->getSCE(SC_ASSNCROS)->val2;
+		else
+			switch (((TBL_PC*)bl)->status.weapon) {
+				case W_BOW:
+				case W_REVOLVER:
+				case W_RIFLE:
+				case W_GATLING:
+				case W_SHOTGUN:
+				case W_GRENADE:
+					break;
+				default:
+					max = sc->getSCE(SC_ASSNCROS)->val2;
+			}
+	}
+	aspd_rate -= max;
+
+	if (sc->getSCE(SC_BERSERK))
+		aspd_rate -= 300;
+	else if (sc->getSCE(SC_MADNESSCANCEL))
+		aspd_rate -= 200;
+
+	if( sc->getSCE(i=SC_ASPDPOTION3) ||
+		sc->getSCE(i=SC_ASPDPOTION2) ||
+		sc->getSCE(i=SC_ASPDPOTION1) ||
+		sc->getSCE(i=SC_ASPDPOTION0) )
+		aspd_rate -= sc->getSCE(i)->val2;
+
+	if(bl->type == BL_PC && sc->getSCE(SC_DONTFORGETME))
+		aspd_rate += sc->getSCE(SC_DONTFORGETME)->val2;
+#ifdef RENEWAL
+	if (sc->getSCE(SC_ENSEMBLEFATIGUE))
+		aspd_rate += sc->getSCE(SC_ENSEMBLEFATIGUE)->val2;
+#else
+	if(sc->getSCE(SC_LONGING))
+		aspd_rate += sc->getSCE(SC_LONGING)->val2;
+#endif
+	if(sc->getSCE(SC_STEELBODY))
+		aspd_rate += 250;
+	if(sc->getSCE(SC_DEFENDER))
+		aspd_rate += sc->getSCE(SC_DEFENDER)->val4;
+	if(sc->getSCE(SC_GOSPEL) && sc->getSCE(SC_GOSPEL)->val4 == BCT_ENEMY)
+		aspd_rate += 250;
+#ifndef RENEWAL
+	if(sc->getSCE(SC_GRAVITATION))
+		aspd_rate += sc->getSCE(SC_GRAVITATION)->val2;
+#endif

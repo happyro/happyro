@@ -1,0 +1,500 @@
+uint64 SizeFixDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string weapon_name;
+
+	if (!this->asString(node, "Weapon", weapon_name))
+		return 0;
+
+	std::string weapon_name_constant = "W_" + weapon_name;
+	int64 constant;
+
+	if (!script_get_constant(weapon_name_constant.c_str(), &constant)) {
+		this->invalidWarning(node["Weapon"], "Size Fix unknown weapon %s, skipping.\n", weapon_name.c_str());
+		return 0;
+	}
+
+	if (constant < W_FIST || constant > W_2HSTAFF) {
+		this->invalidWarning(node["Weapon"], "Size Fix weapon %s is an invalid weapon, skipping.\n", weapon_name.c_str());
+		return 0;
+	}
+
+	int32 weapon_id = static_cast<int32>(constant);
+	std::shared_ptr<s_sizefix_db> size = this->find(weapon_id);
+	bool exists = size != nullptr;
+
+	if (!exists)
+		size = std::make_shared<s_sizefix_db>();
+
+	if (this->nodeExists(node, "Small")) {
+		uint16 small;
+
+		if (!this->asUInt16(node, "Small", small))
+			return 0;
+
+		if (small > 100) {
+			this->invalidWarning(node["Small"], "Small Size Fix %d for %s is out of bounds, defaulting to 100.\n", small, weapon_name.c_str());
+			small = 100;
+		}
+
+		size->small = small;
+	} else {
+		if (!exists)
+			size->small = 100;
+	}
+
+	if (this->nodeExists(node, "Medium")) {
+		uint16 medium;
+
+		if (!this->asUInt16(node, "Medium", medium))
+			return 0;
+
+		if (medium > 100) {
+			this->invalidWarning(node["Medium"], "Medium Size Fix %d for %s is out of bounds, defaulting to 100.\n", medium, weapon_name.c_str());
+			medium = 100;
+		}
+
+		size->medium = medium;
+	} else {
+		if (!exists)
+			size->medium = 100;
+	}
+
+	if (this->nodeExists(node, "Large")) {
+		uint16 large;
+
+		if (!this->asUInt16(node, "Large", large))
+			return 0;
+
+		if (large > 100) {
+			this->invalidWarning(node["Large"], "Large Size Fix %d for %s is out of bounds, defaulting to 100.\n", large, weapon_name.c_str());
+			large = 100;
+		}
+
+		size->large = large;
+	} else {
+		if (!exists)
+			size->large = 100;
+	}
+
+	if (!exists)
+		this->put(weapon_id, size);
+
+	return 1;
+}
+
+SizeFixDatabase size_fix_db;
+
+const std::string EnchantgradeDatabase::getDefaultLocation(){
+	return std::string(db_path) + "/enchantgrade.yml";
+}
+
+uint64 EnchantgradeDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	if( !this->nodesExist( node, { "Type", "Levels" } ) ){
+		return 0;
+	}
+
+	std::string itemtype_constant;
+
+	if( !this->asString( node, "Type", itemtype_constant ) ){
+		return 0;
+	}
+
+	int64 constant_value;
+
+	if( !script_get_constant( ( "IT_" + itemtype_constant ).c_str(), &constant_value ) ){
+		this->invalidWarning( node["Type"], "Unknown item type \"%s\".\n", itemtype_constant.c_str() );
+		return 0;
+	}
+
+	uint16 itemtype = static_cast<uint16>( constant_value );
+	uint16 itemtype_maxlevel;
+
+	if( itemtype == IT_WEAPON ){
+		itemtype_maxlevel = MAX_WEAPON_LEVEL;
+	}else if( itemtype == IT_ARMOR ){
+		itemtype_maxlevel = MAX_ARMOR_LEVEL;
+	}else{
+		this->invalidWarning( node["Type"], "Item type \"%s\" is not supported.\n", itemtype_constant.c_str() );
+		return 0;
+	}
+
+	std::shared_ptr<s_enchantgrade> enchantgrade = this->find( itemtype );
+	bool exists = enchantgrade != nullptr;
+
+	if( !exists ){
+		enchantgrade = std::make_shared<s_enchantgrade>();
+		enchantgrade->itemtype = itemtype;
+	}
+
+	for( const ryml::NodeRef& levelNode : node["Levels"] ){
+		if( !this->nodesExist( levelNode, { "Level", "Grades" } ) ){
+			return 0;
+		}
+
+		uint16 level;
+
+		if( !this->asUInt16( levelNode, "Level", level ) ){
+			return 0;
+		}
+
+		if( level == 0 || level > itemtype_maxlevel ){
+			this->invalidWarning( levelNode["Level"], "Level %hu is invalid for item type %s[1~%hu].\n", level, itemtype_constant.c_str(), itemtype_maxlevel );
+			return 0;
+		}
+
+		std::map<e_enchantgrade, std::shared_ptr<s_enchantgradelevel>>& grades = enchantgrade->levels[level];
+
+		for( const ryml::NodeRef& gradeNode : levelNode["Grades"] ){
+			std::string gradeConstant;
+
+			if( !this->asString( gradeNode, "Grade", gradeConstant ) ){
+				return 0;
+			}
+
+			if( !script_get_constant( ( "ENCHANTGRADE_" + gradeConstant ).c_str(), &constant_value ) ){
+				this->invalidWarning( node["Grade"], "Unknown grade \"%s\".\n", gradeConstant.c_str() );
+				return 0;
+			}
+
+			if( constant_value >= MAX_ENCHANTGRADE ){
+				this->invalidWarning( gradeNode["Grade"], "Grade %" PRId64 " is too high. Maximum: %hu.\n", constant_value, MAX_ENCHANTGRADE - 1 );
+				return 0;
+			}
+
+			e_enchantgrade gradeLevel = (e_enchantgrade)constant_value;
+
+			std::shared_ptr<s_enchantgradelevel> grade = util::map_find( grades, gradeLevel );
+			bool gradeExists = grade != nullptr;
+
+			if( !gradeExists ){
+				if( !this->nodesExist( gradeNode, { "Chances", "Options" } ) ){
+					return 0;
+				}
+
+				grade = std::make_shared<s_enchantgradelevel>();
+				grade->grade = gradeLevel;
+				for( int32 i = 0; i < ARRAYLENGTH( grade->chances ); i++ ){
+					grade->chances[i] = 0;
+				}
+			}
+
+			if( this->nodeExists( gradeNode, "Chances" ) ){
+				for( const ryml::NodeRef& chanceNode : gradeNode["Chances"] ){
+					uint16 refine;
+
+					if( !this->asUInt16( chanceNode, "Refine", refine ) ){
+						return 0;
+					}
+
+					if( refine > MAX_REFINE ){
+						this->invalidWarning( chanceNode["Refine"], "Refine %hu is too high. Maximum: %hu.\n", refine, MAX_REFINE );
+						return 0;
+					}
+
+					uint16 chance;
+
+					if( !this->asUInt16Rate( chanceNode, "Chance", chance ) ){
+						return 0;
+					}
+
+					grade->chances[refine] = chance;
+				}
+			}
+
+			if( this->nodeExists( gradeNode, "Bonus" ) ){
+				uint16 bonus;
+
+				if( !this->asUInt16( gradeNode, "Bonus", bonus ) ){
+					return 0;
+				}
+
+				grade->bonus = bonus;
+			}else{
+				if( !gradeExists ){
+					grade->bonus = 0;
+				}
+			}
+
+			if( this->nodeExists( gradeNode, "AnnounceSuccess" ) ){
+				bool announce;
+
+				if( !this->asBool( gradeNode, "AnnounceSuccess", announce ) ){
+					return 0;
+				}
+
+				grade->announceSuccess = announce;
+			}else{
+				if( !gradeExists ){
+					grade->announceSuccess = true;
+				}
+			}
+
+			if( this->nodeExists( gradeNode, "AnnounceFail" ) ){
+				bool announce;
+
+				if( !this->asBool( gradeNode, "AnnounceFail", announce) ){
+					return 0;
+				}
+
+				grade->announceFail = announce;
+			}else{
+				if( !gradeExists ){
+					grade->announceFail = false;
+				}
+			}
+
+			if( this->nodeExists( gradeNode, "Announce" ) ){
+				bool announce;
+
+				if( !this->asBool( gradeNode, "Announce", announce ) ){
+					return 0;
+				}
+
+				grade->announceSuccess = announce;
+				grade->announceFail = announce;
+			}
+
+			if( this->nodeExists( gradeNode, "Catalyst") ){
+				const ryml::NodeRef& catalystNode = gradeNode["Catalyst"];
+
+				if( this->nodeExists( catalystNode, "Item" ) ){
+					std::string itemName;
+
+					if( !this->asString( catalystNode, "Item", itemName ) ){
+						return 0;
+					}
+
+					std::shared_ptr<item_data> id = item_db.search_aegisname( itemName.c_str() );
+
+					if( id == nullptr ){
+						this->invalidWarning( catalystNode["Item"], "Unknown item \"%s\".\n", itemName.c_str() );
+						return 0;
+					}
+
+					grade->catalyst.item = id->nameid;
+				}else{
+					if( !gradeExists ){
+						grade->catalyst.item = 0;
+					}
+				}
+
+				if( this->nodeExists( catalystNode, "AmountPerStep" ) ){
+					uint16 amountPerStep;
+
+					if( !this->asUInt16( catalystNode, "AmountPerStep", amountPerStep ) ){
+						return 0;
+					}
+
+					grade->catalyst.amountPerStep = amountPerStep;
+				}else{
+					if( !gradeExists ){
+						grade->catalyst.amountPerStep = 0;
+					}
+				}
+
+				if( this->nodeExists( catalystNode, "MaximumSteps" ) ){
+					uint16 maximumSteps;
+
+					if( !this->asUInt16( catalystNode, "MaximumSteps", maximumSteps ) ){
+						return 0;
+					}
+
+					grade->catalyst.maximumSteps = maximumSteps;
+				}else{
+					if( !gradeExists ){
+						grade->catalyst.maximumSteps = 0;
+					}
+				}
+
+				if( this->nodeExists( catalystNode, "ChanceIncrease" ) ){
+					uint16 chanceIncrease;
+
+					if( !this->asUInt16Rate( catalystNode, "ChanceIncrease", chanceIncrease ) ){
+						return 0;
+					}
+
+					grade->catalyst.chanceIncrease = chanceIncrease;
+				}else{
+					if( !gradeExists ){
+						grade->catalyst.chanceIncrease = 0;
+					}
+				}
+			}else{
+				if( !gradeExists ){
+					grade->catalyst.item = 0;
+					grade->catalyst.amountPerStep = 0;
+					grade->catalyst.maximumSteps = 0;
+					grade->catalyst.chanceIncrease = 0;
+				}
+			}
+
+			if( this->nodeExists( gradeNode, "Options" ) ){
+				for( const ryml::NodeRef& optionNode : gradeNode["Options"] ){
+					uint16 optionIndex;
+
+					if( !this->asUInt16( optionNode, "Option", optionIndex ) ){
+						return 0;
+					}
+
+					std::shared_ptr<s_enchantgradeoption> option = util::map_find( grade->options, optionIndex );
+					bool optionExists = option != nullptr;
+
+					if( !optionExists ){
+						option = std::make_shared<s_enchantgradeoption>();
+						option->id = optionIndex;
+					}
+
+					if( this->nodeExists( optionNode, "Amount" ) ){
+						uint16 amount;
+
+						if( !this->asUInt16( optionNode, "Amount", amount ) ){
+							return 0;
+						}
+
+						if( amount > MAX_AMOUNT ){
+							this->invalidWarning( optionNode["Amount"], "Amount %hu is too high, capping to %hu...\n", amount, MAX_AMOUNT );
+							amount = MAX_AMOUNT;
+						}
+
+						if( amount == 0 ){
+							if( grade->options.erase( optionIndex ) > 0 ){
+								continue;
+							}else{
+								this->invalidWarning( optionNode["Amount"], "Trying to remove invalid option %hu...\n", optionIndex );
+								return 0;
+							}
+						}
+
+						option->amount = amount;
+					}else{
+						if( !optionExists ){
+							option->amount = 1;
+						}
+					}
+
+					if( this->nodeExists( optionNode, "Item" ) ){
+						std::string itemName;
+
+						if( !this->asString( optionNode, "Item", itemName ) ){
+							return 0;
+						}
+
+						std::shared_ptr<item_data> id = item_db.search_aegisname( itemName.c_str() );
+
+						if( id == nullptr ){
+							this->invalidWarning( optionNode["Item"], "Unknown item \"%s\".\n", itemName.c_str() );
+							return 0;
+						}
+
+						option->item = id->nameid;
+					}else{
+						if( !optionExists ){
+							option->item = 0;
+						}
+					}
+
+					if( this->nodeExists( optionNode, "Zeny" ) ){
+						uint32 zeny;
+
+						if( !this->asUInt32( optionNode, "Zeny", zeny ) ){
+							return 0;
+						}
+
+						option->zeny = zeny;
+					}else{
+						if( !optionExists ){
+							option->zeny = 0;
+						}
+					}
+
+					if( this->nodeExists( optionNode, "BreakingRate" ) ){
+						uint16 breaking_rate;
+
+						if( !this->asUInt16Rate( optionNode, "BreakingRate", breaking_rate ) ){
+							return 0;
+						}
+
+						option->breaking_rate = breaking_rate;
+					}else{
+						if( !optionExists ){
+							option->breaking_rate = 0;
+						}
+					}
+
+					if( this->nodeExists( optionNode, "DowngradeAmount" ) ){
+						uint16 downgrade_amount;
+
+						if( !this->asUInt16( optionNode, "DowngradeAmount", downgrade_amount ) ){
+							return 0;
+						}
+
+						if( downgrade_amount > MAX_REFINE ){
+							this->invalidWarning( optionNode["DowngradeAmount"], "Downgrade amount %hu is invalid, skipping.\n", downgrade_amount );
+							return 0;
+						}
+
+						option->downgrade_amount = downgrade_amount;
+					}else{
+						if( !optionExists ){
+							option->downgrade_amount = 0;
+						}
+					}
+
+					if( !optionExists ){
+						grade->options[optionIndex] = option;
+					}
+				}
+			}
+
+			if( !gradeExists ){
+				grades[gradeLevel] = grade;
+			}
+		}
+	}
+
+	if( !exists ){
+		this->put( itemtype, enchantgrade );
+	}
+
+	return 1;
+}
+
+std::shared_ptr<s_enchantgradelevel> EnchantgradeDatabase::findCurrentLevelInfo( const struct item_data& data, struct item& item ){
+	std::shared_ptr<s_enchantgrade> enchantgrade = enchantgrade_db.find( data.type );
+
+	// Unsupported item type - no answer
+	if( enchantgrade == nullptr ){
+		return nullptr;
+	}
+
+	uint16 level = 0;
+
+	if( data.type == IT_WEAPON ){
+		level = data.weapon_level;
+	}else if( data.type == IT_ARMOR ){
+		level = data.armor_level;
+	}
+
+	const auto& enchantgradelevels = enchantgrade->levels.find( level );
+
+	// Cannot upgrade this weapon or armor level - no answer
+	if( enchantgradelevels == enchantgrade->levels.end() ){
+		return nullptr;
+	}
+
+	return util::map_find( enchantgradelevels->second, (e_enchantgrade)( item.enchantgrade - 1 ) );
+}
+
+void EnchantgradeDatabase::loadingFinished(){
+	for( const auto& it_itemTypes : *this ){
+		for( const auto& it_itemLevels : it_itemTypes.second->levels ){
+			for( const auto& it_enchantgrades : it_itemLevels.second ){
+				std::shared_ptr<s_enchantgradelevel> enchantgradelevel = it_enchantgrades.second;
+
+				if( enchantgradelevel->catalyst.amountPerStep == 0 ){
+					enchantgradelevel->catalyst.item = 0;
+					enchantgradelevel->catalyst.chanceIncrease = 0;
+					enchantgradelevel->catalyst.maximumSteps = 0;
+				}
+			}
+		}
+	}

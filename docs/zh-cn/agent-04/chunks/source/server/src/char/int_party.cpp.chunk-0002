@@ -1,0 +1,457 @@
+// Communication from the map server
+
+
+// Create Party
+int32 mapif_parse_CreateParty(int32 fd, char *name, int32 item, int32 item2, struct party_member *leader)
+{
+	std::shared_ptr<struct party_data> p = search_partyname( name );
+
+	if( p != nullptr ){
+		mapif_party_created(fd,leader->account_id,leader->char_id,nullptr);
+		return 0;
+	}
+
+	// Check Authorised letters/symbols in the name of the character
+	if (charserv_config.char_config.char_name_option == 1) { // only letters/symbols in char_name_letters are authorised
+		for( int32 i = 0; i < NAME_LENGTH && name[i]; i++ ){
+			if (strchr(charserv_config.char_config.char_name_letters, name[i]) == nullptr) {
+				if( name[i] == '"' ) { /* client-special-char */
+					normalize_name(name,"\"");
+					mapif_parse_CreateParty(fd,name,item,item2,leader);
+					return 0;
+				}
+				mapif_party_created(fd,leader->account_id,leader->char_id,nullptr);
+				return 0;
+			}
+		}
+	} else if (charserv_config.char_config.char_name_option == 2) { // letters/symbols in char_name_letters are forbidden
+		for( int32 i = 0; i < NAME_LENGTH && name[i]; i++ ){
+			if (strchr(charserv_config.char_config.char_name_letters, name[i]) != nullptr) {
+				mapif_party_created(fd,leader->account_id,leader->char_id,nullptr);
+				return 0;
+			}
+		}
+	}
+
+	p = std::make_shared<struct party_data>();
+
+	safestrncpy(p->party.name,name,NAME_LENGTH);
+	p->party.exp=0;
+	p->party.item=(item?1:0)|(item2?2:0);
+
+	memcpy(&p->party.member[0], leader, sizeof(struct party_member));
+	p->party.member[0].leader=1;
+	p->party.member[0].online=1;
+
+	p->party.party_id=-1;//New party.
+	if (inter_party_tosql(&p->party,PS_CREATE|PS_ADDMEMBER,0)) {
+		//Add party to db
+		int_party_calc_state(p);
+		party_db[p->party.party_id] = p;
+		mapif_party_info(fd, &p->party, 0);
+		mapif_party_created(fd,leader->account_id,leader->char_id,&p->party);
+	}else{
+		// Failed to create party.
+		mapif_party_created(fd,leader->account_id,leader->char_id,nullptr);
+	}
+
+	return 0;
+}
+
+// Party information request
+void mapif_parse_PartyInfo(int32 fd, int32 party_id, uint32 char_id)
+{
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if( p != nullptr ){
+		mapif_party_info(fd, &p->party, char_id);
+	}else{
+		mapif_party_noinfo(fd, party_id, char_id);
+	}
+}
+
+// Add a player to party request
+int32 mapif_parse_PartyAddMember(int32 fd, int32 party_id, struct party_member *member)
+{
+	int32 i;
+
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if( p == nullptr || p->size == MAX_PARTY ){
+		mapif_party_memberadded(fd, party_id, member->account_id, member->char_id, 1);
+		return 0;
+	}
+
+	ARR_FIND( 0, MAX_PARTY, i, p->party.member[i].account_id == 0 );
+	if( i == MAX_PARTY )
+	{// Party full
+		mapif_party_memberadded(fd, party_id, member->account_id, member->char_id, 1);
+		return 0;
+	}
+
+	memcpy(&p->party.member[i], member, sizeof(struct party_member));
+	p->party.member[i].leader = 0;
+	if (p->party.member[i].online) p->party.count++;
+	p->size++;
+	if (p->size == 2 || p->size == 3) // Check family state. And also accept either of their Parents. [RoM]
+		int_party_calc_state(p);
+	else //Check even share range.
+	if (member->lv < p->min_lv || member->lv > p->max_lv || p->family) {
+		if (p->family) p->family = 0; //Family state broken.
+		int_party_check_lv(p);
+	}
+
+	mapif_party_info(-1, &p->party, 0);
+	mapif_party_memberadded(fd, party_id, member->account_id, member->char_id, 0);
+	inter_party_tosql(&p->party, PS_ADDMEMBER, i);
+
+	return 0;
+}
+
+//Party setting change request
+int32 mapif_parse_PartyChangeOption(int32 fd,int32 party_id,uint32 account_id,int32 exp,int32 item)
+{
+	int32 flag = 0;
+
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if(!p)
+		return 0;
+	if (p->size == 2 || p->size == 3) //check family state. Also accept either of their parents.
+		int_party_calc_state(p);
+	p->party.exp=exp;
+	if( exp && !party_check_exp_share(p) ){
+		flag|=0x01;
+		p->party.exp=0;
+	}
+	p->party.item = item&0x3; //Filter out invalid values.
+	mapif_party_optionchanged(fd,&p->party,account_id,flag);
+	inter_party_tosql(&p->party, PS_BASIC, 0);
+	return 0;
+}
+
+//Request leave party
+int32 mapif_parse_PartyLeave(int32 fd, int32 party_id, uint32 account_id, uint32 char_id, char *name, enum e_party_member_withdraw type)
+{
+	int32 i,j=-1;
+
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	// Party does not exists?
+	if( p == nullptr ){
+		if( SQL_ERROR == Sql_Query(sql_handle, "UPDATE `%s` SET `party_id`='0' WHERE `party_id`='%d'", schema_config.char_db, party_id) )
+			Sql_ShowDebug(sql_handle);
+		return 0;
+	}
+
+	for (i = 0; i < MAX_PARTY; i++) {
+		if(p->party.member[i].account_id == account_id &&
+			p->party.member[i].char_id == char_id) {
+			break;
+		}
+	}
+	if (i >= MAX_PARTY)
+		return 0; //Member not found?
+
+	mapif_party_withdraw(party_id, account_id, char_id, name, type);
+
+	if (p->party.member[i].leader){
+		// TODO: Official allow 'leaderless' party
+		p->party.member[i].account_id = 0;
+		for (j = 0; j < MAX_PARTY; j++) {
+			if (!p->party.member[j].account_id)
+				continue;
+			mapif_party_withdraw(party_id, p->party.member[j].account_id, p->party.member[j].char_id, p->party.member[j].name, type);
+			p->party.member[j].account_id = 0;
+		}
+		//Party gets deleted on the check_empty call below.
+	} else {
+		inter_party_tosql(&p->party,PS_DELMEMBER,i);
+		j = p->party.member[i].lv;
+		if(p->party.member[i].online) p->party.count--;
+		memset(&p->party.member[i], 0, sizeof(struct party_member));
+		p->size--;
+		if (j == p->min_lv || j == p->max_lv || p->family)
+		{
+			if(p->family) p->family = 0; //Family state broken.
+			int_party_check_lv(p);
+		}
+	}
+
+	if (party_check_empty(p) == 0)
+		mapif_party_info(-1, &p->party, 0);
+	return 0;
+}
+// When member goes to other map or levels up.
+int32 mapif_parse_PartyChangeMap( int32 fd, int32 party_id, uint32 account_id, uint32 char_id, int32 online, uint32 lv, const char* map ){
+	int32 i;
+
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if( p == nullptr ){
+		return 0;
+	}
+
+	for(i = 0; i < MAX_PARTY &&
+		(p->party.member[i].account_id != account_id ||
+		p->party.member[i].char_id != char_id); i++);
+
+	if (i == MAX_PARTY) return 0;
+
+	if (p->party.member[i].online != online)
+	{
+		p->party.member[i].online = online;
+		if (online)
+			p->party.count++;
+		else
+			p->party.count--;
+		// Even share check situations: Family state (always breaks)
+		// character logging on/off is max/min level (update level range)
+		// or character logging on/off has a different level (update level range using new level)
+		if (p->family ||
+			(p->party.member[i].lv <= p->min_lv || p->party.member[i].lv >= p->max_lv) ||
+			(p->party.member[i].lv != lv && (lv <= p->min_lv || lv >= p->max_lv))
+			)
+		{
+			p->party.member[i].lv = lv;
+			int_party_check_lv(p);
+		}
+		//Send online/offline update.
+		mapif_party_membermoved(&p->party, i);
+	}
+
+	if (p->party.member[i].lv != lv) {
+		if(p->party.member[i].lv == p->min_lv ||
+			p->party.member[i].lv == p->max_lv)
+		{
+			p->party.member[i].lv = lv;
+			int_party_check_lv(p);
+		} else
+			p->party.member[i].lv = lv;
+		//There is no need to send level update to map servers
+		//since they do nothing with it.
+	}
+
+	if( strncmp( p->party.member[i].map, map, sizeof( p->party.member[i].map ) ) != 0 ){
+		safestrncpy( p->party.member[i].map, map, sizeof( p->party.member[i].map ) );
+		mapif_party_membermoved(&p->party, i);
+		int_party_check_lv(p);
+	}
+	return 0;
+}
+
+//Request party dissolution
+int32 mapif_parse_BreakParty(int32 fd,int32 party_id)
+{
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if(!p)
+		return 0;
+	inter_party_tosql(&p->party,PS_BREAK,0);
+	mapif_party_broken(fd,party_id);
+	return 0;
+}
+
+//Party sending the message
+int32 mapif_parse_PartyMessage(int32 fd,int32 party_id,uint32 account_id,char *mes,int32 len)
+{
+	return mapif_party_message(party_id,account_id,mes,len, fd);
+}
+
+int32 mapif_parse_PartyLeaderChange(int32 fd,int32 party_id,uint32 account_id,uint32 char_id)
+{
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if(!p)
+		return 0;
+
+	for( int32 i = 0; i < MAX_PARTY; i++ ){
+		if(p->party.member[i].leader)
+			p->party.member[i].leader = 0;
+		if(p->party.member[i].account_id == account_id &&
+			p->party.member[i].char_id == char_id)
+	  	{
+			p->party.member[i].leader = 1;
+			inter_party_tosql(&p->party,PS_LEADER, i);
+		}
+	}
+	return 1;
+}
+
+/**
+ * Used to update party share level range in run time
+ * @param fd : map-serv link
+ * @param share_lvl : Max level number of difference to share exp
+ * @return 
+ */
+int32 mapif_parse_PartyShareLevel(int32 fd,uint32 share_lvl)
+{
+	party_share_level = share_lvl;
+
+	// Update online parties
+	for( const auto& pair : party_db ){
+		std::shared_ptr<struct party_data> p = pair.second;
+
+		if( p->party.count > 1 ){
+			int_party_calc_state( p );
+		}
+	}
+
+	return 1;
+}
+
+
+// Communication from the map server
+//-Analysis that only one packet
+// Data packet length is set to inter.cpp that you
+// Do NOT go and check the packet length, RFIFOSKIP is done by the caller
+// Return :
+// 	0 : error
+//	1 : ok
+int32 inter_party_parse_frommap(int32 fd)
+{
+	switch(RFIFOW(fd,0)) {
+	case 0x3020: mapif_parse_CreateParty(fd, RFIFOCP(fd,4), RFIFOB(fd,28), RFIFOB(fd,29), (struct party_member*)RFIFOP(fd,30)); break;
+	case 0x3021: mapif_parse_PartyInfo(fd, RFIFOL(fd,2), RFIFOL(fd,6)); break;
+	case 0x3022: mapif_parse_PartyAddMember(fd, RFIFOL(fd,4), (struct party_member*)RFIFOP(fd,8)); break;
+	case 0x3023: mapif_parse_PartyChangeOption(fd, RFIFOL(fd,2), RFIFOL(fd,6), RFIFOW(fd,10), RFIFOW(fd,12)); break;
+	case 0x3024: mapif_parse_PartyLeave(fd, RFIFOL(fd,2), RFIFOL(fd,6), RFIFOL(fd,10), RFIFOCP(fd,14), (enum e_party_member_withdraw)RFIFOB(fd,14+NAME_LENGTH)); break;
+	case 0x3025: mapif_parse_PartyChangeMap( fd, RFIFOL( fd, 2 ), RFIFOL( fd, 6 ), RFIFOL( fd, 10 ), RFIFOB( fd, 14 ), RFIFOW( fd, 15 ), RFIFOCP( fd, 17 ) ); break;
+	case 0x3026: mapif_parse_BreakParty(fd, RFIFOL(fd,2)); break;
+	case 0x3027: mapif_parse_PartyMessage(fd, RFIFOL(fd,4), RFIFOL(fd,8), RFIFOCP(fd,12), RFIFOW(fd,2)-12); break;
+	case 0x3029: mapif_parse_PartyLeaderChange(fd, RFIFOL(fd,2), RFIFOL(fd,6), RFIFOL(fd,10)); break;
+	case 0x302A: mapif_parse_PartyShareLevel(fd, RFIFOL(fd,2)); break;
+	default:
+		return 0;
+	}
+	return 1;
+}
+
+//Leave request from the server (for delete character)
+int32 inter_party_leave(int32 party_id,uint32 account_id, uint32 char_id, char *name)
+{
+	return mapif_parse_PartyLeave(-1,party_id,account_id, char_id, name, PARTY_MEMBER_WITHDRAW_EXPEL);
+}
+
+int32 inter_party_CharOnline(uint32 char_id, int32 party_id)
+{
+	int32 i;
+
+	if( party_id == -1 )
+	{// Get party_id from the database
+		char* data;
+
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT party_id FROM `%s` WHERE char_id='%d'", schema_config.char_db, char_id) )
+		{
+			Sql_ShowDebug(sql_handle);
+			return 0;
+		}
+
+		if( SQL_SUCCESS != Sql_NextRow(sql_handle) )
+			return 0; //Eh? No party?
+
+		Sql_GetData(sql_handle, 0, &data, nullptr);
+		party_id = atoi(data);
+		Sql_FreeResult(sql_handle);
+	}
+	if (party_id == 0)
+		return 0; //No party...
+
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if(!p) {
+		ShowError("Character %d's party %d not found!\n", char_id, party_id);
+		return 0;
+	}
+
+	//Set member online
+	for(i=0; i<MAX_PARTY; i++) {
+		if (p->party.member[i].char_id == char_id) {
+			if (!p->party.member[i].online) {
+				p->party.member[i].online = 1;
+				p->party.count++;
+				if (p->party.member[i].lv < p->min_lv ||
+					p->party.member[i].lv > p->max_lv)
+					int_party_check_lv(p);
+			}
+			break;
+		}
+	}
+	return 1;
+}
+
+int32 inter_party_CharOffline(uint32 char_id, int32 party_id) {
+	int32 i;
+
+	if( party_id == -1 )
+	{// Get guild_id from the database
+		char* data;
+
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT party_id FROM `%s` WHERE char_id='%d'", schema_config.char_db, char_id) )
+		{
+			Sql_ShowDebug(sql_handle);
+			return 0;
+		}
+
+		if( SQL_SUCCESS != Sql_NextRow(sql_handle) )
+			return 0; //Eh? No party?
+
+		Sql_GetData(sql_handle, 0, &data, nullptr);
+		party_id = atoi(data);
+		Sql_FreeResult(sql_handle);
+	}
+	if (party_id == 0)
+		return 0; //No party...
+
+	//Character has a party, set character offline and check if they were the only member online
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if( p == nullptr ){
+		return 0;
+	}
+
+	//Set member offline
+	for(i=0; i< MAX_PARTY; i++) {
+		if(p->party.member[i].char_id == char_id)
+		{
+			p->party.member[i].online = 0;
+			p->party.count--;
+			if(p->party.member[i].lv == p->min_lv ||
+				p->party.member[i].lv == p->max_lv)
+				int_party_check_lv(p);
+			break;
+		}
+	}
+
+	// Parties don't have any data that needs be saved at this point... so just remove it from memory.
+	if( p->party.count == 0 ){
+		party_db.erase( party_id );
+	}
+
+	return 1;
+}
+
+int32 inter_party_charname_changed(int32 party_id, uint32 char_id, char *name)
+{
+	int32 i;
+
+	std::shared_ptr<struct party_data> p = inter_party_fromsql( party_id );
+
+	if( p == nullptr || p->party.party_id == 0 ){
+		ShowError("inter_party_charname_changed: Can't find party %d.\n", party_id);
+		return 0;
+	}
+
+	ARR_FIND(0, MAX_PARTY, i, p->party.member[i].char_id == char_id);
+	if( i == MAX_PARTY )
+	{
+		ShowError("inter_party_charname_changed: Can't find character %d in party %d.\n", char_id, party_id);
+		return 0;
+	}
+
+	safestrncpy(p->party.member[i].name, name, NAME_LENGTH);
+
+	mapif_party_info(-1, &p->party, char_id);
+	
+	return 0;
+}

@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "quest.hpp"
+
+#include <cstdlib>
+
+#include <common/cbasetypes.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/strlib.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "battle.hpp"
+#include "chrif.hpp"
+#include "clif.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp"
+#include "log.hpp"
+#include "map.hpp"
+#include "mob.hpp"
+#include "party.hpp"
+#include "pc.hpp"
+
+using namespace rathena;
+
+static int32 split_exact_quest_time(char* modif_p, int32* week, int32* day, int32* hour, int32* minute, int32 *second);
+
+const std::string QuestDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/quest_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the quest_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 QuestDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	uint32 quest_id;
+
+	if (!this->asUInt32(node, "Id", quest_id))
+		return 0;
+
+	std::shared_ptr<s_quest_db> quest = this->find(quest_id);
+	bool exists = quest != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Title" }))
+			return 0;
+
+		quest = std::make_shared<s_quest_db>();
+		quest->id = quest_id;
+	}
+
+	if (this->nodeExists(node, "Title")) {
+		std::string name;
+
+		if (!this->asString(node, "Title", name))
+			return 0;
+
+		quest->name = name;
+	}
+
+	if (this->nodeExists(node, "TimeLimit")) {
+		std::string time;
+
+		if (!this->asString(node, "TimeLimit", time))
+			return 0;
+
+		if (time.find("+") != std::string::npos) {
+			double timediff = solve_time(const_cast<char *>(time.c_str()));
+
+			if (timediff <= 0) {
+				this->invalidWarning(node["TimeLimit"], "Incorrect TimeLimit format %s given, skipping.\n", time.c_str());
+				return 0;
+			}
+			quest->time = static_cast<time_t>(timediff);
+		}
+		else {// '+' not found, set to specific time
+			int32 day, hour, minute, second, week;
+
+			if (split_exact_quest_time(const_cast<char *>(time.c_str()), &week, &day, &hour, &minute, &second) == 0) {
+				this->invalidWarning(node["TimeLimit"], "Incorrect TimeLimit format %s given, skipping.\n", time.c_str());
+				return 0;
+			}
+			if (week > 0)
+				quest->time = hour * 3600 + minute * 60 + second;
+			else
+				quest->time = day * 86400 + hour * 3600 + minute * 60 + second;
+			quest->time_at = true;
+			quest->time_week = week;
+		}
+
+	} else {
+		if (!exists) {
+			quest->time = 0;
+			quest->time_at = false;
+			quest->time_week = -1;
+		}
+	}
+
+	if (this->nodeExists(node, "Targets")) {
+		const auto& targets = node["Targets"];
+
+		for (const auto& targetNode : targets) {
+			if (quest->objectives.size() >= MAX_QUEST_OBJECTIVES) {
+				this->invalidWarning(targetNode, "Targets list exceeds the maximum of %d, skipping.\n", MAX_QUEST_OBJECTIVES);
+				return 0;
+			}
+
+			if (!this->nodeExists(targetNode, "Mob") && !this->nodeExists(targetNode, "Id")) {
+				this->invalidWarning(targetNode, "Missing Target 'Mob' or 'Id', skipping.\n");
+				return 0;
+			}
+
+			std::shared_ptr<s_quest_objective> target;
+			std::vector<std::shared_ptr<s_quest_objective>>::iterator it;
+			uint16 index = 0, mob_id = 0;
+
+			if (this->nodeExists(targetNode, "Mob")) {
+
+				std::string mob_name;
+
+				if (!this->asString(targetNode, "Mob", mob_name))
+					return 0;
+
+				std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname(mob_name.c_str());
+
+				if (!mob) {
+					this->invalidWarning(targetNode["Mob"], "Mob %s does not exist, skipping.\n", mob_name.c_str());
+					return 0;
+				}
+
+				mob_id = mob->id;
+
+				it = std::find_if(quest->objectives.begin(), quest->objectives.end(), [&](std::shared_ptr<s_quest_objective> const &v) {
+					return (*v).mob_id == mob_id;
+				});
+			}
+			else {
+				if (!this->asUInt16(targetNode, "Id", index)) {
+					this->invalidWarning(targetNode, "Missing 'Id', skipping.\n");
+					return 0;
+				}
+				if (index == 0) {
+					this->invalidWarning(targetNode["Id"], "'Id' can't be 0, skipping.\n");
+					return 0;
+				}
+
+				it = std::find_if(quest->objectives.begin(), quest->objectives.end(), [&](std::shared_ptr<s_quest_objective> const &v) {
+					return (*v).index == index;
+				});
+			}
+
+			if (it != quest->objectives.end())
+				target = (*it);
+			else
+				target = nullptr;
+
+			bool targetExists = target != nullptr;
+
+			if (!targetExists) {
+				if (!this->nodeExists(targetNode, "Count")) {
+					this->invalidWarning(targetNode["Count"], "Targets has no Count value specified, skipping.\n");
+					return 0;
+				}
+
+				target = std::make_shared<s_quest_objective>();
+				target->index = index;
+				target->mob_id = mob_id;
+				target->min_level = 0;
+				target->max_level = 0;
+				target->race = RC_ALL;
+				target->size = SZ_ALL;
+				target->element = ELE_ALL;
+				target->mapid = -1;
+				target->map_name = "";
+			}
+
+			if (!this->nodeExists(targetNode, "Mob")) {
+				if (this->nodeExists(targetNode, "MinLevel")) {
+					uint16 level;
+
+					if (!this->asUInt16(targetNode, "MinLevel", level))
+						return 0;
+
+					target->min_level = level;
+				}
+
+				if (this->nodeExists(targetNode, "MaxLevel")) {
+					uint16 level;
+
+					if (!this->asUInt16(targetNode, "MaxLevel", level))
+						return 0;
+
+					if (target->min_level > level) {
+						this->invalidWarning(targetNode["MaxLevel"], "%d's MinLevel is greater than MaxLevel. Defaulting MaxLevel to %d.\n", target->min_level, MAX_LEVEL);
+						level = MAX_LEVEL;
+					}
+
+					target->max_level = level;
+				}
+
+				if (this->nodeExists(targetNode, "Race")) {
+					std::string race;
+
+					if (!this->asString(targetNode, "Race", race))
+						return 0;
+
+					std::string race_constant = "RC_" + race;
+					int64 constant;
+
+					if (!script_get_constant(race_constant.c_str(), &constant)) {
+						this->invalidWarning(targetNode["Race"], "Invalid race %s, skipping.\n", race.c_str());
+						return 0;
+					}
+
+					if (constant < RC_FORMLESS || constant > RC_ALL || constant == RC_PLAYER_HUMAN || constant == RC_PLAYER_DORAM) {
+						this->invalidWarning(targetNode["Race"], "Unsupported race %s, skipping.\n", race.c_str());
+						return 0;
+					}
+
+					target->race = static_cast<e_race>(constant);
+				}
+
+				if (this->nodeExists(targetNode, "Size")) {
+					std::string size_;
+
+					if (!this->asString(targetNode, "Size", size_))
+						return 0;
+
+					std::string size_constant = "Size_" + size_;
+					int64 constant;
+
+					if (!script_get_constant(size_constant.c_str(), &constant)) {
+						this->invalidWarning(targetNode["Size"], "Invalid size type %s, skipping.\n", size_.c_str());
+						return 0;
+					}
+
+					if (constant < SZ_SMALL || constant > SZ_ALL) {
+						this->invalidWarning(targetNode["Size"], "Unsupported size %s, skipping.\n", size_.c_str());
+						return 0;
+					}
+
+					target->size = static_cast<e_size>(constant);
+				}
+
+				if (this->nodeExists(targetNode, "Element")) {
+					std::string element;
+
+					if (!this->asString(targetNode, "Element", element))
+						return 0;
+
+					std::string element_constant = "Ele_" + element;
+					int64 constant;
+
+					if (!script_get_constant(element_constant.c_str(), &constant)) {
+						this->invalidWarning(targetNode["Element"], "Invalid element %s, skipping.\n", element.c_str());
+						return 0;
+					}
+
+					if (constant < ELE_NEUTRAL || constant > ELE_ALL) {
+						this->invalidWarning(targetNode["Element"], "Unsupported element %s, skipping.\n", element.c_str());
+						return 0;
+					}
+
+					target->element = static_cast<e_element>(constant);
+				}
+
+				if (this->nodeExists(targetNode, "Location")) {
+					std::string location;
+
+					if (!this->asString(targetNode, "Location", location))
+						return 0;
+
+					uint16 mapindex = mapindex_name2idx(location.c_str(), nullptr);
+
+					if (mapindex == 0 && strcmpi(location.c_str(), "All") != 0) {
+						this->invalidWarning(targetNode["Location"], "Map \"%s\" not found.\n", location.c_str());
+						return 0;
+					}
+
+					target->mapid = map_mapindex2mapid(mapindex);
+				}
+
+				if (this->nodeExists(targetNode, "MapName")) {
+					std::string map_name;
+
+					if (!this->asString(targetNode, "MapName", map_name))
+						return 0;
+
+					target->map_name = map_name;
+				}
+
+				if (this->nodeExists(targetNode, "MapMobTargets")) {
+					const auto& MapMobTargetsNode = targetNode["MapMobTargets"];
+
+					for (const auto& MapMobTargetsIt : MapMobTargetsNode) {
+						std::string mob_name;
+						c4::from_chars(MapMobTargetsIt.key(), &mob_name);
+
+						std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname(mob_name.c_str());
+
+						if (!mob) {
+							this->invalidWarning(MapMobTargetsNode[MapMobTargetsIt.key()], "Mob %s does not exist, skipping.\n", mob_name.c_str());
+							continue;
+						}
+
+						bool active;
+
+						if (!this->asBool(MapMobTargetsNode, mob_name, active))
+							return 0;
+
+						if (!active) {
+							util::vector_erase_if_exists(target->mobs_allowed, mob->id);
+							continue;
+						}
+
+						if (!util::vector_exists( target->mobs_allowed, mob->id ))
+							target->mobs_allowed.push_back(mob->id);
+					}
+				}
+
+				// if max_level is set, min_level is 1
+				if (target->min_level == 0 && target->max_level > 0)
+					target->min_level = 1;
+			}
+
+			if (this->nodeExists(targetNode, "Count")) {
+				uint16 count;
+
+				if (!this->asUInt16(targetNode, "Count", count))
+					return 0;
+
+				target->count = count;
+			}
+
+			quest->objectives.push_back(target);
+		}
+	}
+
+	if (this->nodeExists(node, "Drops")) {
+		const auto& drops = node["Drops"];
+
+		for (const auto& dropNode : drops) {
+			uint32 mob_id = 0; // Can be 0 which means all monsters
+
+			if (this->nodeExists(dropNode, "Mob")) {
+				std::string mob_name;
+
+				if (!this->asString(dropNode, "Mob", mob_name))
+					return 0;
+
+				std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname(mob_name.c_str());
+
+				if (!mob) {
+					this->invalidWarning(dropNode["Mob"], "Mob %s does not exist, skipping.\n", mob_name.c_str());
+					continue;
+				}
+
+				mob_id = mob->id;
+			}
+
+			//std::shared_ptr<s_quest_dropitem> target = util::vector_find(quest->dropitem, mob_id);
+			std::shared_ptr<s_quest_dropitem> target;
+			std::vector<std::shared_ptr<s_quest_dropitem>>::iterator it = std::find_if(quest->dropitem.begin(), quest->dropitem.end(), [&](std::shared_ptr<s_quest_dropitem> const &v) {
+				return (*v).mob_id == mob_id;
+			});
+
+			if (it != quest->dropitem.end())
+				target = (*it);
+			else
+				target = nullptr;
+
+			bool targetExists = target != nullptr;
+
+			if (!targetExists) {
+				if (!this->nodeExists(dropNode, "Item")) {
+					this->invalidWarning(dropNode["Item"], "Drops has no Item value specified, skipping.\n");
+					continue;
+				}
+
+				if (!this->nodeExists(dropNode, "Rate")) {
+					this->invalidWarning(dropNode["Rate"], "Drops has no Rate value specified, skipping.\n");
+					continue;
+				}
+
+				target = std::make_shared<s_quest_dropitem>();
+				target->mob_id = mob_id;
+			}
+
+			if (this->nodeExists(dropNode, "Item")) {
+				std::string item_name;
+
+				if (!this->asString(dropNode, "Item", item_name))
+					return 0;
+
+				std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+				if (!item) {
+					this->invalidWarning(dropNode["Item"], "Item %s does not exist, skipping.\n", item_name.c_str());
+					continue;
+				}
+
+				target->nameid = item->nameid;
+			}
+
+			if (this->nodeExists(dropNode, "Count")) {
+				uint16 count;
+
+				if (!this->asUInt16(dropNode, "Count", count))
+					return 0;
+
+				if (!itemdb_isstackable(target->nameid)) {
+					this->invalidWarning(dropNode["Count"], "Item %s is not stackable, capping to 1.\n", itemdb_name(target->nameid));
+					count = 1;
+				}
+
+				target->count = count;
+			} else {
+				if (!targetExists)
+					target->count = 1;
+			}
+
+			if (this->nodeExists(dropNode, "Rate")) {
+				uint16 rate;
+
+				if (!this->asUInt16(dropNode, "Rate", rate))
+					return 0;
+
+				target->rate = rate;
+			}
+
+			quest->dropitem.push_back(target);
+		}
+	}
+
+	if (!exists)
+		this->put(quest_id, quest);
+
+	return 1;
+}
+
+
+static int32 split_exact_quest_time(char* modif_p, int32* week, int32* day, int32* hour, int32* minute, int32 *second) {
+	int32 w = -1, d = -1, h = -1, mn = -1, s = -1;
+
+	nullpo_retr(0, modif_p);
+
+	while (modif_p[0] != '\0') {
+		int32 value = atoi(modif_p);
+
+		if (modif_p[0] == '-' || modif_p[0] == '+')
+			modif_p++;
+		while (modif_p[0] >= '0' && modif_p[0] <= '9')
+			modif_p++;
+		if (strncasecmp(modif_p, "SUNDAY", 6) == 0) {
+			w = 0;
+			modif_p = modif_p + 6;
+		} else if (strncasecmp(modif_p, "MONDAY", 6) == 0) {
+			w = 1;
+			modif_p = modif_p + 6;
+		} else if (strncasecmp(modif_p, "TUESDAY", 7) == 0) {
+			w = 2;
+			modif_p = modif_p + 7;
+		} else if (strncasecmp(modif_p, "WEDNESDAY", 9) == 0) {
+			w = 3;
+			modif_p = modif_p + 9;
+		} else if (strncasecmp(modif_p, "THURSDAY", 8) == 0) {
+			w = 4;
+			modif_p = modif_p + 8;
+		} else if (strncasecmp(modif_p, "FRIDAY", 6) == 0) {
+			w = 5;
+			modif_p = modif_p + 6;
+		} else if (strncasecmp(modif_p, "SATURDAY", 8) == 0) {
+			w = 6;
+			modif_p = modif_p + 8;
+		} else if (modif_p[0] == 's') {
+			s = value;
+			modif_p++;
+		} else if (modif_p[0] == 'm' && modif_p[1] == 'n') {
+			mn = value;
+			modif_p = modif_p + 2;
+		} else if (modif_p[0] == 'h') {
+			h = value;
+			modif_p++;
+		} else if (modif_p[0] == 'd' || modif_p[0] == 'j') {
+			d = value;
+			modif_p++;
+		} else if (modif_p[0] != '\0') {
+			modif_p++;
+		}
+	}
+
+	if (h < 0 || h > 23 || mn > 59 || s > 59)	// hour is required
+		return 0;

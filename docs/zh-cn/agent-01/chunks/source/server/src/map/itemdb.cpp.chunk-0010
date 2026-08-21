@@ -1,0 +1,500 @@
+
+		if (!this->asString(node, "Script", script))
+			return 0;
+
+		if (randopt->script) {
+			script_free_code( randopt->script );
+			randopt->script = nullptr;
+		}
+
+		randopt->script = parse_script(script.c_str(), this->getCurrentFile().c_str(), this->getLineNumber(node["Script"]), SCRIPT_IGNORE_EXTERNAL_BRACKETS);
+	}
+
+	if (!exists)
+		this->put(id, randopt);
+
+	return 1;
+}
+
+void RandomOptionDatabase::loadingFinished(){
+	const char* prefix = "RDMOPT_";
+
+	for( const auto& pair : *this ){
+		std::string name = prefix + pair.second->name;
+		int64 constant;
+
+		// Check if it has already been set
+		if( script_get_constant( name.c_str(), &constant ) ){
+			// It is already the same
+			if( constant == pair.first ){
+				continue;
+			}else{
+				// Export it to the script engine -> will issue a warning
+			}
+		}
+
+		script_set_constant( name.c_str(), pair.first, false, false );
+	}
+
+	TypesafeYamlDatabase::loadingFinished();
+}
+
+RandomOptionDatabase random_option_db;
+
+/**
+ * Check if the given random option name exists.
+ * @param name: Random option name
+ * @return True on success or false on failure
+ */
+bool RandomOptionDatabase::option_exists(std::string name) {
+	for (const auto &opt : random_option_db) {
+		if (opt.second->name.compare(name) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+/**
+ * Return the constant value of the given random option.
+ * @param name: Random option name
+ * @param id: Random option ID
+ * @return True on success or false on failure
+ */
+bool RandomOptionDatabase::option_get_id(std::string name, uint16 &id) {
+	for (const auto &opt : random_option_db) {
+		if (opt.second->name.compare(name) == 0) {
+			id = opt.first;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+const std::string RandomOptionGroupDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/item_randomopt_group.yml";
+}
+
+bool RandomOptionGroupDatabase::add_option(const ryml::NodeRef& node, std::shared_ptr<s_random_opt_group_entry> &entry) {
+	uint16 option_id;
+
+	if (this->nodeExists(node, "Option")) {
+		std::string opt_name;
+
+		if (!this->asString(node, "Option", opt_name))
+			return false;
+
+		if (!random_option_db.option_get_id(opt_name, option_id)) {
+			this->invalidWarning(node["Option"], "Invalid Random Option name %s given.\n", opt_name.c_str());
+			return false;
+		}
+	} else {
+		this->invalidWarning(node, "Missing Option node.\n");
+		return false;
+	}
+
+	entry = std::make_shared<s_random_opt_group_entry>();
+	entry->id = option_id;
+
+	if (this->nodeExists(node, "MinValue")) {
+		int16 value;
+
+		if (!this->asInt16(node, "MinValue", value))
+			return false;
+
+		entry->min_value = value;
+	} else {
+		entry->min_value = 0;
+	}
+
+	if (this->nodeExists(node, "MaxValue")) {
+		int16 value;
+
+		if (!this->asInt16(node, "MaxValue", value))
+			return false;
+
+		entry->max_value = value;
+	} else {
+		entry->max_value = 0;
+	}
+
+	if (entry->min_value > entry->max_value) {
+		this->invalidWarning(node["MaxValue"], "MinValue %d is greater than MaxValue %d, setting MaxValue to MinValue + 1.\n", entry->min_value, entry->max_value);
+		entry->max_value = entry->min_value + 1;
+	}
+
+	if (this->nodeExists(node, "Param")) {
+		int16 value;
+
+		if (!this->asInt16(node, "Param", value))
+			return false;
+
+		entry->param = static_cast<int8>(value);
+	} else {
+		entry->param = 0;
+	}
+
+	if (this->nodeExists(node, "Chance")) {
+		uint16 chance;
+
+		if (!this->asUInt16Rate(node, "Chance", chance))
+			return false;
+
+		entry->chance = chance;
+	} else {
+		entry->chance = 0;
+	}
+
+	return true;
+}
+
+void s_random_opt_group::apply( struct item& item ){
+	auto apply_sub = []( s_item_randomoption& item_option, const std::shared_ptr<s_random_opt_group_entry>& option ){
+		item_option.id = option->id;
+		item_option.value = rnd_value( option->min_value, option->max_value );
+		item_option.param = option->param;
+	};
+
+	// (Re)initialize all the options
+	for( size_t i = 0; i < MAX_ITEM_RDM_OPT; i++ ){
+		item.option[i].id = 0;
+		item.option[i].value = 0;
+		item.option[i].param = 0;
+	};
+
+	// Apply Must options
+	for( size_t i = 0; i < this->slots.size(); i++ ){
+		// Try to apply an entry
+		for( size_t j = 0, max = this->slots[static_cast<uint16>(i)].size() * 3; j < max; j++ ){
+			std::shared_ptr<s_random_opt_group_entry> option = util::vector_random( this->slots[static_cast<uint16>(i)] );
+
+			if ( rnd_chance<uint16>(option->chance, 10000) ) {
+				apply_sub( item.option[i], option );
+				break;
+			}
+		}
+
+		// If no entry was applied, assign one
+		if( item.option[i].id == 0 ){
+			std::shared_ptr<s_random_opt_group_entry> option = util::vector_random( this->slots[static_cast<uint16>(i)] );
+
+			// Apply an entry without checking the chance
+			apply_sub( item.option[i], option );
+		}
+	}
+
+	// Apply Random options (if available)
+	if( this->max_random > 0 ){
+		for( size_t i = 0; i < min( this->max_random, MAX_ITEM_RDM_OPT ); i++ ){
+			// If item already has an option in this slot, skip it
+			if( item.option[i].id > 0 ){
+				continue;
+			}
+
+			std::shared_ptr<s_random_opt_group_entry> option = util::vector_random( this->random_options );
+
+			if ( rnd_chance<uint16>(option->chance, 10000) ){
+				apply_sub( item.option[i], option );
+			}
+		}
+	}
+
+	// Fix any gaps, the client cannot handle this
+	for( size_t i = 0; i < MAX_ITEM_RDM_OPT; i++ ){
+		// If an option is empty
+		if( item.option[i].id == 0 ){
+			// Check if any other options, after the empty option exist
+			size_t j;
+			for( j = i + 1; j < MAX_ITEM_RDM_OPT; j++ ){
+				if( item.option[j].id != 0 ){
+					break;
+				}
+			}
+
+			// Another option was found, after the empty option
+			if( j < MAX_ITEM_RDM_OPT ){
+				// Move the later option forward
+				item.option[i].id = item.option[j].id;
+				item.option[i].value = item.option[j].value;
+				item.option[i].param = item.option[j].param;
+
+				// Reset the option that was moved
+				item.option[j].id = 0;
+				item.option[j].value = 0;
+				item.option[j].param = 0;
+			}else{
+				// Cancel early
+				break;
+			}
+		}
+	}
+}
+
+/**
+ * Reads and parses an entry from the item_randomopt_group.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 RandomOptionGroupDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	uint16 id;
+
+	if (!this->asUInt16(node, "Id", id))
+		return 0;
+
+	std::shared_ptr<s_random_opt_group> randopt = this->find(id);
+	bool exists = randopt != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Group" }))
+			return 0;
+
+		randopt = std::make_shared<s_random_opt_group>();
+		randopt->id = id;
+	}
+
+	if (this->nodeExists(node, "Group")) {
+		std::string name;
+
+		if (!this->asString(node, "Group", name))
+			return 0;
+
+		if (randopt->name.compare(name) != 0 && random_option_group.option_exists(name)) {
+			this->invalidWarning(node["Group"], "Found duplicate random option group name for %s, skipping.\n", name.c_str());
+			return 0;
+		}
+
+		randopt->name = name;
+	}
+
+	if (this->nodeExists(node, "Slots")) {
+		const auto& slotsNode = node["Slots"];
+		for (const ryml::NodeRef& slotNode : slotsNode) {
+			if (randopt->slots.size() >= MAX_ITEM_RDM_OPT) {
+				this->invalidWarning(slotNode, "Reached maximum of %d Random Option group options. Skipping the remaining slots...\n", MAX_ITEM_RDM_OPT);
+				break;
+			}
+
+			uint16 slot;
+
+			if (!this->asUInt16(slotNode, "Slot", slot))
+				return 0;
+
+			if (slot < 1 || slot > MAX_ITEM_RDM_OPT) {
+				this->invalidWarning(slotNode["Slot"], "Invalid Random Opton Slot number %hu given, must be between 1~%d, skipping.\n", slot, MAX_ITEM_RDM_OPT);
+				return 0;
+			}
+
+			if (!this->nodeExists(slotNode, "Options")) {
+				this->invalidWarning(slotNode, "Random option slot does not contain Options node, skipping.\n");
+				return 0;
+			}
+
+			std::vector<std::shared_ptr<s_random_opt_group_entry>> entries;
+			const auto& optionsNode = slotNode["Options"];
+			for (const auto& optionNode : optionsNode) {
+				std::shared_ptr<s_random_opt_group_entry> entry;
+
+				if (!this->add_option(optionNode, entry))
+					return 0;
+
+				entries.push_back(entry);
+			}
+
+			randopt->slots[slot - 1] = entries;
+		}
+	}
+
+	if (this->nodeExists(node, "MaxRandom")) {
+		uint16 max;
+
+		if (!this->asUInt16(node, "MaxRandom", max))
+			return 0;
+
+		if (max > MAX_ITEM_RDM_OPT) {
+			this->invalidWarning(node["MaxRandom"], "Exceeds the maximum of %d Random Option group options, capping to MAX_ITEM_RDM_OPT.\n", MAX_ITEM_RDM_OPT);
+			max = MAX_ITEM_RDM_OPT;
+		}
+
+		randopt->max_random = max;
+	} else {
+		if (!exists)
+			randopt->max_random = 0;
+	}
+
+	if (this->nodeExists(node, "Random")) {
+		randopt->random_options.clear();
+
+		const auto& randomNode = node["Random"];
+		for (const auto& randomNode : randomNode) {
+			std::shared_ptr<s_random_opt_group_entry> entry;
+
+			if (!this->add_option(randomNode, entry))
+				return 0;
+
+			randopt->random_options.push_back(entry);
+		}
+	}
+
+	if (!exists)
+		this->put(id, randopt);
+
+	return 1;
+}
+
+RandomOptionGroupDatabase random_option_group;
+
+/**
+ * Check if the given random option group name exists.
+ * @param name: Random option name
+ * @return True on success or false on failure
+ */
+bool RandomOptionGroupDatabase::option_exists(std::string name) {
+	for (const auto &opt : random_option_group) {
+		if (opt.second->name.compare(name) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+/**
+ * Return the constant value of the given random option group.
+ * @param name: Random option group name
+ * @param id: Random option group ID
+ * @return True on success or false on failure
+ */
+bool RandomOptionGroupDatabase::option_get_id(std::string name, uint16 &id) {
+	for (const auto &opt : random_option_group) {
+		if (opt.second->name.compare(name) == 0) {
+			id = opt.first;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/**
+* Read all item-related databases
+*/
+static void itemdb_read(void) {
+	int32 i;
+	const char* dbsubpath[] = {
+		"",
+		"/" DBIMPORT,
+	};
+	
+	if (db_use_sqldbs)
+		itemdb_read_sqldb();
+	else
+		item_db.load();
+	
+	for(i=0; i<ARRAYLENGTH(dbsubpath); i++){
+		uint8 n1 = (uint8)(strlen(db_path)+strlen(dbsubpath[i])+1);
+		uint8 n2 = (uint8)(strlen(db_path)+strlen(DBPATH)+strlen(dbsubpath[i])+1);
+		char* dbsubpath1 = (char*)aMalloc(n1+1);
+		char* dbsubpath2 = (char*)aMalloc(n2+1);
+		
+
+		if(i==0) {
+			safesnprintf(dbsubpath1,n1,"%s%s",db_path,dbsubpath[i]);
+			safesnprintf(dbsubpath2,n2,"%s/%s%s",db_path,DBPATH,dbsubpath[i]);
+		}
+		else {
+			safesnprintf(dbsubpath1,n1,"%s%s",db_path,dbsubpath[i]);
+			safesnprintf(dbsubpath2,n1,"%s%s",db_path,dbsubpath[i]);
+		}
+
+		sv_readdb(dbsubpath2, "item_noequip.txt",       ',', 2, 2, -1, &itemdb_read_noequip, i > 0);
+		aFree(dbsubpath1);
+		aFree(dbsubpath2);
+	}
+
+	random_option_db.load();
+	random_option_group.load();
+	itemdb_group.load();
+	itemdb_combo.load();
+	laphine_synthesis_db.load();
+	laphine_upgrade_db.load();
+	item_reform_db.load();
+	item_enchant_db.load();
+	item_package_db.load();
+
+	if (battle_config.feature_roulette)
+		itemdb_parse_roulette_db();
+}
+
+/*==========================================
+ * Initialize / Finalize
+ *------------------------------------------*/
+
+bool item_data::isStackable() const{
+	switch (this->type) {
+		case IT_WEAPON:
+		case IT_ARMOR:
+		case IT_PETEGG:
+		case IT_PETARMOR:
+		case IT_SHADOWGEAR:
+			return false;
+	}
+	return true;
+}
+
+int32 item_data::inventorySlotNeeded(int32 quantity)
+{
+	return (this->flag.guid || !this->isStackable()) ? quantity : 1;
+}
+
+void itemdb_gen_itemmoveinfo()
+{
+	ShowInfo("itemdb_gen_itemmoveinfo: Generating itemmoveinfov5.txt.\n");
+	auto starttime = std::chrono::system_clock::now();
+	auto os = std::ofstream("./generated/clientside/data/itemmoveinfov5.txt", std::ios::trunc);
+	std::map<t_itemid, std::shared_ptr<item_data>> sorted_itemdb(item_db.begin(), item_db.end());
+
+	os << "// ItemID,\tDrop,\tVending,\tStorage,\tCart,\tNpc Sale,\tMail,\tAuction,\tGuildStorage\n";
+	os << "// This format does not accept blank lines. Be careful.\n";
+
+	item_data tmp_id{};
+	for (auto it = sorted_itemdb.begin(); it != sorted_itemdb.end(); ++it) {
+		if (it->second->type == IT_UNKNOWN)
+			continue;
+		if (memcmp(&it->second->flag.trade_restriction, &tmp_id.flag.trade_restriction, sizeof(tmp_id.flag.trade_restriction)) == 0)
+			continue;
+
+		os << it->first << "\t" << it->second->flag.trade_restriction.drop << "\t" << it->second->flag.trade_restriction.trade << "\t" << it->second->flag.trade_restriction.storage << "\t" << it->second->flag.trade_restriction.cart << "\t" << it->second->flag.trade_restriction.sell << "\t" << it->second->flag.trade_restriction.mail << "\t" << it->second->flag.trade_restriction.auction << "\t" << it->second->flag.trade_restriction.guild_storage << "\t// " << it->second->name << "\n";
+	}
+
+	os.close();
+
+	auto currenttime = std::chrono::system_clock::now();
+	ShowInfo("itemdb_gen_itemmoveinfo: Done generating itemmoveinfov5.txt. The process took %lldms\n", std::chrono::duration_cast<std::chrono::milliseconds>(currenttime - starttime).count());
+}
+
+/**
+* Reload Item DB
+*/
+void itemdb_reload(void) {
+	struct s_mapiterator* iter;
+	map_session_data* sd;
+
+	do_final_itemdb();
+
+	// read new data
+	itemdb_read();
+	cashshop_reloaddb();
+
+	mob_reload_itemmob_data();
+
+	// readjust itemdb pointer cache for each player
+	iter = mapit_geteachpc();
+	for( sd = (map_session_data*)mapit_first(iter); mapit_exists(iter); sd = (map_session_data*)mapit_next(iter) ) {
+		memset(sd->item_delay, 0, sizeof(sd->item_delay));  // reset item delays
+		sd->combos.clear(); // clear combo bonuses
+		pc_setinventorydata( *sd );
+		pc_check_available_item(sd, ITMCHK_ALL); // Check for invalid(ated) items.
+		pc_load_combo(sd); // Check to see if new combos are available
+		status_calc_pc(sd, SCO_FORCE); // 
+	}
+	mapit_free(iter);

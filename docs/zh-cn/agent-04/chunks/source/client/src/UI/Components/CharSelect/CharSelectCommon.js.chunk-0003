@@ -1,0 +1,415 @@
+			}
+
+			entity.setAction({
+				action: action,
+				frame: 0,
+				play: true,
+				repeat: true
+			});
+		}
+
+		// Move
+		_index = (index + _maxSlots) % _maxSlots;
+		const boxSelect = root.querySelector('.box_select');
+		boxSelect.classList.remove('slot1', 'slot2', 'slot3');
+		boxSelect.classList.add(`slot${(_index % 3) + 1}`);
+
+		// Set page
+		if (pageBalls) {
+			const pagebtn = root.querySelector('.pageinfo .pagebtn');
+			pagebtn.textContent = '';
+
+			for (let i = 1; i <= _maxSlots / 3; i++) {
+				drawBall(pagebtn, i, Math.floor(_index / 3) + 1 === i);
+			}
+			// pageinfo position center
+			root.querySelector('.pageinfo').style.left = `${576 / 2 - (_maxSlots / 3) * 8}px`;
+
+			// show make add button
+			let mix = (index + 1) % 3 === 0 ? index + 1 - 3 : index + 1 - ((index + 1) % 3);
+			mix = mix >= _maxSlots ? 0 : mix;
+			for (let i = 1; i <= 3; i++) {
+				root.querySelector(`.make${i}`).style.display = 'none';
+				if (!_entitySlots[mix + (i - 1)]) {
+					root.querySelector(`.make${i}`).style.display = 'block';
+				}
+			}
+		} else {
+			root.querySelector('.pageinfo .current').textContent = Math.floor(_index / 3) + 1;
+		}
+
+		// Update page deltimes
+		if (deleteReservation) {
+			for (let i = 0; i < 3; i++) {
+				const tmpIndex = _index - (_index % 3) + i;
+				info = _slots[tmpIndex];
+				entity = _entitySlots[tmpIndex];
+				const countdown = root.querySelector(`.timedelete.slot${(tmpIndex % 3) + 1}`);
+
+				if (info && entity) {
+					if (info.DeleteDate && (!packetverGatedDelete || PACKETVER.value >= 20100803)) {
+						countdown.dataset.datetime = info.DeleteDate;
+						countdown.textContent = formatDatetime(info.DeleteDate);
+						countdown.style.display = 'block';
+						if (Math.floor(Date.now() / 1000) > info.DeleteDate) {
+							countdown.classList.remove('waitdelete');
+							countdown.classList.add('candelete');
+						} else {
+							countdown.classList.remove('candelete');
+							countdown.classList.add('waitdelete');
+						}
+						entity.action = entity.ACTION.SIT;
+					} else {
+						countdown.dataset.datetime = 0;
+						countdown.textContent = formatDatetime('');
+						countdown.style.display = 'none';
+						entity.action = entity.ACTION.IDLE;
+					}
+				} else {
+					countdown.dataset.datetime = 0;
+					countdown.textContent = formatDatetime('');
+					countdown.style.display = 'none';
+				}
+			}
+		}
+
+		// Not found, just clean up.
+		entity = _entitySlots[_index];
+		if (!entity) {
+			charinfo.querySelectorAll('div').forEach(div => {
+				div.textContent = '';
+			});
+			root.querySelector('.make').style.display = 'block';
+			root.querySelector('.delete').style.display = 'none';
+			if (deleteReservation) {
+				root.querySelector('.canceldelete').style.display = 'none';
+				root.querySelector('.finaldelete').style.display = 'none';
+			}
+			root.querySelector('.ok').style.display = 'none';
+			return;
+		}
+
+		info = _slots[_index];
+		// Bind new value
+		if (deleteReservation && info.DeleteDate && (!packetverGatedDelete || PACKETVER.value >= 20100803)) {
+			root.querySelector('.delete').style.display = 'none';
+			root.querySelector('.canceldelete').style.display = 'block';
+			if (Math.floor(Date.now() / 1000) > info.DeleteDate) {
+				root.querySelector('.finaldelete').style.display = 'block';
+				action = entity.ACTION.DIE;
+			} else {
+				root.querySelector('.finaldelete').style.display = 'none';
+				action = entity.ACTION.SIT;
+			}
+			root.querySelector('.make').style.display = 'none';
+			root.querySelector('.ok').style.display = 'block';
+		} else {
+			if (deleteReservation) {
+				if (!packetverGatedDelete || PACKETVER.value >= 20100803) {
+					root.querySelector('.delete').style.display = 'block';
+					root.querySelector('.canceldelete').style.display = 'none';
+					root.querySelector('.finaldelete').style.display = 'none';
+				} else {
+					root.querySelector('.delete').style.display = 'none';
+					root.querySelector('.canceldelete').style.display = 'none';
+					root.querySelector('.finaldelete').style.display = 'block';
+				}
+				root.querySelector('.make').style.display = 'none';
+			} else {
+				root.querySelector('.make').style.display = 'none';
+				root.querySelector('.delete').style.display = 'block';
+			}
+			root.querySelector('.ok').style.display = 'block';
+			action = entity.ACTION.READYFIGHT;
+		}
+
+		// Animate the character
+		entity.setAction({
+			action: action,
+			frame: 0,
+			play: true,
+			repeat: true
+		});
+
+		charinfo.querySelector('.name').textContent = info.name;
+		charinfo.querySelector('.job').textContent = MonsterTable[info.job] || '';
+		charinfo.querySelector('.lvl').textContent = info.level;
+		charinfo.querySelector('.exp').textContent = info.exp;
+		charinfo.querySelector('.hp').textContent = info.hp;
+		charinfo.querySelector('.sp').textContent = info.sp;
+		charinfo.querySelector('.map').textContent = DB.getMapName(info.lastMap, '') || '';
+		charinfo.querySelector('.str').textContent = info.Str;
+		charinfo.querySelector('.agi').textContent = info.Agi;
+		charinfo.querySelector('.vit').textContent = info.Vit;
+		charinfo.querySelector('.int').textContent = info.Int;
+		charinfo.querySelector('.dex').textContent = info.Dex;
+		charinfo.querySelector('.luk').textContent = info.Luk;
+	}
+
+	/**
+	 * Render sprites to canvas (V1 / V2 / V3)
+	 */
+	function renderPaginated() {
+		Camera.direction = 4;
+		const idx = Math.floor(_index / 3) * 3;
+		const count = _ctx.length;
+
+		for (let i = 0; i < count; ++i) {
+			_ctx[i].clearRect(0, 0, _ctx[i].canvas.width, _ctx[i].canvas.height);
+
+			if (_entitySlots[idx + i]) {
+				SpriteRenderer.bind2DContext(_ctx[i], 63, 130);
+				_entitySlots[idx + i].renderEntity();
+			}
+		}
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Grid variant (V4)
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Format delay duration (V4)
+	 */
+	function formatDuration(seconds) {
+		const hours = Math.floor(seconds / 3600);
+		const minutes = Math.floor((seconds % 3600) / 60);
+		const remainingSeconds = seconds % 60;
+
+		const replacer = DB.getMessage(3349).includes('%d') ? '%d' : '%02d';
+
+		return DB.getMessage(3349)
+			.replace(replacer, hours.toString().padStart(2, '0'))
+			.replace(replacer, minutes.toString().padStart(2, '0'))
+			.replace(replacer, remainingSeconds.toString().padStart(2, '0'));
+	}
+
+	/**
+	 * Countdown for delay in deletion (V4)
+	 */
+	function updateAllVisibleCountdowns() {
+		const root = Component.getRoot();
+		const visibleCountdowns = root.querySelectorAll('.timedelete:not(.hidden)');
+
+		visibleCountdowns.forEach(countdownDiv => {
+			const deleteReservedDuration = parseInt(countdownDiv.dataset.duration, 10);
+			const updatedDuration = Math.max(0, deleteReservedDuration - 1);
+
+			countdownDiv.textContent = formatDuration(updatedDuration);
+			if (updatedDuration > 0) {
+				countdownDiv.style.color = 'red';
+			} else {
+				countdownDiv.style.color = 'blue';
+			}
+
+			countdownDiv.dataset.duration = updatedDuration.toString();
+		});
+	}
+
+	/**
+	 * Start the countdown update interval only when in grid UI
+	 */
+	function startCountdownInterval() {
+		if (!countdownInterval) {
+			countdownInterval = setInterval(updateAllVisibleCountdowns, 1000);
+		}
+	}
+
+	/**
+	 * Stop the countdown update interval
+	 */
+	function stopCountdownInterval() {
+		if (countdownInterval) {
+			clearInterval(countdownInterval);
+			countdownInterval = null;
+		}
+	}
+
+	/**
+	 * Move cursor, update window value (V4)
+	 *
+	 * @param {number} index
+	 */
+	function moveCursorToGrid(index) {
+		const root = Component.getRoot();
+		const charinfo = root.querySelector('.charinfo');
+
+		const prevIndex = _index;
+		let entity = _slots[_index];
+		shouldRunBackgroundChange = false;
+
+		if (entity) {
+			Client.loadFile(`${DB.INTERFACE_PATH}select_character_ver3/img_slot_normal.bmp`, dataURI => {
+				const prevSlot = root.querySelector(`#slot${prevIndex}`);
+				if (prevSlot) {
+					prevSlot.style.backgroundImage = `url(${dataURI})`;
+				}
+			});
+		}
+
+		const slotIndex = (_index = index > _maxSlots ? _maxSlots : index < 0 ? 0 : index);
+
+		// Not found, just clean up.
+		entity = _slots[_index];
+		if (!entity) {
+			charinfo.querySelectorAll('div').forEach(div => {
+				div.textContent = '';
+			});
+			root.querySelector('.delete').style.display = 'none';
+			root.querySelector('.canceldelete').style.display = 'none';
+			root.querySelector('.finaldelete').style.display = 'none';
+			root.querySelector('.ok').style.display = 'none';
+			const countdown = root.querySelector(`.timedelete.slot${_index}`);
+			if (countdown) {
+				countdown.dataset.duration = 0;
+				countdown.classList.add('hidden');
+				countdown.style.display = 'none';
+			}
+			return;
+		} else {
+			_curindex = slotIndex;
+			shouldRunBackgroundChange = true;
+		}
+
+		if (shouldRunBackgroundChange === true) {
+			changeBackgroundEverySecond();
+		}
+
+		const info = _slots[_index];
+		// Bind new value
+		if (info.DeleteDate) {
+			root.querySelector('.delete').style.display = 'none';
+			root.querySelector('.canceldelete').style.display = 'block';
+			root.querySelector('.finaldelete').style.display = 'block';
+		} else {
+			root.querySelector('.canceldelete').style.display = 'none';
+			root.querySelector('.finaldelete').style.display = 'none';
+			root.querySelector('.delete').style.display = 'block';
+		}
+
+		root.querySelector('.ok').style.display = 'block';
+
+		charinfo.querySelector('.map').textContent = DB.getMapName(info.lastMap, '') || '';
+		charinfo.querySelector('.job').textContent = MonsterTable[info.job] || '';
+		charinfo.querySelector('.lvl').textContent = info.level;
+		charinfo.querySelector('.exp').textContent = info.exp;
+		charinfo.querySelector('.hp').textContent = info.hp;
+		charinfo.querySelector('.sp').textContent = info.sp;
+		charinfo.querySelector('.str').textContent = info.Str;
+		charinfo.querySelector('.agi').textContent = info.Agi;
+		charinfo.querySelector('.vit').textContent = info.Vit;
+		charinfo.querySelector('.int').textContent = info.Int;
+		charinfo.querySelector('.dex').textContent = info.Dex;
+		charinfo.querySelector('.luk').textContent = info.Luk;
+	}
+
+	function changeBackgroundEverySecond() {
+		const root = Component.getRoot();
+		const backgroundchange = root.querySelector(`#slot${_curindex}`);
+		if (backgroundchange && shouldRunBackgroundChange === true) {
+			Client.loadFile(`${DB.INTERFACE_PATH}select_character_ver3/img_slot_select${img}.bmp`, dataURI => {
+				backgroundchange.style.backgroundImage = `url(${dataURI})`;
+				backgroundchange.style.width = '157px';
+				backgroundchange.style.height = '197px';
+				backgroundchange.style.backgroundSize = 'contain';
+				backgroundchange.style.backgroundRepeat = 'no-repeat';
+			});
+
+			// Increment the slot index and wrap around if needed
+			img = (img + 1) % 8;
+		}
+	}
+
+	Component.updateCharSlot = function updateCharSlot(slotId) {
+		const root = this.getRoot();
+		let start = 0;
+		let loopMax = Math.max(_maxSlots, _slots.length);
+
+		if (typeof slotId !== 'undefined') {
+			start = slotId;
+			loopMax = slotId + 1;
+		}
+
+		const charCanvases = root.querySelectorAll('.char_canvas');
+		const jobIcons = root.querySelectorAll('.job_icon');
+
+		for (let i = start; i < loopMax; ++i) {
+			if (charCanvases[i]) {
+				charCanvases[i].querySelector('.name').innerHTML = _slots[i] ? _slots[i].name : '';
+			}
+			if (!_slots[i]) {
+				if (jobIcons[i]) {
+					jobIcons[i].style.backgroundImage = '';
+				}
+				const slotCanvas = root.querySelector(`#slot${i}`);
+				if (slotCanvas) {
+					Client.loadFile(`${DB.INTERFACE_PATH}select_character_ver3/img_slot2_normal.bmp`, dataURI => {
+						slotCanvas.style.backgroundImage = `url(${dataURI})`;
+					});
+				}
+				const countdown = root.querySelector(`.timedelete.slot${i}`);
+				if (countdown) {
+					countdown.dataset.duration = 0;
+					countdown.classList.add('hidden');
+					countdown.style.display = 'none';
+				}
+			} else {
+				const slotCanvas = root.querySelector(`#slot${i}`);
+				if (slotCanvas) {
+					Client.loadFile(`${DB.INTERFACE_PATH}select_character_ver3/img_slot_normal.bmp`, dataURI => {
+						slotCanvas.style.backgroundImage = `url(${dataURI})`;
+					});
+				}
+
+				if (jobIcons[i]) {
+					const slotJobIcon = jobIcons[i];
+					Client.loadFile(`${DB.INTERFACE_PATH}renewalparty/icon_jobs_${_slots[i].job}.bmp`, dataURI => {
+						slotJobIcon.style.backgroundImage = `url(${dataURI})`;
+					});
+				}
+
+				if (_slots[i].DeleteDate) {
+					const countdown = root.querySelector(`.timedelete.slot${i}`);
+					if (countdown) {
+						countdown.dataset.duration = _slots[i].DeleteDate;
+						countdown.classList.remove('hidden');
+						countdown.style.display = 'block';
+					}
+				}
+			}
+		}
+	};
+
+	Component.clearAllSlots = function clearAllSlots() {
+		_slots.length = 0;
+		_entitySlots.length = 0;
+		_list.length = 0;
+		Component.updateCharSlot();
+	};
+
+	/**
+	 * Render sprites to canvas (V4)
+	 */
+	function renderGrid() {
+		Camera.direction = 4;
+		const idx = Math.floor(_index / _maxSlots) * _maxSlots;
+		const count = _ctx.length;
+
+		for (let i = 0; i < count; ++i) {
+			_ctx[i].clearRect(0, 0, _ctx[i].canvas.width, _ctx[i].canvas.height);
+
+			if (_entitySlots[idx + i]) {
+				SpriteRenderer.bind2DContext(_ctx[i], 78, 157);
+				if (_slots[idx + i] && _slots[idx + i].DeleteDate) {
+					_entitySlots[idx + i].action = 2;
+				}
+				_entitySlots[idx + i].renderEntity();
+			}
+		}
+	}
+
+	/**
+	 * Create component and export it
+	 */
+	return UIManager.addComponent(Component);
+}

@@ -1,0 +1,500 @@
+				}
+				else if( memcmp(itm->card, it->card, sizeof(itm->card)) )
+				{// named/carded item
+					important++;
+					continue;
+				}
+			}
+
+			// count / delete item
+			buildin_delitem_delete(sd, i, &amount, loc, delete_items);
+		}
+
+		// 2nd pass -- any matching item
+		if( amount == 0 || important == 0 )
+		{// either everything was already consumed or no items were skipped
+			;
+		}
+		else for( i = 0; amount && i < size; i++ )
+		{
+			struct item *itm = nullptr;
+
+			if( !&items[i] || !(itm = &items[i])->nameid || itm->nameid != it->nameid )
+			{// wrong/invalid item
+				continue;
+			}
+
+			if( itemdb_type(itm->nameid) == IT_PETEGG && itm->card[0] == CARD0_PET && CheckForCharServer() )
+			{// pet which cannot be deleted
+				continue;
+			}
+
+			if( exact_match )
+			{
+				if( (exact_match&0x1) && ( itm->refine != it->refine || itm->identify != it->identify || itm->attribute != it->attribute || itm->enchantgrade != it->enchantgrade || memcmp(itm->card, it->card, sizeof(itm->card)) ) )
+				{// not matching attributes
+					continue;
+				}
+				if (exact_match&0x2) {
+					uint8 j;
+					for (j = 0; j < MAX_ITEM_RDM_OPT; j++) {
+						if (itm->option[j].id != it->option[j].id || itm->option[j].value != it->option[j].value || itm->option[j].param != it->option[j].param)
+							break;
+					}
+					if (j != MAX_ITEM_RDM_OPT)
+						continue;
+				}
+			}
+
+			// count / delete item
+			buildin_delitem_delete(sd, i, &amount, loc, delete_items);
+		}
+
+		if( amount )
+		{// not enough items
+			return false;
+		}
+		else if( delete_items )
+		{// we are done with the work
+			return true;
+		}
+		else
+		{// get rid of the items now
+			delete_items = true;
+		}
+	}
+}
+
+
+/// Deletes items from the target/attached player.
+/// Prioritizes ordinary items.
+///
+/// delitem <item id>,<amount>{,<account id>}
+/// delitem "<item name>",<amount>{,<account id>}
+/// cartdelitem <item id>,<amount>{,<account id>}
+/// cartdelitem "<item name>",<amount>{,<account id>}
+/// storagedelitem <item id>,<amount>{,<account id>}
+/// storagedelitem "<item name>",<amount>{,<account id>}
+/// guildstoragedelitem <item id>,<amount>{,<account id>}
+/// guildstoragedelitem "<item name>",<amount>{,<account id>}
+BUILDIN_FUNC(delitem)
+{
+	TBL_PC *sd;
+	struct item it;
+	uint8 loc = 0;
+	char* command = (char*)script_getfuncname(st);
+
+	if(!strncmp(command, "cart", 4))
+		loc = TABLE_CART;
+	else if(!strncmp(command, "storage", 7))
+		loc = TABLE_STORAGE;
+	else if(!strncmp(command, "guildstorage", 12))
+		loc = TABLE_GUILD_STORAGE;
+
+	if( !script_accid2sd(4,sd) ){
+		// In any case cancel script execution
+		st->state = END;
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (loc == TABLE_CART && !pc_iscarton(sd)) {
+		ShowError("buildin_cartdelitem: player doesn't have cart (CID=%d).\n", sd->status.char_id);
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (loc == TABLE_GUILD_STORAGE) {
+		struct s_storage *gstor = guild2storage2(sd->status.guild_id);
+
+		if (gstor == nullptr || sd->state.storage_flag) {
+			script_pushint(st, -1);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if( script_isstring(st, 2) )
+	{
+		const char* item_name = script_getstr(st, 2);
+		std::shared_ptr<item_data> id = item_db.searchname(item_name);
+
+		if( id == nullptr ){
+			ShowError("buildin_%s: unknown item \"%s\".\n", command, item_name);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+		it.nameid = id->nameid;// "<item name>"
+	}
+	else
+	{
+		it.nameid = script_getnum(st, 2);// <item id>
+		if( !item_db.exists( it.nameid ) )
+		{
+			ShowError("buildin_%s: unknown item \"%u\".\n", command, it.nameid);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	it.amount=script_getnum(st,3);
+
+	if( it.amount <= 0 )
+		return SCRIPT_CMD_SUCCESS;// nothing to do
+
+	if( buildin_delitem_search(sd, &it, 0, loc) )
+	{// success
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	ShowError("buildin_%s: failed to delete %d items (AID=%d item_id=%u).\n", command, it.amount, sd->status.account_id, it.nameid);
+	st->state = END;
+	st->mes_active = 0;
+	clif_scriptclose( *sd, st->oid );
+
+	return SCRIPT_CMD_FAILURE;
+}
+
+/// Deletes items from the target/attached player.
+///
+/// delitem2 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// delitem2 "<Item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// cartdelitem2 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// cartdelitem2 "<Item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// storagedelitem2 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// storagedelitem2 "<Item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// guildstoragedelitem2 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// guildstoragedelitem2 "<Item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>}
+/// delitem3 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+/// delitem3 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+/// delitem4 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+/// delitem4 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+BUILDIN_FUNC(delitem2)
+{
+	TBL_PC *sd;
+	uint8 loc = 0;
+	char* command = (char*)script_getfuncname(st);
+	int32 aid_pos = 11;
+
+	if(!strncmp(command, "cart", 4))
+		loc = TABLE_CART;
+	else if(!strncmp(command, "storage", 7))
+		loc = TABLE_STORAGE;
+	else if(!strncmp(command, "guildstorage", 12))
+		loc = TABLE_GUILD_STORAGE;
+
+	if (command[strlen(command)-1] == '3')
+		aid_pos = 14;
+	else if (command[strlen(command)-1] == '4')
+		aid_pos = 15;
+
+	if( !script_accid2sd(aid_pos,sd) ){
+		// In any case cancel script execution
+		st->state = END;
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (loc == TABLE_CART && !pc_iscarton(sd)) {
+		ShowError("buildin_cartdelitem: player doesn't have cart (CID=%d).\n", sd->status.char_id);
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (loc == TABLE_GUILD_STORAGE) {
+		struct s_storage *gstor = guild2storage2(sd->status.guild_id);
+
+		if (gstor == nullptr || sd->state.storage_flag) {
+			script_pushint(st, -1);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	struct item it = {};
+
+	if( script_isstring(st, 2) )
+	{
+		const char* item_name = script_getstr(st, 2);
+		std::shared_ptr<item_data> id = item_db.searchname( item_name );
+
+		if( id == nullptr ){
+			ShowError("buildin_%s: unknown item \"%s\".\n", command, item_name);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+		it.nameid = id->nameid;// "<item name>"
+	}
+	else
+	{
+		it.nameid = script_getnum(st, 2);// <item id>
+		if( !item_db.exists( it.nameid ) )
+		{
+			ShowError("buildin_%s: unknown item \"%u\".\n", command, it.nameid);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	it.amount=script_getnum(st,3);
+	it.identify=script_getnum(st,4);
+	it.refine=script_getnum(st,5);
+	it.attribute=script_getnum(st,6);
+	it.card[0]=script_getnum(st,7);
+	it.card[1]=script_getnum(st,8);
+	it.card[2]=script_getnum(st,9);
+	it.card[3]=script_getnum(st,10);
+
+	uint8 flag = 0x1;
+
+	if (command[strlen(command)-1] == '3' || command[strlen(command)-1] == '4') {
+		int32 offset = 11;
+
+		if (command[strlen(command)-1] == '4') {
+			offset = 12;
+
+			int32 grade = script_getnum(st, 11);
+			if (grade < ENCHANTGRADE_NONE || grade > MAX_ENCHANTGRADE) {
+				ShowError( "buildin_%s: Not a correct grade! Grade=%d\n", command, grade );
+				return SCRIPT_CMD_FAILURE;
+			}
+			it.enchantgrade = static_cast<e_enchantgrade>(grade);
+		}
+		
+		bool res = script_getitem_randomoption(st, sd, &it, command, offset);
+		if (!res)
+			return SCRIPT_CMD_FAILURE;
+		flag |= 0x2;
+	}
+
+	if( it.amount <= 0 )
+		return SCRIPT_CMD_SUCCESS;// nothing to do
+
+	if( buildin_delitem_search(sd, &it, flag, loc) )
+	{// success
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	ShowError("buildin_%s: failed to delete %d items (AID=%d item_id=%u).\n", command, it.amount, sd->status.account_id, it.nameid);
+	st->state = END;
+	st->mes_active = 0;
+	clif_scriptclose( *sd, st->oid );
+
+	return SCRIPT_CMD_FAILURE;
+}
+
+/// Deletes items from the target/attached player at given index.
+/// delitemidx <index>{,<amount>{,<char id>}};
+BUILDIN_FUNC(delitemidx) {
+	map_session_data* sd;
+
+	if (!script_charid2sd(4, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 idx = script_getnum(st, 2);
+	if (idx < 0 || idx >= MAX_INVENTORY) {
+		ShowWarning("buildin_delitemidx: Index %d is out of the range 0-%d.\n", idx, MAX_INVENTORY - 1);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (sd->inventory_data[idx] == nullptr) {
+		ShowWarning("buildin_delitemidx: No item can be deleted from index %d of player %s (AID: %u, CID: %u).\n", idx, sd->status.name, sd->status.account_id, sd->status.char_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 amount;
+	if (script_hasdata(st, 3))
+		amount = script_getnum(st, 3);
+	else
+		amount = sd->inventory.u.items_inventory[idx].amount;
+
+	if (amount > 0)
+		script_pushint(st, pc_delitem(sd, idx, amount, 0, 0, LOG_TYPE_SCRIPT) == 0);
+	else
+		script_pushint(st, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Enables/Disables use of items while in an NPC [Skotlex]
+ *------------------------------------------*/
+BUILDIN_FUNC(enableitemuse)
+{
+	TBL_PC *sd;
+	if (script_rid2sd(sd))
+		st->npc_item_flag = sd->npc_item_flag = 1;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(disableitemuse)
+{
+	TBL_PC *sd;
+	if (script_rid2sd(sd))
+		st->npc_item_flag = sd->npc_item_flag = 0;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Returns a character's specified stat.
+ * Check pc_readparam for available options.
+ * readparam <param>{,"<nick>"}
+ * readparam <param>{,<char_id>}
+ *------------------------------------------*/
+BUILDIN_FUNC(readparam)
+{
+	int32 value;
+	struct script_data *data = script_getdata(st, 2);
+	TBL_PC *sd = nullptr;
+
+	if( script_hasdata(st, 3) ){
+		if (script_isint(st, 3))
+			script_charid2sd(3, sd);
+		else
+			script_nick2sd(3, sd);
+	}else{
+		script_rid2sd(sd);
+	}
+	
+	if( !sd ){
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	// If you use a parameter, return the value behind it
+	if( reference_toparam(data) ){
+		get_val_(st, data, sd);
+		value = (int32)data->u.num;
+	}else{
+		value = static_cast<int32>(pc_readparam(sd,script_getnum(st, 2)));
+	}
+
+	script_pushint(st,value);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Return charid identification
+ * return by @num :
+ *	0 : char_id
+ *	1 : party_id
+ *	2 : guild_id
+ *	3 : account_id
+ *	4 : bg_id
+ *	5 : clan_id
+ *------------------------------------------*/
+BUILDIN_FUNC(getcharid)
+{
+	int32 num;
+	TBL_PC *sd;
+
+	num = script_getnum(st,2);
+
+	if( !script_nick2sd(3,sd) ){
+		script_pushint(st,0); //return 0, according docs
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch( num ) {
+	case 0: script_pushint(st,sd->status.char_id); break;
+	case 1: script_pushint(st,sd->status.party_id); break;
+	case 2: script_pushint(st,sd->status.guild_id); break;
+	case 3: script_pushint(st,sd->status.account_id); break;
+	case 4: script_pushint(st,sd->bg_id); break;
+	case 5: script_pushint(st,sd->status.clan_id); break;
+	default:
+		ShowError("buildin_getcharid: invalid parameter (%d).\n", num);
+		script_pushint(st,0);
+		break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * returns the GID of an NPC
+ * Returns 0 if the NPC name provided is not found.
+ *------------------------------------------*/
+BUILDIN_FUNC(getnpcid)
+{
+	int32 num = script_getnum(st,2);
+	npc_data* nd = nullptr;
+
+	if( script_hasdata(st,3) )
+	{// unique npc name
+		if( ( nd = npc_name2id(script_getstr(st,3)) ) == nullptr )
+		{
+			//Npc not found.
+			script_pushint(st,0);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+
+	switch (num) {
+		case 0:
+			script_pushint(st,nd ? nd->id : st->oid);
+			break;
+		default:
+			ShowError("buildin_getnpcid: invalid parameter (%d).\n", num);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Return the name of the party_id
+ * null if not found
+ *------------------------------------------*/
+BUILDIN_FUNC(getpartyname)
+{
+	int32 party_id;
+	struct party_data* p;
+
+	party_id = script_getnum(st,2);
+
+	if( ( p = party_search(party_id) ) != nullptr )
+	{
+		script_pushstrcopy(st,p->party.name);
+	}
+	else
+	{
+		script_pushconststr(st,"null");
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Get the information of the members of a party by type
+ * @party_id, @type
+ * return by @type :
+ *	- : nom des membres
+ *	1 : char_id des membres
+ *	2 : account_id des membres
+ *------------------------------------------*/
+BUILDIN_FUNC(getpartymember)
+{
+	struct party_data *p;
+	uint8 j = 0;
+
+	p = party_search(script_getnum(st,2));
+
+	if (p != nullptr) {
+		uint8 i, type = 0;
+		struct script_data *data = nullptr;
+		char *varname = nullptr;
+
+		if (script_hasdata(st,3))
+ 			type = script_getnum(st,3);
+
+		if (script_hasdata(st,4)) {
+			data = script_getdata(st, 4);
+			if (!data_isreference(data)) {
+				ShowError("buildin_getpartymember: Error in argument! Please give a variable to store values in.\n");
+				return SCRIPT_CMD_FAILURE;
+			}
+			varname = reference_getname(data);
+			if (type <= 0 && varname[strlen(varname)-1] != '$') {
+				ShowError("buildin_getpartymember: The array %s is not string type.\n", varname);
+				return SCRIPT_CMD_FAILURE;
+			}
+			if (not_server_variable(*varname)) {
+				map_session_data *sd;
+

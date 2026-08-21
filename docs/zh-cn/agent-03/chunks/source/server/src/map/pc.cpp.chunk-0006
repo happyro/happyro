@@ -1,0 +1,500 @@
+			clif_displaymessage( sd->fd, msg_txt( sd, 11 ) ); // Invisible: On
+			// decrement the number of pvp players on the map
+			map_getmapdata( sd->m )->users_pvp--;
+
+			if( map_getmapflag( sd->m, MF_PVP ) && !map_getmapflag( sd->m, MF_PVP_NOCALCRANK ) && sd->pvp_timer != INVALID_TIMER ){
+				// unregister the player for ranking
+				delete_timer( sd->pvp_timer, pc_calc_pvprank_timer );
+				sd->pvp_timer = INVALID_TIMER;
+			}
+
+			clif_changeoption( sd );
+		}
+	}
+
+	channel_autojoin(sd);
+}
+
+static int32 pc_calc_skillpoint(map_session_data* sd)
+{
+	uint16 i, skill_point = 0;
+
+	nullpo_ret(sd);
+
+	for(i = 1; i < MAX_SKILL; i++) {
+		if( sd->status.skill[i].id && sd->status.skill[i].lv > 0) {
+			std::shared_ptr<s_skill_db> skill = skill_db.find(sd->status.skill[i].id);
+
+			if ((!skill->inf2[INF2_ISQUEST] || battle_config.quest_skill_learn) &&
+				(!skill->inf2[INF2_ISWEDDING] || skill->inf2[INF2_ISSPIRIT]) //Do not count wedding/link skills. [Skotlex]
+				)
+			{
+				if(sd->status.skill[i].flag == SKILL_FLAG_PERMANENT)
+					skill_point += sd->status.skill[i].lv;
+				else if(sd->status.skill[i].flag >= SKILL_FLAG_REPLACED_LV_0)
+					skill_point += (sd->status.skill[i].flag - SKILL_FLAG_REPLACED_LV_0);
+			}
+		}
+	}
+
+	return skill_point;
+}
+
+static bool pc_grant_allskills(map_session_data *sd, bool addlv) {
+	if (!sd || !pc_has_permission(sd, PC_PERM_ALL_SKILL))
+		return false;
+
+	/**
+	* Dummy skills must NOT be added here otherwise they'll be displayed in the,
+	* skill tree and since they have no icons they'll give resource errors
+	* Get ALL skills except npc/guild ones. [Skotlex]
+	* Don't add SG_DEVIL [Komurka] and MO_TRIPLEATTACK and RG_SNATCHER [ultramage]
+	**/
+	for (const auto &skill : skill_db) {
+		uint16 skill_id = skill.second->nameid;
+
+		if (skill_id == 0 || skill.second->inf2[INF2_ISNPC]|| skill.second->inf2[INF2_ISGUILD])
+			continue;
+		switch (skill_id) {
+			case SM_SELFPROVOKE:
+			case AB_DUPLELIGHT_MELEE:
+			case AB_DUPLELIGHT_MAGIC:
+			case WL_CHAINLIGHTNING_ATK:
+			case WL_TETRAVORTEX_FIRE:
+			case WL_TETRAVORTEX_WATER:
+			case WL_TETRAVORTEX_WIND:
+			case WL_TETRAVORTEX_GROUND:
+			case WL_SUMMON_ATK_FIRE:
+			case WL_SUMMON_ATK_WIND:
+			case WL_SUMMON_ATK_WATER:
+			case WL_SUMMON_ATK_GROUND:
+			case LG_OVERBRAND_BRANDISH:
+			case LG_OVERBRAND_PLUSATK:
+			case WM_SEVERE_RAINSTORM_MELEE:
+			case RL_R_TRIP_PLUSATK:
+			case SG_DEVIL:
+			case MO_TRIPLEATTACK:
+			case RG_SNATCHER:
+				continue;
+			default:
+				{
+					uint8 lv = (uint8)skill_get_max(skill_id);
+
+					if (lv > 0) {
+						uint16 idx = skill_get_index(skill_id);
+
+						sd->status.skill[idx].id = skill_id;
+						if (addlv)
+							sd->status.skill[idx].lv = lv;
+					}
+				}
+				break;
+		}
+	}
+	return true;
+}
+
+/*==========================================
+ * Calculation of skill level.
+ * @param sd
+ *------------------------------------------*/
+void pc_calc_skilltree(map_session_data *sd)
+{
+	nullpo_retv(sd);
+
+	uint64 job = pc_calc_skilltree_normalize_job(sd);
+	int32 class_ = pc_mapid2jobid(job, sd->status.sex);
+
+	if( class_ == -1 )
+	{ //Unable to normalize job??
+		ShowError( "pc_calc_skilltree: Unable to normalize job %s(%d) for character %s (%d:%d)\n", job_name( sd->status.class_ ), sd->status.class_, sd->status.name, sd->status.account_id, sd->status.char_id );
+		return;
+	}
+	uint16 job_id = class_;
+	class_ = pc_class2idx(class_);
+
+	for (const auto &skill : skill_db) {
+		uint16 skill_id = skill.second->nameid;
+		uint16 idx = skill_get_index(skill_id);
+
+		if( sd->status.skill[idx].flag != SKILL_FLAG_PLAGIARIZED && sd->status.skill[idx].flag != SKILL_FLAG_PERM_GRANTED ) //Don't touch these
+			sd->status.skill[idx].id = 0; //First clear skills.
+		/* permanent skills that must be re-checked */
+		if( sd->status.skill[idx].flag == SKILL_FLAG_PERM_GRANTED ) {
+			if (skill_id == 0) {
+				sd->status.skill[idx].id = 0;
+				sd->status.skill[idx].lv = 0;
+				sd->status.skill[idx].flag = SKILL_FLAG_PERMANENT;
+				continue;
+			}
+			switch (skill_id) {
+				case NV_TRICKDEAD:
+					if( (sd->class_&MAPID_SECONDMASK) != MAPID_NOVICE ) {
+						sd->status.skill[idx].id = 0;
+						sd->status.skill[idx].lv = 0;
+						sd->status.skill[idx].flag = SKILL_FLAG_PERMANENT;
+					}
+					break;
+			}
+		}
+	}
+
+	for (const auto &skill : skill_db) {
+		uint16 idx = skill_get_index(skill.second->nameid);
+
+		// Restore original level of skills after deleting earned skills.
+		if( sd->status.skill[idx].flag != SKILL_FLAG_PERMANENT && sd->status.skill[idx].flag != SKILL_FLAG_PERM_GRANTED && sd->status.skill[idx].flag != SKILL_FLAG_PLAGIARIZED ) {
+			sd->status.skill[idx].lv = (sd->status.skill[idx].flag == SKILL_FLAG_TEMPORARY) ? 0 : sd->status.skill[idx].flag - SKILL_FLAG_REPLACED_LV_0;
+			sd->status.skill[idx].flag = SKILL_FLAG_PERMANENT;
+		}
+	}
+
+	// Removes Taekwon Ranker skill bonus
+	if ((sd->class_&MAPID_SECONDMASK) != MAPID_TAEKWON) {
+		std::shared_ptr<s_skill_tree> tree = skill_tree_db.find(JOB_TAEKWON);
+	
+		if (tree != nullptr && !tree->skills.empty()) {
+			for (const auto &it : tree->skills) {
+				uint16 sk_idx = skill_get_index(it.first);
+				if (sk_idx == 0)
+					continue;
+				if (sd->status.skill[sk_idx].flag != SKILL_FLAG_PLAGIARIZED && sd->status.skill[sk_idx].flag != SKILL_FLAG_PERM_GRANTED) {
+					if (it.first == NV_BASIC || it.first == NV_FIRSTAID || it.first == WE_CALLBABY)
+						continue;
+					sd->status.skill[sk_idx].id = 0;
+				}
+			}
+		}
+	}
+
+	// Grant all skills
+	pc_grant_allskills(sd, false);
+
+	int32 flag;
+	std::shared_ptr<s_skill_tree> tree = skill_tree_db.find(job_id);
+
+	do {
+		flag = 0;
+		if (tree == nullptr || tree->skills.empty())
+			break;
+
+		for (const auto &skillsit : tree->skills) {
+			bool fail = false;
+			uint16 skid = skillsit.first;
+			uint16 sk_idx = skill_get_index(skid);
+
+			if (sd->status.skill[sk_idx].id)
+				continue; //Skill already known.
+
+			if (!battle_config.skillfree) {
+				// Checking required skills
+				std::shared_ptr<s_skill_tree_entry> entry = skillsit.second;
+
+				if (entry != nullptr && !entry->need.empty()) {
+					for (const auto &it : entry->need) {
+						uint16 sk_need_id = it.first;
+						uint16 sk_need_idx = skill_get_index(sk_need_id);
+
+						if (sk_need_idx > 0) {
+							uint16 sk_need = sk_need_id;
+
+							if (sd->status.skill[sk_need_idx].id == 0 || sd->status.skill[sk_need_idx].flag == SKILL_FLAG_TEMPORARY || sd->status.skill[sk_need_idx].flag == SKILL_FLAG_PLAGIARIZED)
+								sk_need = 0; //Not learned.
+							else if (sd->status.skill[sk_need_idx].flag >= SKILL_FLAG_REPLACED_LV_0) //Real learned level
+								sk_need = sd->status.skill[sk_need_idx].flag - SKILL_FLAG_REPLACED_LV_0;
+							else
+								sk_need = pc_checkskill(sd,sk_need_id);
+
+							if (sk_need < it.second) {
+								fail = true;
+								break;
+							}
+						}
+					}
+				}
+
+				if (sd->status.base_level < entry->baselv) { //We need to get the actual class in this case
+					int32 c_ = pc_mapid2jobid(sd->class_, sd->status.sex);
+
+					c_ = pc_class2idx(c_);
+					if (class_ == c_ || (class_ != c_ && sd->status.base_level < entry->baselv))
+						fail = true; // base level requirement wasn't satisfied
+				}
+				if (sd->status.job_level < entry->joblv) { //We need to get the actual class in this case
+					int32 c_ = pc_mapid2jobid(sd->class_, sd->status.sex);
+
+					c_ = pc_class2idx(c_);
+					if (class_ == c_ || (class_ != c_ && sd->status.job_level < entry->joblv))
+						fail = true; // job level requirement wasn't satisfied
+				}
+			}
+
+			if (!fail) {
+				std::shared_ptr<s_skill_db> skill = skill_db.find(skid);
+
+				if (!sd->status.skill[sk_idx].lv && (
+					(skill->inf2[INF2_ISQUEST] && !battle_config.quest_skill_learn) ||
+					skill->inf2[INF2_ISWEDDING] ||
+					(skill->inf2[INF2_ISSPIRIT] && !sd->sc.getSCE(SC_SPIRIT))
+				))
+					continue; //Cannot be learned via normal means. Note this check DOES allows raising already known skills.
+
+				sd->status.skill[sk_idx].id = skid;
+
+				if(skill->inf2[INF2_ISSPIRIT]) { //Spirit skills cannot be learned, they will only show up on your tree when you get buffed.
+					sd->status.skill[sk_idx].lv = 1; // need to manually specify a skill level
+					sd->status.skill[sk_idx].flag = SKILL_FLAG_TEMPORARY; //So it is not saved, and tagged as a "bonus" skill.
+				}
+				flag = 1; // skill list has changed, perform another pass
+			}
+		}
+	} while(flag);
+
+	if( class_ > 0 && sd->status.skill_point == 0 && pc_is_taekwon_ranker(sd) ) {
+		uint16 skid = 0;
+
+		/* Taekwon Ranker Bonus Skill Tree
+		============================================
+		- Grant All Taekwon Tree, but only as Bonus Skills in case they drop from ranking.
+		- (c > 0) to avoid grant Novice Skill Tree in case of Skill Reset (need more logic)
+		- (sd->status.skill_point == 0) to wait until all skill points are assigned to avoid problems with Job Change quest. */
+
+		std::shared_ptr<s_skill_tree> tree = skill_tree_db.find(job_id);
+
+		if (tree != nullptr && !tree->skills.empty()) {
+			for (const auto &it : tree->skills) {
+				skid = it.first;
+				uint16 sk_idx = skill_get_index(skid);
+
+				if (sk_idx == 0)
+					continue;
+
+				if( skill_get_inf2_(skid, { INF2_ISQUEST, INF2_ISWEDDING }) )
+					continue; //Do not include Quest/Wedding skills.
+				if( sd->status.skill[sk_idx].id == 0 ) {
+					sd->status.skill[sk_idx].id = skid;
+					sd->status.skill[sk_idx].flag = SKILL_FLAG_TEMPORARY; // So it is not saved, and tagged as a "bonus" skill.
+				} else if( skid != NV_BASIC )
+					sd->status.skill[sk_idx].flag = SKILL_FLAG_REPLACED_LV_0 + sd->status.skill[sk_idx].lv; // Remember original level
+				sd->status.skill[sk_idx].lv = skill_tree_get_max(skid, sd->status.class_);
+			}
+		}
+	}
+
+	// Enable Bard/Dancer spirit linked skills.
+	if (sd->sc.getSCE(SC_SPIRIT) && sd->sc.getSCE(SC_SPIRIT)->val2 == SL_BARDDANCER) {
+		std::vector<std::vector<uint16>> linked_skills = { { BA_WHISTLE, DC_HUMMING },
+														   { BA_ASSASSINCROSS, DC_DONTFORGETME },
+														   { BA_POEMBRAGI, DC_FORTUNEKISS },
+														   { BA_APPLEIDUN, DC_SERVICEFORYOU } };
+
+		for (const auto &skill : linked_skills) {
+			if (pc_checkskill(sd, skill[!sd->status.sex]) < 10)
+				continue;
+
+			// Tag it as a non-savable, non-uppable, bonus skill
+			pc_skill(sd, skill[sd->status.sex], 10, ADDSKILL_TEMP);
+		}
+	}
+}
+
+//Checks if you can learn a new skill after having leveled up a skill.
+static void pc_check_skilltree(map_session_data *sd)
+{
+	int32 flag = 0;
+
+	if (battle_config.skillfree)
+		return; //Function serves no purpose if this is set
+
+	int32 c = pc_mapid2jobid( pc_calc_skilltree_normalize_job( sd ), sd->status.sex );
+	if (c == -1) { //Unable to normalize job??
+		ShowError("pc_check_skilltree: Unable to normalize job %d for character %s (%d:%d)\n", sd->status.class_, sd->status.name, sd->status.account_id, sd->status.char_id);
+		return;
+	}
+	std::shared_ptr<s_skill_tree> tree = skill_tree_db.find(c);
+	if (tree == nullptr || tree->skills.empty())
+		return;
+
+	do {
+		flag = 0;
+
+		for (const auto &skillsit : tree->skills) {
+			uint16 skid = skillsit.first;
+			uint16 sk_idx = skill_get_index(skid);
+			bool fail = false;
+
+			if (sd->status.skill[sk_idx].id) //Already learned
+				continue;
+
+			// Checking required skills
+			std::shared_ptr<s_skill_tree_entry> entry = skillsit.second;
+
+			if (entry != nullptr && !entry->need.empty()) {
+				for (const auto &it : entry->need) {
+					uint16 sk_need_id = it.first;
+					uint16 sk_need_idx = skill_get_index(sk_need_id);
+
+					if (sk_need_id > 0) {
+						int16 sk_need = sk_need_id;
+
+						if (sd->status.skill[sk_need_idx].id == 0 || sd->status.skill[sk_need_idx].flag == SKILL_FLAG_TEMPORARY || sd->status.skill[sk_need_idx].flag == SKILL_FLAG_PLAGIARIZED)
+							sk_need = 0; //Not learned.
+						else if (sd->status.skill[sk_need_idx].flag >= SKILL_FLAG_REPLACED_LV_0) //Real lerned level
+							sk_need = sd->status.skill[sk_need_idx].flag - SKILL_FLAG_REPLACED_LV_0;
+						else
+							sk_need = pc_checkskill(sd,sk_need_id);
+
+						if (sk_need < it.second) {
+							fail = true;
+							break;
+						}
+					}
+				}
+			}
+
+			if( fail )
+				continue;
+			if (sd->status.base_level < entry->baselv || sd->status.job_level < entry->joblv)
+				continue;
+
+			std::shared_ptr<s_skill_db> skill = skill_db.find(skid);
+
+			if( !sd->status.skill[sk_idx].lv && (
+				(skill->inf2[INF2_ISQUEST] && !battle_config.quest_skill_learn) ||
+				skill->inf2[INF2_ISWEDDING] ||
+				(skill->inf2[INF2_ISSPIRIT] && !sd->sc.getSCE(SC_SPIRIT))
+			) )
+				continue; //Cannot be learned via normal means.
+
+			sd->status.skill[sk_idx].id = skid;
+			flag = 1;
+		}
+	} while(flag);
+}
+
+// Make sure all the skills are in the correct condition
+// before persisting to the backend.. [MouseJstr]
+void pc_clean_skilltree(map_session_data *sd)
+{
+	uint16 i;
+	for (i = 0; i < MAX_SKILL; i++){
+		if (sd->status.skill[i].flag == SKILL_FLAG_TEMPORARY || sd->status.skill[i].flag == SKILL_FLAG_PLAGIARIZED) {
+			sd->status.skill[i].id = 0;
+			sd->status.skill[i].lv = 0;
+			sd->status.skill[i].flag = SKILL_FLAG_PERMANENT;
+		}
+		else if (sd->status.skill[i].flag >= SKILL_FLAG_REPLACED_LV_0){
+			sd->status.skill[i].lv = sd->status.skill[i].flag - SKILL_FLAG_REPLACED_LV_0;
+			sd->status.skill[i].flag = SKILL_FLAG_PERMANENT;
+		}
+	}
+}
+
+uint64 pc_calc_skilltree_normalize_job_sub( map_session_data *sd ){
+	int32 skill_point = pc_calc_skillpoint( sd );
+
+	if ((sd->class_ & MAPID_FIRSTMASK) != MAPID_SUMMONER)
+	{
+		// Novice's skill points for basic skill.
+		std::shared_ptr<s_job_info> novice_job = job_db.find(JOB_NOVICE);
+
+		int32 novice_skills = novice_job->max_job_level - 1;
+
+		if (skill_point < novice_skills) {
+			return MAPID_NOVICE;
+		}
+
+		skill_point -= novice_skills;
+	}
+
+	// 1st Class Job LV Check
+	if( sd->class_ & JOBL_2 && ( sd->class_ & MAPID_SECONDMASK ) != MAPID_SUPER_NOVICE ){
+		uint64 mapid_1st = sd->class_ & MAPID_FIRSTMASK;
+		int32 class_1st = pc_mapid2jobid( mapid_1st, sd->status.sex );
+
+		if( !sd->change_level_2nd ){
+			if( class_1st >= JOB_NOVICE ){
+				sd->change_level_2nd = job_db.find( class_1st )->max_job_level;
+			}else{
+				sd->change_level_2nd = 0;
+			}
+
+			pc_setglobalreg( sd, add_str( JOBCHANGE2ND_VAR ), sd->change_level_2nd );
+		}
+
+		if( class_1st > 0 && skill_point < ( sd->change_level_2nd - 1 ) ){
+			return mapid_1st;
+		}
+
+		skill_point -= ( sd->change_level_2nd - 1 );
+	}
+
+	// 2nd Class Job LV Check
+	if( sd->class_ & JOBL_THIRD ){
+		uint64 mapid_2nd = sd->class_ & MAPID_SECONDMASK;
+		int32 class_2nd = pc_mapid2jobid( mapid_2nd, sd->status.sex );
+
+		if( !sd->change_level_3rd ){
+			if( class_2nd >= JOB_NOVICE ){
+				sd->change_level_3rd = job_db.find( class_2nd )->max_job_level;
+			}else{
+				sd->change_level_3rd = 0;
+			}
+
+			pc_setglobalreg( sd, add_str( JOBCHANGE3RD_VAR ), sd->change_level_3rd );
+		}
+
+		if( class_2nd > 0 && skill_point < ( sd->change_level_3rd - 1 ) ){
+			return mapid_2nd;
+		}
+
+		skill_point -= ( sd->change_level_3rd - 1 );
+	}
+
+	// 3rd Class Job LV Check
+	if( sd->class_ & JOBL_FOURTH ){
+		uint64 mapid_3rd = sd->class_ & MAPID_THIRDMASK;
+		int32 class_3rd = pc_mapid2jobid( mapid_3rd, sd->status.sex );
+
+		if( !sd->change_level_4th ){
+			if( class_3rd >= JOB_NOVICE ){
+				sd->change_level_4th = job_db.find( class_3rd )->max_job_level;
+			}else{
+				sd->change_level_4th = 0;
+			}
+
+			pc_setglobalreg( sd, add_str( JOBCHANGE4TH_VAR ), sd->change_level_4th );
+		}
+
+		if( class_3rd > 0 && skill_point < ( sd->change_level_4th - 1 ) ){
+			return mapid_3rd;
+		}
+
+		skill_point -= ( sd->change_level_4th - 1 );
+	}
+
+	return sd->class_;
+}
+
+uint64 pc_calc_skilltree_normalize_job( map_session_data* sd ){
+	if( !battle_config.skillup_limit || pc_has_permission( sd, PC_PERM_ALL_SKILL ) ){
+		return sd->class_;
+	}
+
+	uint64 c = pc_calc_skilltree_normalize_job_sub( sd );
+
+	// Special Masks
+	if( sd->class_&JOBL_UPPER ){
+		if( pc_mapid2jobid( c | JOBL_UPPER, sd->status.sex ) >= JOB_NOVICE ){
+			c |= JOBL_UPPER;// Rebirth Job
+		}
+	}
+
+	if( sd->class_&JOBL_BABY ){
+		if( pc_mapid2jobid( c | JOBL_BABY, sd->status.sex ) >= JOB_NOVICE ){
+			c |= JOBL_BABY;// Baby Job
+		}
+	}
+
+	// Primary 4th Jobs Can Access Trans Job Skill Trees.
+	if (pc_is_primary_fourth(sd->class_) && !pc_is_primary_fourth(c)) {

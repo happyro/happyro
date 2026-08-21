@@ -1,0 +1,500 @@
+/**
+ * Controls/ProcessCommand.js - extended from ChatBox
+ *
+ * Command in chatbox handler
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import DB from 'DB/DBManager.js';
+import Emotions from 'DB/Emotions.js';
+import BGM from 'Audio/BGM.js';
+import Sound from 'Audio/SoundManager.js';
+import Session from 'Engine/SessionStorage.js';
+import PACKET from 'Network/PacketStructure.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import Network from 'Network/NetworkManager.js';
+import ControlPreferences from 'Preferences/Controls.js';
+import UIPreferences from 'Preferences/UI.js';
+import AudioPreferences from 'Preferences/Audio.js';
+import MapPreferences from 'Preferences/Map.js';
+import CameraPreferences from 'Preferences/Camera.js';
+import Renderer from 'Renderer/Renderer.js';
+import Configs from 'Core/Configs.js';
+import EffectConst from 'DB/Effects/EffectConst.js';
+import StatusState from 'DB/Status/StatusState.js';
+import EntityManager from 'Renderer/EntityManager.js';
+import EffectManager from 'Renderer/EffectManager.js';
+import MapRenderer from 'Renderer/MapRenderer.js';
+import ChatRoomCreate from 'UI/Components/ChatRoomCreate/ChatRoomCreate.js';
+import ChatRoom from 'UI/Components/ChatRoom/ChatRoom.js';
+import Group from 'Engine/MapEngine/Group.js';
+import Friends from 'Engine/MapEngine/Friends.js';
+import Guild from 'Engine/MapEngine/Guild.js';
+import HomunInformations from 'UI/Components/HomunInformations/HomunInformations.js';
+import MercenaryInformations from 'UI/Components/MercenaryInformations/MercenaryInformations.js';
+import CaptchaUpload from 'UI/Components/Captcha/CaptchaUpload.js';
+import CaptchaSelector from 'UI/Components/Captcha/CaptchaSelector.js';
+import SnowWeather from 'Renderer/Effects/SnowWeather.js';
+import RainWeather from 'Renderer/Effects/RainWeather.js';
+import SakuraWeatherEffect from 'Renderer/Effects/SakuraWeatherEffect.js';
+import PokJukWeatherEffect from 'Renderer/Effects/PokJukWeatherEffect.js';
+import CloudWeatherEffect from 'Renderer/Effects/CloudWeatherEffect.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Navigation from 'UI/Components/Navigation/Navigation.js';
+import RankingTypes from 'DB/Jobs/RankingTypes.js';
+
+let aliases = {};
+
+const CommandStore = {
+	sound: {
+		description: 'Toggles playing of sound effects',
+		callback: function () {
+			this.addText(DB.getMessage(27 + AudioPreferences.Sound.play), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			AudioPreferences.Sound.play = !AudioPreferences.Sound.play;
+			AudioPreferences.save();
+			if (AudioPreferences.Sound.play) {
+				Sound.stop();
+			}
+		}
+	},
+	bgm: {
+		description: 'Toggles playing of background music',
+		callback: function () {
+			this.addText(DB.getMessage(31 + AudioPreferences.BGM.play), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			AudioPreferences.BGM.play = !AudioPreferences.BGM.play;
+			AudioPreferences.save();
+
+			if (AudioPreferences.BGM.play) {
+				BGM.play(BGM.filename);
+			} else {
+				BGM.stop();
+			}
+			return;
+		}
+	},
+	effect: {
+		description: 'Toggles the display of anything but basic graphical effects',
+		callback: function () {
+			this.addText(DB.getMessage(23 + MapPreferences.effect), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.effect = !MapPreferences.effect;
+			MapPreferences.save();
+			return;
+		}
+	},
+	mineffect: {
+		description: "Enables less graphically intense effects. This command does not work for Wizard's AoE skills.",
+		callback: function () {
+			this.addText(DB.getMessage(687 + MapPreferences.mineffect), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.mineffect = !MapPreferences.mineffect;
+			MapPreferences.save();
+			return;
+		}
+	},
+	miss: {
+		description: 'Toggles display of the ‘miss’ animation',
+		callback: function () {
+			this.addText(DB.getMessage(317 + MapPreferences.miss), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.miss = !MapPreferences.miss;
+			MapPreferences.save();
+			return;
+		}
+	},
+	aura: {
+		description: 'Minimizes the aura effect for level 99 and 175 characters',
+		callback: function () {
+			const isSimplified = MapPreferences.aura > 1;
+			this.addText(DB.getMessage(711 + isSimplified), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.aura = isSimplified ? 1 : 2;
+			MapPreferences.save();
+
+			EntityManager.forEach(function (entity) {
+				entity.aura.load(EffectManager);
+			});
+			return;
+		}
+	},
+	aura2: {
+		description: 'Disables the aura effect for level 99 and 175 characters',
+		callback: function () {
+			this.addText(
+				DB.getMessage(
+					2994 + MapPreferences.aura,
+					MapPreferences.aura ? 'Aura effect is OFF' : 'Aura effect is ON' // default text if not in DB msgstringtable
+				),
+				this.TYPE.INFO,
+				this.FILTER.PUBLIC_LOG
+			);
+			MapPreferences.aura = MapPreferences.aura ? 0 : 1;
+			MapPreferences.save();
+
+			EntityManager.forEach(function (entity) {
+				entity.aura.load(EffectManager);
+			});
+			return;
+		}
+	},
+	showname: {
+		description: 'Returns to the original font',
+		callback: function () {
+			this.addText(DB.getMessage(722 + MapPreferences.showname), this.TYPE.INFO);
+			MapPreferences.showname = !MapPreferences.showname;
+			MapPreferences.save();
+
+			// update all display names
+			EntityManager.forEach(function (entity) {
+				entity.display.refresh(entity);
+			});
+			return;
+		}
+	},
+	camera: {
+		description: "Turns camera 'smoothing' off and on.",
+		callback: function () {
+			this.addText(DB.getMessage(319 + CameraPreferences.smooth), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			CameraPreferences.smooth = !CameraPreferences.smooth;
+			CameraPreferences.save();
+			return;
+		}
+	},
+
+	fog: {
+		description: 'Turns fog on and off',
+		callback: function () {
+			MapPreferences.fog = !MapPreferences.fog;
+			this.addText('fog ' + (MapPreferences.fog ? 'on' : 'off'), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.save();
+			return;
+		}
+	},
+
+	lightmap: {
+		description: 'Removes shade effects and a majority of lighting effects',
+		callback: function () {
+			MapPreferences.lightmap = !MapPreferences.lightmap;
+			MapPreferences.save();
+			return;
+		}
+	},
+
+	smoothlight: {
+		description: 'Cycles the posterization effect of the lightmap: on, off, off with gamma correction',
+		callback: function () {
+			MapPreferences.smoothlight = (MapPreferences.smoothlight + 1) % 3;
+			const messages = ['Posterization On', 'Smoothlight On', 'Smoothlight On with Gamma Correction'];
+			this.addText(messages[MapPreferences.smoothlight], this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.save();
+			return;
+		}
+	},
+
+	noctrl: {
+		description: 'Allows attacking monsters continuously with only one left-click',
+		callback: function () {
+			this.addText(DB.getMessage(717 + ControlPreferences.noctrl), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.noctrl = !ControlPreferences.noctrl;
+			ControlPreferences.save();
+			return;
+		},
+		aliases: ['nc']
+	},
+
+	noshift: {
+		description:
+			' Allows targeting monsters or other players in PvP arenas with support skills without having to press the Shift key',
+		callback: function () {
+			this.addText(DB.getMessage(701 + ControlPreferences.noshift), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.noshift = !ControlPreferences.noshift;
+			ControlPreferences.save();
+			return;
+		},
+		aliases: ['ns']
+	},
+
+	snap: {
+		description: 'The mouse cursor semi-automatically moves to the target',
+		callback: function () {
+			this.addText(DB.getMessage(271 + ControlPreferences.snap), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.snap = !ControlPreferences.snap;
+			ControlPreferences.save();
+			return;
+		}
+	},
+
+	itemsnap: {
+		description: 'The mouse cursor semi-automatically moves to the loot',
+		callback: function () {
+			this.addText(DB.getMessage(276 + ControlPreferences.itemsnap), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.itemsnap = !ControlPreferences.itemsnap;
+			ControlPreferences.save();
+			return;
+		}
+	},
+	window: {
+		description: 'Toggles snapping/magnetism between windows',
+		callback: function () {
+			UIPreferences.windowmagnet = !UIPreferences.windowmagnet;
+			this.addText(
+				'Window magnet ' + (UIPreferences.windowmagnet ? 'ON' : 'OFF'),
+				this.TYPE.INFO,
+				this.FILTER.PUBLIC_LOG
+			);
+			UIPreferences.save();
+			return;
+		},
+		aliases: ['wi']
+	},
+
+	stand: {
+		description: 'Makes your character sit or stand',
+		callback: function () {
+			let pkt;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.REQUEST_ACT2();
+			} else {
+				pkt = new PACKET.CZ.REQUEST_ACT();
+			}
+			if (Session.Entity.action === Session.Entity.ACTION.SIT) {
+				pkt.action = 3; // stand up
+			} else {
+				pkt.action = 2; // sit down
+			}
+			Network.sendPacket(pkt);
+			return;
+		},
+		aliases: ['sit']
+	},
+
+	doridori: {
+		description: "Moves your character's head from side to side",
+		callback: function () {
+			let pkt;
+			Session.Entity.headDir = Session.Entity.headDir === 1 ? 2 : 1;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION2();
+			} else {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION();
+			}
+			pkt.headDir = Session.Entity.headDir;
+			pkt.dir = Session.Entity.direction;
+			Network.sendPacket(pkt);
+
+			// Doridori recovery bonus
+			if (Session.Entity.action === Session.Entity.ACTION.SIT) {
+				if (!Session.Entity.doriTime) {
+					Session.Entity.doriTime = [0, 0, 0, 0, 0];
+				}
+
+				Session.Entity.doriTime.shift();
+				Session.Entity.doriTime.push(Renderer.tick);
+
+				const doriStart = Session.Entity.doriTime[0];
+				const doriEnd = Session.Entity.doriTime[4];
+
+				if (doriEnd - doriStart > 1500 && doriEnd - doriStart < 3000) {
+					const doripkt = new PACKET.CZ.DORIDORI();
+					Network.sendPacket(doripkt);
+					Session.Entity.doriTime = [0, 0, 0, 0, 0];
+				}
+			}
+			return;
+		}
+	},
+
+	bangbang: {
+		description: 'Rotates your character clockwise',
+		callback: function () {
+			let pkt;
+			Session.Entity.direction = (Session.Entity.direction + 1) % 8;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION2();
+			} else {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION();
+			}
+			pkt.headDir = Session.Entity.headDir;
+			pkt.dir = Session.Entity.direction;
+			Network.sendPacket(pkt);
+			return;
+		}
+	},
+
+	bingbing: {
+		description: 'Rotates your character counterclockwise',
+		callback: function () {
+			let pkt;
+			Session.Entity.direction = (Session.Entity.direction + 7) % 8;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION2();
+			} else {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION();
+			}
+			pkt.headDir = Session.Entity.headDir;
+			pkt.dir = Session.Entity.direction;
+			Network.sendPacket(pkt);
+			return;
+		}
+	},
+
+	where: {
+		description: "Shows your character's location as a map name and set of coordinates",
+		callback: function () {
+			const currentMap = MapRenderer.currentMap;
+			this.addText(
+				DB.getMapName(currentMap) +
+					'(' +
+					currentMap +
+					') : ' +
+					Math.floor(Session.Entity.position[0]) +
+					', ' +
+					Math.floor(Session.Entity.position[1]),
+				this.TYPE.INFO,
+				this.FILTER.PUBLIC_LOG
+			);
+			return;
+		}
+	},
+
+	who: {
+		description: 'Shows the current number of players on the server',
+		callback: function () {
+			const pkt = new PACKET.CZ.REQ_USER_COUNT();
+			Network.sendPacket(pkt);
+			return;
+		},
+		aliases: ['w']
+	},
+
+	memo: {
+		description: 'Memorizes a location for use with the Warp Portal skill',
+		callback: function () {
+			const pkt = new PACKET.CZ.REMEMBER_WARPPOINT();
+			Network.sendPacket(pkt);
+			return;
+		}
+	},
+
+	chat: {
+		description: 'Creates a chat room',
+		callback: function () {
+			ChatRoomCreate.show();
+			return;
+		}
+	},
+
+	q: {
+		description: 'Leaves a chat room',
+		callback: function () {
+			ChatRoom.remove();
+			return;
+		}
+	},
+
+	leave: {
+		description: 'Allows one to leave a party',
+		callback: function () {
+			Group.onRequestLeave();
+			return;
+		}
+	},
+
+	invite: {
+		description: '"<name>" Invite a person to your party. Works across different maps',
+		callback: function (text) {
+			const matches = text.match(/^invite\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Group.onRequestInvitation(0, matches[2]);
+				return;
+			}
+		}
+	},
+
+	organize: {
+		description: 'Creates a party named <Party Name>',
+		callback: function (text) {
+			const matches = text.match(/^organize\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Group.onRequestCreationEasy(matches[2]);
+				return;
+			}
+		}
+	},
+
+	hi: {
+		description: 'Sends the specified message to everyone on your friend list',
+		callback: function () {
+			Friends.sayHi();
+			return;
+		}
+	},
+
+	guild: {
+		description: "Creates a guild named <Guild Name>. This requires an Emperium to be in the creator's inventory",
+		callback: function (text) {
+			const matches = text.match(/^guild\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Guild.createGuild(matches[2]);
+				return;
+			}
+		}
+	},
+
+	breakguild: {
+		description: 'Disbands a guild. Can only be used by the guild leader. All members must be expelled first',
+		callback: function (text) {
+			const matches = text.match(/^breakguild\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Guild.breakGuild(matches[2]);
+				return;
+			}
+		}
+	},
+
+	alchemist: {
+		description: 'Shows the top 10 brewing Alchemists in the server.',
+		callback: function () {
+			if (PACKETVER.value >= 20130605) {
+				const pkt = new PACKET.CZ.RANKING();
+				pkt.rankType = RankingTypes.ALCHEMIST;
+				Network.sendPacket(pkt);
+			} else {
+				const pkt = new PACKET.CZ.ALCHEMIST_RANK();
+				Network.sendPacket(pkt);
+			}
+			return;
+		}
+	},
+
+	blacksmith: {
+		description: 'Shows the top 10 forging/upgrading Blacksmiths in the server',
+		callback: function () {
+			if (PACKETVER.value >= 20130605) {
+				const pkt = new PACKET.CZ.RANKING();
+				pkt.rankType = RankingTypes.BLACKSMITH;
+				Network.sendPacket(pkt);
+			} else {
+				const pkt = new PACKET.CZ.BLACKSMITH_RANK();
+				Network.sendPacket(pkt);
+			}
+			return;
+		}
+	},
+
+	taekwon: {
+		description: 'Shows the top 10 TaeKwon Kids based on completion of TaeKwon Missions in the server',
+		callback: function () {
+			if (PACKETVER.value >= 20130605) {
+				const pkt = new PACKET.CZ.RANKING();
+				pkt.rankType = RankingTypes.TAEKWON;
+				Network.sendPacket(pkt);
+			} else {
+				const pkt = new PACKET.CZ.TAEKWON_RANK();
+				Network.sendPacket(pkt);
+			}
+			return;
+		}
+	},
+
+	hoai: {
+		description: 'Switches Homunculus AI between default and custom mode',

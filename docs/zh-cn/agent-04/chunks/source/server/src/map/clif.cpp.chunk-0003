@@ -1,0 +1,500 @@
+	block_list *tbl = ers_alloc(delay_clearunit_ers, block_list);
+	tbl->next = nullptr;
+	tbl->prev = nullptr;
+	tbl->id = bl->id;
+	tbl->m = bl->m;
+	tbl->x = bl->x;
+	tbl->y = bl->y;
+	tbl->type = BL_NUL;
+	add_timer(tick, clif_clearunit_delayed_sub, (int32)type, (intptr_t)tbl);
+}
+
+//To make the assignation of the level based on limits clearer/easier. [Skotlex]
+static int32 clif_setlevel_sub(int32 lv) {
+	if( lv < battle_config.max_lv ) {
+		;
+	} else if( lv < battle_config.aura_lv ) {
+		lv = battle_config.max_lv - 1;
+	} else {
+		lv = battle_config.max_lv;
+	}
+
+	return lv;
+}
+
+static int32 clif_setlevel(const block_list* bl) {
+	int32 lv = status_get_lv(bl);
+	if( battle_config.client_limit_unit_lv&bl->type )
+		return clif_setlevel_sub(lv);
+	switch( bl->type ) {
+		case BL_NPC:
+		case BL_PET:
+			// npcs and pets do not have level
+			return 0;
+	}
+	return lv;
+}
+
+/*==========================================
+ * Prepares 'unit standing/spawning' packet
+ *------------------------------------------*/
+static void clif_set_unit_idle( const block_list* bl, bool walking, send_target target, const block_list* tbl ){
+	nullpo_retv( bl );
+
+
+	const map_session_data* sd = BL_CAST(BL_PC,bl);
+	const status_change* sc = status_get_sc( bl );
+	const view_data* vd = status_get_viewdata( bl );
+	int32 g_id = status_get_guild_id( bl );
+
+#if PACKETVER < 20091103
+	if( !pcdb_checkid( vd->look[LOOK_BASE] ) ){
+		struct packet_idle_unit2 p;
+
+		p.PacketType = idle_unit2Type;
+#if PACKETVER >= 20071106
+		p.objecttype = clif_bl_type( bl, walking );
+#endif
+		p.GID = bl->id;
+		p.speed = status_get_speed( bl );
+		p.bodyState = ( sc ) ? sc->opt1 : 0;
+		p.healthState = ( sc ) ? sc->opt2 : 0;
+		p.effectState = ( sc ) ? sc->option : 0;
+		p.job = vd->look[LOOK_BASE];
+		p.head = vd->look[LOOK_HAIR];
+		p.weapon = vd->look[LOOK_WEAPON];
+		p.accessory = vd->look[LOOK_HEAD_BOTTOM];
+		if( bl->type == BL_NPC && vd->look[LOOK_BASE] == JT_GUILD_FLAG ){
+			// The hell, why flags work like this?
+			p.shield = status_get_emblem_id( bl );
+			p.accessory2 = GetWord( g_id, 1 );
+			p.accessory3 = GetWord( g_id, 0 );
+		}else{
+			p.shield = vd->look[LOOK_SHIELD];
+			p.accessory2 = vd->look[LOOK_HEAD_TOP];
+			p.accessory3 = vd->look[LOOK_HEAD_MID];
+		}
+		p.headpalette = vd->look[LOOK_HAIR_COLOR];
+		p.bodypalette = vd->look[LOOK_CLOTHES_COLOR];
+		p.headDir = ( sd )? sd->head_dir : 0;
+		p.GUID = g_id;
+		p.GEmblemVer = status_get_emblem_id( bl );
+		p.honor = ( sd ) ? sd->status.manner : 0;
+		p.virtue = ( sc ) ? sc->opt3 : 0;
+		p.isPKModeON = ( sd && sd->status.karma ) ? 1 : 0;
+		p.sex = vd->sex;
+		WBUFPOS( &p.PosDir[0], 0, bl->x, bl->y, unit_getdir( bl ) );
+		p.xSize = p.ySize = ( sd ) ? 5 : 0;
+		p.state = vd->dead_sit;
+		p.clevel = clif_setlevel( bl );
+
+		clif_send( &p, sizeof( p ), tbl, target );
+
+		return;
+	}
+#endif
+
+	struct packet_idle_unit p;
+
+	p.PacketType = idle_unitType;
+#if PACKETVER >= 20091103
+	p.PacketLength = sizeof(p);
+	p.objecttype = clif_bl_type( bl, walking );
+#endif
+#if PACKETVER >= 20131223
+	p.AID = bl->id;
+	p.GID = (sd) ? sd->status.char_id : 0; // CCODE
+#else
+	p.GID = bl->id;
+#endif
+	p.speed = status_get_speed(bl);
+	p.bodyState = (sc) ? sc->opt1 : 0;
+	p.healthState = (sc) ? sc->opt2 : 0;
+
+	// npc option changed?
+	if( tbl && tbl->type == BL_PC && bl->type == BL_NPC ){
+		map_session_data* sd = (map_session_data*)tbl;
+		npc_data* nd = (npc_data*)bl;
+		int32 option = (sc) ? sc->option : 0;
+
+		if( !nd->vd.dead_sit ){
+			if( std::find( sd->cloaked_npc.begin(), sd->cloaked_npc.end(), nd->id ) != sd->cloaked_npc.end() ){
+				option ^= OPTION_CLOAK;
+			}
+		}
+
+		p.effectState = option;
+	}else{
+		p.effectState = (sc) ? sc->option : 0;
+	}
+	p.job = vd->look[LOOK_BASE];
+	p.head = vd->look[LOOK_HAIR];
+	p.weapon = vd->look[LOOK_WEAPON];
+#if PACKETVER < 7 || PACKETVER_MAIN_NUM >= 20181121 || PACKETVER_RE_NUM >= 20180704 || PACKETVER_ZERO_NUM >= 20181114
+	p.shield = vd->look[LOOK_SHIELD];
+#endif
+	if( bl->type == BL_NPC && vd->look[LOOK_BASE] == JT_GUILD_FLAG ){
+		// The hell, why flags work like this?
+		p.accessory = status_get_emblem_id( bl );
+		p.accessory2 = GetWord( g_id, 1 );
+		p.accessory3 = GetWord( g_id, 0 );
+	}else{
+		p.accessory = vd->look[LOOK_HEAD_BOTTOM];
+		p.accessory2 = vd->look[LOOK_HEAD_TOP];
+		p.accessory3 = vd->look[LOOK_HEAD_MID];
+	}
+	p.headpalette = vd->look[LOOK_HAIR_COLOR];
+	p.bodypalette = vd->look[LOOK_CLOTHES_COLOR];
+	p.headDir = (sd)? sd->head_dir : 0;
+#if PACKETVER >= 20101124
+	p.robe = vd->look[LOOK_ROBE];
+#endif
+	p.GUID = g_id;
+	p.GEmblemVer = status_get_emblem_id( bl );
+	p.honor = (sd) ? sd->status.manner : 0;
+	p.virtue = (sc) ? sc->opt3 : 0;
+	p.isPKModeON = (sd && sd->status.karma) ? 1 : 0;
+	p.sex = vd->sex;
+	WBUFPOS( &p.PosDir[0], 0, bl->x, bl->y, unit_getdir( bl ) );
+	p.xSize = p.ySize = (sd) ? 5 : 0;
+	p.state = vd->dead_sit;
+	p.clevel = clif_setlevel( bl );
+#if PACKETVER >= 20080102
+	p.font = (sd) ? sd->status.font : 0;
+#endif
+#if PACKETVER >= 20120221
+	if( battle_config.monster_hp_bars_info && !map_getmapflag( bl->m, MF_HIDEMOBHPBAR ) && bl->type == BL_MOB && ( status_get_hp( bl ) < status_get_max_hp( bl ) ) ){
+		p.maxHP = status_get_max_hp(bl);
+		p.HP = status_get_hp(bl);
+	}else{
+		p.maxHP = -1;
+		p.HP = -1;
+	}
+
+	if( bl->type == BL_MOB ){
+		p.isBoss = ( (mob_data*)bl )->get_bosstype();
+	}else if( bl->type == BL_PET ){
+		p.isBoss = ( (pet_data*)bl )->db->get_bosstype();
+	}else{
+		p.isBoss = BOSSTYPE_NONE;
+	}
+#endif
+#if PACKETVER >= 20231220 && !defined(PACKETVER_ZERO)
+	p.body = vd->look[LOOK_BODY2];
+#elif PACKETVER >= 20150513
+	if( vd->look[LOOK_BODY2] > JOB_SECOND_JOB_START && vd->look[LOOK_BODY2] < JOB_SECOND_JOB_END ){
+		p.body = 1;
+	}else{
+		p.body = 0;
+	}
+#endif
+/* Might be earlier, this is when the named item bug began */
+#if PACKETVER >= 20131223
+	safestrncpy(p.name, status_get_name( *bl ), NAME_LENGTH);
+#endif
+
+	clif_send( &p, sizeof( p ), tbl, target );
+	// if disguised, send to self
+	if( disguised( bl ) ){
+#if PACKETVER >= 20091103
+		p.objecttype = pcdb_checkid( status_get_viewdata( bl )->look[LOOK_BASE] ) ? 0x0 : 0x5; //PC_TYPE : NPC_MOB_TYPE
+#if PACKETVER >= 20131223
+		p.AID = disguised_bl_id( bl->id );
+#else
+		p.GID = disguised_bl_id( bl->id );
+#endif
+#else
+		p.GID = disguised_bl_id( bl->id );
+#endif
+		clif_send(&p, sizeof(p), bl, SELF);
+	}
+}
+
+static void clif_spawn_unit( const block_list* bl, enum send_target target ){
+	nullpo_retv( bl );
+
+	const map_session_data* sd = BL_CAST(BL_PC,bl);
+	const status_change* sc = status_get_sc( bl );
+	const view_data* vd = status_get_viewdata( bl );
+	int32 g_id = status_get_guild_id( bl );
+
+#if PACKETVER < 20091103
+	if( !pcdb_checkid( vd->look[LOOK_BASE] ) ){
+		struct packet_spawn_unit2 p;
+
+		p.PacketType = spawn_unit2Type;
+#if PACKETVER >= 20071106
+		p.objecttype = clif_bl_type( bl, false );
+#endif
+		p.GID = bl->id;
+		p.speed = status_get_speed( bl );
+		p.bodyState = ( sc ) ? sc->opt1 : 0;
+		p.healthState = ( sc ) ? sc->opt2 : 0;
+		p.effectState = ( sc ) ? sc->option : 0;
+		p.head = vd->look[LOOK_HAIR];
+		p.weapon = vd->look[LOOK_WEAPON];
+		p.accessory = vd->look[LOOK_HEAD_BOTTOM];
+		p.job = vd->look[LOOK_BASE];
+		if( bl->type == BL_NPC && vd->look[LOOK_BASE] == JT_GUILD_FLAG ){
+			// The hell, why flags work like this?
+			p.shield = status_get_emblem_id( bl );
+			p.accessory2 = GetWord( g_id, 1 );
+			p.accessory3 = GetWord( g_id, 0 );
+		}else{
+			p.shield = vd->look[LOOK_SHIELD];
+			p.accessory2 = vd->look[LOOK_HEAD_TOP];
+			p.accessory3 = vd->look[LOOK_HEAD_MID];
+		}
+		p.headpalette = vd->look[LOOK_HAIR_COLOR];
+		p.bodypalette = vd->look[LOOK_CLOTHES_COLOR];
+		p.headDir = ( sd ) ? sd->head_dir : 0;
+		p.isPKModeON = ( sd && sd->status.karma ) ? 1 : 0;
+		p.sex = vd->sex;
+		WBUFPOS( &p.PosDir[0], 0, bl->x, bl->y, unit_getdir( bl ) );
+		p.xSize = p.ySize = ( sd ) ? 5 : 0;
+
+		clif_send( &p, sizeof( p ), bl, target );
+		return;
+	}
+#endif
+
+	struct packet_spawn_unit p;
+
+	p.PacketType = spawn_unitType;
+#if PACKETVER >= 20091103
+	p.PacketLength = sizeof(p);
+	p.objecttype = clif_bl_type( bl, false );
+#endif
+#if PACKETVER >= 20131223
+	p.AID = bl->id;
+	p.GID = (sd) ? sd->status.char_id : 0; // CCODE
+#else
+	p.GID = bl->id;
+#endif
+	p.speed = status_get_speed( bl );
+	p.bodyState = (sc) ? sc->opt1 : 0;
+	p.healthState = (sc) ? sc->opt2 : 0;
+	p.effectState = (sc) ? sc->option : 0;
+	p.job = vd->look[LOOK_BASE];
+	p.head = vd->look[LOOK_HAIR];
+	p.weapon = vd->look[LOOK_WEAPON];
+#if PACKETVER < 7 || PACKETVER_MAIN_NUM >= 20181121 || PACKETVER_RE_NUM >= 20180704 || PACKETVER_ZERO_NUM >= 20181114
+	p.shield = vd->look[LOOK_SHIELD];
+#endif
+	if( bl->type == BL_NPC && vd->look[LOOK_BASE] == JT_GUILD_FLAG ){
+		// The hell, why flags work like this?
+		p.accessory = status_get_emblem_id( bl );
+		p.accessory2 = GetWord( g_id, 1 );
+		p.accessory3 = GetWord( g_id, 0 );
+	}else{
+		p.accessory = vd->look[LOOK_HEAD_BOTTOM];
+		p.accessory2 = vd->look[LOOK_HEAD_TOP];
+		p.accessory3 = vd->look[LOOK_HEAD_MID];
+	}
+	p.headpalette = vd->look[LOOK_HAIR_COLOR];
+	p.bodypalette = vd->look[LOOK_CLOTHES_COLOR];
+	p.headDir = (sd)? sd->head_dir : 0;
+#if PACKETVER >= 20101124
+	p.robe = vd->look[LOOK_ROBE];
+#endif
+	p.GUID = g_id;
+	p.GEmblemVer = status_get_emblem_id( bl );
+	p.honor = (sd) ? sd->status.manner : 0;
+	p.virtue = (sc) ? sc->opt3 : 0;
+	p.isPKModeON = (sd && sd->status.karma) ? 1 : 0;
+	p.sex = vd->sex;
+	WBUFPOS( &p.PosDir[0], 0, bl->x, bl->y, unit_getdir( bl ) );
+	p.xSize = p.ySize = (sd) ? 5 : 0;
+	p.clevel = clif_setlevel( bl );
+#if PACKETVER >= 20080102
+	p.font = (sd) ? sd->status.font : 0;
+#endif
+#if PACKETVER >= 20120221
+	if( battle_config.monster_hp_bars_info && bl->type == BL_MOB && !map_getmapflag( bl->m, MF_HIDEMOBHPBAR ) && ( status_get_hp( bl ) < status_get_max_hp( bl ) ) ){
+		p.maxHP = status_get_max_hp( bl );
+		p.HP = status_get_hp( bl );
+	}else{
+		p.maxHP = -1;
+		p.HP = -1;
+	}
+
+	if( bl->type == BL_MOB ){
+		p.isBoss = ( (mob_data*)bl )->get_bosstype();
+	}else if( bl->type == BL_PET ){
+		p.isBoss = ( (pet_data*)bl )->db->get_bosstype();
+	}else{
+		p.isBoss = BOSSTYPE_NONE;
+	}
+#endif
+#if PACKETVER >= 20231220 && !defined(PACKETVER_ZERO)
+	p.body = vd->look[LOOK_BODY2];
+#elif PACKETVER >= 20150513
+	if( vd->look[LOOK_BODY2] > JOB_SECOND_JOB_START && vd->look[LOOK_BODY2] < JOB_SECOND_JOB_END ){
+		p.body = 1;
+	}else{
+		p.body = 0;
+	}
+#endif
+/* Might be earlier, this is when the named item bug began */
+#if PACKETVER >= 20131223
+	safestrncpy( p.name, status_get_name( *bl ), NAME_LENGTH );
+#endif
+
+	if( disguised( bl ) ){
+		nullpo_retv( sd );
+
+		if( sd->status.class_ != sd->disguise ){
+			clif_send( &p, sizeof( p ), bl, target );
+		}
+
+#if PACKETVER >= 20091103
+		p.objecttype = pcdb_checkid( status_get_viewdata(bl)->look[LOOK_BASE] ) ? 0x0 : 0x5; //PC_TYPE : NPC_MOB_TYPE
+#if PACKETVER >= 20131223
+		p.AID = disguised_bl_id( bl->id );
+#else
+		p.GID = disguised_bl_id( bl->id );
+#endif
+#else
+		p.GID = disguised_bl_id( bl->id );
+#endif
+		clif_send( &p, sizeof( p ), bl, SELF );
+	}else{
+		clif_send( &p, sizeof( p ), bl, target );
+	}
+}
+
+/*==========================================
+ * Prepares 'unit walking' packet
+ *------------------------------------------*/
+static void clif_set_unit_walking( const block_list& bl, const map_session_data* tsd, const unit_data& ud, enum send_target target ){
+	struct packet_unit_walking p;
+
+	p.PacketType = unit_walkingType;
+#if PACKETVER >= 20091103
+	p.PacketLength = sizeof(p);
+#endif
+#if PACKETVER >= 20071106
+	p.objecttype = clif_bl_type( &bl, true );
+#endif
+	const map_session_data* sd = BL_CAST(BL_PC,&bl);
+#if PACKETVER >= 20131223
+	p.AID = bl.id;
+	p.GID = (sd) ? sd->status.char_id : 0; // CCODE
+#else
+	p.GID = bl.id;
+#endif
+	p.speed = status_get_speed( &bl );
+	const status_change* sc = status_get_sc( &bl );
+	p.bodyState = (sc) ? sc->opt1 : 0;
+	p.healthState = (sc) ? sc->opt2 : 0;
+	p.effectState = (sc) ? sc->option : 0;
+	const view_data* vd = status_get_viewdata( &bl );
+	p.job = vd->look[LOOK_BASE];
+	p.head = vd->look[LOOK_HAIR];
+	p.weapon = vd->look[LOOK_WEAPON];
+	p.accessory = vd->look[LOOK_HEAD_BOTTOM];
+	p.moveStartTime = client_tick(gettick());
+#if PACKETVER < 7 || PACKETVER_MAIN_NUM >= 20181121 || PACKETVER_RE_NUM >= 20180704 || PACKETVER_ZERO_NUM >= 20181114
+	p.shield = vd->look[LOOK_SHIELD];
+#endif
+	p.accessory2 = vd->look[LOOK_HEAD_TOP];
+	p.accessory3 = vd->look[LOOK_HEAD_MID];
+	p.headpalette = vd->look[LOOK_HAIR_COLOR];
+	p.bodypalette = vd->look[LOOK_CLOTHES_COLOR];
+	p.headDir = (sd) ? sd->head_dir : 0;
+#if PACKETVER >= 20101124
+	p.robe = vd->look[LOOK_ROBE];
+#endif
+	p.GUID = status_get_guild_id( &bl );
+	p.GEmblemVer = status_get_emblem_id( &bl );
+	p.honor = (sd) ? sd->status.manner : 0;
+	p.virtue = (sc) ? sc->opt3 : 0;
+	p.isPKModeON = (sd && sd->status.karma) ? 1 : 0;
+	p.sex = vd->sex;
+	WBUFPOS2(&p.MoveData[0], 0, bl.x, bl.y, ud.to_x, ud.to_y, ud.sx, ud.sy);
+	p.xSize = p.ySize = (sd) ? 5 : 0;
+	p.clevel = clif_setlevel( &bl );
+#if PACKETVER >= 20080102
+	p.font = (sd) ? sd->status.font : 0;
+#endif
+#if PACKETVER >= 20120221
+	if( battle_config.monster_hp_bars_info && !map_getmapflag(bl.m, MF_HIDEMOBHPBAR) && bl.type == BL_MOB && (status_get_hp( &bl ) < status_get_max_hp( &bl ) ) ){
+		p.maxHP = status_get_max_hp( &bl );
+		p.HP = status_get_hp( &bl );
+	} else {
+		p.maxHP = -1;
+		p.HP = -1;
+	}
+
+	if( bl.type == BL_MOB ){
+		p.isBoss = static_cast<const mob_data*>( &bl )->get_bosstype();
+	}else if( bl.type == BL_PET ){
+		p.isBoss = static_cast<const pet_data*>( &bl )->db->get_bosstype();
+	}else{
+		p.isBoss = BOSSTYPE_NONE;
+	}
+#endif
+#if PACKETVER >= 20231220 && !defined(PACKETVER_ZERO)
+	p.body = vd->look[LOOK_BODY2];
+#elif PACKETVER >= 20150513
+	if( vd->look[LOOK_BODY2] > JOB_SECOND_JOB_START && vd->look[LOOK_BODY2] < JOB_SECOND_JOB_END ){
+		p.body = 1;
+	}else{
+		p.body = 0;
+	}
+#endif
+/* Might be earlier, this is when the named item bug began */
+#if PACKETVER >= 20131223
+	safestrncpy(p.name, status_get_name( bl ), NAME_LENGTH);
+#endif
+
+	clif_send( &p, sizeof(p), tsd ? tsd : &bl, target );
+
+	// if disguised, send the info to self
+	if( disguised( &bl ) ){
+#if PACKETVER >= 20091103
+		p.objecttype = pcdb_checkid( status_get_viewdata( &bl )->look[LOOK_BASE] ) ? 0x0 : 0x5; //PC_TYPE : NPC_MOB_TYPE
+#if PACKETVER >= 20131223
+		p.AID = disguised_bl_id( bl.id );
+#else
+		p.GID = disguised_bl_id( bl.id );
+#endif
+#else
+		p.GID = disguised_bl_id( bl.id );
+#endif
+		clif_send(&p, sizeof(p), &bl, SELF);
+	}
+}
+
+/// Changes sprite of a non player object.
+/// 01b0 <id>.L <type>.B <value>.L (ZC_NPCSPRITE_CHANGE)
+void clif_class_change( const block_list& bl, int32 class_, enum send_target target, const map_session_data* sd ){
+	if( pcdb_checkid( class_ ) ){
+		// player classes yield missing sprites
+		return;
+	}
+
+	PACKET_ZC_NPCSPRITE_CHANGE p = {};
+
+	p.packetType = HEADER_ZC_NPCSPRITE_CHANGE;
+	p.GID = bl.id;
+	// Unused
+	p.type = 0;
+	p.class_ = class_;
+
+	const block_list* tbl;
+
+	if( sd != nullptr ){
+		tbl = sd;
+	}else{
+		tbl = &bl;
+	}
+
+	clif_send( &p, sizeof( p ), tbl, target );
+}
+
+void clif_servantball( const map_session_data& sd, const block_list* target, enum send_target send_target ){
+	PACKET_ZC_SPIRITS p = {};
+
+	p.PacketType = HEADER_ZC_SPIRITS;
+	p.AID = sd.id;

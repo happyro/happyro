@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "itemdb.hpp"
+
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <unordered_map>
+
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/strlib.hpp>
+#include <common/utils.hpp>
+#include <common/utilities.hpp>
+
+#include "battle.hpp" // struct battle_config
+#include "cashshop.hpp"
+#include "clif.hpp"
+#include "intif.hpp"
+#include "log.hpp"
+#include "mob.hpp"
+#include "pc.hpp"
+#include "status.hpp"
+
+using namespace rathena;
+
+
+ComboDatabase itemdb_combo;
+ItemGroupDatabase itemdb_group;
+
+struct s_roulette_db rd;
+
+static void itemdb_jobid2mapid(uint64 bclass[3], e_mapid jobmask, bool active);
+
+const std::string ItemDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/item_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the item_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 ItemDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	t_itemid nameid;
+
+	if (!this->asUInt32(node, "Id", nameid))
+		return 0;
+
+	std::shared_ptr<item_data> item = this->find(nameid);
+	bool exists = item != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "AegisName", "Name" }))
+			return 0;
+
+		item = std::make_shared<item_data>();
+		item->nameid = nameid;
+		item->flag.available = true;
+	}
+
+	if (this->nodeExists(node, "AegisName")) {
+		std::string name;
+
+		if (!this->asString(node, "AegisName", name))
+			return 0;
+
+		if (name.length() > ITEM_NAME_LENGTH) {
+			this->invalidWarning(node["AegisName"], "AegisName \"%s\" exceeds maximum of %d characters, capping...\n", name.c_str(), ITEM_NAME_LENGTH - 1);
+		}
+
+		std::shared_ptr<item_data> id = item_db.search_aegisname( name.c_str() );
+
+		if (id != nullptr && id->nameid != nameid) {
+			this->invalidWarning(node["AegisName"], "Found duplicate item Aegis name for %s, skipping.\n", name.c_str());
+			return 0;
+		}
+
+		if( exists ){
+			// Create a copy
+			std::string aegisname = item->name;
+			// Convert it to lower
+			util::tolower( aegisname );
+			// Remove old AEGIS name from lookup
+			this->aegisNameToItemDataMap.erase( aegisname );
+		}
+
+		item->name.resize(ITEM_NAME_LENGTH);
+		item->name = name.c_str();
+
+		// Create a copy
+		std::string aegisname = name;
+		// Convert it to lower
+		util::tolower( aegisname );
+
+		this->aegisNameToItemDataMap[aegisname] = item;
+	}
+
+	if (this->nodeExists(node, "Name")) {
+		std::string name;
+
+		if (!this->asString(node, "Name", name))
+			return 0;
+
+		if (name.length() > ITEM_NAME_LENGTH) {
+			this->invalidWarning(node["Name"], "Name \"%s\" exceeds maximum of %d characters, capping...\n", name.c_str(), ITEM_NAME_LENGTH - 1);
+		}
+
+		if( exists ){
+			// Create a copy
+			std::string ename = item->ename;
+			// Convert it to lower
+			util::tolower( ename );
+			// Remove old name from lookup
+			this->nameToItemDataMap.erase( ename );
+		}
+
+		item->ename.resize(ITEM_NAME_LENGTH);
+		item->ename = name.c_str();
+
+		// Create a copy
+		std::string ename = name;
+		// Convert it to lower
+		util::tolower( ename );
+
+		this->nameToItemDataMap[ename] = item;
+	}
+
+	if (this->nodeExists(node, "Type")) {
+		std::string type;
+
+		if (!this->asString(node, "Type", type))
+			return 0;
+
+		std::string type_constant = "IT_" + type;
+		int64 constant;
+
+		if (!script_get_constant(type_constant.c_str(), &constant) || constant < IT_HEALING || constant >= IT_MAX) {
+			this->invalidWarning(node["Type"], "Invalid item type %s, defaulting to IT_ETC.\n", type.c_str());
+			constant = IT_ETC;
+		}
+
+		item->type = static_cast<item_types>(constant);
+	} else {
+		if (!exists)
+			item->type = IT_ETC;
+	}
+
+	if (this->nodeExists(node, "SubType")) {
+		std::string type;
+
+		if (!this->asString(node, "SubType", type))
+			return 0;
+
+		if (item->type == IT_WEAPON) {
+			std::string type_constant = "W_" + type;
+			int64 constant;
+
+			if (!script_get_constant(type_constant.c_str(), &constant) || constant < W_FIST || constant >= MAX_WEAPON_TYPE) {
+				this->invalidWarning(node["SubType"], "Invalid weapon type %s, defaulting to W_FIST.\n", type.c_str());
+				item->subtype = W_FIST;
+			}
+
+			item->subtype = static_cast<weapon_type>(constant);
+		} else if (item->type == IT_AMMO) {
+			std::string type_constant = "AMMO_" + type;
+			int64 constant;
+
+			if (!script_get_constant(type_constant.c_str(), &constant) || constant <= AMMO_NONE || constant >= MAX_AMMO_TYPE) {
+				this->invalidWarning(node["SubType"], "Invalid ammo type %s, defaulting to AMMO_NONE.\n", type.c_str());
+				item->subtype = AMMO_NONE;
+			}
+
+			item->subtype = static_cast<e_ammo_type>(constant);
+		} else if (item->type == IT_CARD) {
+			std::string type_constant = "CARD_" + type;
+			int64 constant;
+
+			if (!script_get_constant(type_constant.c_str(), &constant) || constant < CARD_NORMAL || constant >= MAX_CARD_TYPE) {
+				this->invalidWarning(node["SubType"], "Invalid card type %s, defaulting to CARD_NORMAL.\n", type.c_str());
+				item->subtype = CARD_NORMAL;
+			}
+
+			item->subtype = static_cast<e_card_type>(constant);
+		} else {
+			this->invalidWarning(node["SubType"], "Item sub type is not supported for this item type.\n");
+			return 0;
+		}
+	} else {
+		if (!exists)
+			item->subtype = 0;
+	}
+
+	bool has_buy = false, has_sell = false;
+
+	if (this->nodeExists(node, "Buy")) {
+		uint32 buy;
+
+		if (!this->asUInt32(node, "Buy", buy))
+			return 0;
+
+		if( buy > MAX_ZENY ){
+			this->invalidWarning( node["Buy"], "Buying price exceeds MAX_ZENY. Capping...\n" );
+			buy = MAX_ZENY;
+		}
+
+		has_buy = true;
+		item->value_buy = buy;
+	} else {
+		if (!exists) {
+			item->value_buy = 0;
+		}
+	}
+
+	if (this->nodeExists(node, "Sell")) {
+		uint32 sell;
+
+		if (!this->asUInt32(node, "Sell", sell))
+			return 0;
+
+		if( sell > MAX_ZENY ){
+			this->invalidWarning( node["Sell"], "Sell price exceeds MAX_ZENY. Capping...\n" );
+			sell = MAX_ZENY;
+		}
+
+		has_sell = true;
+		item->value_sell = sell;
+	} else {
+		if (!exists) {
+			item->value_sell = 0;
+		}
+	}
+
+	hasPriceValue[item->nameid] = { has_buy, has_sell };
+
+	if (this->nodeExists(node, "Weight")) {
+		uint32 weight;
+
+		if (!this->asUInt32(node, "Weight", weight))
+			return 0;
+
+		item->weight = weight;
+	} else {
+		if (!exists)
+			item->weight = 0;
+	}
+
+	if (this->nodeExists(node, "Attack")) {
+		uint32 atk;
+
+		if (!this->asUInt32(node, "Attack", atk))
+			return 0;
+
+		item->atk = atk;
+	} else {
+		if (!exists)
+			item->atk = 0;
+	}
+
+#ifdef RENEWAL
+	if (this->nodeExists(node, "MagicAttack")) {
+		uint32 matk;
+
+		if (!this->asUInt32(node, "MagicAttack", matk))
+			return 0;
+
+		item->matk = matk;
+	} else {
+		if (!exists)
+			item->matk = 0;
+	}
+#endif
+
+	if (this->nodeExists(node, "Defense")) {
+		uint32 def;
+
+		if (!this->asUInt32(node, "Defense", def))
+			return 0;
+
+		if (def > DEFTYPE_MAX) {
+			this->invalidWarning(node["Defense"], "Item defense %d exceeds DEFTYPE_MAX (%d), capping to DEFTYPE_MAX.\n", def, DEFTYPE_MAX);
+			def = DEFTYPE_MAX;
+		}
+
+		item->def = def;
+	} else {
+		if (!exists)
+			item->def = 0;
+	}
+
+	if (this->nodeExists(node, "Range")) {
+		uint16 range;
+
+		if (!this->asUInt16(node, "Range", range))
+			return 0;
+
+		if (range > AREA_SIZE) {
+			this->invalidWarning(node["Range"], "Item attack range %d exceeds AREA_SIZE (%d), capping to AREA_SIZE.\n", range, AREA_SIZE);
+			range = AREA_SIZE;
+		}
+
+		item->range = range;
+	} else {
+		if (!exists)
+			item->range = 0;
+	}
+
+	if (this->nodeExists(node, "Slots")) {
+		uint16 slots;
+
+		if (!this->asUInt16(node, "Slots", slots))
+			return 0;
+
+		if (slots > MAX_SLOTS) {
+			this->invalidWarning(node["Slots"], "Item slots %d exceeds MAX_SLOTS (%d), capping to MAX_SLOTS.\n", slots, MAX_SLOTS);
+			slots = MAX_SLOTS;
+		}
+
+		item->slots = slots;
+	} else {
+		if (!exists)
+			item->slots = 0;
+	}
+
+	if (this->nodeExists(node, "Jobs")) {
+		const ryml::NodeRef& jobNode = node["Jobs"];
+
+		item->class_base[0] = item->class_base[1] = item->class_base[2] = 0;
+
+		if (this->nodeExists(jobNode, "All")) {
+			bool active;
+
+			if (!this->asBool(jobNode, "All", active))
+				return 0;
+
+			itemdb_jobid2mapid(item->class_base, MAPID_ALL, active);
+		}
+
+		for (const auto& jobit : jobNode) {
+			std::string jobName;
+			c4::from_chars(jobit.key(), &jobName);
+
+			// Skipped because processed above the loop
+			if (jobName.compare("All") == 0)
+				continue;
+
+			std::string jobName_constant = "EAJ_" + jobName;
+			int64 constant;
+
+			if (!script_get_constant(jobName_constant.c_str(), &constant)) {
+				this->invalidWarning(jobNode[jobit.key()], "Invalid item job %s, defaulting to All.\n", jobName.c_str());
+				itemdb_jobid2mapid(item->class_base, MAPID_ALL, true);
+				break;
+			}
+
+			bool active;
+
+			if (!this->asBool(jobNode, jobName, active))
+				return 0;
+
+			itemdb_jobid2mapid(item->class_base, static_cast<e_mapid>(constant), active);
+		}
+	} else {
+		if (!exists) {
+			item->class_base[0] = item->class_base[1] = item->class_base[2] = 0;
+
+			itemdb_jobid2mapid(item->class_base, MAPID_ALL, true);
+		}
+	}
+
+	if (this->nodeExists(node, "Classes")) {
+		const auto& classNode = node["Classes"];
+
+		if (this->nodeExists(classNode, "All")) {
+			bool active;
+
+			if (!this->asBool(classNode, "All", active))
+				return 0;
+
+			if (active)
+				item->class_upper |= ITEMJ_ALL;
+			else
+				item->class_upper &= ~ITEMJ_ALL;
+		}
+
+		for (const auto& classit : classNode) {
+			std::string className;
+			c4::from_chars(classit.key(), &className);
+
+			// Skipped because processed above the loop
+			if (className.compare("All") == 0)
+				continue;
+
+			std::string className_constant = "ITEMJ_" + className;
+			int64 constant;
+
+			if (!script_get_constant(className_constant.c_str(), &constant)) {
+				this->invalidWarning(classNode[classit.key()], "Invalid class upper %s, defaulting to All.\n", className.c_str());
+				item->class_upper |= ITEMJ_ALL;
+				break;
+			}
+
+			bool active;
+
+			if (!this->asBool(classNode, className, active))
+				return 0;
+
+			if (active)
+				item->class_upper |= constant;
+			else
+				item->class_upper &= ~constant;
+		}
+	} else {
+		if (!exists)
+			item->class_upper = ITEMJ_ALL;
+	}
+
+	if (this->nodeExists(node, "Gender")) {
+		std::string gender;
+
+		if (!this->asString(node, "Gender", gender))
+			return 0;
+
+		std::string gender_constant = "SEX_" + gender;
+		int64 constant;
+
+		if (!script_get_constant(gender_constant.c_str(), &constant) || constant < SEX_FEMALE || constant > SEX_BOTH) {
+			this->invalidWarning(node["Gender"], "Invalid item gender %s, defaulting to SEX_BOTH.\n", gender.c_str());
+			constant = SEX_BOTH;
+		}
+
+		item->sex = static_cast<e_sex>(constant);
+		item->sex = this->defaultGender( node, item );
+	} else {
+		if (!exists) {
+			item->sex = SEX_BOTH;
+			item->sex = this->defaultGender( node, item );
+		}
+	}
+
+	if (this->nodeExists(node, "Locations")) {
+		const auto& locationNode = node["Locations"];
+
+		for (const auto& locit : locationNode) {
+			std::string equipName;
+			c4::from_chars(locit.key(), &equipName);
+
+			std::string equipName_constant = "EQP_" + equipName;
+			int64 constant;
+
+			if (!script_get_constant(equipName_constant.c_str(), &constant)) {
+				this->invalidWarning(locationNode[locit.key()], "Invalid equip location %s, defaulting to IT_ETC.\n", equipName.c_str());
+				item->type = IT_ETC;
+				break;
+			}
+
+			bool active;
+
+			if (!this->asBool(locationNode, equipName, active))
+				return 0;
+
+			if (active) {
+				if (constant & EQP_SHADOW_GEAR && item->type != IT_SHADOWGEAR) {
+					this->invalidWarning(node, "Invalid item equip location %s as it's not a Shadow Gear item type, defaulting to IT_ETC.\n", equipName.c_str());
+					item->type = IT_ETC;
+				}
+
+				item->equip |= constant;
+			} else
+				item->equip &= ~constant;
+		}
+	} else {
+		if (!exists) {
+			if (itemdb_isequip2(item.get())) {
+				this->invalidWarning(node, "Invalid item equip location as it has no equip location, defaulting to IT_ETC.\n");
+				item->type = IT_ETC;
+			} else
+				item->equip = 0;
+		}
+	}
+
+	if (this->nodeExists(node, "WeaponLevel")) {
+		uint16 lv;
+
+		if (!this->asUInt16(node, "WeaponLevel", lv))
+			return 0;
+
+		if (lv > MAX_WEAPON_LEVEL) {
+			this->invalidWarning(node["WeaponLevel"], "Invalid weapon level %d, defaulting to 0.\n", lv);
+			lv = 0;
+		}
+
+		if (item->type != IT_WEAPON) {
+			this->invalidWarning(node["WeaponLevel"], "Item type is not a weapon, defaulting to 0.\n");
+			lv = 0;

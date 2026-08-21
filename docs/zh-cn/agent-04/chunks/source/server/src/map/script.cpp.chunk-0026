@@ -1,0 +1,500 @@
+		if( sc_db == nullptr ){
+			ShowError( "buildin_sc_end: Unknown status change %d.\n", type );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if( sc_db->flag[SCF_NOCLEARBUFF] && sc_db->flag[SCF_NOFORCEDEND] ){
+			ShowError( "buildin_sc_end: Status %d cannot be cleared.\n", type );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		//This should help status_change_end force disabling the SC in case it has no limit.
+		sce->val1 = sce->val2 = sce->val3 = sce->val4 = 0;
+		status_change_end(bl, (sc_type)type);
+	} else
+		status_change_clear(bl, 3); // remove all effects
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Ends all status effects from any learned skill on the attached player.
+ * if <job_id> was given it will end the effect of that class for the attached player
+ * sc_end_class {<char_id>{,<job_id>}};
+ */
+BUILDIN_FUNC(sc_end_class)
+{
+	map_session_data *sd;
+	int32 class_;
+
+	if (!script_charid2sd(2, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if (script_hasdata(st, 3))
+		class_ = script_getnum(st, 3);
+	else
+		class_ = sd->status.class_;
+
+	if (!pcdb_checkid(class_)) {
+		ShowError("buildin_sc_end_class: Invalid job ID '%d' given.\n", script_getnum(st, 3));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	status_db.changeSkillTree(sd, class_);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * @FIXME atm will return reduced tick, 0 immune, 1 no tick
+ *------------------------------------------*/
+BUILDIN_FUNC(getscrate)
+{
+	block_list *bl;
+	int32 type;
+	t_tick rate;
+
+	type=script_getnum(st,2);
+	rate=script_getnum(st,3);
+	if( script_hasdata(st,4) ) //get for the bl assigned
+		bl = map_id2bl(script_getnum(st,4));
+	else
+		bl = map_id2bl(st->rid);
+
+	if (bl)
+		rate = status_get_sc_def(nullptr,bl, (sc_type)type, 10000, 10000, SCSTART_NONE);
+
+	script_pushint(st,rate);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * getstatus(<effect type>{,<type>{,<char_id>}});
+ **/
+BUILDIN_FUNC(getstatus)
+{
+	int32 id, type;
+	map_session_data* sd;
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	id = script_getnum(st, 2);
+	type = script_hasdata(st, 3) ? script_getnum(st, 3) : 0;
+
+	if( id <= SC_NONE || id >= SC_MAX )
+	{// invalid status type given
+		ShowWarning("script.cpp:getstatus: Invalid status type given (%d).\n", id);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	status_change_entry* sce = sd->sc.getSCE( id );
+
+	// Check if the status is active
+	if( sce == nullptr ){
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch( type )
+	{
+		case 1:
+			script_pushint( st, sce->val1 );
+			break;
+		case 2:
+			script_pushint( st, sce->val2 );
+			break;
+		case 3:
+			script_pushint( st, sce->val3 );
+			break;
+		case 4:
+			script_pushint( st, sce->val4 );
+			break;
+		case 5:
+			{
+				const struct TimerData* timer = get_timer( sce->timer );
+
+				if( timer )
+				{// return the amount of time remaining
+					script_pushint(st, timer->tick - gettick());
+				} else {
+					script_pushint(st, -1);
+				}
+			}
+			break;
+		default: script_pushint(st, 1); break;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(debugmes)
+{
+	const char *str;
+	str=script_getstr(st,2);
+	ShowDebug("script debug : %d %d : %s\n",st->rid,st->oid,str);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC( errormes ){
+	ShowError( "%s\n", script_getstr( st, 2 ) );
+	script_reportsrc( st );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Attempts to catch a pet with the lure item.
+ * pet {<item_id>{,flag}}
+ * catchpet {<item_id>{,flag}}
+*/
+BUILDIN_FUNC(catchpet)
+{
+	const char* command = script_getfuncname(st);
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	t_itemid lure_id;
+	if( script_hasdata( st, 2 ) ){
+		lure_id = script_getnum( st, 2 );
+
+		std::shared_ptr<item_data> id = item_db.find( lure_id );
+
+		if (id == nullptr) {
+			ShowError( "buildin_%s: Invalid lure item ID %d.\n", command, lure_id );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else{
+		if( sd->itemid == 0 ){
+			ShowError( "buildin_%s: Called outside of an item script without item id.\n", command );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		lure_id = sd->itemid;
+	}
+
+	e_pet_catch_flag flag = PET_CATCH_NORMAL;
+
+	if( script_hasdata( st, 3 ) ){
+		int32 val = script_getnum( st, 3 );
+
+		if( val < PET_CATCH_NORMAL || val >= PET_CATCH_MAX ){
+			ShowError( "buildin_%s: Invalid value '%d' for flag.\n", command, val );
+		}
+
+		flag = static_cast<e_pet_catch_flag>( val );
+	}
+
+	pet_catch_process_start( *sd, lure_id, flag );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * [orn]
+ *------------------------------------------*/
+BUILDIN_FUNC(homunculus_evolution)
+{
+	TBL_PC *sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	if(hom_is_active(sd->hd))
+	{
+		if (sd->hd->homunculus.intimacy >= battle_config.homunculus_evo_intimacy_need)
+			hom_evolution(sd->hd);
+		else
+			clif_emotion( *(sd->hd), ET_SWEAT );
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Checks for vaporized morph state
+ * and deletes ITEMID_STRANGE_EMBRYO.
+ *------------------------------------------*/
+BUILDIN_FUNC(homunculus_mutate)
+{
+	uint16 homun_id;
+	TBL_PC *sd;
+
+	if( !script_rid2sd(sd) || sd->hd == nullptr )
+		return SCRIPT_CMD_SUCCESS;
+
+	if(script_hasdata(st,2))
+		homun_id = script_getnum(st,2);
+	else
+		homun_id = rnd_value<uint16>(MER_EIRA, MER_ELEANOR);
+
+	if( sd->hd->homunculus.vaporize == HOM_ST_MORPH ) {
+		int32 m_class = hom_class2mapid(sd->hd->homunculus.class_);
+		int32 m_id = hom_class2mapid(homun_id);
+		int16 i = pc_search_inventory(sd, ITEMID_STRANGE_EMBRYO);
+
+		if ( m_class != -1 && m_id != -1 && m_class&HOM_EVO && m_id&HOM_S && sd->hd->homunculus.level >= 99 && i >= 0 ) {
+			sd->hd->homunculus.vaporize = HOM_ST_REST; // Remove morph state.
+			hom_call(sd); // Respawn homunculus.
+			hom_mutate(sd->hd, homun_id);
+			pc_delitem(sd, i, 1, 0, 0, LOG_TYPE_SCRIPT);
+			script_pushint(st, 1);
+			return SCRIPT_CMD_SUCCESS;
+		} else
+			clif_emotion( *sd, ET_SWEAT );
+	} else
+		clif_emotion( *sd, ET_SWEAT );
+
+	script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Puts homunculus into morph state
+ * and gives ITEMID_STRANGE_EMBRYO.
+ *------------------------------------------*/
+BUILDIN_FUNC(morphembryo)
+{
+	struct item item_tmp;
+	TBL_PC *sd;
+
+	if( !script_rid2sd(sd) || sd->hd == nullptr )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( hom_is_active(sd->hd) ) {
+		int32 m_class = hom_class2mapid(sd->hd->homunculus.class_);
+
+		if ( m_class != -1 && m_class&HOM_EVO && sd->hd->homunculus.level >= 99 ) {
+			char i;
+			memset(&item_tmp, 0, sizeof(item_tmp));
+			item_tmp.nameid = ITEMID_STRANGE_EMBRYO;
+			item_tmp.identify = 1;
+
+			if( (i = pc_additem(sd, &item_tmp, 1, LOG_TYPE_SCRIPT)) ) {
+				clif_additem(sd, 0, 0, i);
+				clif_emotion( *sd, ET_SWEAT ); // Fail to avoid item drop exploit.
+			} else {
+				hom_vaporize(sd, HOM_ST_MORPH);
+				script_pushint(st, 1);
+				return SCRIPT_CMD_SUCCESS;
+			}
+		} else
+			clif_emotion( *(sd->hd), ET_SWEAT );
+	} else
+		clif_emotion( *sd, ET_SWEAT );
+
+	script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// [Zephyrus]
+BUILDIN_FUNC(homunculus_shuffle)
+{
+	TBL_PC *sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	if(hom_is_active(sd->hd))
+		hom_shuffle(sd->hd);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Check for homunculus state.
+ * Return: -1 = No homunculus
+ *          0 = Homunculus is active
+ *          1 = Homunculus is vaporized (rest)
+ *          2 = Homunculus is in morph state
+ *------------------------------------------*/
+BUILDIN_FUNC(checkhomcall)
+{
+	TBL_PC *sd;
+	TBL_HOM *hd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	hd = sd->hd;
+
+	if( !hd )
+		script_pushint(st, -1);
+	else
+		script_pushint(st, hd->homunculus.vaporize);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//These two functions bring the eA MAPID_* class functionality to scripts.
+BUILDIN_FUNC(eaclass)
+{
+	int32 class_;
+	if( script_hasdata(st,2) )
+		class_ = script_getnum(st,2);
+	else {
+		TBL_PC *sd;
+
+		if (!script_charid2sd(3,sd)) {
+			script_pushint(st,-1);
+			return SCRIPT_CMD_SUCCESS;
+		}
+		class_ = sd->status.class_;
+	}
+	script_pushint(st,pc_jobid2mapid(class_));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(roclass)
+{
+	int32 class_ =script_getnum(st,2);
+	int32 sex;
+	if( script_hasdata(st,3) )
+		sex = script_getnum(st,3);
+	else {
+		TBL_PC *sd;
+		if (st->rid && script_rid2sd(sd))
+			sex = sd->status.sex;
+		else
+			sex = SEX_MALE; //Just use male when not found.
+	}
+	script_pushint(st,pc_mapid2jobid(class_, sex));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Tells client to open a hatching window, used for pet incubator
+ *------------------------------------------*/
+BUILDIN_FUNC(birthpet)
+{
+	TBL_PC *sd;
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( sd->status.pet_id )
+	{// do not send egg list, when you already have a pet
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	clif_sendegg(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * resetlvl <action type>{,<char_id>};
+ * @param action_type:
+ *	1 : make like after rebirth
+ *	2 : blvl,jlvl=1, skillpoint=0
+ * 	3 : don't reset skill, blvl=1
+ *	4 : jlvl=0
+ * @author AppleGirl
+ **/
+BUILDIN_FUNC(resetlvl)
+{
+	TBL_PC *sd;
+
+	int32 type=script_getnum(st,2);
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	pc_resetlvl(sd,type);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Reset a player status point
+ * resetstatus({<char_id>});
+ **/
+BUILDIN_FUNC(resetstatus)
+{
+	TBL_PC *sd;
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	pc_resetstate(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Reset player's skill
+ * resetskill({<char_id>});
+ **/
+BUILDIN_FUNC(resetskill)
+{
+	TBL_PC *sd;
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	pc_resetskill(sd,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Reset SG designated maps
+ * resetfeel({<char_id>});
+ **/
+BUILDIN_FUNC(resetfeel)
+{
+	TBL_PC *sd;
+	if (!script_charid2sd(2,sd) || (sd->class_&MAPID_SECONDMASK) != MAPID_STAR_GLADIATOR)
+		return SCRIPT_CMD_FAILURE;
+	pc_resetfeel(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Reset SG designated monsters
+ * resethate({<char_id>});
+ **/
+BUILDIN_FUNC(resethate)
+{
+	TBL_PC *sd;
+	if (!script_charid2sd(2,sd) || (sd->class_&MAPID_SECONDMASK) != MAPID_STAR_GLADIATOR)
+		return SCRIPT_CMD_FAILURE;
+	pc_resethate(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Counts total amount of skill points.
+ * skillpointcount({<char_id>})
+ **/
+BUILDIN_FUNC(skillpointcount)
+{
+	TBL_PC *sd;
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	script_pushint(st,sd->status.skill_point + pc_resetskill(sd,2));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(changebase)
+{
+	TBL_PC *sd=nullptr;
+	int32 vclass;
+
+	if( !script_mapid2sd(3,sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	vclass = script_getnum(st,2);
+	if(vclass == JOB_WEDDING)
+	{
+		if (!battle_config.wedding_modifydisplay || //Do not show the wedding sprites
+			sd->class_&JOBL_BABY //Baby classes screw up when showing wedding sprites. [Skotlex] They don't seem to anymore.
+			)
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if(!sd->disguise && vclass != sd->vd.look[LOOK_BASE]) {
+		status_set_viewdata(sd, vclass);
+		//Updated client view. Base, Weapon and Cloth Colors.
+		clif_changelook(sd,LOOK_BASE,sd->vd.look[LOOK_BASE]);
+		clif_changelook(sd,LOOK_WEAPON,sd->status.weapon);
+		if (sd->vd.look[LOOK_CLOTHES_COLOR])
