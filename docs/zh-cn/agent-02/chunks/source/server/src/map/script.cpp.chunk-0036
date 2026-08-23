@@ -1,0 +1,500 @@
+		safestrncpy(buf2, q, len);
+		q = p;
+
+		// Note: This assumes the passed value being the correct
+		// type to the current format specifier. If not, the server
+		// probably crashes or returns anything else, than expected,
+		// but it would behave in normal code the same way so it's
+		// the scripter's responsibility.
+		data = script_getdata(st, arg+3);
+
+		if(data_isstring(data))  // String
+			StringBuf_Printf(&final_buf, buf2, script_getstr(st, arg+3));
+		else if(data_isint(data))  // Number
+			StringBuf_Printf(&final_buf, buf2, script_getnum(st, arg+3));
+		else if(data_isreference(data)) {  // Variable
+			char* name = reference_getname(data);
+
+			if(name[strlen(name)-1]=='$')  // var Str
+				StringBuf_Printf(&final_buf, buf2, script_getstr(st, arg+3));
+			else  // var Int
+				StringBuf_Printf(&final_buf, buf2, script_getnum(st, arg+3));
+		} else {  // Unsupported type
+			ShowError("buildin_sprintf: Unknown argument type!\n");
+			if(buf) aFree(buf);
+			if(buf2) aFree(buf2);
+			script_pushconststr(st,"");
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		arg++;
+	}
+
+	// Append anything left
+	if(*q)
+		StringBuf_AppendStr(&final_buf, q);
+
+	// Passed more, than needed
+	if(arg < argc) {
+		ShowWarning("buildin_sprintf: Unused arguments passed.\n");
+		script_reportsrc(st);
+	}
+
+	script_pushstrcopy(st, StringBuf_Value(&final_buf));
+
+	if(buf) aFree(buf);
+	if(buf2) aFree(buf2);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// sscanf(<str>, <format>, ...);
+// Implements C sscanf.
+//-------------------------------------------------------
+BUILDIN_FUNC(sscanf){
+	uint32 argc, arg = 0;
+	struct script_data* data;
+	map_session_data* sd = nullptr;
+	const char* str;
+	const char* format;
+	const char* p;
+	const char* q;
+	char* buf = nullptr;
+	char* buf_p;
+	char* ref_str = nullptr;
+	int32 ref_int;
+
+	// Get data
+	str = script_getstr(st, 2);
+	format = script_getstr(st, 3);
+	argc = script_lastdata(st)-3;
+
+	size_t len = strlen(format);
+
+
+	if (len != 0 && strlen(str) == 0) {
+		// If the source string is empty but the format string is not, we return -1
+		// according to the C specs. (if the format string is also empty, we shall
+		// continue and return 0: 0 conversions took place out of the 0 attempted.)
+		script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	CREATE(buf, char, len*2+1);
+
+	// Issue sscanf for each parameter
+	*buf = 0;
+	q = format;
+	while((p = strchr(q, '%'))){
+		if(p!=q){
+			strncat(buf, q, (size_t)(p-q));
+			q = p;
+		}
+		p = q+1;
+		if(*p=='*' || *p=='%'){  // Skip
+			strncat(buf, q, 2);
+			q+=2;
+			continue;
+		}
+		if(arg>=argc){
+			ShowError("buildin_sscanf: Not enough arguments passed!\n");
+			script_pushint(st, -1);
+			if(buf) aFree(buf);
+			if(ref_str) aFree(ref_str);
+			return SCRIPT_CMD_FAILURE;
+		}
+		if((p = strchr(q+1, '%'))==nullptr){
+			p = strchr(q, 0);  // EOS
+		}
+		len = p-q;
+		strncat(buf, q, len);
+		q = p;
+
+		// Validate output
+		data = script_getdata(st, arg+4);
+		if(!data_isreference(data) || !reference_tovariable(data)){
+			ShowError("buildin_sscanf: Target argument is not a variable!\n");
+			script_pushint(st, -1);
+			if(buf) aFree(buf);
+			if(ref_str) aFree(ref_str);
+			return SCRIPT_CMD_FAILURE;
+		}
+		buf_p = reference_getname(data);
+		if(not_server_variable(*buf_p) && !script_rid2sd(sd)){
+			script_pushint(st, -1);
+			if(buf) aFree(buf);
+			if(ref_str) aFree(ref_str);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		// Save value if any
+		if( is_string_variable( buf_p ) ){
+			if(ref_str==nullptr){
+				CREATE(ref_str, char, strlen(str)+1);
+			}
+			if( sscanf( str, buf, ref_str ) != 1 ){
+				ShowError( "buildin_sscanf: sscanf failed to scan value for string variable \"%s\".\n", buf_p );
+				script_pushint( st, -1 );
+				if( buf != nullptr ){
+					aFree( buf );
+				}
+				if( ref_str != nullptr ){
+					aFree( ref_str );
+				}
+				return SCRIPT_CMD_FAILURE;
+			}
+			set_reg_str( st, sd, reference_uid( reference_getid( data ), reference_getindex( data ) ), buf_p, ref_str, reference_getref( data ) );
+		} else {
+			if( sscanf( str, buf, &ref_int ) !=1 ){
+				ShowError( "buildin_sscanf: sscanf failed to scan value for integer variable \"%s\".\n", buf_p );
+				script_pushint( st, -1 );
+				if( buf != nullptr ){
+					aFree( buf );
+				}
+				if( ref_str != nullptr ){
+					aFree( ref_str );
+				}
+				return SCRIPT_CMD_FAILURE;
+			}
+			set_reg_num( st, sd, reference_uid( reference_getid( data ), reference_getindex( data ) ), buf_p, ref_int, reference_getref( data ) );
+		}
+		arg++;
+
+		// Disable used format (%... -> %*...)
+		buf_p = strchr(buf, 0);
+		memmove(buf_p-len+2, buf_p-len+1, len);
+		*(buf_p-len+1) = '*';
+	}
+
+	script_pushint(st, arg);
+	if(buf) aFree(buf);
+	if(ref_str) aFree(ref_str);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//=======================================================
+// strpos(<haystack>, <needle>)
+// strpos(<haystack>, <needle>, <offset>)
+//
+// Implements PHP style strpos. Adapted from code from
+// http://www.daniweb.com/code/snippet313.html, Dave Sinkula
+//-------------------------------------------------------
+BUILDIN_FUNC(strpos) {
+	const char *haystack = script_getstr(st,2);
+	const char *needle = script_getstr(st,3);
+	int32 i;
+	size_t len;
+
+	if( script_hasdata(st,4) )
+		i = script_getnum(st,4);
+	else
+		i = 0;
+
+	if (needle[0] == '\0') {
+		script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	len = strlen(haystack);
+	for ( ; i < len; ++i ) {
+		if ( haystack[i] == *needle ) {
+			// matched starting char -- loop through remaining chars
+			const char *h, *n;
+			for ( h = &haystack[i], n = needle; *h && *n; ++h, ++n ) {
+				if ( *h != *n ) {
+					break;
+				}
+			}
+			if ( !*n ) { // matched all of 'needle' to null termination
+				script_pushint(st, i);
+				return SCRIPT_CMD_SUCCESS;
+			}
+		}
+	}
+	script_pushint(st, -1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//===============================================================
+// replacestr <input>, <search>, <replace>{, <usecase>{, <count>}}
+//
+// Note: Finds all instances of <search> in <input> and replaces
+// with <replace>. If specified will only replace as many
+// instances as specified in <count>. By default will be case
+// sensitive.
+//---------------------------------------------------------------
+BUILDIN_FUNC(replacestr)
+{
+	const char *input = script_getstr(st, 2);
+	const char *find = script_getstr(st, 3);
+	const char *replace = script_getstr(st, 4);
+	size_t inputlen = strlen(input);
+	size_t findlen = strlen(find);
+	struct StringBuf output;
+	bool usecase = true;
+
+	int32 count = 0;
+	int32 numFinds = 0;
+	size_t i = 0, f = 0;
+
+	if(findlen == 0) {
+		ShowError("script:replacestr: Invalid search length.\n");
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if(script_hasdata(st, 5)) {
+		if( script_isint(st, 5) )
+			usecase = script_getnum(st, 5) != 0;
+		else {
+			ShowError("script:replacestr: Invalid usecase value. Expected int32 got string\n");
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if(script_hasdata(st, 6)) {
+		count = script_getnum(st, 6);
+		if(count == 0) {
+			ShowError("script:replacestr: Invalid count value. Expected int32 got string\n");
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	StringBuf_Init(&output);
+
+	for(; i < inputlen; i++) {
+		if(count && count == numFinds) {	//found enough, stop looking
+			break;
+		}
+
+		for(f = 0; f <= findlen; f++) {
+			if(f == findlen) { //complete match
+				numFinds++;
+				StringBuf_AppendStr(&output, replace);
+
+				i += findlen - 1;
+				break;
+			} else {
+				if(usecase) {
+					if((i + f) > inputlen || input[i + f] != find[f]) {
+						StringBuf_Printf(&output, "%c", input[i]);
+						break;
+					}
+				} else {
+					if(((i + f) > inputlen || input[i + f] != find[f]) && TOUPPER(input[i+f]) != TOUPPER(find[f])) {
+						StringBuf_Printf(&output, "%c", input[i]);
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	//append excess after enough found
+	if(i < inputlen)
+		StringBuf_AppendStr(&output, &(input[i]));
+
+	script_pushstrcopy(st, StringBuf_Value(&output));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+//========================================================
+// countstr <input>, <search>{, <usecase>}
+//
+// Note: Counts the number of times <search> occurs in
+// <input>. By default will be case sensitive.
+//--------------------------------------------------------
+BUILDIN_FUNC(countstr)
+{
+	const char *input = script_getstr(st, 2);
+	const char *find = script_getstr(st, 3);
+	size_t inputlen = strlen(input);
+	size_t findlen = strlen(find);
+	bool usecase = true;
+
+	int32 numFinds = 0;
+
+	if(findlen == 0) {
+		ShowError("script:countstr: Invalid search length.\n");
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if(script_hasdata(st, 4)) {
+		if( script_isint(st, 4) )
+			usecase = script_getnum(st, 4) != 0;
+		else {
+			ShowError("script:countstr: Invalid usecase value. Expected int32 got string\n");
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	for( size_t i = 0; i < inputlen; i++ ){
+		for( size_t f = 0; f <= findlen; f++ ){
+			if(f == findlen) { //complete match
+				numFinds++;
+				i += findlen - 1;
+				break;
+			} else {
+				if(usecase) {
+					if((i + f) > inputlen || input[i + f] != find[f]) {
+						break;
+					}
+				} else {
+					if(((i + f) > inputlen || input[i + f] != find[f]) && TOUPPER(input[i+f]) != TOUPPER(find[f])) {
+						break;
+					}
+				}
+			}
+		}
+	}
+	script_pushint(st, numFinds);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/// Changes the display name and/or display class of the npc.
+/// Returns 0 is successful, 1 if the npc does not exist.
+///
+/// setnpcdisplay("<npc name>", "<new display name>", <new class id>, <new size>) -> <int>
+/// setnpcdisplay("<npc name>", "<new display name>", <new class id>) -> <int>
+/// setnpcdisplay("<npc name>", "<new display name>") -> <int>
+/// setnpcdisplay("<npc name>", <new class id>) -> <int>
+BUILDIN_FUNC(setnpcdisplay)
+{
+	const char* name;
+	const char* newname = nullptr;
+	int32 class_ = JT_FAKENPC, size = -1;
+	npc_data* nd;
+
+	name = script_getstr(st,2);
+
+	if( script_hasdata(st,4) )
+		class_ = script_getnum(st,4);
+	if( script_hasdata(st,5) )
+		size = script_getnum(st,5);
+
+	if( script_isstring(st, 3) )
+ 		newname = script_getstr(st, 3);
+	else
+ 		class_ = script_getnum(st, 3);
+
+	nd = npc_name2id(name);
+	if( nd == nullptr )
+	{// not found
+		script_pushint(st,1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	// update npc
+	if( newname )
+		npc_setdisplayname(nd, newname);
+
+	if( size != -1 && size != (int32)nd->size )
+		nd->size = size;
+	else
+		size = -1;
+
+	if( class_ != JT_FAKENPC && nd->class_ != class_ )
+		npc_setclass(nd, class_);
+	else if( size != -1 )
+		unit_refresh(nd); // Required to update the visual size
+
+	script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(atoi)
+{
+	const char *value;
+	value = script_getstr(st,2);
+	script_pushint(st,atoi(value));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(axtoi)
+{
+	const char *hex = script_getstr(st,2);
+	long value = strtol(hex, nullptr, 16);
+#if LONG_MAX > INT_MAX || LONG_MIN < INT_MIN
+	value = cap_value(value, INT_MIN, INT_MAX);
+#endif
+	script_pushint(st, (int32)value);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(strtol)
+{
+	const char *string = script_getstr(st, 2);
+	int32 base = script_getnum(st, 3);
+	long value = strtol(string, nullptr, base);
+#if LONG_MAX > INT_MAX || LONG_MIN < INT_MIN
+	value = cap_value(value, INT_MIN, INT_MAX);
+#endif
+	script_pushint(st, (int32)value);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// case-insensitive substring search [lordalfa]
+BUILDIN_FUNC(compare)
+{
+	const char *message;
+	const char *cmpstring;
+	message = script_getstr(st,2);
+	cmpstring = script_getstr(st,3);
+	script_pushint(st,(stristr(message,cmpstring) != nullptr));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(strcmp)
+{
+	const char *str1;
+	const char *str2;
+	str1 = script_getstr(st,2);
+	str2 = script_getstr(st,3);
+	script_pushint(st,strcmp(str1, str2));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// [zBuffer] List of mathematics commands --->
+BUILDIN_FUNC(sqrt)
+{
+	double i, a;
+	i = script_getnum(st,2);
+	a = sqrt(i);
+	script_pushint(st,(int32)a);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(pow)
+{
+	double i, a, b;
+	a = script_getnum(st,2);
+	b = script_getnum(st,3);
+	i = pow(a,b);
+	script_pushint(st,(int32)i);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(distance)
+{
+	int32 x0, y0, x1, y1;
+
+	x0 = script_getnum(st,2);
+	y0 = script_getnum(st,3);
+	x1 = script_getnum(st,4);
+	y1 = script_getnum(st,5);
+
+	script_pushint(st,distance_xy(x0,y0,x1,y1));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// <--- [zBuffer] List of mathematics commands
+
+BUILDIN_FUNC(md5)

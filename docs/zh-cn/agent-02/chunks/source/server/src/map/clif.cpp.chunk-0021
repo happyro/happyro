@@ -1,0 +1,500 @@
+					break;
+				case BL_PET:
+					safestrncpy(packet.name, static_cast<const pet_data*>(bl)->pet.name, NAME_LENGTH);
+					break;
+				case BL_NPC:
+					safestrncpy(packet.name, static_cast<const npc_data*>(bl)->name, NAME_LENGTH);
+					break;
+				case BL_ELEM:
+					safestrncpy(packet.name, static_cast<const s_elemental_data*>(bl)->db->name.c_str(), NAME_LENGTH);
+					break;
+			}
+
+#if PACKETVER_MAIN_NUM >= 20180207 || PACKETVER_RE_NUM >= 20171129 || PACKETVER_ZERO_NUM >= 20171130
+			const unit_data* ud = unit_bl2ud(bl);
+
+			if (ud != nullptr) {
+				memcpy(packet.title, ud->title, NAME_LENGTH);
+				packet.groupId = ud->group_id;
+			}
+#endif
+
+			clif_send(&packet, sizeof(packet), src, target);
+		}
+			break;
+		case BL_MOB: {
+			const mob_data* md = static_cast<const mob_data*>(bl);
+
+			if( md->guardian_data && md->guardian_data->guild_id ){
+				PACKET_ZC_ACK_REQNAMEALL packet = { 0 };
+
+				packet.packet_id = HEADER_ZC_ACK_REQNAMEALL;
+				packet.gid = bl->id;
+				safestrncpy( packet.name, md->name, NAME_LENGTH );
+				safestrncpy( packet.guild_name, md->guardian_data->guild_name, NAME_LENGTH );
+				safestrncpy( packet.position_name, md->guardian_data->castle->castle_name, NAME_LENGTH );
+
+				clif_send(&packet, sizeof(packet), src, target);
+			}else if( battle_config.show_mob_info ){
+				PACKET_ZC_ACK_REQNAMEALL packet = { 0 };
+
+				packet.packet_id = HEADER_ZC_ACK_REQNAMEALL;
+				packet.gid = bl->id;
+				safestrncpy( packet.name, md->name, NAME_LENGTH );
+
+				char mobhp[50], *str_p = mobhp;
+
+				if( battle_config.show_mob_info&4 ){
+					str_p += sprintf( str_p, "Lv. %d | ", md->level );
+				}
+
+				if( battle_config.show_mob_info&1 ){
+					str_p += sprintf( str_p, "HP: %u/%u | ", md->status.hp, md->status.max_hp );
+				}
+
+				if( battle_config.show_mob_info&2 ){
+					str_p += sprintf( str_p, "HP: %u%% | ", get_percentage( md->status.hp, md->status.max_hp ) );
+				}
+
+				// Even thought mobhp ain't a name, we send it as one so the client can parse it. [Skotlex]
+				if( str_p != mobhp ){
+					*(str_p-3) = '\0'; //Remove trailing space + pipe.
+					safestrncpy( packet.party_name, mobhp, NAME_LENGTH );
+				}
+
+				clif_send(&packet, sizeof(packet), src, target);
+			} else {
+				PACKET_ZC_ACK_REQNAMEALL_NPC packet = { 0 };
+
+				packet.packet_id = HEADER_ZC_ACK_REQNAMEALL_NPC;
+				packet.gid = bl->id;
+				safestrncpy(packet.name, md->name, NAME_LENGTH);
+
+#if PACKETVER_MAIN_NUM >= 20180207 || PACKETVER_RE_NUM >= 20171129 || PACKETVER_ZERO_NUM >= 20171130
+				const unit_data* ud = unit_bl2ud(bl);
+
+				if (ud != nullptr) {
+					memcpy(packet.title, ud->title, NAME_LENGTH);
+					packet.groupId = ud->group_id;
+				}
+#endif
+
+				clif_send(&packet, sizeof(packet), src, target);
+			}
+		}
+			break;
+		case BL_CHAT:
+		case BL_SKILL:
+			// Newer clients request this, but do not need an answer
+			return;
+		default:
+			ShowError("clif_name: bad type %d(%d)\n", bl->type, bl->id);
+			return;
+	}
+}
+
+/// Taekwon Jump (TK_HIGHJUMP) effect (ZC_HIGHJUMP).
+/// 01ff <id>.L <x>.W <y>.W
+///
+/// Visually moves(instant) a character to x,y. The char moves even
+/// when the target cell isn't walkable. If the char is sitting it
+/// stays that way.
+void clif_slide( const block_list& bl, int32 x, int32 y ){
+
+	PACKET_ZC_HIGHJUMP p{};
+
+	p.packetType = HEADER_ZC_HIGHJUMP;
+	p.srcId = bl.id;
+	p.x = x;
+	p.y = y;
+	clif_send(&p, sizeof(p), &bl, AREA);
+
+	if( disguised(&bl) )
+	{
+		p.srcId = disguised_bl_id(bl.id);
+		clif_send(&p, sizeof(p), &bl, SELF);
+	}
+}
+
+
+/// Public chat message (ZC_NOTIFY_CHAT). lordalfa/Skotlex - used by @me as well
+/// 008d <packet len>.W <id>.L <message>.?B
+void clif_disp_overhead_( const block_list* bl, const char* mes, enum send_target flag)
+{
+	unsigned char buf[256]; //This should be more than sufficient, the theorical max is CHAT_SIZE + 8 (pads and extra inserted crap)
+	int16 len_mes;
+
+	len_mes = static_cast<decltype(len_mes)>( strlen(mes) + 1 ); //Account for \0
+
+	if (len_mes > sizeof(buf)-8) {
+		ShowError("clif_disp_overhead: Message too long (length %d)\n", len_mes);
+		len_mes = sizeof(buf)-8; //Trunk it to avoid problems.
+	}
+	// send message to others
+	if (flag == AREA) {
+		WBUFW(buf,0) = 0x8d;
+		WBUFW(buf,2) = len_mes + 8; // len of message + 8 (command+len+id)
+		WBUFL(buf,4) = bl->id;
+		safestrncpy(WBUFCP(buf,8), mes, len_mes);
+		clif_send(buf, WBUFW(buf,2), bl, AREA_CHAT_WOC);
+	}
+
+	// send back message to the speaker
+	if( bl->type == BL_PC ) {
+		WBUFW(buf,0) = 0x8e;
+		WBUFW(buf, 2) = len_mes + 4;
+		safestrncpy(WBUFCP(buf,4), mes, len_mes);
+		clif_send(buf, WBUFW(buf,2), bl, SELF);
+	}
+}
+
+/*==========================
+ * Minimap fix [Kevin]
+ * Remove dot from minimap
+ *--------------------------*/
+void clif_party_xy_remove( const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	PACKET_ZC_NOTIFY_POSITION_TO_GROUPM p{};
+	p.PacketType = HEADER_ZC_NOTIFY_POSITION_TO_GROUPM;
+	p.AID = sd->status.account_id;
+	p.xPos = -1;
+	p.yPos = -1;
+
+	clif_send(&p, sizeof(p), sd, PARTY_SAMEMAP_WOS);
+}
+
+
+/// Displays a skill message.
+/// 0215 <msg id>.L (ZC_SKILLMSG)
+/// msg id:
+///     0x15 = End all negative status (PA_GOSPEL)
+///     0x16 = Immunity to all status (PA_GOSPEL)
+///     0x17 = MaxHP +100% (PA_GOSPEL)
+///     0x18 = MaxSP +100% (PA_GOSPEL)
+///     0x19 = All stats +20 (PA_GOSPEL)
+///     0x1c = Enchant weapon with Holy element (PA_GOSPEL)
+///     0x1d = Enchant armor with Holy element (PA_GOSPEL)
+///     0x1e = DEF +25% (PA_GOSPEL)
+///     0x1f = ATK +100% (PA_GOSPEL)
+///     0x20 = HIT/Flee +50 (PA_GOSPEL)
+///     0x28 = Full strip failed because of coating (ST_FULLSTRIP)
+///     ? = nothing
+void clif_gospel_info( const map_session_data& sd, int32 type ){
+#if PACKETVER >= 20041101
+	PACKET_ZC_SKILLMSG p{};
+
+	p.packetType = HEADER_ZC_SKILLMSG;
+	p.msgId = type;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+
+/// Multi-purpose mission information packet (ZC_STARSKILL).
+/// 020e <mapname>.24B <monster_id>.L <star>.B <result>.B
+/// result:
+///      0 = Star Gladiator %s has designed <mapname>'s as the %s.
+///      star:
+///          0 = Place of the Sun
+///          1 = Place of the Moon
+///          2 = Place of the Stars
+///      1 = Star Gladiator %s's %s: <mapname>
+///      star:
+///          0 = Place of the Sun
+///          1 = Place of the Moon
+///          2 = Place of the Stars
+///      10 = Star Gladiator %s has designed <mapname>'s as the %s.
+///      star:
+///          0 = Target of the Sun
+///          1 = Target of the Moon
+///          2 = Target of the Stars
+///      11 = Star Gladiator %s's %s: <mapname used as monster name>
+///      star:
+///          0 = Monster of the Sun
+///          1 = Monster of the Moon
+///          2 = Monster of the Stars
+///      20 = [TaeKwon Mission] Target Monster : <mapname used as monster name> (<star>%)
+///      21 = [Taming Mission] Target Monster : <mapname used as monster name>
+///      22 = [Collector Rank] Target Item : <monster_id used as item id>
+///      30 = [Sun, Moon and Stars Angel] Designed places and monsters have been reset.
+///      40 = Target HP : <monster_id used as HP>
+void clif_starskill( const map_session_data* sd, const char* mapname, int32 monster_id, unsigned char star, unsigned char result )
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0x20e));
+	WFIFOW(fd,0) = 0x20e;
+	safestrncpy(WFIFOCP(fd,2), mapname, NAME_LENGTH);
+	WFIFOL(fd,26) = monster_id;
+	WFIFOB(fd,30) = star;
+	WFIFOB(fd,31) = result;
+	WFIFOSET(fd,packet_len(0x20e));
+}
+
+/*==========================================
+ * Info about Star Glaldiator save map [Komurka]
+ * type: 1: Information, 0: Map registered
+ *------------------------------------------*/
+void clif_feel_info( const map_session_data* sd, unsigned char feel_level, unsigned char type )
+{
+	char mapname[MAP_NAME_LENGTH_EXT];
+
+	mapindex_getmapname_ext(mapindex_id2name(sd->feel_map[feel_level].index), mapname);
+	clif_starskill(sd, mapname, 0, feel_level, type ? 1 : 0);
+}
+
+/*==========================================
+ * Info about Star Glaldiator hate mob [Komurka]
+ * type: 1: Register mob, 0: Information.
+ *------------------------------------------*/
+void clif_hate_info( const map_session_data* sd, unsigned char hate_level,int32 class_, unsigned char type )
+{
+	if( pcdb_checkid(class_) ) {
+		clif_starskill(sd, job_name(class_), class_, hate_level, type ? 10 : 11);
+	} else if( mobdb_checkid(class_) ) {
+		clif_starskill(sd, mob_db.find(class_)->jname.c_str(), class_, hate_level, type ? 10 : 11);
+	} else {
+		ShowWarning("clif_hate_info: Received invalid class %d for this packet (char_id=%d, hate_level=%u, type=%u).\n", class_, sd->status.char_id, (uint32)hate_level, (uint32)type);
+	}
+}
+
+/*==========================================
+ * Info about TaeKwon Do TK_MISSION mob [Skotlex]
+ *------------------------------------------*/
+void clif_mission_info( const map_session_data* sd, int32 mob_id, unsigned char progress )
+{
+	clif_starskill(sd, mob_db.find(mob_id)->jname.c_str(), mob_id, progress, 20);
+}
+
+/*==========================================
+ * Feel/Hate reset (thanks to Rayce) [Skotlex]
+ *------------------------------------------*/
+void clif_feel_hate_reset( const map_session_data* sd )
+{
+	clif_starskill(sd, "", 0, 0, 30);
+}
+
+
+/// Send out reply to configuration change
+/// 02d9 <type>.L <value>.L (ZC_CONFIG)
+/// type: see enum e_config_type
+/// value:
+///		false = disabled
+///		true = enabled
+void clif_configuration( const map_session_data* sd, enum e_config_type type, bool enabled ){
+	int32 fd;
+	nullpo_retv(sd);
+	fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x2d9));
+	WFIFOW(fd, 0) = 0x2d9;
+	WFIFOL(fd, 2) = type;
+	WFIFOL(fd, 6) = enabled;
+	WFIFOSET(fd, packet_len(0x2d9));
+}
+
+
+/// The player's 'view equip' state, sent during login.
+/// 02da <open equip window>.B (ZC_CONFIG_NOTIFY)
+/// open equip window:
+///     0 = disabled
+///     1 = enabled
+void clif_equipcheckbox( const map_session_data& sd ){
+	PACKET_ZC_CONFIG_NOTIFY p{};
+
+	p.packetType = HEADER_ZC_CONFIG_NOTIFY;
+	p.flag = sd.status.show_equip;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Sends info about a player's equipped items.
+/// 02d7 <packet len>.W <name>.24B <class>.W <hairstyle>.W <up-viewid>.W <mid-viewid>.W <low-viewid>.W <haircolor>.W <cloth-dye>.W <gender>.B {equip item}.26B* (ZC_EQUIPWIN_MICROSCOPE)
+/// 02d7 <packet len>.W <name>.24B <class>.W <hairstyle>.W <bottom-viewid>.W <mid-viewid>.W <up-viewid>.W <haircolor>.W <cloth-dye>.W <gender>.B {equip item}.28B* (ZC_EQUIPWIN_MICROSCOPE, PACKETVER >= 20100629)
+/// 0859 <packet len>.W <name>.24B <class>.W <hairstyle>.W <bottom-viewid>.W <mid-viewid>.W <up-viewid>.W <haircolor>.W <cloth-dye>.W <gender>.B {equip item}.28B* (ZC_EQUIPWIN_MICROSCOPE2, PACKETVER >= 20101124)
+/// 0859 <packet len>.W <name>.24B <class>.W <hairstyle>.W <bottom-viewid>.W <mid-viewid>.W <up-viewid>.W <robe>.W <haircolor>.W <cloth-dye>.W <gender>.B {equip item}.28B* (ZC_EQUIPWIN_MICROSCOPE2, PACKETVER >= 20110111)
+/// 0997 <packet len>.W <name>.24B <class>.W <hairstyle>.W <bottom-viewid>.W <mid-viewid>.W <up-viewid>.W <robe>.W <haircolor>.W <cloth-dye>.W <gender>.B {equip item}.31B* (ZC_EQUIPWIN_MICROSCOPE_V5, PACKETVER >= 20120925)
+/// 0a2d <packet len>.W <name>.24B <class>.W <hairstyle>.W <bottom-viewid>.W <mid-viewid>.W <up-viewid>.W <robe>.W <haircolor>.W <cloth-dye>.W <gender>.B {equip item}.57B* (ZC_EQUIPWIN_MICROSCOPE_V6, PACKETVER >= 20150225)
+void clif_viewequip_ack( const map_session_data& sd, const map_session_data& tsd ){
+#if PACKETVER_AD_NUM >= 20071211 || PACKETVER_SAK_NUM >= 20071127 || PACKETVER_MAIN_NUM >= 20071211 || defined(PACKETVER_RE)
+	PACKET_ZC_EQUIPWIN_MICROSCOPE* p = reinterpret_cast<PACKET_ZC_EQUIPWIN_MICROSCOPE*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_EQUIPWIN_MICROSCOPE;
+	p->PacketLength = sizeof( *p );
+
+	safestrncpy( p->characterName, tsd.status.name, NAME_LENGTH );
+
+	p->job = tsd.vd.look[LOOK_BASE];
+	p->head = tsd.vd.look[LOOK_HAIR];
+	p->accessory = tsd.vd.look[LOOK_HEAD_BOTTOM];
+	p->accessory2 = tsd.vd.look[LOOK_HEAD_MID];
+	p->accessory3 = tsd.vd.look[LOOK_HEAD_TOP];
+#if PACKETVER >= 20110111
+	p->robe = tsd.vd.look[LOOK_ROBE];
+#endif
+	p->headpalette = tsd.vd.look[LOOK_HAIR_COLOR];
+	p->bodypalette = tsd.vd.look[LOOK_CLOTHES_COLOR];
+#if PACKETVER >= 20231220 && !defined(PACKETVER_ZERO)
+	p->body2 = tsd.vd.look[LOOK_BODY2];
+#elif PACKETVER_MAIN_NUM >= 20180801 || PACKETVER_RE_NUM >= 20180801 || PACKETVER_ZERO_NUM >= 20180808
+	if( tsd.vd.look[LOOK_BODY2] > JOB_SECOND_JOB_START && tsd.vd.look[LOOK_BODY2] < JOB_SECOND_JOB_END ){
+		p->body2 = 1;
+	}else{
+		p->body2 = 0;
+	}
+#endif
+	p->sex = tsd.vd.sex;
+
+	for( int32 i = 0, equip = 0; i < EQI_MAX; i++ ){
+		int32 k = tsd.equip_index[i];
+
+		if( k >= 0 ){
+			if( tsd.inventory.u.items_inventory[k].nameid == 0 || tsd.inventory_data[k] == nullptr ){ // Item doesn't exist
+				continue;
+			}
+
+			if( !tsd.inventory.u.items_inventory[k].equip ){
+				continue;
+			}
+
+			if( !itemdb_isequip2( tsd.inventory_data[k] ) ){ // Is not equippable
+				continue;
+			}
+
+			clif_item_equip( client_index( k ), &p->list[equip], &tsd.inventory.u.items_inventory[k], tsd.inventory_data[k], pc_equippoint( &tsd, k ) );
+
+			p->PacketLength += static_cast<decltype(p->PacketLength)>( sizeof( p->list[0] ) );
+			equip++;
+		}
+	}
+
+	clif_send( p, p->PacketLength, &sd, SELF );
+#endif
+}
+
+
+/// Display msgstringtable.txt string.
+/// 0291 <message>.W (ZC_MSG)
+void clif_msg( const map_session_data& sd, e_clif_messages msg_id ){
+#if PACKETVER >= 20060424
+	PACKET_ZC_MSG p{};
+
+	p.packetType = HEADER_ZC_MSG;
+	p.msgId = msg_id; // zero-based msgstringtable.txt index
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+
+/// Display msgstringtable.txt string and fill in a valid for %d format.
+/// 0x7e2 <message>.W <value>.L (ZC_MSG_VALUE)
+void clif_msg_value( const map_session_data& sd, e_clif_messages msg_id, int32 value ){
+	PACKET_ZC_MSG_VALUE p{};
+
+	p.packetType = HEADER_ZC_MSG_VALUE;
+	p.message = msg_id;
+	p.value = value;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Displays msgstringtable.txt string, prefixed with a skill name.
+/// 07e6 <skill id>.W <msg id>.L (ZC_MSG_SKILL)
+///
+/// NOTE: Message has following format and is printed in color 0xCDCDFF (purple):
+///       "[SkillName] Message"
+void clif_msg_skill( const map_session_data& sd, uint16 skill_id, e_clif_messages msg_id ){
+#if PACKETVER >= 20090818
+	PACKET_ZC_MSG_SKILL p{};
+
+	p.packetType = HEADER_ZC_MSG_SKILL;
+	p.skillId = skill_id;
+	p.msgId = msg_id;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+/// Displays msgstringtable.txt string in a color.
+/// 09cd <msg id>.W <color>.L (ZC_MSG_COLOR)
+void clif_msg_color( const map_session_data& sd, e_clif_messages msg_id, uint32 color ){
+#if PACKETVER >= 20130807
+	PACKET_ZC_MSG_COLOR p{};
+
+	p.PacketType = HEADER_ZC_MSG_COLOR;
+	p.MessageId = msg_id;
+	p.MessageColor = color;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+/// Validates one global/guild/party/whisper message packet and tries to recognize its components.
+/// Returns true if the packet was parsed successfully.
+/// Formats: false - <packet id>.w <packet len>.w (<name> : <message>).?B 00
+///          true - <packet id>.w <packet len>.w <name>.24B <message>.?B 00
+static bool clif_process_message(map_session_data* sd, bool whisperFormat, char* out_name, char* out_message, char* out_full_message ){
+	const char* separator = " : ";
+	int32 fd;
+	struct s_packet_db* info;
+	uint16 packetLength, inputLength;
+	const char *input, *name, *message;
+	size_t nameLength, messageLength;
+
+	fd = sd->fd;
+
+	info = &packet_db[RFIFOW(fd,0)];
+
+	packetLength = RFIFOW(fd,info->pos[0]);
+	input = RFIFOCP(fd,info->pos[1]);
+
+	// basic structure check for the 4-byte header
+	if( packetLength < 4 ){
+		ShowWarning("clif_process_message: Received malformed packet from player '%s' (no message data)!\n", sd->status.name);
+		return false;
+	}else{
+		inputLength = packetLength - 4;
+	}
+
+	// process <name> part of the packet
+	if( whisperFormat ) {	
+		// name has fixed width
+		if( inputLength < NAME_LENGTH + 1 ) {
+			ShowWarning("clif_process_message: Received malformed packet from player '%s' (packet length is incorrect)!\n", sd->status.name);
+			return false;
+		}
+
+		name = input;
+
+		// validate name
+		nameLength = strnlen( name, NAME_LENGTH - 1 );
+
+		// only restriction is that the name must be zero-terminated
+		if( name[nameLength] != '\0' ) {
+			ShowWarning("clif_process_message: Player '%s' sent an unterminated name!\n", sd->status.name);
+			return false;
+		}
+
+		message = input + NAME_LENGTH;
+		messageLength = inputLength - NAME_LENGTH;		
+	}else{
+		// name and message are separated by ' : '
+		size_t separatorLength = strnlen( separator, NAME_LENGTH );
+
+		nameLength = strnlen( sd->status.name, NAME_LENGTH - 1 ); // name length (w/o zero byte)
+		
+		// check if there's enough data provided
+		if( inputLength < nameLength + separatorLength + 1 ){
+			ShowWarning("clif_process_message: Received malformed packet from player '%s' (no username data)!\n", sd->status.name);
+			return false;
+		}
+
+		name = input;
+
+		// validate name

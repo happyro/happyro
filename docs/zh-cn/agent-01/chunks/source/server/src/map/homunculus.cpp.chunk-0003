@@ -1,0 +1,500 @@
+	if (hd->homunculus.rename_flag && !battle_config.hom_rename)
+		return 1;
+
+	for (i = 0; i < NAME_LENGTH && name[i];i++) {
+		if (!(name[i]&0xe0) || name[i] == 0x7f)
+			return 1;
+	}
+
+	return intif_rename_hom(sd, name);
+}
+
+/**
+* Acknowledge change name request from inter-server
+* @param sd
+* @param name
+* @param flag
+*/
+void hom_change_name_ack(map_session_data *sd, char* name, int32 flag)
+{
+	homun_data *hd = sd->hd;
+	if (!hom_is_active(hd))
+		return;
+
+	normalize_name(name," ");//bugreport:3032
+
+	if (!flag || name[0] == '\0') {
+		clif_displaymessage(sd->fd, msg_txt(sd,280)); // You cannot use this name
+		return;
+	}
+	safestrncpy(hd->homunculus.name,name,NAME_LENGTH);
+	hd->homunculus.rename_flag = 1;
+	clif_hominfo(sd,hd,1);
+	clif_name_area(hd);
+	clif_hominfo(sd,hd,0);
+}
+
+/**
+* Create homunc structure
+* @param sd
+* @param hom
+*/
+void hom_alloc(map_session_data *sd, struct s_homunculus *hom)
+{
+	nullpo_retv(sd);
+
+	Assert((sd->status.hom_id == 0 || sd->hd == 0) || sd->hd->master == sd);
+
+	std::shared_ptr<s_homunculus_db> homun_db = homunculus_db.homun_search(hom->class_);
+
+	if (homun_db == nullptr) {
+		ShowError("hom_alloc: unknown class [%d] for homunculus '%s', requesting deletion.\n", hom->class_, hom->name);
+		sd->status.hom_id = 0;
+		intif_homunculus_requestdelete(hom->hom_id);
+		return;
+	}
+
+	homun_data *hd;
+	t_tick tick = gettick();
+
+	sd->hd = hd = (homun_data*)aCalloc(1,sizeof(homun_data));
+	new (sd->hd) homun_data();
+
+	hd->type = BL_HOM;
+	hd->id = npc_get_new_npc_id();
+
+	hd->master = sd;
+	hd->homunculusDB = homun_db;
+	memcpy(&hd->homunculus, hom, sizeof(struct s_homunculus));
+	hd->exp_next = homun_exp_db.get_nextexp(hd->homunculus.level);
+
+	status_set_viewdata(hd, hd->homunculus.class_);
+	unit_dataset(hd);
+	hd->ud.dir = sd->ud.dir;
+
+	// Find a random valid pos around the player
+	hd->m = sd->m;
+	hd->x = sd->x;
+	hd->y = sd->y;
+	unit_calc_pos(hd, sd->x, sd->y, sd->ud.dir);
+	hd->x = hd->ud.to_x;
+	hd->y = hd->ud.to_y;
+
+	// Ticks need to be initialized before adding bl to map_addiddb
+	hd->regen.tick.hp = tick;
+	hd->regen.tick.sp = tick;
+
+	map_addiddb(hd);
+	status_calc_homunculus(hd, SCO_FIRST);
+
+	hd->hungry_timer = INVALID_TIMER;
+	hd->masterteleport_timer = INVALID_TIMER;
+}
+
+/**
+* Init homunculus timers
+* @param hd
+*/
+void hom_init_timers(homun_data * hd)
+{
+	if (hd->hungry_timer == INVALID_TIMER) {
+		int32 hunger_delay = (battle_config.homunculus_starving_rate > 0 && hd->homunculus.hunger <= battle_config.homunculus_starving_rate) ? battle_config.homunculus_starving_delay : hd->homunculusDB->hungryDelay; // Every 20 seconds if hunger <= 10
+
+		hd->hungry_timer = add_timer(gettick()+hunger_delay,hom_hungry,hd->master->id,0);
+	}
+	hd->regen.state.block = 0; //Restore HP/SP block.
+	hd->masterteleport_timer = INVALID_TIMER;
+}
+
+/**
+ * Make a player spawn a homonculus (call)
+ * @param sd
+ * @return False:failure, True:success
+ */
+bool hom_call(map_session_data *sd)
+{
+	homun_data *hd;
+
+	if (!sd->status.hom_id) //Create a new homun.
+		return hom_create_request(sd, HM_CLASS_BASE + rnd_value(0, 7)) ;
+
+	// If homunc not yet loaded, load it
+	if (!sd->hd)
+		return intif_homunculus_requestload(sd->status.account_id, sd->status.hom_id) > 0;
+
+	hd = sd->hd;
+
+	if (!hd->homunculus.vaporize)
+		return false; //Can't use this if homun wasn't vaporized.
+
+	if (hd->homunculus.vaporize == HOM_ST_MORPH)
+		return false; // Can't call homunculus (morph state).
+
+	hom_init_timers(hd);
+	hd->homunculus.vaporize = HOM_ST_ACTIVE;
+	if (hd->prev == nullptr)
+	{	//Spawn him
+		hd->x = sd->x;
+		hd->y = sd->y;
+		hd->m = sd->m;
+		if(map_addblock(hd))
+			return false;
+		clif_spawn(hd);
+		clif_send_homdata( *hd, SP_ACK );
+		// For some reason, official servers send the homunculus info twice, then update the HP/SP again.
+		clif_hominfo(sd, hd, 1);
+		clif_hominfo(sd, hd, 0);
+		clif_homunculus_updatestatus(*sd, SP_HP);
+		clif_homunculus_updatestatus(*sd, SP_SP);
+		clif_homskillinfoblock( *hd );
+		status_calc_bl(hd, { SCB_SPEED });
+		hom_save(hd);
+	} else
+		//Warp him to master.
+		unit_warp(hd,sd->m, sd->x, sd->y,CLR_OUTSIGHT);
+
+	// Apply any active skill cooldowns.
+	for (const auto &entry : hd->scd) {
+		skill_blockhomun_start(*hd, entry.first, entry.second);
+	}
+
+#ifdef RENEWAL
+	sc_start(sd, sd, SC_HOMUN_TIME, 100, 1, skill_get_time(AM_CALLHOMUN, 1));
+#endif
+
+	return true;
+}
+
+/**
+ * Receive homunculus data from char server
+ * @param account_id : owner account_id of the homon
+ * @param sh : homonculus data from char-serv
+ * @param flag : does the creation in inter-serv was a success (0:no,1:yes)
+ * @return 0:failure, 1:success
+ */
+int32 hom_recv_data(uint32 account_id, struct s_homunculus *sh, int32 flag)
+{
+	map_session_data *sd;
+	homun_data *hd;
+	bool created = false;
+
+	sd = map_id2sd(account_id);
+	if(!sd)
+		return 0;
+	if (sd->status.char_id != sh->char_id)
+	{
+		if (sd->status.hom_id == sh->hom_id)
+			sh->char_id = sd->status.char_id; //Correct char id.
+		else
+			return 0;
+	}
+	if(!flag) { // Failed to load
+		sd->status.hom_id = 0;
+		return 0;
+	}
+
+	if (!sd->status.hom_id) { //Hom just created.
+		sd->status.hom_id = sh->hom_id;
+		created = true;
+	}
+	if (sd->hd) //uh? Overwrite the data.
+		memcpy(&sd->hd->homunculus, sh, sizeof(struct s_homunculus));
+	else
+		hom_alloc(sd, sh);
+
+	hd = sd->hd;
+	if (created)
+		status_percent_heal(hd, 100, 100);
+
+	if(hd && hd->homunculus.hp && !hd->homunculus.vaporize && hd->prev == nullptr && sd->prev != nullptr)
+	{
+		if(map_addblock(hd))
+			return 0;
+		clif_spawn(hd);
+		clif_send_homdata( *hd, SP_ACK );
+		// For some reason, official servers send the homunculus info twice, then update the HP/SP again.
+		clif_hominfo(sd, hd, 1);
+		clif_hominfo(sd, hd, 0);
+		clif_homunculus_updatestatus(*sd, SP_HP);
+		clif_homunculus_updatestatus(*sd, SP_SP);
+		clif_homskillinfoblock( *hd );
+		hom_init_timers(hd);
+
+#ifdef RENEWAL
+		sc_start(sd, sd, SC_HOMUN_TIME, 100, 1, skill_get_time(AM_CALLHOMUN, 1));
+#endif
+	}
+
+	// Apply any active skill cooldowns.
+	for (uint16 i = 0; i < ARRAYLENGTH(hd->homunculus.scd); i++) {
+		skill_blockhomun_start(*hd, hd->homunculus.scd[i].skill_id, hd->homunculus.scd[i].tick);
+	}
+
+	return 1;
+}
+
+/**
+* Ask homunculus creation to char-server
+* @param sd
+* @param class_
+* @return True:Success; False:Failed
+*/
+bool hom_create_request(map_session_data *sd, int32 class_)
+{
+	nullpo_ret(sd);
+
+	std::shared_ptr<s_homunculus_db> homun_db = homunculus_db.homun_search(class_);
+
+	if (homun_db == nullptr)
+		return false;
+
+	struct s_homunculus homun;
+
+	memset(&homun, 0, sizeof(struct s_homunculus));
+	//Initial data
+	safestrncpy(homun.name, homun_db->name, NAME_LENGTH-1);
+	homun.class_ = class_;
+	homun.level = 1;
+	homun.hunger = 32; //32%
+	homun.intimacy = 2100; //21/1000
+	homun.char_id = sd->status.char_id;
+
+	homun.hp = 10;
+
+	s_hom_stats base = homun_db->base;
+
+	homun.max_hp = base.HP;
+	homun.max_sp = base.SP;
+	homun.str = base.str *10;
+	homun.agi = base.agi *10;
+	homun.vit = base.vit *10;
+	homun.int_= base.int_*10;
+	homun.dex = base.dex *10;
+	homun.luk = base.luk *10;
+
+	// Request homunculus creation
+	intif_homunculus_create(sd->status.account_id, &homun);
+	return true;
+}
+
+/**
+ * Make a player resurect an homon (player must have one)
+ * @param sd : player pointer
+ * @param per : hp percentage to revive homon
+ * @param x : x map coordinate
+ * @param y : Y map coordinate
+ * @return 0:failure, 1:success
+ */
+int32 hom_ressurect(map_session_data* sd, unsigned char per, int16 x, int16 y)
+{
+	homun_data* hd;
+	nullpo_ret(sd);
+
+	if (!sd->status.hom_id)
+		return 0; // no homunculus
+
+	if (!sd->hd) //Load homun data;
+		return intif_homunculus_requestload(sd->status.account_id, sd->status.hom_id);
+
+	hd = sd->hd;
+
+	if (hd->homunculus.vaporize == HOM_ST_REST)
+		return 0; // vaporized homunculi need to be 'called'
+
+	if (!status_isdead(*hd))
+		return 0; // already alive
+
+	hom_init_timers(hd);
+
+	if (!hd->prev)
+	{	//Add it back to the map.
+		hd->m = sd->m;
+		hd->x = x;
+		hd->y = y;
+		if(map_addblock(hd))
+			return 0;
+		clif_spawn(hd);
+	}
+
+	hd->ud.state.blockedmove = false;
+
+	// Apply any active skill cooldowns.
+	for (const auto &entry : hd->scd) {
+		skill_blockhomun_start(*hd, entry.first, entry.second);
+	}
+
+#ifdef RENEWAL
+	sc_start(sd, sd, SC_HOMUN_TIME, 100, 1, skill_get_time(AM_CALLHOMUN, 1));
+#endif
+
+	return status_revive(hd, per, 0);
+}
+
+/**
+* Revive homunculus
+* @param hd
+* @param hp
+* @param sp
+*/
+void hom_revive(homun_data *hd, uint32 hp, uint32 sp)
+{
+	map_session_data *sd = hd->master;
+	hd->homunculus.hp = hd->battle_status.hp;
+	if (!sd)
+		return;
+	clif_send_homdata( *hd, SP_ACK );
+	// For some reason, official servers send the homunculus info twice, then update the HP/SP again.
+	clif_hominfo(sd, hd, 1);
+	clif_hominfo(sd, hd, 0);
+	clif_homunculus_updatestatus(*sd, SP_HP);
+ 	clif_homunculus_updatestatus(*sd, SP_SP);
+	clif_homskillinfoblock( *hd );
+
+	if( hd->homunculus.class_ == MER_ELEANOR ){
+		sc_start(hd,hd, SC_STYLE_CHANGE, 100, MH_MD_FIGHTING, INFINITE_TICK);
+	}
+}
+
+/**
+* Reset homunculus status
+* @param hd
+*/
+void hom_reset_stats(homun_data *hd)
+{	//Resets a homunc stats back to zero (but doesn't touches hunger or intimacy)
+	struct s_homunculus *hom = &hd->homunculus;
+	struct s_hom_stats *base = &hd->homunculusDB->base;
+
+	hom->level = 1;
+	hom->hp = 10;
+	hom->max_hp = base->HP;
+	hom->max_sp = base->SP;
+	hom->str = base->str *10;
+	hom->agi = base->agi *10;
+	hom->vit = base->vit *10;
+	hom->int_= base->int_*10;
+	hom->dex = base->dex *10;
+	hom->luk = base->luk *10;
+	hom->exp = 0;
+	hd->exp_next = homun_exp_db.get_nextexp(hom->level);
+	memset(&hd->homunculus.hskill, 0, sizeof hd->homunculus.hskill);
+	hd->homunculus.skillpts = 0;
+}
+
+/**
+* Shuffle homunculus status
+* @param hd
+*/
+int32 hom_shuffle(homun_data *hd)
+{
+	map_session_data *sd;
+	int32 lv, i, skillpts;
+	struct s_skill b_skill[MAX_HOMUNSKILL];
+
+	if (!hom_is_active(hd))
+		return 0;
+
+	sd = hd->master;
+	lv = hd->homunculus.level;
+	t_exp exp = hd->homunculus.exp;
+	memcpy(&b_skill, &hd->homunculus.hskill, sizeof(b_skill));
+	skillpts = hd->homunculus.skillpts;
+	//Reset values to level 1.
+	hom_reset_stats(hd);
+	//Level it back up
+	for (i = 1; i < lv && hd->exp_next; i++){
+		hd->homunculus.exp += hd->exp_next;
+		// Should never happen, but who knows
+		if( !hom_levelup(hd) ) {
+			break;
+		}
+	}
+
+	if(hd->homunculus.class_ == hd->homunculusDB->evo_class) {
+		//Evolved bonuses
+		struct s_homunculus *hom = &hd->homunculus;
+		struct s_hom_stats *max = &hd->homunculusDB->emax, *min = &hd->homunculusDB->emin;
+
+		hom->max_hp += rnd_value(min->HP, max->HP);
+		hom->max_sp += rnd_value(min->SP, max->SP);
+		hom->str += 10*rnd_value(min->str, max->str);
+		hom->agi += 10*rnd_value(min->agi, max->agi);
+		hom->vit += 10*rnd_value(min->vit, max->vit);
+		hom->int_+= 10*rnd_value(min->int_,max->int_);
+		hom->dex += 10*rnd_value(min->dex, max->dex);
+		hom->luk += 10*rnd_value(min->luk, max->luk);
+	}
+
+	hd->homunculus.exp = exp;
+	memcpy(&hd->homunculus.hskill, &b_skill, sizeof(b_skill));
+	hd->homunculus.skillpts = skillpts;
+	clif_homskillinfoblock( *hd );
+	status_calc_homunculus(hd, SCO_NONE);
+	status_percent_heal(hd, 100, 100);
+	clif_specialeffect(hd,EF_HO_UP,AREA);
+
+	return 1;
+}
+
+/**
+ * Get minimum intimacy value of specified grade
+ * @param grade see enum e_homun_grade
+ * @return Intimacy value
+ **/
+uint32 hom_intimacy_grade2intimacy(enum e_homun_grade grade) {
+	if (grade < HOMGRADE_HATE_WITH_PASSION || grade > HOMGRADE_LOYAL)
+		return 0;
+	return intimacy_grades[grade].min_value;
+}
+
+/**
+ * Get grade of given intimacy value
+ * @param intimacy
+ * @return Grade, see enum e_homun_grade
+ **/
+enum e_homun_grade hom_intimacy_intimacy2grade(uint32 intimacy) {
+#define CHK_HOMINTIMACY(grade) { if (intimacy >= intimacy_grades[(grade)].min_value) return (grade); }
+	CHK_HOMINTIMACY(HOMGRADE_LOYAL)
+	CHK_HOMINTIMACY(HOMGRADE_CORDIAL)
+	CHK_HOMINTIMACY(HOMGRADE_NEUTRAL)
+	CHK_HOMINTIMACY(HOMGRADE_SHY)
+	CHK_HOMINTIMACY(HOMGRADE_AWKWARD)
+	CHK_HOMINTIMACY(HOMGRADE_HATE)
+#undef CHK_HOMINTIMACY
+	return HOMGRADE_HATE_WITH_PASSION;
+}
+
+/**
+* Get initmacy grade
+* @param hd
+*/
+uint8 hom_get_intimacy_grade(homun_data *hd) {
+	return hom_intimacy_intimacy2grade(hd->homunculus.intimacy);
+}
+
+const std::string HomunculusDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/homunculus_db.yml";
+}
+
+bool HomunculusDatabase::parseStatusNode(const std::string &nodeName, const std::string &subNodeName, const ryml::NodeRef &node, s_hom_stats &bonus) {
+	uint32 value;
+
+	if (!this->asUInt32(node, nodeName, value))
+		return false;
+
+	if (subNodeName.compare("Hp") == 0)
+		bonus.HP = value;
+	else if (subNodeName.compare("Sp") == 0)
+		bonus.SP = value;
+	else if (subNodeName.compare("Str") == 0)
+		bonus.str = static_cast<uint16>(value);
+	else if (subNodeName.compare("Agi") == 0)
+		bonus.agi = static_cast<uint16>(value);
+	else if (subNodeName.compare("Vit") == 0)
+		bonus.vit = static_cast<uint16>(value);
+	else if (subNodeName.compare("Int") == 0)
+		bonus.int_ = static_cast<uint16>(value);
+	else if (subNodeName.compare("Dex") == 0)
+		bonus.dex = static_cast<uint16>(value);
+	else if (subNodeName.compare("Luk") == 0)
+		bonus.luk = static_cast<uint16>(value);
+

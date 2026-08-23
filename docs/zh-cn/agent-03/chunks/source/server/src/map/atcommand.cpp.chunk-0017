@@ -1,0 +1,500 @@
+	pc_identifyall(sd, true);
+	return 0;
+}
+
+/*==========================================
+ * @gmotd (Global MOTD)
+ * by davidsiaw :P
+ *------------------------------------------*/
+ACMD_FUNC(gmotd)
+{
+	FILE* fp;
+
+	if( ( fp = fopen(motd_txt, "r") ) != nullptr )
+	{
+		char buf[CHAT_SIZE_MAX];
+		size_t len;
+
+		while( fgets(buf, sizeof(buf), fp) )
+		{
+			if( buf[0] == '/' && buf[1] == '/' )
+			{
+				continue;
+			}
+
+			len = strlen(buf);
+
+			while( len && ( buf[len-1] == '\r' || buf[len-1] == '\n' ) )
+			{// strip trailing EOL characters
+				len--;
+			}
+
+			if( len )
+			{
+				buf[len] = 0;
+
+				intif_broadcast(buf, len+1, 0);
+			}
+		}
+		fclose(fp);
+	}
+	return 0;
+}
+
+ACMD_FUNC(misceffect)
+{
+	int32 effect = 0;
+	nullpo_retr(-1, sd);
+	if (!message || !*message)
+		return -1;
+	if (sscanf(message, "%11d", &effect) < 1)
+		return -1;
+	if (effect < NOTIFYEFFECT_BASE_LEVEL_UP || effect > NOTIFYEFFECT_TAEKWON_BASE_LEVEL_UP)
+		return -1;
+	clif_misceffect(*sd, static_cast<e_notify_effect>(effect));
+
+	return 0;
+}
+
+/*==========================================
+ * MAIL SYSTEM
+ *------------------------------------------*/
+ACMD_FUNC(mail)
+{
+	nullpo_ret(sd);
+	mail_openmail(sd);
+	return 0;
+}
+
+/*==========================================
+ * Show Monster DB Info   v 1.0
+ * originally by [Lupus]
+ *------------------------------------------*/
+ACMD_FUNC(mobinfo)
+{
+	unsigned char msize[SZ_ALL][7] = { "Small", "Medium", "Large" };
+	unsigned char mrace[RC_ALL][11] = { "Formless", "Undead", "Beast", "Plant", "Insect", "Fish", "Demon", "Demi-Human", "Angel", "Dragon", "Player" };
+	unsigned char melement[ELE_ALL][8] = { "Neutral", "Water", "Earth", "Fire", "Wind", "Poison", "Holy", "Dark", "Ghost", "Undead" };
+	char atcmd_output2[CHAT_SIZE_MAX];
+	uint16 mob_ids[MAX_SEARCH], count;
+	uint16 i;
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	memset(atcmd_output2, '\0', sizeof(atcmd_output2));
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1239)); // Please enter a monster name/ID (usage: @mobinfo <monster_name_or_monster_ID>).
+		return -1;
+	}
+
+	// If monster identifier/name argument is a name
+	i = util::strtoint32def(message);
+	if (i != 0 && (i = mobdb_checkid(i)))
+	{
+		mob_ids[0] = i;
+		count = 1;
+	} else
+		count = mobdb_searchname_array(message, mob_ids, MAX_SEARCH);
+
+	if (!count) {
+		clif_displaymessage(fd, msg_txt(sd,40)); // Invalid monster ID or name.
+		return -1;
+	}
+
+	if (count >= MAX_SEARCH) {
+		sprintf(atcmd_output, msg_txt(sd,269), MAX_SEARCH); // Displaying first %d matches
+		clif_displaymessage(fd, atcmd_output);
+		count = MAX_SEARCH;
+	}
+	for (uint16 k = 0; k < count; k++) {
+		std::shared_ptr<s_mob_db> mob = mob_db.find(mob_ids[k]);
+
+		if (mob == nullptr)
+			continue;
+
+		t_exp base_exp = mob->base_exp;
+		t_exp job_exp = mob->job_exp;
+
+		if (pc_isvip(sd)) { // Display EXP rate increase for VIP
+			base_exp += (base_exp * battle_config.vip_base_exp_increase) / 100;
+			job_exp += (job_exp * battle_config.vip_job_exp_increase) / 100;
+		}
+#ifdef RENEWAL_EXP
+		if( battle_config.atcommand_mobinfo_type ) {
+			int32 penalty = pc_level_penalty_mod( sd, PENALTY_EXP, mob );
+
+			base_exp = base_exp * penalty / 100;
+			job_exp = job_exp * penalty / 100;
+		}
+#endif
+		// stats
+		if( mob->get_bosstype() == BOSSTYPE_MVP )
+			sprintf(atcmd_output, msg_txt(sd,1240), mob->name.c_str(), mob->jname.c_str(), mob->sprite.c_str(), mob->id); // MVP Monster: '%s'/'%s'/'%s' (%d)
+		else
+			sprintf(atcmd_output, msg_txt(sd,1241), mob->name.c_str(), mob->jname.c_str(), mob->sprite.c_str(), mob->id); // Monster: '%s'/'%s'/'%s' (%d)
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1242), mob->lv, mob->status.max_hp, base_exp, job_exp, MOB_HIT(mob), MOB_FLEE(mob)); //  Lv:%d  HP:%d  Base EXP:%llu  Job EXP:%llu  HIT:%d  FLEE:%d
+		clif_displaymessage(fd, atcmd_output);
+		sprintf(atcmd_output, msg_txt(sd,1243), //  DEF:%d  MDEF:%d  STR:%d  AGI:%d  VIT:%d  INT:%d  DEX:%d  LUK:%d
+			mob->status.def, mob->status.mdef,mob->status.str, mob->status.agi,
+			mob->status.vit, mob->status.int_, mob->status.dex, mob->status.luk);
+		clif_displaymessage(fd, atcmd_output);
+
+		sprintf(atcmd_output, msg_txt(sd,1244), //  ATK:%d~%d  Range:%d~%d~%d  Size:%s  Race: %s  Element: %s (Lv:%d)
+			mob->status.batk + mob->status.rhw.atk, mob->status.batk + mob->status.rhw.atk2, mob->status.rhw.range,
+			mob->range2 , mob->range3, msize[mob->status.size],
+			mrace[mob->status.race], melement[mob->status.def_ele], mob->status.ele_lv);
+		clif_displaymessage(fd, atcmd_output);
+#ifdef RENEWAL
+		sprintf(atcmd_output, msg_txt(sd, 827), mob->status.res, mob->status.mres);//  MDEF:%d  RES:%d  MRES:%d
+		clif_displaymessage(fd, atcmd_output);
+#endif
+		// drops
+		clif_displaymessage(fd, msg_txt(sd,1245)); //  Drops:
+		strcpy(atcmd_output, " ");
+
+		if( mob->dropitem.empty() ){
+			clif_displaymessage(fd, msg_txt(sd,1246)); // This monster has no drops.
+		}else{
+			uint32 j = 0;
+			int32 drop_modifier = 100;
+#ifdef RENEWAL_DROP
+			if( battle_config.atcommand_mobinfo_type ){
+				drop_modifier = pc_level_penalty_mod( sd, PENALTY_DROP, mob );
+			}
+#endif
+
+			for( const std::shared_ptr<s_mob_drop>& entry : mob->dropitem ){
+				if (entry->nameid == 0 || entry->rate < 1)
+					continue;
+
+				std::shared_ptr<item_data> id = item_db.find(entry->nameid);
+
+				if (id == nullptr)
+					continue;
+
+				int32 droprate = mob_getdroprate( sd, mob, entry->rate, drop_modifier );
+
+				sprintf(atcmd_output2, " - %s  %02.02f%%", item_db.create_item_link( id ).c_str(), (float)droprate / 100);
+				strcat(atcmd_output, atcmd_output2);
+				if (++j % 3 == 0) {
+					clif_displaymessage(fd, atcmd_output);
+					strcpy(atcmd_output, " ");
+				}
+			}
+
+			if( j % 3 != 0 ){
+				clif_displaymessage(fd, atcmd_output);
+			}
+		}
+
+		// mvp
+		if( mob->get_bosstype() == BOSSTYPE_MVP ){
+			sprintf(atcmd_output, msg_txt(sd,1247), mob->mexp); //  MVP Bonus EXP:%llu
+			clif_displaymessage(fd, atcmd_output);
+			clif_displaymessage(fd, msg_txt(sd,1248)); //  MVP drops:
+			strcpy(atcmd_output, " ");
+
+			if( mob->mvpitem.empty() ){
+				clif_displaymessage(fd, msg_txt(sd,1249)); // This monster has no MVP drops.
+			}else{
+				float mvpremain = 100.0; //Remaining drop chance for official mvp drop mode
+				uint32 j = 0;
+
+				for( const std::shared_ptr<s_mob_drop>& entry : mob->mvpitem ){
+					if (entry->nameid == 0)
+						continue;
+
+					std::shared_ptr<item_data> id = item_db.find(entry->nameid);
+
+					if (id == nullptr)
+						continue;
+
+					//Because if there are 3 MVP drops at 50%, the first has a chance of 50%, the second 25% and the third 12.5%
+					float mvppercent = (float)entry->rate * mvpremain / 10000.0f;
+					if(battle_config.item_drop_mvp_mode == 0) {
+						mvpremain -= mvppercent;
+					}
+					if (mvppercent > 0) {
+						sprintf(atcmd_output2, " - %s  %02.02f%%", item_db.create_item_link( id ).c_str(), mvppercent);
+						strcat(atcmd_output, atcmd_output2);
+						if (++j % 3 == 0) {
+							clif_displaymessage(fd, atcmd_output);
+							strcpy(atcmd_output, " ");
+						}
+					}
+				}
+
+				if( j % 3 != 0 ){
+					clif_displaymessage(fd, atcmd_output);
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+/*=========================================
+* @showmobs by KarLaeda
+* => For 15 sec displays the mobs on minimap
+*------------------------------------------*/
+ACMD_FUNC(showmobs)
+{
+	char mob_name[100];
+	int32 mob_id;
+	int32 number = 0;
+	struct s_mapiterator* it;
+
+	nullpo_retr(-1, sd);
+
+	if(sscanf(message, "%99[^\n]", mob_name) < 0)
+		return -1;
+
+	if((mob_id = strtol(mob_name, nullptr, 10)) == 0)
+		mob_id = mobdb_searchname(mob_name);
+
+	std::shared_ptr<s_mob_db> mob = mob_db.find(mob_id);
+
+	if (mob == nullptr || mobdb_checkid(mob_id) == 0) {
+		snprintf(atcmd_output, sizeof atcmd_output, msg_txt(sd,1250),mob_name); // Invalid mob id %s!
+		clif_displaymessage(fd, atcmd_output);
+		return 0;
+	}
+
+	if(status_has_mode(&mob->status,MD_STATUSIMMUNE) && !pc_has_permission(sd, PC_PERM_SHOW_BOSS)){	// If player group does not have access to boss mobs.
+		clif_displaymessage(fd, msg_txt(sd,1251)); // Can't show boss mobs!
+		return 0;
+	}
+
+	if(mob_id == strtol(mob_name, nullptr, 10) && !mob->jname.empty())
+		strcpy(mob_name, mob->jname.c_str());    // --ja--
+		//strcpy(mob_name, mob->name.c_str());    // --en--
+
+	snprintf(atcmd_output, sizeof atcmd_output, msg_txt(sd,1252), // Mob Search... %s %s
+		mob_name, mapindex_id2name(sd->mapindex));
+	clif_displaymessage(fd, atcmd_output);
+
+	it = mapit_geteachmob();
+	for(;;)
+	{
+		TBL_MOB* md = (TBL_MOB*)mapit_next(it);
+		if( md == nullptr )
+			break;// no more mobs
+
+		if( md->m != sd->m )
+			continue;
+		if( mob_id != -1 && md->mob_id != mob_id )
+			continue;
+		if( md->special_state.ai || md->master_id )
+			continue; // hide slaves and player summoned mobs
+		if( md->spawn_timer != INVALID_TIMER )
+			continue; // hide mobs waiting for respawn
+
+		++number;
+		clif_viewpoint( *sd, 1, 0, md->x, md->y, number, 0xFFFFFF );
+	}
+	mapit_free(it);
+
+	return 0;
+}
+
+/*==========================================
+ * homunculus level up [orn]
+ *------------------------------------------*/
+ACMD_FUNC(homlevel)
+{
+	TBL_HOM * hd;
+	int32 level = 0, i = 0;
+
+	nullpo_retr(-1, sd);
+
+	if ( !message || !*message || ( level = atoi(message) ) < 1 ) {
+		clif_displaymessage(fd, msg_txt(sd,1253)); // Please enter a level adjustment (usage: @homlevel <number of levels>).
+		return -1;
+	}
+
+	if ( !hom_is_active(sd->hd) ) {
+		clif_displaymessage(fd, msg_txt(sd,1254)); // You do not have a homunculus.
+		return -1;
+	}
+
+	hd = sd->hd;
+
+	for (i = 1; i <= level && hd->exp_next; i++){
+		hd->homunculus.exp += hd->exp_next;
+		if( !hom_levelup(hd) )
+			break;
+	}
+
+	status_calc_homunculus(hd, SCO_NONE);
+	status_percent_heal(hd, 100, 100);
+	clif_specialeffect(hd,EF_HO_UP,AREA);
+
+	return 0;
+}
+
+/*==========================================
+ * homunculus evolution H [orn]
+ *------------------------------------------*/
+ACMD_FUNC(homevolution)
+{
+	nullpo_retr(-1, sd);
+
+	if ( !hom_is_active(sd->hd) ) {
+		clif_displaymessage(fd, msg_txt(sd,1254)); // You do not have a homunculus.
+		return -1;
+	}
+
+	if ( !hom_evolution(sd->hd) ) {
+		clif_displaymessage(fd, msg_txt(sd,1255)); // Your homunculus doesn't evolve.
+		return -1;
+	}
+
+	clif_homskillinfoblock( *sd->hd );
+
+	return 0;
+}
+
+ACMD_FUNC(hommutate)
+{
+	int32 homun_id, m_class = 0, m_id;
+	nullpo_retr(-1, sd);
+
+	if (!hom_is_active(sd->hd)) {
+		clif_displaymessage(fd, msg_txt(sd,1254)); // You do not have a homunculus.
+		return -1;
+	}
+
+	if (!message || !*message) {
+		homun_id = rnd_value<uint16>(MER_EIRA, MER_ELEANOR);
+	} else {
+		homun_id = atoi(message);
+	}
+
+	m_class = hom_class2mapid(sd->hd->homunculus.class_);
+	m_id	= hom_class2mapid(homun_id);
+
+	if (m_class != -1 && m_id != -1 && m_class&HOM_EVO && m_id&HOM_S && sd->hd->homunculus.level >= 99) {
+		hom_mutate(sd->hd, homun_id);
+	} else {
+		clif_emotion(*sd->hd, ET_SWEAT );
+	}
+	return 0;
+}
+
+/*==========================================
+ * call choosen homunculus [orn]
+ *------------------------------------------*/
+ACMD_FUNC(makehomun)
+{
+	int32 homunid;
+	nullpo_retr(-1, sd);
+
+	if ( sd->status.hom_id ) {
+		clif_displaymessage(fd, msg_txt(sd,450)); // You already have a homunculus
+		return -1;
+	}
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1256)); // Please enter a homunculus ID (usage: @makehomun <homunculus id>).
+		return -1;
+	}
+
+	homunid = atoi(message);
+	if( homunid < HM_CLASS_BASE || homunid > HM_CLASS_BASE + MAX_HOMUNCULUS_CLASS - 1 )
+	{
+		clif_displaymessage(fd, msg_txt(sd,1257)); // Invalid Homunculus ID.
+		return -1;
+	}
+
+	hom_create_request(sd,homunid);
+	return 0;
+}
+
+/*==========================================
+ * modify homunculus intimacy [orn]
+ *------------------------------------------*/
+ACMD_FUNC(homfriendly)
+{
+	int32 friendly = 0;
+
+	nullpo_retr(-1, sd);
+
+	if ( !hom_is_active(sd->hd) ) {
+		clif_displaymessage(fd, msg_txt(sd,1254)); // You do not have a homunculus.
+		return -1;
+	}
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1258)); // Please enter a friendly value (usage: @homfriendly <friendly value [0-1000]>).
+		return -1;
+	}
+
+	friendly = atoi(message);
+	friendly = cap_value(friendly, 0, 1000);
+
+	sd->hd->homunculus.intimacy = friendly * 100 ;
+	clif_send_homdata( *sd->hd, SP_INTIMATE );
+	return 0;
+}
+
+/*==========================================
+ * modify homunculus hunger [orn]
+ *------------------------------------------*/
+ACMD_FUNC(homhungry)
+{
+	int32 hungry = 0;
+
+	nullpo_retr(-1, sd);
+
+	if ( !hom_is_active(sd->hd) ) {
+		clif_displaymessage(fd, msg_txt(sd,1254)); // You do not have a homunculus.
+		return -1;
+	}
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1259)); // Please enter a hunger value (usage: @homhungry <hunger value [0-100]>).
+		return -1;
+	}
+
+	hungry = atoi(message);
+	hungry = cap_value(hungry, 0, 100);
+
+	sd->hd->homunculus.hunger = hungry;
+	clif_send_homdata( *sd->hd, SP_HUNGRY );
+	return 0;
+}
+
+/*==========================================
+ * make the homunculus speak [orn]
+ *------------------------------------------*/
+ACMD_FUNC(homtalk)
+{
+	char mes[100],temp[CHAT_SIZE_MAX];
+
+	nullpo_retr(-1, sd);
+
+	if ( battle_config.min_chat_delay ) {
+		if( DIFF_TICK(sd->cantalk_tick, gettick()) > 0 )
+			return 0;
+		sd->cantalk_tick = gettick() + battle_config.min_chat_delay;
+	}
+
+	if (sd->sc.cant.chat || (sd->state.block_action & PCBLOCK_CHAT))
+		return -1; //no "chatting" while muted.
+
+	if ( !hom_is_active(sd->hd) ) {
+		clif_displaymessage(fd, msg_txt(sd,1254)); // You do not have a homunculus.
+		return -1;
+	}
+
+	if (!message || !*message || sscanf(message, "%99[^\n]", mes) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1260)); // Please enter a message (usage: @homtalk <message>).
+		return -1;
+	}
+
+	snprintf(temp, sizeof temp ,"%s : %s", sd->hd->homunculus.name, mes);
+	clif_disp_overhead(sd->hd, temp);
+
+	return 0;
+}

@@ -1,0 +1,500 @@
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( sd->status.party_id ) {
+		script_pushint(st,-2);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	safestrncpy(party_name,script_getstr(st,2),NAME_LENGTH);
+	trim(party_name);
+	if( party_searchname(party_name) ) {
+		script_pushint(st,-3);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if( script_getnum(st,4) )
+		item1 = 1;
+	if( script_getnum(st,5) )
+		item2 = 1;
+
+	party_create_byscript = 1;
+	script_pushint( st, party_create( *sd, party_name, item1, item2 ) );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Adds player to specified party
+ * party_addmember <party id>,<char id>;
+ * @param party_id: The party that will be entered by player
+ * @param char_id: Char id of player that will be joined to the party
+ * @return val: Result value
+ *	-5	- another character of the same account is in the party
+ *	-4	- party is full
+ *	-3	- party is not found
+ *	-2	- player is in party already
+ *	-1	- player is not found
+ *	0	- unknown error
+ *	1	- success
+ */
+BUILDIN_FUNC(party_addmember)
+{
+	int32 party_id = script_getnum(st,2);
+	TBL_PC *sd;
+	struct party_data *party;
+
+	if( !(sd = map_charid2sd(script_getnum(st,3))) ) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( sd->status.party_id ) {
+		script_pushint(st,-2);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !(party = party_search(party_id)) ) {
+		script_pushint(st,-3);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (battle_config.block_account_in_same_party) {
+		int32 i;
+		ARR_FIND(0, MAX_PARTY, i, party->party.member[i].account_id == sd->status.account_id);
+		if (i < MAX_PARTY) {
+			script_pushint(st,-5);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if( party->party.count >= MAX_PARTY ) {
+		script_pushint(st,-4);
+		return SCRIPT_CMD_FAILURE;
+	}
+	sd->party_invite = party_id;
+	script_pushint( st, party_add_member( party_id, *sd ) );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Removes player from his/her party. If party_id and char_id is empty remove the invoker from his/her party
+ * party_delmember {<char id>,<party_id>};
+ * @param: char_id
+ * @param: party_id
+ * @return val: Result value
+ *	-3	- player is not in party
+ *	-2	- party is not found
+ *	-1	- player is not found
+ *	0	- unknown error
+ *	1	- success
+ */
+BUILDIN_FUNC(party_delmember)
+{
+	TBL_PC *sd = nullptr;
+
+	if( !script_hasdata(st,2) && !script_hasdata(st,3) && !script_rid2sd(sd) ) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if( sd || script_charid2sd(2,sd) )
+		script_pushint(st,party_removemember2(sd,0,0));
+	else
+		script_pushint(st,party_removemember2(nullptr,script_getnum(st,2),script_getnum(st,3)));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Changes party leader of specified party (even the leader is offline)
+ * party_changeleader <party id>,<char id>;
+ * @param party_id: ID of party
+ * @param char_id: Char ID of new leader
+ * @return val: Result value
+ *	-4	- player is party leader already
+ *	-3	- player is not in this party
+ *	-2	- player is not found
+ *	-1	- party is not found
+ *	0	- unknown error
+ *	1	- success */
+BUILDIN_FUNC(party_changeleader)
+{
+	int32 i, party_id = script_getnum(st,2);
+	TBL_PC *sd = nullptr;
+	TBL_PC *tsd = nullptr;
+	struct party_data *party = nullptr;
+
+	if( !(party = party_search(party_id)) ) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !(tsd = map_charid2sd(script_getnum(st,3))) ) {
+		script_pushint(st,-2);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( tsd->status.party_id != party_id ) {
+		script_pushint(st,-3);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	ARR_FIND(0,MAX_PARTY,i,party->party.member[i].leader);
+	if( i >= MAX_PARTY ) {	//this is should impossible!
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if( party->data[i].sd == tsd ) {
+		script_pushint(st,-4);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st,party_changeleader(sd,tsd,party));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Changes party option
+ * party_changeoption <party id>,<option>,<flag>;
+ * @param party_id: ID of party that will be changed
+ * @param option: Type of option
+ * @return val: -1 - party is not found, 0 - invalid option, 1 - success
+ */
+BUILDIN_FUNC(party_changeoption)
+{
+	struct party_data *party;
+
+	if( !(party = party_search(script_getnum(st,2))) ) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st,party_setoption(party,script_getnum(st,3),script_getnum(st,4)));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Destroys party with party id.
+ * party_destroy <party id>;
+ * @param party_id: ID of party that will be destroyed
+ */
+BUILDIN_FUNC(party_destroy)
+{
+	int32 i;
+	struct party_data *party;
+
+	if( !(party = party_search(script_getnum(st,2))) ) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	ARR_FIND(0,MAX_PARTY,i,party->party.member[i].leader);
+	if( i >= MAX_PARTY || !party->data[i].sd ) { //leader not online
+		int32 j;
+		for( j = 0; j < MAX_PARTY; j++ ) {
+			TBL_PC *sd = party->data[j].sd;
+			if(sd)
+				party_member_withdraw(party->party.party_id,sd->status.account_id,sd->status.char_id,sd->status.name,PARTY_MEMBER_WITHDRAW_LEAVE);
+			else if( party->party.member[j].char_id )
+				intif_party_leave(party->party.party_id,party->party.member[j].account_id,party->party.member[j].char_id,party->party.member[j].name,PARTY_MEMBER_WITHDRAW_LEAVE);
+		}
+		party_broken(party->party.party_id);
+		script_pushint(st,1);
+	}
+	else //leader leave = party broken
+		script_pushint( st, party_leave( *party->data[i].sd ) );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Returns various information about a player's VIP status. Need to enable VIP system
+ * vip_status <type>,{"<character name>"};
+ * @param type: Info type, see enum vip_status_type
+ * @param name: Character name (Optional)
+ */
+BUILDIN_FUNC(vip_status) {
+#ifdef VIP_ENABLE
+	TBL_PC *sd;
+	int32 type;
+
+	if( !script_nick2sd(3,sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	type = script_getnum(st, 2);
+
+	switch(type) {
+		case VIP_STATUS_ACTIVE: // Get VIP status.
+			script_pushint(st, pc_isvip(sd));
+			break;
+		case VIP_STATUS_EXPIRE: // Get VIP expire date.
+			if (pc_isvip(sd)) {
+				script_pushint(st, sd->vip.time);
+			} else
+				script_pushint(st, 0);
+			break;
+		case VIP_STATUS_REMAINING: // Get remaining time.
+			if (pc_isvip(sd)) {
+				script_pushint(st, sd->vip.time - time(nullptr));
+			} else
+				script_pushint(st, 0);
+			break;
+		default:
+			ShowError( "buildin_vip_status: Unsupported type %d.\n", type );
+			return SCRIPT_CMD_FAILURE;
+	}
+#else
+	script_pushint(st, 0);
+#endif
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/** Adds or removes VIP time in minutes. Need to enable VIP system
+ * vip_time <time in mn>,{"<character name>"};
+ * @param time: VIP duration in minutes. If time < 0 remove time, else add time.
+ * @param name: Character name (optional)
+ */
+BUILDIN_FUNC(vip_time) {
+#ifdef VIP_ENABLE //would be a pain for scripting npc otherwise
+	TBL_PC *sd;
+	int32 viptime = script_getnum(st, 2) * 60; // Convert since it's given in minutes.
+
+	if( !script_nick2sd(3,sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	chrif_req_login_operation(sd->status.account_id, sd->status.name, CHRIF_OP_LOGIN_VIP, viptime, 7, 0); 
+#endif
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/**
+ * Turns a player into a monster and optionally can grant a SC attribute effect.
+ * transform <monster name/ID>, <duration>, <sc type>, <val1>, <val2>, <val3>, <val4>;
+ * active_transform <monster name/ID>, <duration>, <sc type>, <val1>, <val2>, <val3>, <val4>;
+ * @param monster: Monster ID or name
+ * @param duration: Transform duration in millisecond (ms)
+ * @param sc_type: Type of SC that will be affected during the transformation
+ * @param val1: Value for SC
+ * @param val2: Value for SC
+ * @param val3: Value for SC
+ * @param val4: Value for SC
+ * @author: malufett
+ */
+BUILDIN_FUNC(montransform) {
+	TBL_PC *sd;
+	enum sc_type type;
+	int32 tick, mob_id, val1, val2, val3, val4;
+	val1 = val2 = val3 = val4 = 0;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_FAILURE;
+
+	if( script_isstring(st, 2) )
+		mob_id = mobdb_searchname(script_getstr(st, 2));
+	else
+		mob_id = mobdb_checkid(script_getnum(st, 2));
+
+	tick = script_getnum(st, 3);
+
+	if (script_hasdata(st, 4))
+		type = (sc_type)script_getnum(st, 4);
+	else
+		type = SC_NONE;
+
+	if (mob_id == 0) {
+		if( script_isstring(st, 2) )
+			ShowWarning("buildin_montransform: Attempted to use non-existing monster '%s'.\n", script_getstr(st, 2));
+		else
+			ShowWarning("buildin_montransform: Attempted to use non-existing monster of ID '%d'.\n", script_getnum(st, 2));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (mob_id == MOBID_EMPERIUM) {
+		ShowWarning("buildin_montransform: Monster 'Emperium' cannot be used.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!(type >= SC_NONE && type < SC_MAX)) {
+		ShowWarning("buildin_montransform: Unsupported status change id %d\n", type);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st, 5))
+		val1 = script_getnum(st, 5);
+
+	if (script_hasdata(st, 6))
+		val2 = script_getnum(st, 6);
+
+	if (script_hasdata(st, 7))
+		val3 = script_getnum(st, 7);
+
+	if (script_hasdata(st, 8))
+		val4 = script_getnum(st, 8);
+
+	if (tick != 0) {
+		if (battle_config.mon_trans_disable_in_gvg && map_flag_gvg2(sd->m)) {
+			clif_displaymessage(sd->fd, msg_txt(sd,731)); // Transforming into monster is not allowed in Guild Wars.
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (sd->disguise){
+			clif_displaymessage(sd->fd, msg_txt(sd,729)); // Cannot transform into monster while in disguise.
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (!strcmp(script_getfuncname(st), "active_transform")) {
+			status_change_end(sd, SC_ACTIVE_MONSTER_TRANSFORM); // Clear previous
+			sc_start2(nullptr, sd, SC_ACTIVE_MONSTER_TRANSFORM, 100, mob_id, type, tick);
+		} else {
+			status_change_end(sd, SC_MONSTER_TRANSFORM); // Clear previous
+			sc_start2(nullptr, sd, SC_MONSTER_TRANSFORM, 100, mob_id, type, tick);
+		}
+		if (type != SC_NONE)
+			sc_start4(nullptr, sd, type, 100, val1, val2, val3, val4, tick);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Attach script to player for certain duration
+ * bonus_script "<script code>",<duration>{,<flag>{,<type>{,<status_icon>{,<char_id>}}}};
+ * @param "script code"
+ * @param duration
+ * @param flag
+ * @param icon
+ * @param char_id
+* @author [Cydh]
+ **/
+BUILDIN_FUNC(bonus_script) {
+	uint16 flag = 0;
+	int16 icon = EFST_BLANK;
+	uint32 dur;
+	uint8 type = 0;
+	TBL_PC* sd;
+	const char *script_str = nullptr;
+	struct s_bonus_script_entry *entry = nullptr;
+
+	if ( !script_charid2sd(7,sd) )
+		return SCRIPT_CMD_FAILURE;
+	
+	script_str = script_getstr(st,2);
+	dur = 1000 * abs(script_getnum(st,3));
+	FETCH(4, flag);
+	FETCH(5, type);
+	FETCH(6, icon);
+
+	// No Script string, No Duration!
+	if (script_str[0] == '\0' || !dur) {
+		ShowError("buildin_bonus_script: Invalid! Script: \"%s\". Duration: %d\n", script_str, dur);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (strlen(script_str) >= MAX_BONUS_SCRIPT_LENGTH) {
+		ShowError("buildin_bonus_script: Script string to long: \"%s\".\n", script_str);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (icon <= EFST_BLANK || icon >= EFST_MAX)
+		icon = EFST_BLANK;
+
+	if ((entry = pc_bonus_script_add(sd, script_str, dur, (enum efst_type)icon, flag, type))) {
+		linkdb_insert(&sd->bonus_script.head, (void *)((intptr_t)entry), entry);
+		status_calc_pc(sd,SCO_NONE);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+* Removes all bonus script from player
+* bonus_script_clear {<flag>,{<char_id>}};
+* @param flag 0 - Except permanent bonus, 1 - With permanent bonus
+* @param char_id Clear script from this character
+* @author [Cydh]
+*/
+BUILDIN_FUNC(bonus_script_clear) {
+	TBL_PC* sd;
+	bool flag = false;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if (script_hasdata(st,2))
+		flag = script_getnum(st,2) != 0;
+
+	pc_bonus_script_clear(sd,(flag ? BSF_PERMANENT : BSF_REM_ALL));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Allows player to use atcommand while talking with NPC
+* enable_command;
+* @author [Cydh], [Kichi]
+*/
+BUILDIN_FUNC(enable_command) {
+	TBL_PC* sd;
+
+	if (!script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE;
+	sd->state.disable_atcommand_on_npc = 0;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Prevents player to use atcommand while talking with NPC
+* disable_command;
+* @author [Cydh], [Kichi]
+*/
+BUILDIN_FUNC(disable_command) {
+	TBL_PC* sd;
+
+	if (!script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE;
+	sd->state.disable_atcommand_on_npc = 1;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Get the information of the members of a guild by type.
+ * getguildmember <guild_id>{,<type>};
+ * @param guild_id: ID of guild
+ * @param type: Type of option (optional)
+ */
+BUILDIN_FUNC(getguildmember)
+{
+	uint8 j = 0;
+
+	auto g = guild_search(script_getnum(st,2));
+
+	if (g) {
+		uint8 i, type = 0;
+		struct script_data *data = nullptr;
+		char *varname = nullptr;
+
+		if (script_hasdata(st,3))
+ 			type = script_getnum(st,3);
+
+		if (script_hasdata(st,4)) {
+			data = script_getdata(st, 4);
+			if (!data_isreference(data)) {
+				ShowError("buildin_getguildmember: Error in argument! Please give a variable to store values in.\n");
+				return SCRIPT_CMD_FAILURE;
+			}
+			varname = reference_getname(data);
+			if (type <= 0 && varname[strlen(varname)-1] != '$') {
+				ShowError("buildin_getguildmember: The array %s is not string type.\n", varname);
+				return SCRIPT_CMD_FAILURE;
+			}
+			if (not_server_variable(*varname)) {
+				map_session_data *sd;
+
+				if (!script_rid2sd(sd)) {
+					ShowError("buildin_getguildmember: Cannot use a player variable '%s' if no player is attached.\n", varname);
+					return SCRIPT_CMD_FAILURE;
+				}
+			}
+		}
+
+		for (i = 0; i < MAX_GUILD; i++) {
+			if (g->guild.member[i].account_id) {
+				switch (type) {
+					case 2:
+						if (data)
+							setd_sub_num( st, nullptr, varname, j, g->guild.member[i].account_id, data->ref );
+						else
+							mapreg_setreg(reference_uid(add_str("$@guildmemberaid"), j),g->guild.member[i].account_id);
+						break;
+					case 1:
+						if (data)
+							setd_sub_num( st, nullptr, varname, j, g->guild.member[i].char_id, data->ref );

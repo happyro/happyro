@@ -1,0 +1,263 @@
+
+		if (c == nullptr) {
+			ShowError("guild_castledataloadack: castle id=%d not found.\n", gc->castle_id);
+			continue;
+		}
+
+		// update map-server castle data with new info
+		memcpy(&c->guild_id, &gc->guild_id, sizeof(struct guild_castle) - offsetof(struct guild_castle, guild_id));
+
+		if( c->guild_id ) {
+			if( i != ev )
+				guild_request_info(c->guild_id);
+			else { // last owned one
+				char event_name[EVENT_NAME_LENGTH];
+
+				snprintf( event_name, EVENT_NAME_LENGTH, "::%s", script_config.agit_init_event_name );
+				guild_npc_request_info(c->guild_id, event_name);
+				snprintf( event_name, EVENT_NAME_LENGTH, "::%s", script_config.agit_init2_event_name );
+				guild_npc_request_info(c->guild_id, event_name);
+				snprintf( event_name, EVENT_NAME_LENGTH, "::%s", script_config.agit_init3_event_name );
+				guild_npc_request_info(c->guild_id, event_name);
+			}
+		}
+	}
+	ShowStatus("Received '" CL_WHITE "%d" CL_RESET "' guild castles from char-server.\n", n);
+	return 0;
+}
+
+/**
+ * Start WoE:FE and triggers all npc OnAgitStart
+ */
+bool guild_agit_start(void){
+	if( agit_flag ){
+		return false;
+	}
+
+	agit_flag = true;
+
+	npc_event_runall( script_config.agit_start_event_name );
+
+	return true;
+}
+
+/**
+ * End WoE:FE and triggers all npc OnAgitEnd
+ */
+bool guild_agit_end(void){
+	if( !agit_flag ){
+		return false;
+	}
+
+	agit_flag = false;
+
+	npc_event_runall( script_config.agit_end_event_name );
+
+	return true;
+}
+
+/**
+ * Start WoE:SE and triggers all npc OnAgitStart2
+ */
+bool guild_agit2_start(void){
+	if( agit2_flag ){
+		return false;
+	}
+
+	agit2_flag = true;
+
+	npc_event_runall( script_config.agit_start2_event_name );
+
+	return true;
+}
+
+/**
+ * End WoE:SE and triggers all npc OnAgitEnd2
+ */
+bool guild_agit2_end(void){
+	if( !agit2_flag ){
+		return false;
+	}
+
+	agit2_flag = false;
+
+	npc_event_runall( script_config.agit_end2_event_name );
+
+	return true;
+}
+
+/**
+ * Start WoE:TE and triggers all npc OnAgitStart3
+ */
+bool guild_agit3_start(void){
+	if( agit3_flag ){
+		return false;
+	}
+
+	agit3_flag = true;
+
+	npc_event_runall( script_config.agit_start3_event_name );
+
+	return true;
+}
+
+/**
+ * End WoE:TE and triggers all npc OnAgitEnd3
+ */
+bool guild_agit3_end(void){
+	if( !agit3_flag ){
+		return false;
+	}
+
+	agit3_flag = false;
+
+	npc_event_runall( script_config.agit_end3_event_name );
+
+	return true;
+}
+
+// How many castles does this guild have?
+int32 guild_checkcastles(const struct mmo_guild &g) {
+	int32 nb_cas = 0;
+	for (const auto &it : castle_db) {
+		if (it.second->guild_id == g.guild_id)
+			nb_cas++;
+	}
+	return nb_cas;
+}
+
+// Are these two guilds allied?
+bool guild_isallied(int32 guild_id, int32 guild_id2) {
+	int32 i;
+	auto g = guild_search(guild_id);
+	if (!g)
+		return false;
+
+	ARR_FIND( 0, MAX_GUILDALLIANCE, i, g->guild.alliance[i].guild_id == guild_id2 );
+	return( i < MAX_GUILDALLIANCE && g->guild.alliance[i].opposition == 0 );
+}
+
+bool guild_has_permission( map_session_data& sd, enum e_guild_permission permission ){
+	int32 position = guild_getposition( sd );
+
+	if( position < 0 ){
+		return false;
+	}
+
+	return ( sd.guild->guild.position[position].mode & permission ) != 0;
+}
+
+void guild_flag_add(npc_data *nd) {
+	int32 i;
+
+	/* check */
+	for( i = 0; i < guild_flags_count; i++ ) {
+		if( guild_flags[i] && guild_flags[i]->id == nd->id ) {
+			return;/* exists, most likely updated the id. */
+		}
+	}
+
+	i = guild_flags_count;/* save the current slot */
+	/* add */
+	RECREATE(guild_flags,npc_data*,++guild_flags_count);
+	/* save */
+	guild_flags[i] = nd;
+}
+
+void guild_flag_remove(npc_data *nd) {
+	int32 i, cursor;
+	if( guild_flags_count == 0 )
+		return;
+	/* find it */
+	for( i = 0; i < guild_flags_count; i++ ) {
+		if( guild_flags[i] && guild_flags[i]->id == nd->id ) {/* found */
+			guild_flags[i] = nullptr;
+			break;
+		}
+	}
+
+	/* compact list */
+	for( i = 0, cursor = 0; i < guild_flags_count; i++ ) {
+		if( guild_flags[i] == nullptr )
+			continue;
+
+		if( cursor != i ) {
+			memmove(&guild_flags[cursor], &guild_flags[i], sizeof(npc_data*));
+		}
+
+		cursor++;
+	}
+}
+
+/**
+ * @see DBApply
+ */
+static int32 eventlist_db_final(DBKey key, DBData *data, va_list ap) {
+	struct eventlist *next = nullptr;
+	struct eventlist *current = (struct eventlist *)db_data2ptr(data);
+	while (current != nullptr) {
+		next = current->next;
+		aFree(current);
+		current = next;
+	}
+	return 0;
+}
+
+/**
+ * @see DBApply
+ */
+static int32 guild_expcache_db_final(DBKey key, DBData *data, va_list ap) {
+	ers_free(expcache_ers, db_data2ptr(data));
+	return 0;
+}
+
+/* called when scripts are reloaded/unloaded */
+void guild_flags_clear(void) {
+	int32 i;
+	for( i = 0; i < guild_flags_count; i++ ) {
+		if( guild_flags[i] )
+			guild_flags[i] = nullptr;
+	}
+
+	guild_flags_count = 0;
+}
+
+void do_init_guild(void) {
+	guild_expcache_db  = idb_alloc(DB_OPT_BASE);
+	guild_infoevent_db = idb_alloc(DB_OPT_BASE);
+	expcache_ers = ers_new(sizeof(struct guild_expcache),"guild.cpp::expcache_ers",ERS_OPT_NONE);
+
+	guild_flags_count = 0;
+
+	castle_db.load();
+	guild_skill_tree_db.load();
+
+	add_timer_func_list(guild_payexp_timer,"guild_payexp_timer");
+	add_timer_func_list(guild_send_xy_timer, "guild_send_xy_timer");
+	add_timer_interval(gettick()+GUILD_PAYEXP_INTERVAL,guild_payexp_timer,0,0,GUILD_PAYEXP_INTERVAL);
+	add_timer_interval(gettick()+GUILD_SEND_XY_INTERVAL,guild_send_xy_timer,0,0,GUILD_SEND_XY_INTERVAL);
+}
+
+void do_final_guild(void) {
+	for (auto &it : castle_db) {
+		if (it.second && it.second->temp_guardians) {
+			aFree(it.second->temp_guardians);
+			it.second->temp_guardians = nullptr;
+			it.second->temp_guardians_max = 0;
+		}
+	}
+
+	for (auto &it : guild_db) {
+		if (!it.second)
+			continue;
+		channel_delete(it.second->channel, false);
+	}
+
+	guild_db.clear();
+	castle_db.clear();
+	guild_expcache_db->destroy(guild_expcache_db,guild_expcache_db_final);
+	guild_infoevent_db->destroy(guild_infoevent_db,eventlist_db_final);
+	ers_destroy(expcache_ers);
+
+	aFree(guild_flags);/* never empty; created on boot */
+}

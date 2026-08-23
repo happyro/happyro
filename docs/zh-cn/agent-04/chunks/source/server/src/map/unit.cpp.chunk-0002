@@ -1,0 +1,500 @@
+
+	nullpo_ret(bl);
+	nullpo_ret(nd = va_arg(ap,npc_data *));
+
+	switch( bl->type ) {
+	case BL_PC:
+		TBL_PC *sd = (TBL_PC*)bl;
+
+		if (sd == nullptr)
+			return 1;
+		if (sd->state.block_action & PCBLOCK_NPCCLICK)
+			return 1;
+
+		// Remove NPCs that are no longer within the OnTouch area
+		for (size_t i = 0; i < sd->areanpc.size(); i++) {
+			npc_data *nd = map_id2nd(sd->areanpc[i]);
+
+			if (!nd || nd->subtype != NPCTYPE_SCRIPT || !(nd->m == bl->m && bl->x >= nd->x - nd->u.scr.xs && bl->x <= nd->x + nd->u.scr.xs && bl->y >= nd->y - nd->u.scr.ys && bl->y <= nd->y + nd->u.scr.ys))
+				rathena::util::erase_at(sd->areanpc, i);
+		}
+		npc_touchnext_areanpc(sd, false);
+
+		if (map_getcell(bl->m, bl->x, bl->y, CELL_CHKNPC) == 0)
+			return 1;
+
+		npc_touch_areanpc(sd, bl->m, bl->x, bl->y, nd);
+		break;
+	// case BL_MOB:	// unsupported
+	}
+	
+	return 0;
+}
+
+/**
+ * Defines when to refresh the walking character to object and restart the timer if applicable
+ * Also checks for speed update, target location, and slave teleport timers
+ * @param tid: Timer ID
+ * @param tick: Current tick to decide next timer update
+ * @param data: Data used in timer calls
+ * @return 0 or unit_walktoxy_sub() or unit_walktoxy()
+ */
+static TIMER_FUNC(unit_walktoxy_timer)
+{
+	block_list *bl = map_id2bl(id);
+
+	if(bl == nullptr)
+		return 0;
+	
+	unit_data *ud = unit_bl2ud(bl);
+
+	if(ud == nullptr)
+		return 0;
+
+	if(ud->walktimer != tid) {
+		ShowError("unit_walk_timer mismatch %d != %d\n",ud->walktimer,tid);
+		return 0;
+	}
+
+	ud->walktimer = INVALID_TIMER;
+	// As movement to next cell finished, set sub-cell position to center
+	ud->sx = 8;
+	ud->sy = 8;
+
+	if (bl->prev == nullptr)
+		return 0; // Stop moved because it is missing from the block_list
+
+	if(ud->walkpath.path_pos>=ud->walkpath.path_len)
+		return 0;
+
+	enum directions dir = ud->walkpath.path[ud->walkpath.path_pos];
+
+	if( dir <= DIR_CENTER || dir >= DIR_MAX ){
+		return 0;
+	}
+
+	unit_setdir(bl, dir, false);
+
+	int32 dx = dirx[dir];
+	int32 dy = diry[dir];
+
+	map_session_data *sd = nullptr;
+	mob_data *md = nullptr;
+	npc_data *nd = nullptr;
+
+	// Get icewall walk block depending on Status Immune mode (players can't be trapped)
+	unsigned char icewall_walk_block = 0;
+
+	switch(bl->type) { // avoid useless cast, we can only be 1 type
+		case BL_PC: sd = BL_CAST(BL_PC, bl); break;
+		case BL_MOB:
+			md = BL_CAST(BL_MOB, bl);
+
+			if (status_has_mode(&md->status,MD_STATUSIMMUNE))
+				icewall_walk_block = battle_config.boss_icewall_walk_block;
+			else
+				icewall_walk_block = battle_config.mob_icewall_walk_block;
+			break;
+		case BL_NPC: nd = BL_CAST(BL_NPC, bl); break;
+	}
+
+	int32 x = bl->x;
+	int32 y = bl->y;
+
+	//Monsters will walk into an icewall from the west and south if they already started walking
+	if(map_getcell(bl->m,x+dx,y+dy,CELL_CHKNOPASS) 
+		&& (icewall_walk_block == 0 || dx < 0 || dy < 0 || !map_getcell(bl->m,x+dx,y+dy,CELL_CHKICEWALL)))
+		return unit_walktoxy_sub(bl);
+
+	//Monsters can only leave icewalls to the west and south
+	//But if movement fails more than icewall_walk_block times, they can ignore this rule
+	if(md && !ud->state.force_walk && md->walktoxy_fail_count < icewall_walk_block && map_getcell(bl->m,x,y,CELL_CHKICEWALL) && (dx > 0 || dy > 0)) {
+		//Needs to be done here so that rudeattack skills are invoked
+		md->walktoxy_fail_count++;
+		clif_fixpos( *bl );
+		// Monsters in this situation will unlock target
+		mob_unlocktarget(md, tick);
+		return 0;
+	}
+
+	// Refresh view for all those we lose sight
+	map_foreachinmovearea(clif_outsight, bl, AREA_SIZE, dx, dy, sd?BL_ALL:BL_PC, bl);
+
+	x += dx;
+	y += dy;
+	map_moveblock(bl, x, y, tick);
+
+	if (bl->x != x || bl->y != y || ud->walktimer != INVALID_TIMER)
+		return 0; // map_moveblock has altered the object beyond what we expected (moved/warped it)
+
+	ud->walktimer = CLIF_WALK_TIMER; // Arbitrary non-INVALID_TIMER value to make the clif code send walking packets
+	map_foreachinmovearea(clif_insight, bl, AREA_SIZE, -dx, -dy, sd?BL_ALL:BL_PC, bl);
+	ud->walktimer = INVALID_TIMER;
+
+	if (bl->x == ud->to_x && bl->y == ud->to_y) {
+#if PACKETVER >= 20170726
+		// If this was a walking NPC and it used a player sprite
+		if( bl->type == BL_NPC && pcdb_checkid( status_get_viewdata( bl )->look[LOOK_BASE] ) ){
+			// Respawn the NPC as NPC unit
+			unit_refresh( bl, false );
+		}
+#endif
+
+		// Remove any possible escape states present for mobs once they stopped moving.
+		if (md != nullptr) {
+			md->state.can_escape = 0;
+		}
+
+		ud->state.force_walk = false;
+
+		if (ud->walk_done_event[0]){
+			char walk_done_event[EVENT_NAME_LENGTH];
+
+			// Copying is required in case someone uses unitwalkto inside the event code
+			safestrncpy(walk_done_event, ud->walk_done_event, EVENT_NAME_LENGTH);
+
+			//Clear the event
+			ud->walk_done_event[0] = 0;
+
+			ud->state.walk_script = true;
+
+			// Execute the event
+			npc_event_do_id(walk_done_event,bl->id);
+
+			ud->state.walk_script = false;
+
+			// Check if the unit was killed
+			if( status_isdead(*bl) ){
+				mob_data* md = BL_CAST(BL_MOB, bl);
+
+				if( md && !md->spawn ){
+					unit_free(bl, CLR_OUTSIGHT);
+				}
+
+				return 0;
+			}
+
+		}
+	}
+
+	switch(bl->type) {
+		case BL_PC:
+			if( !sd->npc_ontouch_.empty() )
+				npc_touchnext_areanpc(sd,false);
+			if(map_getcell(bl->m,x,y,CELL_CHKNPC)) {
+				npc_touch_area_allnpc(sd,bl->m,x,y);
+				if (bl->prev == nullptr) // Script could have warped char, abort remaining of the function.
+					return 0;
+			} else
+				sd->areanpc.clear();
+			pc_cell_basilica(sd);
+			break;
+		case BL_MOB:
+			//Movement was successful, reset walktoxy_fail_count
+			md->walktoxy_fail_count = 0;
+			if( map_getcell(bl->m,x,y,CELL_CHKNPC) ) {
+				if( npc_touch_areanpc2(md) )
+					return 0; // Warped
+			} else
+				md->areanpc_id = 0;
+			break;
+		case BL_NPC:
+			if (nd->is_invisible)
+				break;
+
+			int32 xs = -1, ys = -1;
+			switch (nd->subtype) {
+			case NPCTYPE_SCRIPT:
+				xs = nd->u.scr.xs;
+				ys = nd->u.scr.ys;
+				break;
+			case NPCTYPE_WARP:
+				xs = nd->u.warp.xs;
+				ys = nd->u.warp.ys;
+				break;
+			}
+			if (xs > -1 && ys > -1)
+				map_foreachinmap(unit_walktoxy_ontouch, nd->m, BL_PC, nd);
+			break;
+	}
+
+	int32 speed;
+
+	//If stepaction is set then we remembered a client request that should be executed on the next step
+	if (ud->stepaction && ud->target_to) {
+		//Delete old stepaction even if not executed yet, the latest command is what counts
+		if(ud->steptimer != INVALID_TIMER) {
+			delete_timer(ud->steptimer, unit_step_timer);
+			ud->steptimer = INVALID_TIMER;
+		}
+		//Delay stepactions by half a step (so they are executed at full step)
+		if( direction_diagonal( ud->walkpath.path[ud->walkpath.path_pos] ) )
+			speed = status_get_speed(bl)*MOVE_DIAGONAL_COST/MOVE_COST/2;
+		else
+			speed = status_get_speed(bl)/2;
+		ud->steptimer = add_timer(tick+speed, unit_step_timer, bl->id, 0);
+	}
+
+	if(ud->state.change_walk_target) {
+		if(unit_walktoxy_sub(bl)) {
+			return 1;	
+		} else {
+			clif_fixpos( *bl );
+			return 0;
+		}
+	}
+
+	ud->walkpath.path_pos++;
+
+	if(unit_walktoxy_nextcell(*bl, false, tick)) {
+		// Nothing else needs to be done
+	} else if(ud->state.running) { // Keep trying to run.
+		if (!(unit_run(bl, nullptr, SC_RUN) || unit_run(bl, sd, SC_WUGDASH)) )
+			ud->state.running = 0;
+	} else {
+		if (!ud->stepaction && ud->target_to > 0) {
+			// Update target trajectory.
+			if(unit_update_chase(*bl, tick, true))
+				return 0;
+		}
+
+		// Stopped walking. Update to_x and to_y to current location
+		ud->to_x = bl->x;
+		ud->to_y = bl->y;
+
+		if (bl->type != BL_NPC	// walking npc ignores cell stack limit
+			&& !ud->state.ignore_cell_stack_limit
+			&& battle_config.official_cell_stack_limit > 0
+			&& map_count_oncell(bl->m, x, y, BL_CHAR|BL_NPC, 1) > battle_config.official_cell_stack_limit) {
+
+			//Walked on occupied cell, call unit_walktoxy again
+			if(unit_walktoxy(bl, x, y, 8)) {
+				//Execute step timer on next step instead
+				if (ud->steptimer != INVALID_TIMER) {
+					//Execute step timer on next step instead
+					delete_timer(ud->steptimer, unit_step_timer);
+					ud->steptimer = INVALID_TIMER;
+				}
+				return 1;
+			}
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * Delays an xy timer
+ * @param tid: Timer ID
+ * @param tick: Unused
+ * @param id: ID of bl to delay timer on
+ * @param data: Data used in timer calls
+ * @return 1: Success 0: Fail (No valid bl)
+ */
+TIMER_FUNC(unit_delay_walktoxy_timer){
+	block_list *bl = map_id2bl(id);
+
+	if (!bl || bl->prev == nullptr)
+		return 0;
+
+	unit_walktoxy(bl, (int16)((data>>16)&0xffff), (int16)(data&0xffff), 0);
+
+	return 1;
+}
+
+/**
+ * Delays an walk-to-bl timer
+ * @param tid: Timer ID
+ * @param tick: Unused
+ * @param id: ID of bl to delay timer on
+ * @param data: Data used in timer calls (target bl)
+ * @return 1: Success 0: Fail (No valid bl or target)
+ */
+TIMER_FUNC(unit_delay_walktobl_timer){
+	block_list* bl = map_id2bl( id );
+	block_list* tbl = map_id2bl( static_cast<int32>( data ) );
+
+	if(!bl || bl->prev == nullptr || tbl == nullptr)
+		return 0;
+	else {
+		struct unit_data* ud = unit_bl2ud(bl);
+		unit_walktobl(bl, tbl, 0, 0);
+		ud->target_to = 0;
+	}
+
+	return 1;
+}
+
+/**
+ * Begins the function of walking a unit to an x,y location
+ * This is where the path searches and unit can_move checks are done
+ * @param bl: Object to send to x,y coordinate
+ * @param x: X coordinate where the object will be walking to
+ * @param y: Y coordinate where the object will be walking to
+ * @param flag: Parameter to decide how to walk
+ *	&1: Easy walk (fail if CELL_CHKNOPASS is in direct path)
+ *	&2: Force walking (override can_move)
+ *	&4: Delay walking for can_move
+ *	&8: Search for an unoccupied cell and cancel if none available
+ * @return 1: Success 0: Fail or unit_walktoxy_sub()
+ */
+int32 unit_walktoxy( block_list *bl, int16 x, int16 y, unsigned char flag)
+{
+	nullpo_ret(bl);
+
+	unit_data* ud = unit_bl2ud(bl);
+
+	if (ud == nullptr)
+		return 0;
+
+	if ((flag&8) && !map_nearby_freecell(bl->m, x, y, BL_CHAR|BL_NPC, 1)) //This might change x and y
+		return 0;
+
+	walkpath_data wpd = { 0 };
+
+	if (!path_search(&wpd, bl->m, bl->x, bl->y, x, y, flag&1, CELL_CHKNOPASS)) // Count walk path cells
+		return 0;
+
+	// NPCs do not need to fulfill the following checks
+	if( bl->type != BL_NPC ){
+		if( wpd.path_len > battle_config.max_walk_path ){
+			return 0;
+		}
+
+#ifdef OFFICIAL_WALKPATH
+		// Official number of walkable cells is 14 if and only if there is an obstacle between.
+		if( wpd.path_len > 14 && !path_search_long( nullptr, bl->m, bl->x, bl->y, x, y, CELL_CHKNOPASS ) ){
+			return 0;
+		}
+#endif
+	}
+
+	if (flag&4) {
+		unit_unattackable(bl);
+		unit_stop_attack(bl);
+
+		if(DIFF_TICK(ud->canmove_tick, gettick()) > 0 && DIFF_TICK(ud->canmove_tick, gettick()) < 2000) { // Delay walking command. [Skotlex]
+			add_timer(ud->canmove_tick+1, unit_delay_walktoxy_timer, bl->id, (x<<16)|(y&0xFFFF));
+			return 1;
+		}
+	}
+
+	if(!(flag&2) && (!status_bl_has_mode(bl,MD_CANMOVE) || !unit_can_move(bl)))
+		return 0;
+
+	ud->state.walk_easy = flag&1;
+	ud->to_x = x;
+	ud->to_y = y;
+	unit_stop_attack(bl); //Sets target to 0
+
+	status_change* sc = status_get_sc(bl);
+	if (sc && sc->getSCE(SC_CONFUSION)) // Randomize the target position
+		map_random_dir(bl, &ud->to_x, &ud->to_y);
+
+	if(ud->walktimer != INVALID_TIMER) {
+		// When you come to the center of the grid because the change of destination while you're walking right now
+		// Call a function from a timer unit_walktoxy_sub
+		ud->state.change_walk_target = 1;
+		return 1;
+	}
+
+	TBL_PC *sd = BL_CAST(BL_PC, bl);
+
+	// Start timer to recall summon
+	if( sd != nullptr ){
+		if (sd->md != nullptr)
+			unit_check_start_teleport_timer(sd->md);
+		if (sd->ed != nullptr)
+			unit_check_start_teleport_timer(sd->ed);
+		if (sd->hd != nullptr)
+			unit_check_start_teleport_timer(sd->hd);
+		if (sd->pd != nullptr)
+			unit_check_start_teleport_timer(sd->pd);
+	}
+
+	return unit_walktoxy_sub(bl);
+}
+
+/**
+ * Timer to walking a unit to another unit's location
+ * Calls unit_walktoxy_sub once determined the unit can move
+ * @param tid: Object's timer ID
+ * @param id: Object's ID
+ * @param data: Data passed through timer function (target)
+ * @return 0
+ */
+static TIMER_FUNC(unit_walktobl_sub){
+	block_list *bl = map_id2bl(id);
+	struct unit_data *ud = bl?unit_bl2ud(bl):nullptr;
+
+	if (ud != nullptr && ud->walktimer == INVALID_TIMER && ud->target_to != 0 && ud->target_to == data) {
+		if (DIFF_TICK(ud->canmove_tick, tick) > 0) // Keep waiting?
+			add_timer(ud->canmove_tick+1, unit_walktobl_sub, id, data);
+		else if (unit_can_move(bl))
+			unit_walktoxy_sub(bl);
+	}
+
+	return 0;
+}
+
+/**
+ * Tells a unit to walk to a target's location (chase)
+ * @param bl: Object that is walking to target
+ * @param tbl: Target object
+ * @param range: How close to get to target (or attack range if flag&2)
+ * @param flag: Extra behaviour
+ *	&1: Use easy path seek (obstacles will not be walked around)
+ *	&2: Start attacking upon arrival within range, otherwise just walk to target
+ * @return 1: Started walking or set timer 0: Failed
+ */
+int32 unit_walktobl(block_list *bl, block_list *tbl, int32 range, unsigned char flag)
+{
+	nullpo_ret(bl);
+	nullpo_ret(tbl);
+
+	unit_data *ud  = unit_bl2ud(bl);
+
+	if(ud == nullptr)
+		return 0;
+
+	if (!status_bl_has_mode(bl,MD_CANMOVE))
+		return 0;
+
+	if (!unit_can_reach_bl(bl, tbl, distance_bl(bl, tbl)+1, flag&1, &ud->to_x, &ud->to_y)) {
+		ud->to_x = bl->x;
+		ud->to_y = bl->y;
+		ud->target_to = 0;
+
+		return 0;
+	} else if (range == 0) {
+		//Should walk on the same cell as target (for looters)
+		ud->to_x = tbl->x;
+		ud->to_y = tbl->y;
+		//Because of the change of target position the easy walkpath could fail
+		//Note: Easy walking is no longer used by default, but we keep this to prevent endless loops [Playtester]
+		flag &= ~1;
+	}
+
+	ud->state.walk_easy = flag&1;
+	ud->target_to = tbl->id;
+	ud->chaserange = range; // Note that if flag&2, this SHOULD be attack-range
+	ud->state.attack_continue = flag&2?1:0; // Chase to attack.
+	unit_stop_attack(bl); //Sets target to 0
+
+	status_change *sc = status_get_sc(bl);
+	if (sc && sc->getSCE(SC_CONFUSION)) // Randomize the target position
+		map_random_dir(bl, &ud->to_x, &ud->to_y);
+
+	if(ud->walktimer != INVALID_TIMER) {
+		ud->state.change_walk_target = 1;
+
+		// New target, make sure a monster is still in chase state
+		if (bl->type == BL_MOB && ud->state.attack_continue) {
+			mob_data& md = reinterpret_cast<mob_data&>(*bl);
+			mob_setstate(md, MSS_RUSH);
+		}
+
+		return 1;
+	}
+
+	if(DIFF_TICK(ud->canmove_tick, gettick()) > 0) { // Can't move, wait a bit before invoking the movement.

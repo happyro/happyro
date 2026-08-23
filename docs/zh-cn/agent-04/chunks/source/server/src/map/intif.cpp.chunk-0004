@@ -1,0 +1,500 @@
+	sd = map_id2sd( RFIFOL(fd,4) );
+	if (flag){ //If flag != 0, we attach a player and open the storage
+		if(sd == nullptr){
+			ShowError("intif_parse_LoadGuildStorage: user not found (AID: %d)\n",RFIFOL(fd,4));
+			return 0;
+		}
+	}
+	gstor = guild2storage(guild_id);
+	if (!gstor) {
+		ShowWarning("intif_parse_LoadGuildStorage: error guild_id %d not exist\n",guild_id);
+		return 0;
+	}
+	if (gstor->status) { // Already open.. lets ignore this update
+		ShowWarning("intif_parse_LoadGuildStorage: storage received for a client already open (User %d:%d)\n", flag?sd->status.account_id:1, flag?sd->status.char_id:1);
+		return 0;
+	}
+	if (gstor->dirty) { // Already have storage, and it has been modified and not saved yet! Exploit! [Skotlex]
+		ShowWarning("intif_parse_LoadGuildStorage: received storage for an already modified non-saved storage! (User %d:%d)\n", flag?sd->status.account_id:1, flag?sd->status.char_id:1);
+		return 0;
+	}
+	if (RFIFOW(fd,2)-13 != sizeof(struct s_storage)) {
+		ShowError("intif_parse_LoadGuildStorage: data size error %d %" PRIuPTR "\n",RFIFOW(fd,2)-13 , sizeof(struct s_storage));
+		gstor->status = false;
+		return 0;
+	}
+
+	memcpy(gstor,RFIFOP(fd,13),sizeof(struct s_storage));
+	if( flag )
+		storage_guild_storageopen(sd);
+
+	return 1;
+}
+
+/**
+ * ACK guild_storage saved
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_SaveGuildStorage(int32 fd)
+{
+	storage_guild_storagesaved(/*RFIFOL(fd,2), */RFIFOL(fd,6));
+	return 1;
+}
+
+/**
+ * ACK party creation
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_PartyCreated(int32 fd)
+{
+	if(battle_config.etc_log)
+		ShowInfo("intif: party created by account %d\n\n", RFIFOL(fd,2));
+	party_created(RFIFOL(fd,2), RFIFOL(fd,6),RFIFOB(fd,10),RFIFOL(fd,11), RFIFOCP(fd,15));
+	return 1;
+}
+
+/**
+ * Receive party info
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_PartyInfo(int32 fd)
+{
+	if( RFIFOW(fd,2) == 12 ){
+		ShowWarning("intif: party noinfo (char_id=%d party_id=%d)\n", RFIFOL(fd,4), RFIFOL(fd,8));
+		party_recv_noinfo(RFIFOL(fd,8), RFIFOL(fd,4));
+		return 0;
+	}
+
+	if( RFIFOW(fd,2) != 8+sizeof(struct party) )
+		ShowError("intif: party info : data size error (char_id=%d party_id=%d packet_len=%d expected_len=%" PRIuPTR ")\n", RFIFOL(fd,4), RFIFOL(fd,8), RFIFOW(fd,2), 8+sizeof(struct party));
+	party_recv_info((struct party *)RFIFOP(fd,8), RFIFOL(fd,4));
+	return 1;
+}
+
+/**
+ * ACK adding party member
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_PartyMemberAdded(int32 fd)
+{
+	if(battle_config.etc_log)
+		ShowInfo("intif: party member added Party (%d), Account(%d), Char(%d)\n",RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10));
+	party_member_added(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10), RFIFOB(fd, 14));
+	return 1;
+}
+
+/**
+ * ACK changing party option
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_PartyOptionChanged(int32 fd)
+{
+	party_optionchanged(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOW(fd,10),RFIFOW(fd,12),RFIFOB(fd,14));
+	return 1;
+}
+
+/**
+ * ACK member leaving party
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_PartyMemberWithdraw(int32 fd)
+{
+	if(battle_config.etc_log)
+		ShowInfo("intif: party member withdraw: Type(%d) Party(%d), Account(%d), Char(%d), Name(%s)\n",RFIFOB(fd,14+NAME_LENGTH),RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOCP(fd,14));
+	party_member_withdraw(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOCP(fd,14),(enum e_party_member_withdraw)RFIFOB(fd,14+NAME_LENGTH));
+	return 1;
+}
+
+/**
+ * ACK party break
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_PartyBroken(int32 fd)
+{
+	party_broken(RFIFOL(fd,2));
+	return 1;
+}
+
+/**
+ * ACK party on new map
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_PartyMove(int32 fd)
+{
+	party_recv_movemap( RFIFOL( fd, 2 ), RFIFOL( fd, 6 ), RFIFOL( fd, 10 ), RFIFOB( fd, 14 ), RFIFOW( fd, 15 ), RFIFOCP( fd, 17 ) );
+	return 1;
+}
+
+/**
+ * ACK party messages
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_PartyMessage(int32 fd)
+{
+	party_recv_message(RFIFOL(fd,4),RFIFOL(fd,8),RFIFOCP(fd,12),RFIFOW(fd,2)-12);
+	return 1;
+}
+
+/**
+ * ACK guild creation
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildCreated(int32 fd)
+{
+	guild_created(RFIFOL(fd,2),RFIFOL(fd,6));
+	return 1;
+}
+
+/**
+ * ACK guild infos
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_GuildInfo(int32 fd)
+{
+	if(RFIFOW(fd,2) == 8) {
+		ShowWarning("intif: guild noinfo %d\n",RFIFOL(fd,4));
+		guild_recv_noinfo(RFIFOL(fd,4));
+		return 0;
+	}
+	if( RFIFOW(fd,2)!=sizeof(struct mmo_guild)+4 )
+		ShowError("intif: guild info : data size error Gid: %d recv size: %d Expected size: %" PRIuPTR "\n",RFIFOL(fd,4),RFIFOW(fd,2),sizeof(struct mmo_guild)+4);
+	guild_recv_info(*(struct mmo_guild *)RFIFOP(fd,4));
+	return 1;
+}
+
+/**
+ * ACK adding guild member
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildMemberAdded(int32 fd)
+{
+	if(battle_config.etc_log)
+		ShowInfo("intif: guild member added %d %d %d %d\n",RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOB(fd,14));
+	guild_member_added(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOB(fd,14));
+	return 1;
+}
+
+/**
+ * ACK member leaving guild
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildMemberWithdraw(int32 fd)
+{
+	guild_member_withdraw(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOB(fd,14),RFIFOCP(fd,55),RFIFOCP(fd,15));
+	return 1;
+}
+
+/**
+ * ACK guild member basic info
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildMemberInfoShort(int32 fd)
+{
+	guild_recv_memberinfoshort(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOB(fd,14),RFIFOW(fd,15),RFIFOW(fd,17));
+	return 1;
+}
+
+/**
+ * ACK guild break
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildBroken(int32 fd)
+{
+	guild_broken(RFIFOL(fd,2),RFIFOB(fd,6));
+	return 1;
+}
+
+/**
+ * basic guild info change notice
+ * 0x3839 <packet len>.w <guild id>.l <type>.w <data>.?b
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_GuildBasicInfoChanged(int32 fd)
+{
+	//int32 len = RFIFOW(fd,2) - 10;
+	int32 guild_id = RFIFOL(fd,4);
+	int32 type = RFIFOW(fd,8);
+	//void* data = RFIFOP(fd,10);
+
+	auto g = guild_search(guild_id);
+	if( g == nullptr )
+		return 0;
+
+	switch(type) {
+	case GBI_EXP:        g->guild.exp = RFIFOQ(fd,10); break;
+	case GBI_GUILDLV:    g->guild.guild_lv = RFIFOW(fd,10); break;
+	case GBI_SKILLPOINT: g->guild.skill_point = RFIFOL(fd,10); break;
+	}
+
+	return 1;
+}
+
+/**
+ * guild member info change notice
+ * 0x383a <packet len>.w <guild id>.l <account id>.l <char id>.l <type>.w <data>.?b
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_GuildMemberInfoChanged(int32 fd)
+{
+	//int32 len = RFIFOW(fd,2) - 18;
+	int32 guild_id = RFIFOL(fd,4);
+	uint32 account_id = RFIFOL(fd,8);
+	uint32 char_id = RFIFOL(fd,12);
+	int32 type = RFIFOW(fd,16);
+	//void* data = RFIFOP(fd,18);
+
+	int32 idx;
+
+	auto g = guild_search(guild_id);
+	if( g == nullptr )
+		return 0;
+
+	idx = guild_getindex(g->guild,account_id,char_id);
+	if( idx == -1 )
+		return 0;
+
+	switch( type ) {
+	case GMI_POSITION:   g->guild.member[idx].position   = RFIFOW(fd,18); guild_memberposition_changed(g->guild,idx,RFIFOW(fd,18)); break;
+	case GMI_EXP:        g->guild.member[idx].exp        = RFIFOQ(fd,18); break;
+	case GMI_HAIR:       g->guild.member[idx].hair       = RFIFOW(fd,18); break;
+	case GMI_HAIR_COLOR: g->guild.member[idx].hair_color = RFIFOW(fd,18); break;
+	case GMI_GENDER:     g->guild.member[idx].gender     = RFIFOW(fd,18); break;
+	case GMI_CLASS:      g->guild.member[idx].class_     = RFIFOW(fd,18); break;
+	case GMI_LEVEL:      g->guild.member[idx].lv         = RFIFOW(fd,18); break;
+	}
+	return 1;
+}
+
+/**
+ * ACK change of guild title
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildPosition(int32 fd)
+{
+	if( RFIFOW(fd,2)!=sizeof(struct guild_position)+12 )
+		ShowError("intif: guild info : data size error %d %d %" PRIuPTR "\n",RFIFOL(fd,4),RFIFOW(fd,2),sizeof(struct guild_position)+12);
+	guild_position_changed(RFIFOL(fd,4),RFIFOL(fd,8),(struct guild_position *)RFIFOP(fd,12));
+	return 1;
+}
+
+/**
+ * ACK change of guild skill update
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildSkillUp(int32 fd)
+{
+	guild_skillupack(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10));
+	return 1;
+}
+
+/**
+ * ACK change of guild relationship
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildAlliance(int32 fd)
+{
+	guild_allianceack(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOL(fd,14),RFIFOB(fd,18),RFIFOCP(fd,19),RFIFOCP(fd,43));
+	return 1;
+}
+
+/**
+ * ACK change of guild notice
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildNotice(int32 fd)
+{
+	guild_notice_changed(RFIFOL(fd,2),RFIFOCP(fd,6),RFIFOCP(fd,66));
+	return 1;
+}
+
+/**
+ * ACK change of guild emblem
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_GuildEmblem(int32 fd)
+{
+	guild_emblem_changed(RFIFOW(fd,2)-12,RFIFOL(fd,4),RFIFOL(fd,8), RFIFOCP(fd,12));
+	return 1;
+}
+
+int32 intif_parse_GuildEmblemVersionChanged(int32 fd)
+{
+	guild_emblem_changed(0, RFIFOL(fd, 2), RFIFOL(fd, 6), nullptr); // Doesn't need emblem length and data
+	return 1;
+}
+
+/**
+ * ACK guild message
+ * @param fd : char-serv link
+ * @return  1
+ */
+int32 intif_parse_GuildMessage(int32 fd)
+{
+	guild_recv_message(RFIFOL(fd,4),RFIFOL(fd,8),RFIFOCP(fd,12),RFIFOW(fd,2)-12);
+	return 1;
+}
+
+/**
+ * Reply guild castle data request
+ * @param fd : char-serv link
+ * @return ?
+ */
+int32 intif_parse_GuildCastleDataLoad(int32 fd)
+{
+	return guild_castledataloadack(RFIFOW(fd,2), (struct guild_castle *)RFIFOP(fd,4));
+}
+
+/**
+ * ACK change of guildmaster
+ * @param fd : char-serv link
+ * @return ?
+ */
+int32 intif_parse_GuildMasterChanged(int32 fd)
+{
+	return guild_gm_changed(RFIFOL(fd,2),RFIFOL(fd,6),RFIFOL(fd,10),RFIFOL(fd,14));
+}
+
+/**
+ * Request pet creation
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_CreatePet(int32 fd)
+{
+	pet_get_egg(RFIFOL(fd,2),RFIFOW(fd,6),RFIFOL(fd,8));
+	return 1;
+}
+
+/**
+ * ACK pet data
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_RecvPetData(int32 fd)
+{
+	struct s_pet p;
+	int32 len;
+	len=RFIFOW(fd,2);
+	if(sizeof(struct s_pet)!=len-9) {
+		if(battle_config.etc_log)
+			ShowError("intif: pet data: data size error %" PRIuPTR " %d\n",sizeof(struct s_pet),len-9);
+	}
+	else{
+		memcpy(&p,RFIFOP(fd,9),sizeof(struct s_pet));
+		pet_recv_petdata(RFIFOL(fd,4),&p,RFIFOB(fd,8));
+	}
+
+	return 1;
+}
+
+/**
+ * ACK pet save data
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_SavePetOk(int32 fd)
+{
+	if(RFIFOB(fd,6) == 1)
+		ShowError("pet data save failure\n");
+
+	return 1;
+}
+
+/**
+ * ACK deleting pet
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_DeletePetOk(int32 fd)
+{
+	if(RFIFOB(fd,2) == 1)
+		ShowError("pet data delete failure\n");
+
+	return 1;
+}
+
+/**
+ * ACK changing name resquest, players,pets,hommon
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_ChangeNameOk(int32 fd)
+{
+	map_session_data *sd = nullptr;
+	if((sd=map_id2sd(RFIFOL(fd,2)))==nullptr ||
+		sd->status.char_id != RFIFOL(fd,6))
+		return 0;
+
+	switch (RFIFOB(fd,10)) {
+	case 0: //Players [NOT SUPPORTED YET]
+		break;
+	case 1: //Pets
+		pet_change_name_ack(sd, RFIFOCP(fd,12), RFIFOB(fd,11));
+		break;
+	case 2: //Hom
+		hom_change_name_ack(sd, RFIFOCP(fd,12), RFIFOB(fd,11));
+		break;
+	}
+	return 1;
+}
+
+//----------------------------------------------------------------
+// Homunculus recv packets [albator]
+
+/**
+ * ACK Homunculus creation
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_CreateHomunculus(int32 fd)
+{
+	int32 len;
+	len=RFIFOW(fd,2)-9;
+	if(sizeof(struct s_homunculus)!=len) {
+		if(battle_config.etc_log)
+			ShowError("intif: create homun data: data size error %" PRIuPTR " != %d\n",sizeof(struct s_homunculus),len);
+		return 0;
+	}
+	hom_recv_data(RFIFOL(fd,4), (struct s_homunculus*)RFIFOP(fd,9), RFIFOB(fd,8)) ;
+	return 1;
+}
+
+/**
+ * ACK homunculus get data (load homun from char)
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_RecvHomunculusData(int32 fd)
+{
+	int32 len;
+
+	len=RFIFOW(fd,2)-9;
+
+	if(sizeof(struct s_homunculus)!=len) {
+		if(battle_config.etc_log)
+			ShowError("intif: homun data: data size error %" PRIuPTR " %d\n",sizeof(struct s_homunculus),len);
+		return 0;
+	}
+	hom_recv_data(RFIFOL(fd,4), (struct s_homunculus*)RFIFOP(fd,9), RFIFOB(fd,8));

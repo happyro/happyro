@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#ifndef NPC_HPP
+#define NPC_HPP
+
+#include <map>
+#include <vector>
+
+#include <common/database.hpp>
+#include <common/timer.hpp>
+#include <config/core.hpp>
+
+#include "clif.hpp" //
+#include "map.hpp" // block_list
+#include "status.hpp" // struct status_change
+#include "unit.hpp" // struct unit_data
+#include "navi.hpp" // navi stuff
+
+struct block_list;
+struct npc_data;
+struct view_data;
+
+struct npc_timerevent_list {
+	int32 timer,pos;
+};
+
+struct npc_label_list {
+	char name[NAME_LENGTH+1];
+	int32 pos;
+};
+
+/// Item list for NPC sell/buy list
+struct npc_item_list {
+	t_itemid nameid;
+	uint32 value;
+#if PACKETVER >= 20131223
+	int32 qty; ///< Stock counter (Market shop)
+	uint8 flag; ///< 1: Item added by npcshopitem/npcshopadditem, force load! (Market shop)
+#endif
+};
+
+/// List of bought/sold item for NPC shops
+struct s_npc_buy_list {
+	int32 qty;		///< Amount of item will be bought
+	uint32 nameid;	///< ID of item will be bought
+};
+
+struct s_stylist_costs{
+	uint32 price;
+	t_itemid requiredItem;
+	t_itemid requiredItemBox;
+};
+
+struct s_stylist_entry{
+	uint16 look;
+	int16 index;
+	uint32 value;
+	std::shared_ptr<s_stylist_costs> human;
+	std::shared_ptr<s_stylist_costs> doram;
+};
+
+struct s_stylist_list{
+	uint16 look;
+	std::unordered_map<int16, std::shared_ptr<s_stylist_entry>> entries;
+};
+
+class StylistDatabase : public TypesafeYamlDatabase<uint32, s_stylist_list>{
+private:
+	bool parseCostNode( std::shared_ptr<s_stylist_entry> entry, bool doram, const ryml::NodeRef& node );
+
+public:
+	StylistDatabase() : TypesafeYamlDatabase( "STYLIST_DB", 1 ){
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode( const ryml::NodeRef& node ) override;
+};
+
+extern StylistDatabase stylist_db;
+
+struct s_npc_barter_requirement{
+	uint16 index;
+	t_itemid nameid;
+	uint16 amount;
+	int8 refine;
+};
+
+struct s_npc_barter_item{
+	uint16 index;
+	t_itemid nameid;
+	bool stockLimited;
+	uint32 stock;
+	uint32 price;
+	int8 refine;
+	std::map<uint16, std::shared_ptr<s_npc_barter_requirement>> requirements;
+};
+
+struct s_npc_barter{
+	std::string name;
+	int16 m;
+	uint16 x;
+	uint16 y;
+	uint8 dir;
+	int16 sprite;
+	std::map<uint16, std::shared_ptr<s_npc_barter_item>> items;
+	int32 npcid;
+
+	~s_npc_barter();
+};
+
+class BarterDatabase : public TypesafeYamlDatabase<std::string, s_npc_barter>{
+public:
+	BarterDatabase() : TypesafeYamlDatabase( "BARTER_DB", 2, 1 ){
+
+	}
+
+	const std::string getDefaultLocation();
+	uint64 parseBodyNode( const ryml::NodeRef& node );
+	void loadingFinished();
+};
+
+extern BarterDatabase barter_db;
+
+struct s_barter_purchase{
+	std::shared_ptr<s_npc_barter_item> item;
+	uint32 amount;
+	item_data* data;
+};
+
+struct s_questinfo {
+	e_questinfo_types icon;
+	e_questinfo_markcolor color;
+	struct script_code* condition;
+
+	~s_questinfo(){
+		if( this->condition != nullptr ){
+			script_free_code( this->condition );
+		}
+	}
+};
+
+// Status of NPC view.
+enum e_npcv_status : uint8 {
+	NPCVIEW_DISABLE  = 0x01,
+	NPCVIEW_ENABLE   = 0x02,
+	NPCVIEW_HIDEOFF  = 0x04,
+	NPCVIEW_HIDEON   = 0x08,
+	NPCVIEW_CLOAKOFF = 0x10,
+	NPCVIEW_CLOAKON  = 0x20,
+
+	NPCVIEW_VISIBLE   = NPCVIEW_ENABLE | NPCVIEW_HIDEOFF | NPCVIEW_CLOAKOFF,
+	NPCVIEW_INVISIBLE = NPCVIEW_DISABLE | NPCVIEW_HIDEON | NPCVIEW_CLOAKON,
+	NPCVIEW_CLOAK     = NPCVIEW_CLOAKOFF | NPCVIEW_CLOAKON,
+};
+
+struct npc_data : public block_list {
+	struct unit_data ud; //Because they need to be able to move....
+	struct view_data vd;
+	status_change sc; //They can't have status changes, but.. they want the visual opt values.
+	npc_data *master_nd;
+	int16 class_,speed;
+	char name[NPC_NAME_LENGTH+1];// display name
+	char exname[NPC_NAME_LENGTH+1];// unique npc name
+	int32 chat_id,touching_id;
+	uint32 next_walktime;
+	int32 instance_id;
+	e_npcv_status state{NPCVIEW_ENABLE};
+
+	unsigned size : 2;
+
+	struct status_data status;
+	uint32 level,stat_point;
+	struct s_npc_params {
+		uint16 str, agi, vit, int_, dex, luk;
+	} params;
+
+	void* chatdb; // pointer to a npc_parse struct (see npc_chat.cpp)
+	char* path;/* path dir */
+	enum npc_subtype subtype;
+	bool trigger_on_hidden;
+	int32 src_id;
+	union {
+		struct {
+			struct script_code *script;
+			int16 xs,ys; // OnTouch area radius
+			int32 guild_id;
+			t_tick timer;
+			int32 timerid,timeramount,rid;
+			t_tick timertick;
+			struct npc_timerevent_list *timer_event;
+			int32 label_list_num;
+			struct npc_label_list *label_list;
+		} scr;
+		struct {
+			struct npc_item_list *shop_item;
+			uint16 count;
+			t_itemid itemshop_nameid; // Item Shop cost item ID
+			char pointshop_str[32]; // Point Shop cost variable name
+			bool discount;
+		} shop;
+		struct {
+			int16 xs,ys; // OnTouch area radius
+			int16 x,y; // destination coords
+			uint16 mapindex; // destination map
+		} warp;
+		struct {
+			mob_data *md;
+			time_t kill_time;
+			char killer_name[NAME_LENGTH];
+			int32 spawn_timer;
+		} tomb;
+		struct {
+			bool extended;
+		} barter;
+	} u;
+
+	struct sc_display_entry **sc_display;
+	unsigned char sc_display_count;
+
+	std::vector<std::shared_ptr<s_questinfo>> qi_data;
+
+	struct {
+		t_tick timeout;
+		unsigned long color;
+	} progressbar;
+
+	struct{
+		uint32 owner_char_id;
+		t_tick last_interaction;
+		int32 removal_tid;
+	} dynamicnpc;
+
+#ifdef MAP_GENERATOR
+	struct navi_link navi; // for warps and the src of npcs
+	std::vector<navi_link> links; // for extra links, like warper npc
+#endif
+	bool is_invisible;
+};
+
+struct eri;
+extern struct eri *npc_sc_display_ers;
+
+#define START_NPC_NUM 110000000
+
+enum e_job_types
+{
+	NPC_RANGE1_START = 44,
+	JT_WARPNPC,
+	JT_1_ETC_01,
+	JT_1_M_01,
+	JT_1_M_02,
+	JT_1_M_03,
+	JT_1_M_04,
+	JT_1_M_BARD,
+	JT_1_M_HOF,
+	JT_1_M_INNKEEPER,
+	JT_1_M_JOBGUIDER,
+	JT_1_M_JOBTESTER,
+	JT_1_M_KNIGHTMASTER,
+	JT_1_M_LIBRARYMASTER,
+	JT_1_M_MERCHANT,
+	JT_1_M_ORIENT01,
+	JT_1_M_PASTOR,
+	JT_1_M_PUBMASTER,
+	JT_1_M_SIZ,
+	JT_1_M_SMITH,
+	JT_1_M_WIZARD,
+	JT_1_M_YOUNGKNIGHT,
+	JT_1_F_01,
+	JT_1_F_02,
+	JT_1_F_03,
+	JT_1_F_04,
+	JT_1_F_GYPSY,
+	JT_1_F_LIBRARYGIRL,
+	JT_1_F_MARIA,
+	JT_1_F_MERCHANT_01,
+	JT_1_F_MERCHANT_02,
+	JT_1_F_ORIENT_01,
+	JT_1_F_ORIENT_02,
+	JT_1_F_ORIENT_03,
+	JT_1_F_ORIENT_04,
+	JT_1_F_PRIEST,
+	JT_1_F_PUBGIRL,
+	JT_4_DOG01,
+	JT_4_KID01,
+	JT_4_M_01,
+	JT_4_M_02,
+	JT_4_M_03,
+	JT_4_M_04,
+	JT_4_M_BARBER,
+	JT_4_M_ORIENT01,
+	JT_4_M_ORIENT02,
+	JT_4_F_01,
+	JT_4_F_02,
+	JT_4_F_03,
+	JT_4_F_04,
+	JT_4_F_MAID,
+	JT_4_F_SISTER,
+	JT_4W_KID,
+	JT_4W_M_01,
+	JT_4W_M_02,
+	JT_4W_M_03,
+	JT_4W_SAILOR,
+	JT_4W_F_01,
+	JT_8_F,
+	JT_8_F_GRANDMOTHER,
+	JT_EFFECTLAUNCHER,
+	JT_8W_SOLDIER,
+	JT_1_M_MOC_LORD,
+	JT_1_M_PAY_ELDER,
+	JT_1_M_PRON_KING,
+	JT_4_M_MANAGER,
+	JT_4_M_MINISTER,
+	JT_HIDDEN_NPC,
+	JT_4_F_KAFRA6,
+	JT_4_F_KAFRA5,
+	JT_4_F_KAFRA4,
+	JT_4_F_KAFRA3,
+	JT_4_F_KAFRA2,
+	JT_4_F_KAFRA1,
+	JT_2_M_THIEFMASTER,
+	JT_2_M_SWORDMASTER,
+	JT_2_M_PHARMACIST,
+	JT_2_M_MOLGENSTEIN,
+	JT_2_M_DYEINGER,
+	JT_2_F_MAGICMASTER,
+	JT_4_F_TELEPORTER,
+	JT_4_M_TELEPORTER,
+	NPC_RANGE1_END,
+
+	JT_HIDDEN_WARP_NPC = 139,
+
+	NPC_RANGE2_START = 400,
+	JT_4_M_MUT2,
+	JT_4_M_SCIENCE,
+	JT_4_F_VALKYRIE2,
+	JT_4_M_UNCLEKNIGHT,
+	JT_4_M_YOUNGKNIGHT,
+	JT_2_MONEMUS,
+	JT_4_M_ATEIL,
+	JT_4_F_ANNIVERSARY,
+	JT_4_M_GREATPO,
+	JT_4_M_NOVELIST,
+	JT_4_M_CHAMPSOUL,
+	JT_4_M_OLDFRIAR,
+	JT_4_M_CRU_SOLD,
+	JT_4_M_CRU_KNT,
+	JT_4_M_CRU_HEAD,
+	JT_4_M_CRU_CRUA,
+	JT_4_M_KY_SOLD,
+	JT_4_M_KY_KNT,
+	JT_4_M_KY_HEAD,
+	JT_4_M_KY_KIYOM,
+	JT_4_M_BOSSCAT,
+	JT_4_M_BABYCAT,
+	JT_4W_F_KAFRA2,
+	JT_4_F_MUNAK,
+	JT_4_M_BONGUN,
+	JT_4_BEAR,
+	JT_4_BLUEWOLF,
+	JT_4_PECOPECO,
+	JT_4_M_JP_MID,
+	JT_4_M_JP_RUN,
+	JT_4_ORCLADY,
+	JT_4_ORCLADY2,
+	JT_4_ORCWARRIOR,
+	JT_4_ORCWARRIOR2,
+	JT_4_F_FAIRY,
+	JT_4_F_FAIRYKID,
+	JT_4_F_FAIRYKID2,
+	JT_4_F_FAIRYKID3,
+	JT_4_F_FAIRYKID4,
+	JT_4_F_FAIRYKID5,
+	JT_4_F_FAIRYKID6,
+	JT_4_M_FAIRYKID,
+	JT_4_M_FAIRYKID2,
+	JT_4_M_FAIRYKID3,
+	JT_4_M_FAIRYKID4,
+	JT_4_M_FAIRYKID5,
+	JT_4_M_FAIRYSOLDIER,
+	JT_4_M_TUFFOLD,
+	JT_4_MAN_BENKUNI,
+	JT_4_MAN_GALTUN,
+	JT_4_MAN_JERUTOO,
+	JT_4_MAN_LAVAIL,
+	JT_4_MAN_NITT,
+	JT_4_MAN_PIOM,
+	JT_4_MAN_PIOM2,
+	JT_4_M_DSTMAN,
+	JT_4_M_DSTMANDEAD,
+	JT_4_BABYLEOPARD,
+	JT_4_M_REDSWORD,
+	JT_4_MAN_PIOM3,
+	JT_4_M_FAIRYSOLDIER2,
+	JT_4_F_FAIRYSOLDIER,
+	JT_4_DRAGON_EGG,
+	JT_4_MIMIC,
+	JT_4_F_FAIRY1,
+	JT_4_F_GUILLOTINE,
+	JT_4_M_GUILLOTINE,
+	JT_4_M_KNIGHT_BLACK,
+	JT_4_M_KNIGHT_GOLD,
+	JT_4_M_KNIGHT_SILVER,
+	JT_4_SKULL_MUD,
+	JT_4_M_BRZ_INDIAN,
+	JT_4_F_BRZ_INDIAN,
+	JT_4_F_BRZ_INDOLD,
+	JT_4_M_BRZ_JACI,
+	JT_4_M_BRZ_MAN1,
+	JT_4_M_BRZ_MAN2,
+	JT_4_F_BRZ_WOMAN,
+	JT_4_M_MINSTREL,
+	JT_4_M_MINSTREL1,
+	JT_4_M_SHADOWCHASER,
+	JT_4_F_SHADOWCHASER,
+	JT_4_M_SURA,
+	JT_4_F_SURA,
+	JT_4_F_WANDERER,
+	JT_4_M_BARD,
+	JT_1_FLAG_NOFEAR,
+	JT_4_M_NOFEARGUY,
+	JT_4_MAN_PIOM6,
+	JT_4_MAN_PIOM4,
+	JT_4_MAN_PIOM5,
+	JT_4_MAN_GALTUN1,
+	JT_4_HUMAN_GERUTOO,
+	JT_4_M_ROKI,
+	JT_4_M_MERCAT1,
+	JT_4_M_MERCAT2,
+	JT_4_M_CATMAN1,
+	JT_4_M_CATMAN2,
+	JT_4_F_BRZ_WOMAN2,
+	JT_4_M_JP_DISH,
+	JT_4_F_JP_NOAH,
+	JT_4_F_JP_OZ,
+	JT_4_F_JP_CHROME,
+	JT_4_F_JP_RINNE,
+	JT_4_WHITETIGER,
+	JT_4_VENDING_MACHINE,
+	JT_4_MISTY,
+	JT_4_NECORING,
+	JT_4_ELEPHANT,
+	JT_4_F_NYDHOG,
+	JT_4_F_NYDHOG2,
+	JT_4_M_ROKI2,
+	JT_4_M_DOGTRAVELER,
+	JT_4_M_DOGTRAVELER2,
+	JT_4_F_DOGTRAVELER,
+	JT_4_M_RAFLE_GR,
+	JT_4_M_RAFLE_OLD,
+	JT_4_F_RAFLE_PK,
+	JT_4_M_LYINGDOG,
+	JT_4_F_MORAFINE1,
+	JT_4_F_MORAFINE2,
+	JT_4_M_RAFLE_OR,
+	JT_4_F_RAFLE_YE,
+	JT_4_M_RAFLE_VI,
+	JT_4_F_RAFLE_VI,
+	JT_4_M_ARDHA,
+	JT_4_CREEPER,
+	JT_JP_RUFAKU,
+	JT_JP_SUPIKA,
+	JT_JP_SABIKU,
+	JT_JP_ARUGORU,
+	JT_JP_ARUNA,
+	JT_JP_AIRI,
+	JT_4_M_DEWOLDMAN,
+	JT_4_M_DEWOLDWOMAN,
+	JT_4_M_DEWMAN,
+	JT_4_M_DEWWOMAN,
+	JT_4_M_DEWBOY,
+	JT_4_M_DEWGIRL,
+	JT_4_M_DEWZATICHIEF,
+	JT_4_M_DEWZATIMAN,
+	JT_4_M_ALCHE_E,
+	JT_4_MASK_SMOKEY,
+	JT_4_CAT_SAILOR1,
+	JT_4_CAT_SAILOR2,
+	JT_4_CAT_SAILOR3,
+	JT_4_CAT_SAILOR4,
+	JT_4_CAT_CHEF,
+	JT_4_CAT_MERMASTER,
+	JT_4_CRACK,
+	JT_4_ASTER,
+	JT_4_F_STARFISHGIRL,
+	JT_4_CAT_DOWN,
+	JT_4_CAT_REST,
+	JT_4_CAT_3COLOR,
+	JT_4_CAT_ADMIRAL,
+	JT_4_SOIL,
+	JT_4_F_ALCHE_A,
+	JT_4_CAT_ADV1,
+	JT_4_CAT_ADV2,
+	JT_4_CAT_SAILOR5,
+	JT_2_DROP_MACHINE,
+	JT_2_SLOT_MACHINE,
+	JT_2_VENDING_MACHINE1,
+	JT_MOB_TOMB,

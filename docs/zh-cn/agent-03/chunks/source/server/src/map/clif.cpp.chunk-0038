@@ -1,0 +1,500 @@
+	WBUFW(buf,0) = 0x2dc;
+	WBUFW(buf,2) = static_cast<int16>( len + NAME_LENGTH + 8 );
+	WBUFL(buf,4) = src_id;
+	safestrncpy(WBUFCP(buf,8), name, NAME_LENGTH);
+	safestrncpy(WBUFCP(buf,8+NAME_LENGTH), mes, len );
+
+	clif_send(buf,WBUFW(buf,2), sd, BG);
+}
+
+/// Validates and processes battlechat messages.
+/// All messages that are sent after enabling battleground chat with /battlechat.
+/// 02DB <packet len>.W <text>.?B (CZ_BATTLEFIELD_CHAT)
+void clif_parse_BattleChat(int32 fd, map_session_data* sd){
+	char name[NAME_LENGTH], message[CHAT_SIZE_MAX], output[CHAT_SIZE_MAX+NAME_LENGTH*2];
+
+	if( !clif_process_message( sd, false, name, message, output ) )
+		return;
+
+	bg_send_message(sd, output, strlen(output) );
+}
+
+
+/// Notifies client of a battleground score change (ZC_BATTLEFIELD_NOTIFY_POINT).
+/// 02de <camp A points>.W <camp B points>.W
+void clif_bg_updatescore(int16 m)
+{
+	block_list bl;
+	unsigned char buf[6];
+	struct map_data *mapdata = map_getmapdata(m);
+
+	bl.id = 0;
+	bl.type = BL_NUL;
+	bl.m = m;
+
+	WBUFW(buf,0) = 0x2de;
+	WBUFW(buf,2) = mapdata->bgscore_lion;
+	WBUFW(buf,4) = mapdata->bgscore_eagle;
+	clif_send(buf,packet_len(0x2de),&bl,ALL_SAMEMAP);
+}
+
+void clif_bg_updatescore_single( const map_session_data* sd )
+{
+	int32 fd;
+	nullpo_retv(sd);
+	fd = sd->fd;
+
+	struct map_data *mapdata = map_getmapdata(sd->m);
+
+	WFIFOHEAD(fd,packet_len(0x2de));
+	WFIFOW(fd,0) = 0x2de;
+	WFIFOW(fd,2) = mapdata->bgscore_lion;
+	WFIFOW(fd,4) = mapdata->bgscore_eagle;
+	WFIFOSET(fd,packet_len(0x2de));
+}
+
+
+/// Battleground camp belong-information (ZC_BATTLEFIELD_NOTIFY_CAMPINFO).
+/// 02dd <account id>.L <name>.24B <camp>.W
+void clif_sendbgemblem_area( const map_session_data* sd )
+{
+	unsigned char buf[33];
+	nullpo_retv(sd);
+
+	WBUFW(buf, 0) = 0x2dd;
+	WBUFL(buf,2) = sd->id;
+	safestrncpy(WBUFCP(buf,6), sd->status.name, NAME_LENGTH); // name don't show in screen.
+	WBUFW(buf,30) = sd->bg_id;
+	clif_send(buf,packet_len(0x2dd), sd, AREA);
+}
+
+void clif_sendbgemblem_single( int32 fd, const map_session_data* sd )
+{
+	nullpo_retv(sd);
+	WFIFOHEAD(fd,32);
+	WFIFOW(fd,0) = 0x2dd;
+	WFIFOL(fd,2) = sd->id;
+	safestrncpy(WFIFOCP(fd,6), sd->status.name, NAME_LENGTH);
+	WFIFOW(fd,30) = sd->bg_id;
+	WFIFOSET(fd,packet_len(0x2dd));
+}
+
+/// Battlegrounds queue incoming apply request from client.
+/// Queue types: 1 solo queue, 2 party queue, 4 guild queue.
+/// 0x8d7 <queue type>.W <battleground name>.24B (CZ_REQ_ENTRY_QUEUE_APPLY)
+void clif_parse_bg_queue_apply_request(int32 fd, map_session_data *sd)
+{
+	if (!battle_config.feature_bgqueue)
+		return;
+
+	nullpo_retv(sd);
+
+	int16 type = RFIFOW(fd,2);
+	char name[NAME_LENGTH];
+
+	safestrncpy(name, RFIFOCP(fd, 4), NAME_LENGTH);
+
+	if (sd->bg_queue_id > 0) {
+		//ShowWarning("clif_parse_bg_queue_apply_request: Received duplicate queue application: %d from player %s (AID:%d CID:%d).\n", type, sd->status.name, sd->status.account_id, sd->status.char_id);
+		clif_bg_queue_apply_result(BG_APPLY_DUPLICATE, name, sd); // Duplicate application warning
+		return;
+	} else if (type == 1) // Solo
+		bg_queue_join_solo(name, sd);
+	else if (type == 2) // Party
+		bg_queue_join_party(name, sd);
+	else if (type == 4) // Guild
+		bg_queue_join_guild(name, sd);
+	else {
+		ShowWarning("clif_parse_bg_queue_apply_request: Received invalid queue type: %d from player %s (AID:%d CID:%d).\n", type, sd->status.name, sd->status.account_id, sd->status.char_id);
+		clif_bg_queue_apply_result(BG_APPLY_INVALID_APP, name, sd); // Someone sent an invalid queue type packet
+		return;
+	}
+}
+
+/// Outgoing battlegrounds queue apply result.
+/// Result types: @see e_bg_queue_apply_ack
+/// 0x8d8 <result>.B <battleground name>.24B (ZC_ACK_ENTRY_QUEUE_APPLY)
+void clif_bg_queue_apply_result(e_bg_queue_apply_ack result, const char* name, const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x8d8));
+	WFIFOW(fd,0) = 0x8d8;
+	WFIFOB(fd,2) = result;
+	safestrncpy(WFIFOCP(fd,3), name, NAME_LENGTH);
+	WFIFOSET(fd, packet_len(0x8d8));
+}
+
+/// Outgoing battlegrounds queue apply notification.
+/// Sends a notification at the start of the battlegrounds queue and is also used to update the queue number.
+/// 0x8d9 <battleground name>.24B <queue number>.L (ZC_NOTIFY_ENTRY_QUEUE_APPLY)
+void clif_bg_queue_apply_notify( const char* name, const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	std::shared_ptr<s_battleground_queue> queue = bg_search_queue(sd->bg_queue_id);
+
+	if (queue == nullptr) {
+		ShowError("clif_bg_queue_apply_notify: Player is not in a battleground queue.\n");
+		return;
+	}
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x8d9));
+	WFIFOW(fd,0) = 0x8d9;
+	safestrncpy(WFIFOCP(fd,2), name, NAME_LENGTH);
+	WFIFOL(fd,2+NAME_LENGTH) = static_cast<int32>( queue->teama_members.size() + queue->teamb_members.size() );
+	WFIFOSET(fd, packet_len(0x8d9));
+}
+
+/// Battlegrounds queue outgoing cancel result.
+/// 0x8db <result>.B <battleground name>.24B (ZC_ACK_ENTRY_QUEUE_CANCEL)
+void clif_bg_queue_cancel_result(bool success, const char *name, map_session_data *sd)
+{
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x8d8));
+	WFIFOW(fd,0) = 0x8db;
+	WFIFOB(fd,2) = success;
+	safestrncpy(WFIFOCP(fd,3), name, NAME_LENGTH);
+	WFIFOSET(fd, packet_len(0x8d8));
+}
+
+/// Battlegrounds queue incoming cancel request from client.
+/// 0x8da <battleground name>.24B (CZ_REQ_ENTRY_QUEUE_CANCEL)
+void clif_parse_bg_queue_cancel_request(int32 fd, map_session_data *sd)
+{
+	if (!battle_config.feature_bgqueue)
+		return;
+
+	nullpo_retv(sd);
+
+	bool success;
+
+	if (sd->bg_queue_id > 0) {
+		std::shared_ptr<s_battleground_queue> queue = bg_search_queue(sd->bg_queue_id);
+
+		if (queue && queue->state == QUEUE_STATE_SETUP_DELAY)
+			return; // Make the cancel button do nothing if the entry window is open. Otherwise it'll crash the game when you click on both the queue status and entry status window.
+		else
+			success = bg_queue_leave(sd);
+	} else {
+		ShowWarning("clif_parse_bg_queue_cancel_request: Player trying to request leaving non-existent queue with name: %s (AID:%d CID:%d).\n", sd->status.name, sd->status.account_id, sd->status.char_id);
+		success = false;
+	}
+
+	char name[NAME_LENGTH];
+
+	safestrncpy( name, RFIFOCP( fd, 2 ), NAME_LENGTH );
+
+	clif_bg_queue_cancel_result(success, name, sd);
+}
+
+/// Battleground is ready to be joined, send a window asking for players to accept or decline.
+/// 0x8df <battleground name>.24B <lobby name>.24B (ZC_NOTIFY_LOBBY_ADMISSION)
+void clif_bg_queue_lobby_notify( const char* name, const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x8df));
+	WFIFOW(fd,0) = 0x8df;
+	safestrncpy(WFIFOCP(fd,2), name, NAME_LENGTH);
+	safestrncpy(WFIFOCP(fd,2+NAME_LENGTH), name, NAME_LENGTH);
+	WFIFOSET(fd, packet_len(0x8df));
+}
+
+/// Incoming packet from client telling server whether player wants to enter battleground or cancel.
+/// Result types: 1(Accept), 2(Decline).
+/// 0x8e0 <result>.B <battleground name>.24B <lobby name>.24B (CZ_REPLY_LOBBY_ADMISSION)
+void clif_parse_bg_queue_lobby_reply( int32 fd, map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	if(sd->bg_queue_id > 0) {
+		uint8 result = RFIFOB(fd, 2);
+
+		if(result == 1) { // Accept
+			bg_queue_on_accept_invite(sd);
+		} else if(result == 2) { // Decline
+			bg_queue_leave(sd);
+			clif_bg_queue_entry_init(sd);
+		}
+	}
+}
+
+/// Plays a gong sound, signaling that someone has accepted the invite to enter a battleground.
+/// 0x8e1 <result>.B <battleground name>.24B <lobby name>.24B (ZC_REPLY_ACK_LOBBY_ADMISSION)
+void clif_bg_queue_ack_lobby( bool result, const char *name, const char *lobbyname, const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x8e1));
+	WFIFOW(fd,0) = 0x8e1;
+	WFIFOB(fd,2) = result;
+	safestrncpy(WFIFOCP(fd,3), name, NAME_LENGTH);
+	safestrncpy(WFIFOCP(fd,3+NAME_LENGTH), lobbyname, NAME_LENGTH);
+	WFIFOSET(fd, packet_len(0x8e1));
+}
+
+/// Battlegrounds queue incoming queue number request from client.
+/// 0x90a <battleground name>.24B (CZ_REQ_ENTRY_QUEUE_RANKING)
+static void clif_parse_bg_queue_request_queue_number( int32 fd, map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	char name[NAME_LENGTH];
+
+	safestrncpy( name, RFIFOCP(fd, 2), NAME_LENGTH );
+
+	clif_bg_queue_apply_notify(name, sd);
+}
+
+/// Silently removes all the battlegrounds stuff client side so that you will open the first BG window when you press battle on the interface.
+/// Send this when a player joins a battleground so that it will remove all the queue stuff upon warping in.
+/// 0x90e (ZC_ENTRY_QUEUE_INIT)
+void clif_bg_queue_entry_init( const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	PACKET_ZC_ENTRY_QUEUE_INIT p = {};
+
+	p.packetType = HEADER_ZC_ENTRY_QUEUE_INIT;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+/// Custom Fonts (ZC_NOTIFY_FONT).
+/// 02ef <account_id>.L <font id>.W
+void clif_font(const map_session_data* sd)
+{
+#if PACKETVER >= 20080102
+	unsigned char buf[8];
+	nullpo_retv(sd);
+	WBUFW(buf,0) = 0x2ef;
+	WBUFL(buf,2) = sd->id;
+	WBUFW(buf,6) = sd->status.font;
+	clif_send(buf, packet_len(0x2ef), sd, AREA);
+#endif
+}
+
+
+/// Required to start the instancing information window on Client
+/// This window re-appears each "refresh" of client automatically until the keep_limit reaches 0.
+/// S 0x2cb <Instance name>.61B <Standby Position>.W
+void clif_instance_create( int32 instance_id, size_t num ){
+#if PACKETVER >= 20071128
+	map_session_data *sd = nullptr;
+	enum send_target target = PARTY;
+	unsigned char buf[65];
+
+	instance_getsd(instance_id, sd, &target);
+
+	if (!sd)
+		return;
+
+	std::shared_ptr<s_instance_db> db = instance_db.find(util::umap_find(instances, instance_id)->id);
+
+	if (!db)
+		return;
+
+	WBUFW(buf,0) = 0x2cb;
+	safestrncpy(WBUFCP(buf,2), db->name.c_str(), INSTANCE_NAME_LENGTH);
+	WBUFW( buf, 63 ) = static_cast<int16>( num );
+
+	clif_send(buf,packet_len(0x2cb),sd,target);
+#endif
+}
+
+/// To announce Instancing queue creation if no maps available
+/// S 0x2cc <Standby Position>.W
+void clif_instance_changewait(int32 instance_id, int32 num)
+{
+#if PACKETVER >= 20071128
+	map_session_data *sd = nullptr;
+	enum send_target target = PARTY;
+	unsigned char buf[4];
+
+	instance_getsd(instance_id, sd, &target);
+
+	if (!sd)
+		return;
+
+	WBUFW(buf,0) = 0x2cc;
+	WBUFW(buf,2) = num;
+	clif_send(buf,packet_len(0x2cc),sd,target);
+#endif
+
+	return;
+}
+
+/// Notify the current status to members
+/// S 0x2cd <Instance Name>.61B <Instance Remaining Time>.L <Instance Noplayers close time>.L
+void clif_instance_status(int32 instance_id, uint32 limit1, uint32 limit2)
+{
+#if PACKETVER >= 20071128
+	map_session_data *sd = nullptr;
+	enum send_target target = PARTY;
+	unsigned char buf[71];
+
+	instance_getsd(instance_id, sd, &target);
+
+	if (!sd)
+		return;
+
+	std::shared_ptr<s_instance_db> db = instance_db.find(util::umap_find(instances, instance_id)->id);
+
+	if (!db)
+		return;
+
+	WBUFW(buf,0) = 0x2cd;
+	safestrncpy(WBUFCP(buf,2), db->name.c_str(), INSTANCE_NAME_LENGTH);
+	WBUFL(buf,63) = limit1;
+	WBUFL(buf,67) = limit2;
+	clif_send(buf,packet_len(0x2cd),sd,target);
+#endif
+
+	return;
+}
+
+/// Notify a status change to members
+/// S 0x2ce <Message ID>.L
+/// 0 = Notification (EnterLimitDate update?)
+/// 1 = The Memorial Dungeon expired; it has been destroyed
+/// 2 = The Memorial Dungeon's entry time limit expired; it has been destroyed
+/// 3 = The Memorial Dungeon has been removed.
+/// 4 = Create failure (removes the instance window)
+void clif_instance_changestatus(int32 instance_id, e_instance_notify type, uint32 limit)
+{
+#if PACKETVER >= 20071128
+	map_session_data *sd = nullptr;
+	enum send_target target = PARTY;
+	unsigned char buf[10];
+
+	instance_getsd(instance_id, sd, &target);
+
+	if (!sd)
+		return;
+
+	WBUFW(buf,0) = 0x2ce;
+	WBUFL(buf,2) = type;
+	WBUFL(buf,6) = limit;
+	clif_send(buf,packet_len(0x2ce),sd,target);
+#endif
+
+	return;
+}
+
+/// Destroy an instance from the status window
+/// 02cf <command>.L (CZ_MEMORIALDUNGEON_COMMAND)
+void clif_parse_MemorialDungeonCommand(int32 fd, map_session_data *sd)
+{
+	if (pc_istrading(sd) || pc_isdead(sd) || map_getmapdata(sd->m)->instance_id > 0)
+		return;
+
+	const PACKET_CZ_MEMORIALDUNGEON_COMMAND* p = reinterpret_cast<PACKET_CZ_MEMORIALDUNGEON_COMMAND*>( RFIFOP( fd, 0 ) );
+
+	switch (p->command) {
+		case COMMAND_MEMORIALDUNGEON_DESTROY_FORCE:
+			instance_destroy_command(sd);
+			break;
+	}
+}
+
+void clif_instance_info( map_session_data& sd ){
+	if( sd.instance_id > 0 ){
+		instance_reqinfo( &sd, sd.instance_id );
+	}
+
+	if( sd.status.party_id > 0 ){
+		struct party_data* p = party_search( sd.status.party_id );
+
+		if( p != nullptr && p->instance_id > 0 ){
+			instance_reqinfo( &sd, p->instance_id );
+		}
+	}
+
+	if( sd.guild != nullptr && sd.guild->instance_id > 0 ){
+		instance_reqinfo( &sd, sd.guild->instance_id );
+	}
+
+	if( sd.clan != nullptr && sd.clan->instance_id > 0 ){
+		instance_reqinfo( &sd, sd.clan->instance_id );
+	}
+}
+
+/// Notifies clients about item picked up by a party member.
+/// 02b8 <account id>.L <name id>.W <identified>.B <damaged>.B <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W <equip location>.W <item type>.B (ZC_ITEM_PICKUP_PARTY)
+void clif_party_show_picker( const map_session_data* sd, const item* item_data ){
+#if PACKETVER >= 20071002
+	nullpo_retv( sd );
+	nullpo_retv( item_data );
+
+	const struct item_data* id = itemdb_search( item_data->nameid );
+
+	PACKET_ZC_ITEM_PICKUP_PARTY p = {};
+
+	p.packetType = HEADER_ZC_ITEM_PICKUP_PARTY;
+	p.AID = sd->status.account_id;
+	p.itemId = client_nameid( item_data->nameid );
+	p.identified = item_data->identify;
+	p.damaged = item_data->attribute;
+	p.refine = item_data->refine;
+	clif_addcards( &p.slot, item_data );
+	p.location = id->equip; // equip location
+	p.itemType = itemtype( id->nameid ); // item type
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+	p.grade = item_data->enchantgrade;
+#endif
+
+	clif_send( &p, sizeof( p ), sd, PARTY_SAMEMAP_WOS );
+#endif
+}
+
+/** Display gained exp.
+ * 07f6 <account id>.L <amount>.L <var id>.W <exp type>.W (ZC_NOTIFY_EXP)
+ * 0acc <account id>.L <amount>.Q <var id>.W <exp type>.W (ZC_NOTIFY_EXP2)
+ * amount: INT32_MIN ~ INT32_MAX
+ * var id:
+ *     SP_BASEEXP, SP_JOBEXP
+ * exp type:
+ *     0 = normal exp gained/lost
+ *     1 = quest exp gained/lost
+ * @param sd Player
+ * @param exp EXP value gained/loss
+ * @param type SP_BASEEXP, SP_JOBEXP
+ * @param quest False:Normal EXP; True:Quest EXP (displayed in purple color)
+ * @param lost True:if losing EXP
+ */
+void clif_displayexp( const map_session_data* sd, t_exp exp, char type, bool quest, bool lost )
+{
+#if PACKETVER >= 20091027
+	int32 fd;
+	int32 offset;
+#if PACKETVER >= 20170830
+	int32 cmd = 0xacc;
+#else
+	int32 cmd = 0x7f6;
+#endif
+
+	nullpo_retv(sd);
+
+	fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(cmd));
+	WFIFOW(fd,0) = cmd;
+	WFIFOL(fd,2) = sd->id;
+#if PACKETVER >= 20170830
+	WFIFOQ(fd,6) = client_exp(exp) * (lost ? -1 : 1);
+	offset = 4;
+#else
+	WFIFOL(fd,6) = client_exp(exp) * (lost ? -1 : 1);
+	offset = 0;

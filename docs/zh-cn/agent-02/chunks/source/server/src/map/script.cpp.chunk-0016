@@ -1,0 +1,500 @@
+		uint16 amount;
+
+		if( script_isstring(st, i) ) // item name
+			id = item_db.searchname( script_getstr( st, i ) );
+		else // item id
+			id = item_db.find( script_getnum( st, i ) );
+		if( id == nullptr ){
+			ShowError("buildin_checkweight: Invalid item '%s'.\n", script_getstr(st,i));  // returns string, regardless of what it was
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+		nameid = id->nameid;
+
+		amount = script_getnum(st,i+1);
+		if( amount < 1 ) {
+			ShowError("buildin_checkweight: Invalid amount '%d'.\n", amount);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		weight += itemdb_weight(nameid)*amount; //total weight for all chk
+		if( weight + sd->weight > sd->max_weight )
+		{// too heavy
+			script_pushint(st,0);
+			return SCRIPT_CMD_SUCCESS;
+		}
+
+		switch( pc_checkadditem(sd, nameid, amount) ) {
+			case CHKADDITEM_EXIST:
+				// item is already in inventory, but there is still space for the requested amount
+				break;
+			case CHKADDITEM_NEW:
+				if( itemdb_isstackable(nameid) ) {
+					// stackable
+					amount2++;
+					if( slots < amount2 ) {
+						script_pushint(st,0);
+						return SCRIPT_CMD_SUCCESS;
+					}
+				} else {
+					// non-stackable
+					amount2 += amount;
+					if( slots < amount2) {
+						script_pushint(st,0);
+						return SCRIPT_CMD_SUCCESS;
+					}
+				}
+				break;
+			case CHKADDITEM_OVERAMOUNT:
+				script_pushint(st,0);
+				return SCRIPT_CMD_SUCCESS;
+		}
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(checkweight2)
+{
+	//variable sub checkweight
+	int32 i = 0, slots = 0, weight = 0;
+	int16 fail = 0;
+	uint16 amount2 = 0;
+
+	//variable for array parsing
+	struct script_data* data_it;
+	struct script_data* data_nb;
+	const char* name_it;
+	const char* name_nb;
+	int32 id_it, id_nb;
+	int32 idx_it, idx_nb;
+	int32 nb_it, nb_nb; //array size
+
+	TBL_PC *sd;
+	
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	data_it = script_getdata(st, 2);
+	data_nb = script_getdata(st, 3);
+
+	if( !data_isreference(data_it) || !data_isreference(data_nb)) {
+		ShowError("buildin_checkweight2: parameter not a variable\n");
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	id_it = reference_getid(data_it);
+	id_nb = reference_getid(data_nb);
+	idx_it = reference_getindex(data_it);
+	idx_nb = reference_getindex(data_nb);
+	name_it = reference_getname(data_it);
+	name_nb = reference_getname(data_nb);
+
+	if(is_string_variable(name_it) || is_string_variable(name_nb)) {
+		ShowError("buildin_checkweight2: illegal type, need int\n");
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;// not supported
+	}
+	nb_it = script_array_highest_key(st, sd, reference_getname(data_it), reference_getref(data_it));
+	nb_nb = script_array_highest_key(st, sd, reference_getname(data_nb), reference_getref(data_nb));
+	if(nb_it != nb_nb) {
+		ShowError("buildin_checkweight2: Size mistmatch: nb_it=%d, nb_nb=%d\n",nb_it,nb_nb);
+		fail = 1;
+	}
+
+	slots = pc_inventoryblank(sd);
+	for(i=0; i<nb_it; i++) {
+		t_itemid nameid = (t_itemid)get_val2_num( st, reference_uid( id_it, idx_it + i ), reference_getref( data_it ) );
+		uint16 amount = (uint16)get_val2_num( st, reference_uid( id_nb, idx_nb + i ), reference_getref( data_nb ) );
+
+		if(fail)
+			continue; //cpntonie to depop rest
+
+		if (!item_db.exists(nameid)) {
+			ShowError("buildin_checkweight2: Invalid item '%u'.\n", nameid);
+			fail=1;
+			continue;
+		}
+		if(amount == 0 ) {
+			ShowError("buildin_checkweight2: Invalid amount '%d'.\n", amount);
+			fail = 1;
+			continue;
+		}
+
+		weight += itemdb_weight(nameid)*amount;
+		if( weight + sd->weight > sd->max_weight ) {
+			fail = 1;
+			continue;
+		}
+		switch( pc_checkadditem(sd, nameid, amount) ) {
+			case CHKADDITEM_EXIST:
+				// item is already in inventory, but there is still space for the requested amount
+				break;
+			case CHKADDITEM_NEW:
+				if( itemdb_isstackable(nameid) ) {// stackable
+					amount2++;
+					if( slots < amount2 )
+						fail = 1;
+				} else {// non-stackable
+					amount2 += amount;
+					if( slots < amount2 ) {
+						fail = 1;
+					}
+				}
+				break;
+			case CHKADDITEM_OVERAMOUNT:
+				fail = 1;
+		} //end switch
+	} //end loop DO NOT break it prematurly we need to depop all stack
+
+	fail ? script_pushint(st,0) : script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * getitem <item id>,<amount>{,<account ID>};
+ * getitem "<item name>",<amount>{,<account ID>};
+ *
+ * getitembound <item id>,<amount>,<type>{,<account ID>};
+ * getitembound "<item id>",<amount>,<type>{,<account ID>};
+ * Type:
+ *	0 - No bound
+ *	1 - Account Bound
+ *	2 - Guild Bound
+ *	3 - Party Bound
+ *	4 - Character Bound
+ *------------------------------------------*/
+BUILDIN_FUNC(getitem)
+{
+	int32 get_count, i;
+	t_itemid nameid;
+	uint16 amount;
+	map_session_data* sd;
+	const char* command = script_getfuncname(st);
+	std::shared_ptr<item_data> id;
+
+	if( script_isstring(st, 2) ) {// "<item name>"
+		const char *name = script_getstr(st, 2);
+
+		id = item_db.searchname( name );
+
+		if( id == nullptr ){
+			ShowError("buildin_getitem: Nonexistant item %s requested.\n", name);
+			return SCRIPT_CMD_FAILURE; //No item created.
+		}
+		nameid = id->nameid;
+	} else {// <item id>
+		nameid = script_getnum(st, 2);
+
+		id = item_db.find( nameid );
+
+		if( id == nullptr ){
+			ShowError("buildin_getitem: Nonexistant item %u requested.\n", nameid);
+			return SCRIPT_CMD_FAILURE; //No item created.
+		}
+	}
+
+	// <amount>
+	if( (amount = script_getnum(st,3)) <= 0)
+		return SCRIPT_CMD_SUCCESS; //return if amount <=0, skip the useles iteration
+
+	item it = {};
+
+	it.nameid = nameid;
+	it.identify = 1;
+	it.bound = BOUND_NONE;
+
+	if( !strcmp(command,"getitembound") ) {
+		char bound = script_getnum(st,4);
+		if( bound < BOUND_NONE || bound >= BOUND_MAX ) {
+			ShowError("script_getitembound: Not a correct bound type! Type=%d\n",bound);
+			return SCRIPT_CMD_FAILURE;
+		}
+		script_mapid2sd(5,sd);
+		it.bound = bound;
+	} else {
+		script_mapid2sd(4,sd);
+	}
+
+	if( sd == nullptr ) // no target
+		return SCRIPT_CMD_SUCCESS;
+
+	//Check if it's stackable.
+	if( !itemdb_isstackable2( id.get() ) ){
+		get_count = 1;
+	}else{
+		get_count = amount;
+	}
+
+	for (i = 0; i < amount; i += get_count)
+	{
+		// if not pet egg
+		if (!pet_create_egg(sd, nameid))
+		{
+			e_additem_result flag = pc_additem( sd, &it, get_count, LOG_TYPE_SCRIPT );
+
+			if( flag != ADDITEM_SUCCESS ){
+				clif_additem(sd, 0, 0, flag);
+				ShowError( "buildin_getitem: Failed to add the item to player.\n" );
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * getitem2 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>};
+ * getitem2 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account ID>};
+ *
+ * getitembound2 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<bound type>{,<account ID>};
+ * getitembound2 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<bound type>{,<account ID>};
+ *
+ * getitem3 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+ * getitem3 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+ *
+ * getitembound3 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<bound type>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+ * getitembound3 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<bound type>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+ *
+ * getitem4 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+ * getitem4 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+ *
+ * getitembound4 <item id>,<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<bound type>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+ * getitembound4 "<item name>",<amount>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<bound type>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account ID>};
+
+ Type:
+ *	0 - No bound
+ *	1 - Account Bound
+ *	2 - Guild Bound
+ *	3 - Party Bound
+ *	4 - Character Bound
+ *------------------------------------------*/
+BUILDIN_FUNC(getitem2)
+{
+	map_session_data* sd;
+	char bound = BOUND_NONE;
+	const char* command = script_getfuncname(st);
+	int32 offset = 0;
+	int32 grade_offset = 0;
+
+	if( !strncmp(command,"getitembound",12) ) {
+		int32 aid_pos = 12;
+		bound = script_getnum(st,11);
+		if( bound < BOUND_NONE || bound >= BOUND_MAX ) {
+			ShowError("script_getitembound2: Not a correct bound type! Type=%d\n",bound);
+			return SCRIPT_CMD_FAILURE;
+		}
+		if (command[strlen(command)-1] == '3') {
+			offset = 12;
+			aid_pos = 15;
+		}
+		else if (command[strlen(command)-1] == '4') {
+			grade_offset = 12;
+			offset = 13;
+			aid_pos = 16;
+		}
+		script_mapid2sd(aid_pos,sd);
+	} else {
+		int32 aid_pos = 11;
+		if (strcmpi(command,"getitem3") == 0) {
+			offset = 11;
+			aid_pos = 14;
+		} 
+		if (strcmpi(command,"getitem4") == 0) {
+			grade_offset = 11;
+			offset = 12;
+			aid_pos = 15;
+		}
+		script_mapid2sd(aid_pos,sd);
+	}
+
+	if( sd == nullptr ) // no target
+		return SCRIPT_CMD_SUCCESS;
+
+	t_itemid nameid;
+	std::shared_ptr<item_data> item_data;
+
+	if( script_isstring(st, 2) ) {
+		const char *name = script_getstr(st, 2);
+
+		item_data = item_db.searchname( name );
+
+		if( item_data == nullptr ){
+			ShowError("buildin_getitem2: Nonexistant item %s requested (by conv_str).\n", name);
+			return SCRIPT_CMD_FAILURE; //No item created.
+		}
+		nameid = item_data->nameid;
+	} else {
+		nameid = script_getnum(st, 2);
+
+		item_data = item_db.find( nameid );
+
+		if( item_data == nullptr ){
+			ShowError("buildin_getitem2: Nonexistant item %u requested (by conv_num).\n", nameid);
+			return SCRIPT_CMD_FAILURE; //No item created.
+		}
+	}
+
+	int32 amount = script_getnum(st,3);
+	int32 iden = script_getnum(st,4);
+	int32 ref = script_getnum(st,5);
+	int32 attr = script_getnum(st,6);
+	t_itemid c1 = script_getnum(st,7);
+	t_itemid c2 = script_getnum(st,8);
+	t_itemid c3 = script_getnum(st,9);
+	t_itemid c4 = script_getnum(st,10);
+
+	item item_tmp = {};
+
+	if( item_data ) {
+		if( item_data->type == IT_WEAPON || item_data->type == IT_ARMOR || item_data->type == IT_SHADOWGEAR ) {
+			if(ref > MAX_REFINE)
+				ref = MAX_REFINE;
+		}
+		else if( item_data->type == IT_PETEGG ) {
+			iden = 1;
+			ref = 0;
+		}
+		else {
+			iden = 1;
+			ref = attr = 0;
+		}
+
+		item_tmp.nameid = nameid;
+		item_tmp.identify = iden;
+		item_tmp.refine = ref;
+		item_tmp.attribute = attr;
+		item_tmp.card[0] = c1;
+		item_tmp.card[1] = c2;
+		item_tmp.card[2] = c3;
+		item_tmp.card[3] = c4;
+		item_tmp.bound = bound;
+
+		if (offset != 0) {
+			bool res = script_getitem_randomoption(st, sd, &item_tmp, command, offset);
+			if (!res)
+				return SCRIPT_CMD_FAILURE;
+
+			if (grade_offset > 0) {
+				int32 grade = script_getnum(st, grade_offset);
+				if (grade < ENCHANTGRADE_NONE || grade > MAX_ENCHANTGRADE) {
+					ShowError("buildin_getitem2: Not a correct grade! Grade=%d\n", grade);
+					return SCRIPT_CMD_FAILURE;
+				}
+				item_tmp.enchantgrade = static_cast<e_enchantgrade>(grade);
+			}
+		}
+
+		int32 get_count = 0;
+	
+		//Check if it's stackable.
+		if( !itemdb_isstackable2( item_data.get() ) ){
+			get_count = 1;
+		}else{
+			get_count = amount;
+		}
+
+		for (int32 i = 0; i < amount; i += get_count)
+		{
+			// if not pet egg
+			if (!pet_create_egg(sd, nameid))
+			{
+				e_additem_result flag = pc_additem( sd, &item_tmp, get_count, LOG_TYPE_SCRIPT );
+
+				if( flag != ADDITEM_SUCCESS ){
+					clif_additem(sd, 0, 0, flag);
+					ShowError( "buildin_getitem2: Failed to add the item to player.\n" );
+					return SCRIPT_CMD_FAILURE;
+				}
+			}
+		}
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Gives rental item to player
+ * rentitem <item id>,<seconds>{,<account_id>}
+ * rentitem "<item name>",<seconds>{,<account_id>}
+ */
+BUILDIN_FUNC(rentitem) {
+	map_session_data *sd;
+	t_itemid nameid = 0;
+	unsigned char flag = 0;
+
+	if (!script_accid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( script_isstring(st, 2) )
+	{
+		const char *name = script_getstr(st, 2);
+		std::shared_ptr<item_data> itd = item_db.searchname( name );
+
+		if( itd == nullptr ){
+			ShowError("buildin_rentitem: Nonexistant item %s requested.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+		nameid = itd->nameid;
+	}
+	else
+	{
+		nameid = script_getnum(st, 2);
+		if( !item_db.exists(nameid) )
+		{
+			ShowError("buildin_rentitem: Nonexistant item %u requested.\n", nameid);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	int32 seconds = script_getnum(st,3);
+	struct item it = {};
+
+	it.nameid = nameid;
+	it.identify = 1;
+	it.expire_time = (uint32)(time(nullptr) + seconds);
+	it.bound = BOUND_NONE;
+
+	if( (flag = pc_additem(sd, &it, 1, LOG_TYPE_SCRIPT)) )
+	{
+		clif_additem(sd, 0, 0, flag);
+		return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Gives rental item to player with advanced option
+ * rentitem2 <item id>,<time>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account_id>};
+ * rentitem2 "<item name>",<time>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>{,<account_id>};
+ *
+ * rentitem3 <item id>,<time>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account_id>};
+ * rentitem3 "<item name>",<time>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account_id>};
+ *
+ * rentitem4 <item id>,<time>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account_id>};
+ * rentitem4 "<item name>",<time>,<identify>,<refine>,<attribute>,<card1>,<card2>,<card3>,<card4>,<grade>,<RandomIDArray>,<RandomValueArray>,<RandomParamArray>{,<account_id>};
+ */
+BUILDIN_FUNC(rentitem2) {
+	map_session_data *sd;
+	const char *funcname = script_getfuncname(st);
+
+	if (funcname[strlen(funcname)-1] == '3') {
+		if (!script_accid2sd(14,sd))
+			return SCRIPT_CMD_FAILURE;
+	} else if (funcname[strlen(funcname)-1] == '4') {
+		if (!script_accid2sd(15,sd))
+			return SCRIPT_CMD_FAILURE;
+	} else if (!script_accid2sd(11,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	std::shared_ptr<item_data> id;
+	t_itemid nameid = 0;
+
+	if( script_isstring(st, 2) ) {
+		const char *name = script_getstr(st, 2);
+
+		id = item_db.searchname( name );
+
+		if( id == nullptr ) {
+			ShowError("buildin_rentitem2: Nonexistant item %s requested.\n", name);

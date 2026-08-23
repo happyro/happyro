@@ -1,0 +1,387 @@
+	cutin "16go_01",0;
+	mes "[Goni]";
+	mes "... ... ...";
+	close3;
+}
+
+1@rgsr,125,154,5	script	Est#rgsr2	4_F_ESTLOVELOY,{
+	cutin "ep162_est01",2;
+	mes "[Est]";
+	mes "I don't believe there are any enemies left inside, I'm going to pull out.";
+	mes "Just check the Central Room and then get out.";
+	close3;
+}
+
+1@rgsr,125,188,3	script	Restrained Specimen#rgsr	20353,2,3,{
+	if ('rgsr == 12) {
+		specialeffect EF_RED_HIT;
+		specialeffect EF_BEGINSPELL3;
+		npctalk "Do... do not... come close to me...!! Huh, my head... it hurts...";
+		mapannounce 'map$,"Do... do not... come close to me...!! Huh, my head... it hurts...",bc_map,0x00FF00;
+		'rgsr = 13;
+	}
+	end;
+
+OnFail:
+	specialeffect EF_FREEZE;
+	npctalk "Awesome-!! That's it... What did you do!!";
+	mapannounce 'map$,"Awesome-!! That's it... What did you do!!",bc_map,0x00FF00;
+	end;
+}
+
+1@rgsr,144,180,0	script	Control Device#rgsr0	4_ENERGY_BLUE,{
+	if ('rgsr < 13) {
+		mes "This device has an unknown purpose.";
+		mes "There are four buttons in the room.";
+		close;
+	}
+	.@index = atoi(replacestr(strnpcinfo(2),"rgsr",""));
+	if (.@index > 0) {
+		if (!'rsgr_c[ (.@index - 1) ]) {
+			mes "This device has an unknown purpose.";
+			mes "There are four buttons in the room.";
+			next;
+			select("Press the button.");
+			donpcevent instance_npcname("Restrained Specimen#rgsr") + "::OnFail";
+			close;
+		}
+	}
+	if (!'rsgr_c[.@index]) {
+		switch (.@index) {
+			case 0: .@answer = 2; .@string$ = "three phases"; break;
+			case 1: .@answer = 1; .@string$ = "two phases"; break;
+			case 2: .@answer = 4; .@string$ = "one phase"; break;
+			case 3: .@answer = 3;
+		}
+		mes "This device has an unknown purpose.";
+		mes "There are four buttons in the room.";
+		next;
+		.@s = select("Red Button.:Blue Button.:White Button.:Yellow Button.");
+		if (.@s != .@answer)
+			donpcevent instance_npcname("Restrained Specimen#rgsr") + "::OnFail";
+		else {
+			specialeffect EF_BEGINSPELL3,AREA,instance_npcname("Restrained Specimen#rgsr");
+			if (.@index < 3) {
+				mapannounce 'map$,"Gravity control adjustment... completed... There are " + .@string$ +" remaining.",bc_map,0x0D98BA;
+				'rsgr_c[.@index] = 1;
+			} else {
+				'rsgr_c[.@index] = 1;
+				mapannounce 'map$,"Gravity control adjustment... completed... Restraints have been disengaged.",bc_map,0x0D98BA;
+				sleep2 2500;
+				donpcevent instance_npcname("#171_rgsr_control") + "::OnEvent04";
+			}
+		}
+		close;
+	}
+	mes "This device has already been activated.";
+	close;
+}
+
+1@rgsr,108,168,0	duplicate(Control Device#rgsr0)	Control Device#rgsr1	4_ENERGY_RED
+1@rgsr,114,191,0	duplicate(Control Device#rgsr0)	Control Device#rgsr2	4_ENERGY_WHITE
+1@rgsr,143,168,0	duplicate(Control Device#rgsr0)	Control Device#rgsr3	4_ENERGY_YELLOW
+
+1@rgsr,127,164,3	script	Aas#rgsr4	4_EP17_AS,{
+	if ('rgsr != 15)
+		end;
+	cutin "ep171_as01",2;
+	mes "[Aas]";
+	mes "Est has handled everything else on the inside.";
+	mes "Sorry for not being able to help you at all.";
+	next;
+	mes "[Aas]";
+	mes "Let's go back to Einbroch.";
+	mes "I'll... I'll go to my office and join you.";
+	next;
+	.@s = select("Move to Einbroch.:Move to Lighthalzen.:Stay for a while.");
+	if (.@s == 3) {
+		cutin "ep171_as02",2;
+		mes "[Aas]";
+		mes "Do you have anything else to investigate?";
+		mes "I'll wait  here.";
+		close3;
+	}
+	mes "[Aas]";
+	mes "We're going to wait for you in the Cat on Bullet.";
+	mes "Please head there and meet us in the headquarters.";
+	completequest 7862;
+	close2;
+	if (.@s == 1)
+		warp "einbroch",301,324;
+	else
+		warp "lighthalzen",54,272;
+	end;
+}
+
+//= Monster
+1@rgsr,1,1,0	script	#rgsr_mob_1	HIDDEN_WARP_NPC,{
+OnSummon:
+	.@event$ = instance_npcname(strnpcinfo(0))+"::OnMobKill";
+	setarray .@xy,
+	153,80,155,81,154,82, //= Bottom Right
+	138,85,136,87,138,89, //= Center Right
+	152,94,152,98,153,98, //= Stairs Right
+	145,114,151,114,156,114, //= Top Right
+	97,114,102,114,107,114, //= Top Left
+	102,98,101,96,101,95, //= Stairs Left
+	116,88,118,88,121,87, //= Center Left
+	117,101,117,101,117,102, //= Center Top
+	93,66,93,67,94,68, //= Bottom Door
+	58,65,56,57,44,59,31,53,15,55, //= Bottom Room
+	59,94,48,98,53,103,36,110,33,126,46,132,55,131; //= Upper Room
+	for (.@i = 0; .@i < getarraysize(.@xy); .@i += 2)
+		monster 'map$,.@xy[.@i],.@xy[.@i+1],"Special Guard",3627,1,.@event$;
+	end;
+
+OnMobKill:
+	.@event$ = instance_npcname(strnpcinfo(0))+"::OnMobKill";
+	if (!mobcount('map$,.@event$) && 'rgsr == 1) {
+		'rgsr = 2;
+		disablenpc();
+		enablenpc instance_npcname("Access Controller#rgsr");
+	}
+	end;
+}
+
+1@rgsr,1,1,0	script	#rgsr_mob_2	HIDDEN_WARP_NPC,{
+OnSummon:
+	setarray .@xy,102,137,104,136,104,135,126,139,138,137,139,134,137,133,151,135,150,136,151,137,85,151,82,215,84,216,84,218,107,216;
+	setarray .@left_xy,85,170,54,186,55,183,58,181,59,186,62,183,62,216,59,214,56,217,54,214,52,217;
+	setarray .@right_xy,167,136,167,135,168,135,208,138,208,134,203,138,200,134,187,123,188,
+	123,187,122,186,108,188,107,186,105,196,106,203,109,205,105,208,109,187,92,186,90,188,91,
+	187,69,187,67,188,67,201,74,202,77,207,76,211,74,187,48,188,45,186,46,197,45,202,45,208,42,211,42;
+	setarray .@top_xy,169,217,169,214,172,217,172,214,176,217,176,214,180,217,180,214,184,217,184,214,167,204,168,203,168,203,167,176,167,176,166,175;
+	for (.@i = 0; .@i < getarraysize(.@xy); .@i += 2)
+		monster 'map$,.@xy[.@i],.@xy[.@i+1],"Special Guard",3627,1;
+	for (.@i = 0; .@i < getarraysize(.@left_xy); .@i += 2)
+		monster 'map$,.@left_xy[.@i],.@left_xy[.@i+1],"Poisonous Gas",20352,1,instance_npcname(strnpcinfo(0))+"::OnLeftKill";
+	for (.@i = 0; .@i < getarraysize(.@right_xy); .@i += 2)
+		monster 'map$,.@right_xy[.@i],.@right_xy[.@i+1],"Poisonous Gas",20352,1,instance_npcname(strnpcinfo(0))+"::OnRightKill";
+	for (.@i = 0; .@i < getarraysize(.@top_xy); .@i += 2)
+		monster 'map$,.@top_xy[.@i],.@top_xy[.@i+1],"Poisonous Gas",20352,1,instance_npcname(strnpcinfo(0))+"::OnTopKill";
+	end;
+
+OnLeftKill:
+	.@event$ = instance_npcname(strnpcinfo(0))+"::OnLeftKill";
+	if (!mobcount('map$,.@event$)) {
+		mapannounce 'map$,"Est : Who is it? Are you Aas? Are you the adventurer?",bc_map,0x0D98BA;
+		enablenpc instance_npcname("Est#rgsr");
+		enablenpc instance_npcname("Rebellion Crew#rgsr_dum01");
+	}
+	end;
+
+OnRightKill:
+OnTopKill:
+	end;
+}
+
+1@rgsr,1,1,0	script	#rgsr_boss	HIDDEN_WARP_NPC,{
+	end;
+OnSummon:
+	mapannounce 'map$,"Ahahaha.. ahahaha... I'll kill you all!!!!",bc_map,0x00FF00;
+	sleep 2000;
+	mapannounce 'map$,"Aas : What is going on? *click* The lock is...!!",bc_map;
+	sleep 2000;
+	mapannounce 'map$,"I'm not a defect! I'm not a monster!",bc_map,0x00FF00;
+	specialeffect EF_LORD,AREA,instance_npcname("Restrained Specimen#rgsr");
+	disablenpc instance_npcname("Restrained Specimen#rgsr");
+	monster 'map$,125,188,"Failed Specimen",20353,1,instance_npcname(strnpcinfo(0))+"::OnBossKill";
+	end;
+
+OnBossKill:
+	if ('rgsr == 14) {
+		'rgsr = 15;
+		hideonnpc instance_npcname("Aas#rgsr3");
+		disablenpc instance_npcname("Aas#rgsr3");
+		enablenpc instance_npcname("Aas#rgsr4");
+		disablenpc();
+	}
+	end;
+}
+
+1@rgsr,94,68,5	script	#rgsr_touch_mob_0	3622,4,6,{
+	end;
+
+OnTouch:
+	disablenpc();
+	.@v = atoi(replacestr(strnpcinfo(2),"rgsr_touch_mob_",""));
+	if (!.@v)
+		setarray .@xy,98,66,94,68,95,70,92,68;
+	else
+		setarray .@xy,91,91,91,93,95,93,94,97,97,92;
+	for (.@i = 0; .@i < getarraysize(.@xy); .@i += 2)
+		monster 'map$,.@xy[.@i],.@xy[.@i+1],"Special Guard",3622,1;
+	end;
+}
+
+1@rgsr,95,93,5	duplicate(#rgsr_touch_mob_0)	#rgsr_touch_mob_1	3622,4,6
+
+//= Warp/Other
+1@rgsr,59,136,0	warp	#rgsr_warp_0	1,2,1@rgsr,66,136
+
+1@rgsr,51,184,0	script	#rgsr_warp_1	WARPNPC,1,2,{
+	end;
+
+OnTouch:
+	.@event$ = instance_npcname("#rgsr_mob_2")+"::OnLeftKill";
+	if (mobcount('map$,.@event$)) {
+		dispbottom "Voice Behind Door : Who's outside? exterminate that strange poison gas!!";
+		end;
+	}
+	switch (atoi(replacestr(strnpcinfo(2),"rgsr_warp_",""))) {
+		case 1: warp 'map$,46,184; break;
+		case 2:	warp 'map$,46,216; break;
+		case 3: warp 'map$,54,184; break;
+		case 4: warp 'map$,54,216;
+	}
+	end;
+}
+
+1@rgsr,51,216,0	duplicate(#rgsr_warp_1)	#rgsr_warp_2	WARPNPC,1,2
+1@rgsr,49,184,0	duplicate(#rgsr_warp_1)	#rgsr_warp_3	WARPNPC,1,2
+1@rgsr,49,216,0	duplicate(#rgsr_warp_1)	#rgsr_warp_4	WARPNPC,1,2
+
+1@rgsr,186,216,0	script	#rgsr_warp_5	WARPNPC,1,2,{
+	.@event$ = instance_npcname("#rgsr_mob_2")+"::OnTopKill";
+	if (mobcount('map$,.@event$)) {
+		mes "An unknown entity has been detected. Access Denied.";
+		close;
+	}
+	switch (atoi(replacestr(strnpcinfo(2),"rgsr_warp_",""))) {
+		case 5: warp 'map$,191,216; break;
+		case 6: warp 'map$,183,216;
+	}
+	end;
+}
+
+1@rgsr,188,216,0	duplicate(#rgsr_warp_5)	#rgsr_warp_6	WARPNPC,1,2
+
+1@rgsr,214,136,0	script	#rgsr_warp_7	WARPNPC,1,2,{
+	.@event$ = instance_npcname("#rgsr_mob_2")+"::OnRightKill";
+	if (mobcount('map$,.@event$) > 0 || 'rgsr < 7) {
+		mes "An unknown entity has been detected. Access Denied.";
+		close;
+	}
+	switch (atoi(replacestr(strnpcinfo(2),"rgsr_warp_",""))) {
+		case 7: warp 'map$,219,136; break;
+		case 8: warp 'map$,211,136; break;
+		case 9: warp 'map$,219,108; break;
+		case 10: warp 'map$,211,108; break;
+		case 11: warp 'map$,219,76; break;
+		case 12: warp 'map$,211,76; break;
+		case 13: warp 'map$,219,44; break;
+		case 14:  warp 'map$,211,44;
+	}
+	end;
+}
+
+1@rgsr,216,136,0	duplicate(#rgsr_warp_7)	#rgsr_warp_8	WARPNPC,1,2
+1@rgsr,214,108,0	duplicate(#rgsr_warp_7)	#rgsr_warp_9	WARPNPC,1,2
+1@rgsr,216,108,0	duplicate(#rgsr_warp_7)	#rgsr_warp_10	WARPNPC,1,2
+1@rgsr,214,76,0	duplicate(#rgsr_warp_7)	#rgsr_warp_11	WARPNPC,1,2
+1@rgsr,216,76,0	duplicate(#rgsr_warp_7)	#rgsr_warp_12	WARPNPC,1,2
+1@rgsr,214,44,0	duplicate(#rgsr_warp_7)	#rgsr_warp_13	WARPNPC,1,2
+1@rgsr,216,44,0	duplicate(#rgsr_warp_7)	#rgsr_warp_14	WARPNPC,1,2
+
+1@rgsr,37,126,0	script	Researcher#rgsr_dum00	4_F_SCIENCE,{
+	mes "[Detained Researcher]";
+	mes "Why do I have to feed this traitors?";
+	close;
+}
+
+1@rgsr,35,136,7	script	Researcher#rgsr_dum01	4_LGTSCIENCE,{
+	mes "[Detained Researcher]";
+	mes "I want to go home... I just want to go home...";
+	close;
+}
+
+1@rgsr,38,139,3	script	Researcher#rgsr_dum02	4_M_NFMAN,{
+	mes "[Detained Researcher]";
+	mes "Are you here to save us?";
+	mes "Thank you! Thank you!";
+	close;
+}
+
+1@rgsr,31,186,3	script	Researcher#rgsr_dum03	4_LGTSCIENCE,{
+	mes "[Detained Researcher]";
+	mes "What the hell is happening?";
+	mes "Aaaah... I just want to go home...";
+	close;
+}
+
+1@rgsr,24,186,5	script	Researcher#rgsr_dum04	4_F_SCIENCE,{
+	mes "[Detained Researcher]";
+	mes "Why did you come here to save me?";
+	mes "The Enterprise's guards... no wait...";
+	next;
+	mes "[Detained Researcher]";
+	mes "I thought that you were the one who kept us in custody...!";
+	mes "Why would they do that?";
+	close;
+}
+
+1@rgsr,25,182,7	script	Researcher#rgsr_dum05	4_M_HUMAN_01,{
+	mes "[Detained Researcher]";
+	mes "These scumbags took my Research Report and I escaped here.";
+	mes "It was a spray repellent to block blood-sucking insects!";
+	next;
+	mes "[Detained Researcher]";
+	mes "That was my private research, I don't know why they took it!";
+	mes "You can't just take away someone else's Research Report.";
+	close;
+}
+
+1@rgsr,40,186,3	script	Rebellion Crew#rgsr_dum01	4_M_ILYA,{
+	mes "[Rebellion Crew]";
+	mes "I've come prepared, but this was easier than thought.";
+	mes "Now I'm stuck here. Hehehehe!";
+	close;
+}
+
+1@rgsr,33,185,3	script	Rebellion Crew#rgsr_dum02	4_M_REBELLION2,{
+	mes "[Rebellion Crew]";
+	mes "The remaining researchers are gathered here for their security.";
+	mes "The Rebellions will protect them and help them escape.";
+	close;
+}
+
+1@rgsr,31,183,5	script	Rebellion Crew#rgsr_dum03	4_F_ANYA,{
+	mes "[Rebellion Crew]";
+	mes "I thought they had less forces on the inside, but I didn't think they'd have installed toxic gas.";
+	mes "Most people have fled already, only the enemies are remaining.";
+	close;
+}
+
+1@rgsr,195,205,0	script	Research Report#rgsr_00	4_ENERGY_BLUE,{
+	mes "It is a data on new efficiency and side effect of new potions.";
+	mes "However there is information about the core ingredients.";
+	close;
+}
+
+1@rgsr,198,199,0	script	Research Report#rgsr_01	4_ENERGY_BLUE,{
+	mes "Some of the drawing has been torn.";
+	mes "Somebody intentionally destroyed the relevant parts.";
+	close;
+}
+
+1@rgsr,207,210,0	script	Research Report#rgsr_02	4_ENERGY_BLUE,{
+	mes "Parts of the documents were severely damaged.";
+	mes "It seems to have been about attempting to create a device using the refraction of light.";
+	close;
+}
+
+1@rgsr,226,226,0	script	Research Report#rgsr_03	4_ENERGY_BLUE,{
+	mes "Lloyds's enchantment and processing data.";
+	mes "Only the title was left, all the text was removed.";
+	close;
+}
+
+1@rgsr,231,223,0	script	Research Report#rgsr_04	4_ENERGY_BLUE,{
+	mes "The booklet is missing some pages. Someone has deliberately omitted the material.";
+	close;
+}
+
+1@rgsr,243,223,0	script	Research Report#rgsr_05	4_ENERGY_BLUE,{
+	mes "The experimental data has been removed. There are clear traces of someone destroying the information.";
+	close;
+}

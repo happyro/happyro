@@ -1,0 +1,219 @@
+			break;
+		case AG_BATTLE:
+		case AG_TAMING:
+			if (ad->targets.empty())
+				return false;
+
+			for (const auto &it : ad->targets) {
+				if (it.second->mob == update_count[0] && current_count[it.first] < it.second->count) { // Here update_count[0] contains the killed/tamed monster ID
+					current_count[it.first]++;
+					changed = true;
+				}
+			}
+
+			if (!changed)
+				return false;
+
+			if (achievement_target_complete(ad, current_count))
+				complete = true;
+			break;
+		case AG_GOAL_ACHIEVE:
+			if (!achievement_check_condition(ad->condition, sd)) // Parameters weren't met
+				return false;
+
+			changed = true;
+			complete = true;
+			break;
+		/*
+		case AG_CHATTING:
+			if (ad->targets.empty())
+				return false;
+
+			if (ad->mapindex > -1 && sd->bl.m != ad->mapindex)
+				return false;
+
+			for (const auto &it : ad->targets) {
+				if (current_count[it.first] < it.second->count) {
+					current_count[it.first]++;
+					changed = true;
+				}
+			}
+
+			if (!changed)
+				return false;
+
+			if (achievement_target_complete(ad, current_count))
+				complete = true;
+			break;
+		*/
+	}
+
+	if( isNew ){
+		// Always add the achievement if it was completed
+		bool hasCounter = complete;
+
+		// If it was not completed
+		if( !hasCounter ){
+			// Check if it has a counter
+			for( int32 counter : current_count ){
+				if( counter != 0 ){
+					hasCounter = true;
+					break;
+				}
+			}
+		}
+
+		if( hasCounter ){
+			if( !( entry = achievement_add( sd, ad->achievement_id ) ) ){
+				return false; // Failed to add achievement
+			}
+		}else{
+			changed = false;
+		}
+	}
+
+	if (changed) {
+		memcpy(entry->count, current_count.data(), sizeof(current_count));
+		achievement_update_achievement(sd, ad->achievement_id, complete);
+	}
+
+	return true;
+}
+
+/**
+ * Update achievement objective count.
+ * @param sd: Player data
+ * @param group: Achievement enum type
+ * @param sp_value: SP parameter value
+ * @param arg_count: va_arg count
+ */
+void achievement_update_objective(map_session_data *sd, enum e_achievement_group group, uint8 arg_count, ...)
+{
+	if (!battle_config.feature_achievement)
+		return;
+
+	if (sd) {
+		va_list ap;
+		std::array<int32, MAX_ACHIEVEMENT_OBJECTIVES> count = {};
+
+		va_start(ap, arg_count);
+		for (int32 i = 0; i < arg_count; i++){
+			std::string name = "ARG" + std::to_string(i);
+
+			count[i] = va_arg(ap, int32);
+
+			pc_setglobalreg( sd, add_str( name.c_str() ), (int32)count[i] );
+		}
+		va_end(ap);
+
+		for (auto &ach : achievement_db)
+			achievement_update_objectives(sd, ach.second, group, count);
+
+		// Remove variables that might have been set
+		for (int32 i = 0; i < arg_count; i++){
+			std::string name = "ARG" + std::to_string(i);
+
+			pc_setglobalreg( sd, add_str( name.c_str() ), 0 );
+		}
+	}
+}
+
+/**
+ * Map iterator subroutine to update achievement objectives for a party after killing a monster.
+ * @see map_foreachinrange
+ * @param ap: Argument list, expecting:
+ *   int32 Party ID
+ *   int32 Mob ID
+ */
+int32 achievement_update_objective_sub(block_list *bl, va_list ap)
+{
+	map_session_data *sd;
+	int32 mob_id, party_id;
+
+	nullpo_ret(bl);
+	nullpo_ret(sd = (map_session_data *)bl);
+
+	party_id = va_arg(ap, int32);
+	mob_id = va_arg(ap, int32);
+
+	if (sd->achievement_data.achievements == nullptr)
+		return 0;
+	if (sd->status.party_id != party_id)
+		return 0;
+
+	achievement_update_objective(sd, AG_BATTLE, 1, mob_id);
+
+	return 1;
+}
+
+/**
+ * Reloads the achievement database
+ */
+void achievement_db_reload(void)
+{
+	do_final_achievement();
+	do_init_achievement();
+}
+
+/**
+ * Initializes the achievement database
+ */
+void do_init_achievement(void)
+{
+	if (!battle_config.feature_achievement)
+		return;
+	achievement_db.load();
+	achievement_level_db.load();
+}
+
+/**
+ * Finalizes the achievement database
+ */
+void do_final_achievement(void){
+	achievement_db.clear();
+	achievement_level_db.clear();
+}
+
+/**
+ * Achievement constructor
+ */
+s_achievement_db::s_achievement_db()
+	: achievement_id(0)
+	, name("")
+	, group()
+	, targets()
+	, dependent_ids()
+	, condition(nullptr)
+	, mapindex(-1)
+	, rewards()
+	, score(0)
+	, has_dependent(0)
+{}
+
+/**
+* Achievement deconstructor
+*/
+s_achievement_db::~s_achievement_db()
+{
+	if (condition)
+		script_free_code(condition);
+}
+
+/**
+ * Achievement reward constructor
+ */
+s_achievement_db::ach_reward::ach_reward()
+	: nameid(0)
+	, amount(0)
+	, script(nullptr)
+	, title_id(0)
+{}
+
+/**
+ * Achievement reward deconstructor
+ */
+s_achievement_db::ach_reward::~ach_reward()
+{
+	if (script)
+		script_free_code(script);
+}

@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "pet.hpp"
+
+#include <cstdlib>
+#include <map>
+#include <string>
+
+#include <common/db.hpp>
+#include <common/ers.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "battle.hpp"
+#include "chrif.hpp"
+#include "clif.hpp"
+#include "intif.hpp"
+#include "log.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "pc.hpp"
+
+using namespace rathena;
+
+struct s_pet_catch_process{
+	uint32 char_id;
+	t_itemid taming_item;
+	e_pet_catch_flag flag;
+};
+
+std::unordered_map<uint32, std::shared_ptr<s_pet_catch_process>> pet_catchprocesses;
+std::unordered_map<std::string, std::shared_ptr<s_pet_autobonus_wrapper>> pet_autobonuses;
+const t_tick MIN_PETTHINKTIME = 100;
+
+const std::string PetDatabase::getDefaultLocation(){
+	return std::string(db_path) + "/pet_db.yml";
+}
+
+uint64 PetDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	std::string mob_name;
+
+	if( !this->asString( node, "Mob", mob_name ) ){
+		return 0;
+	}
+
+	std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname( mob_name.c_str() );
+
+	if( mob == nullptr ){
+		this->invalidWarning( node["Mob"], "Mob %s does not exist and cannot be used as a pet.\n", mob_name.c_str() );
+		return 0;
+	}
+
+	uint16 mob_id = mob->id;
+
+	std::shared_ptr<s_pet_db> pet = this->find( mob_id );
+	bool exists = pet != nullptr;
+
+	if( !exists ){
+		// Check mandatory nodes
+		if( !this->nodesExist( node, { "EggItem", "Fullness", "CaptureRate" } ) ){
+			return 0;
+		}
+
+		pet = std::make_shared<s_pet_db>();
+		pet->class_ = mob_id;
+	}
+
+	if( this->nodeExists( node, "TameItem" ) ){
+		std::string item_name;
+
+		if( !this->asString( node, "TameItem", item_name ) ){
+			return 0;
+		}
+
+		std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+		if( item == nullptr ){
+			this->invalidWarning( node["TameItem"], "Taming item %s does not exist.\n", item_name.c_str() );
+			return 0;
+		}
+
+		pet->itemID = item->nameid;
+	}else{
+		if( !exists ){
+			pet->itemID = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "EggItem" ) ){
+		std::string item_name;
+
+		if( !this->asString( node, "EggItem", item_name ) ){
+			return 0;
+		}
+
+		std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+		if( item == nullptr ){
+			this->invalidWarning( node["EggItem"], "Egg item %s does not exist.\n", item_name.c_str() );
+			return 0;
+		}
+
+		pet->EggID = item->nameid;
+	}
+
+	if( this->nodeExists( node, "EquipItem" ) ){
+		std::string item_name;
+
+		if( !this->asString( node, "EquipItem", item_name ) ){
+			return 0;
+		}
+
+		std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+		if( item == nullptr ){
+			this->invalidWarning( node["EquipItem"], "Equip item %s does not exist.\n", item_name.c_str() );
+			return 0;
+		}
+
+		pet->AcceID = item->nameid;
+	}else{
+		if( !exists ){
+			pet->AcceID = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "FoodItem" ) ){
+		std::string item_name;
+
+		if( !this->asString( node, "FoodItem", item_name ) ){
+			return 0;
+		}
+
+		std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+		if( item == nullptr ){
+			this->invalidWarning( node["FoodItem"], "Food item %s does not exist.\n", item_name.c_str() );
+			return 0;
+		}
+
+		pet->FoodID = item->nameid;
+	}else{
+		if( !exists ){
+			pet->FoodID = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "Fullness" ) ){
+		uint16 fullness;
+
+		if( !this->asUInt16( node, "Fullness", fullness ) ){
+			return 0;
+		}
+
+		if( fullness > 100 ){
+			this->invalidWarning( node["Fullness"], "Fullness %hu exceeds maximum of 100. Capping...\n", fullness );
+			fullness = 100;
+		}
+
+		pet->fullness = fullness;
+	}
+
+	if( this->nodeExists( node, "HungryDelay" ) ){
+		uint32 delay;
+
+		if( !this->asUInt32( node, "HungryDelay", delay ) ){
+			return 0;
+		}
+
+		pet->hungry_delay = delay * 1000;
+	}else{
+		if( !exists ){
+			pet->hungry_delay = 60000;
+		}
+	}
+
+	if( this->nodeExists( node, "HungerIncrease" ) ){
+		int32 increase;
+
+		if( !this->asInt32( node, "HungerIncrease", increase ) ){
+			return 0;
+		}
+
+		pet->hunger_increase = increase;
+	}else{
+		if( !exists ){
+			pet->hunger_increase = 20;
+		}
+	}
+
+	if( this->nodeExists( node, "IntimacyStart" ) ){
+		uint32 start;
+
+		if( !this->asUInt32( node, "IntimacyStart", start ) ){
+			return 0;
+		}
+
+		if( start > 10000 ){
+			this->invalidWarning( node["IntimacyStart"], "IntimacyStart %hu exceeds maximum of 10000. Capping...\n", start );
+			start = 10000;
+		}
+
+		pet->intimate = start;
+	}else{
+		if( !exists ){
+			pet->intimate = 250;
+		}
+	}
+
+	if( this->nodeExists( node, "IntimacyFed" ) ){
+		int32 fed;
+
+		if( !this->asInt32( node, "IntimacyFed", fed ) ){
+			return 0;
+		}
+
+		pet->r_hungry = fed;
+	}else{
+		if( !exists ){
+			pet->r_hungry = 50;
+		}
+	}
+
+	if( this->nodeExists( node, "IntimacyOverfed" ) ){
+		int32 overfed;
+
+		if( !this->asInt32( node, "IntimacyOverfed", overfed ) ){
+			return 0;
+		}
+
+		pet->r_full = overfed;
+	}else{
+		if( !exists ){
+			pet->r_full = -100;
+		}
+	}
+
+	if( this->nodeExists( node, "IntimacyHungry" ) ){
+		int32 hungry;
+
+		if( !this->asInt32( node, "IntimacyHungry", hungry ) ){
+			return 0;
+		}
+
+		pet->hungry_intimacy_dec = hungry;
+	}else{
+		if( !exists ){
+			pet->hungry_intimacy_dec = -5;
+		}
+	}
+
+	if( this->nodeExists( node, "IntimacyOwnerDie" ) ){
+		int32 die;
+
+		if( !this->asInt32( node, "IntimacyOwnerDie", die ) ){
+			return 0;
+		}
+
+		pet->die = die;
+	}else{
+		if( !exists ){
+			pet->die = -20;
+		}
+	}
+
+	if( this->nodeExists( node, "CaptureRate" ) ){
+		uint16 rate;
+
+		if( !this->asUInt16( node, "CaptureRate", rate ) ){
+			return 0;
+		}
+
+		if( rate > 10000 ){
+			this->invalidWarning( node["CaptureRate"], "CaptureRate %hu exceeds maximum of 10000. Capping...\n", rate );
+			rate = 10000;
+		}
+
+		pet->capture = rate;
+	}
+
+	if( this->nodeExists( node, "SpecialPerformance" ) ){
+		bool performance;
+
+		if( !this->asBool( node, "SpecialPerformance", performance ) ){
+			return 0;
+		}
+
+		pet->s_perfor = performance;
+	}else{
+		if( !exists ){
+			pet->s_perfor = true;
+		}
+	}
+
+	if( this->nodeExists( node, "AttackRate" ) ){
+		uint16 rate;
+
+		if( !this->asUInt16( node, "AttackRate", rate ) ){
+			return 0;
+		}
+
+		if( rate > 10000 ){
+			this->invalidWarning( node["AttackRate"], "AttackRate %hu exceeds maximum of 10000. Capping...\n", rate );
+			rate = 10000;
+		}
+
+		pet->attack_rate = rate;
+	}else{
+		if( !exists ){
+			pet->attack_rate = 10001; // unreachable
+		}
+	}
+
+	if( this->nodeExists( node, "RetaliateRate" ) ){
+		uint16 rate;
+
+		if( !this->asUInt16( node, "RetaliateRate", rate ) ){
+			return 0;
+		}
+
+		if( rate > 10000 ){
+			this->invalidWarning( node["RetaliateRate"], "RetaliateRate %hu exceeds maximum of 10000. Capping...\n", rate );
+			rate = 10000;
+		}
+
+		pet->defence_attack_rate = rate;
+	}else{
+		if( !exists ){
+			pet->defence_attack_rate = 10001; // unreachable
+		}
+	}
+
+	if( this->nodeExists( node, "ChangeTargetRate" ) ){
+		uint16 rate;
+
+		if( !this->asUInt16( node, "ChangeTargetRate", rate ) ){
+			return 0;
+		}
+
+		if( rate > 10000 ){
+			this->invalidWarning( node["ChangeTargetRate"], "ChangeTargetRate %hu exceeds maximum of 10000. Capping...\n", rate );
+			rate = 10000;
+		}
+
+		pet->change_target_rate = rate;
+	}else{
+		if( !exists ){
+			pet->change_target_rate = 10001; // unreachable
+		}
+	}
+
+	if( this->nodeExists( node, "AllowAutoFeed" ) ){
+		bool allow;
+
+		if( !this->asBool( node, "AllowAutoFeed", allow ) ){
+			return 0;
+		}
+
+		pet->allow_autofeed = allow;
+	}else{
+		if( !exists ){
+			pet->allow_autofeed = false;
+		}
+	}
+
+	if( this->nodeExists( node, "Script" ) ){
+		std::string script;
+
+		if( !this->asString( node, "Script", script ) ){
+			return 0;
+		}
+
+		if( pet->pet_bonus_script != nullptr ){
+			script_free_code( pet->pet_bonus_script );
+			pet->pet_bonus_script = nullptr;
+		}
+
+		pet->pet_bonus_script = parse_script( script.c_str(), this->getCurrentFile().c_str(), this->getLineNumber(node["Script"]), SCRIPT_IGNORE_EXTERNAL_BRACKETS );
+	}else{
+		if( !exists ){
+			pet->pet_bonus_script = nullptr;
+		}
+	}
+
+	if( this->nodeExists( node, "SupportScript" ) ){
+		std::string script;
+
+		if( !this->asString( node, "SupportScript", script ) ){
+			return 0;
+		}
+
+		if( pet->pet_support_script != nullptr ){
+			script_free_code( pet->pet_support_script );
+			pet->pet_support_script = nullptr;
+		}
+
+		pet->pet_support_script = parse_script( script.c_str(), this->getCurrentFile().c_str(), this->getLineNumber(node["SupportScript"]), SCRIPT_IGNORE_EXTERNAL_BRACKETS );
+	}else{
+		if( !exists ){
+			pet->pet_support_script = nullptr;
+		}
+	}
+
+	if( this->nodeExists( node, "Evolution" ) ){
+		const auto& evolutionsNode = node["Evolution"];
+		for( const auto& evolutionNode : evolutionsNode ){
+			std::string target_name;
+
+			if( !this->asString( evolutionNode, "Target", target_name ) ){
+				return 0;
+			}
+
+			std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname( target_name.c_str() );
+
+			if( mob == nullptr ){
+				this->invalidWarning( evolutionNode["Target"], "Evolution target %s does not exist.\n", target_name.c_str() );
+				return 0;
+			}
+
+			uint16 targetId = mob->id;
+
+			if( !this->nodeExists( evolutionNode, "ItemRequirements" ) ){
+				this->invalidWarning( evolutionNode, "Missing required node \"ItemRequirements\".\n" );
+				return 0;
+			}
+
+			std::shared_ptr<s_pet_evo_data> evolution = util::umap_find( pet->evolution_data, targetId );
+			bool evolution_exists = evolution != nullptr;
+
+			if( !evolution_exists ){
+				evolution = std::make_shared<s_pet_evo_data>();
+				evolution->target_mob_id = targetId;
+			}
+
+			const auto& requirementsNode = evolutionNode["ItemRequirements"];
+			for( const auto& requirementNode : requirementsNode ){
+				std::string item_name;
+
+				if( !this->asString( requirementNode, "Item", item_name ) ){
+					return 0;
+				}
+
+				std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+				if( item == nullptr ){
+					this->invalidWarning( requirementNode["Item"], "Evolution requirement item %s does not exist.\n", item_name.c_str() );
+					return 0;
+				}
+
+				uint16 amount;
+
+				if( !this->asUInt16( requirementNode, "Amount", amount ) ){
+					return 0;
+				}
+
+				if( amount > MAX_AMOUNT ){
+					this->invalidWarning( requirementNode["Amount"], "Amount %u exceeds the maximum of %d.\n", amount, MAX_AMOUNT );
+					return 0;
+				}
+
+				evolution->requirements[item->nameid] = amount;
+			}
+
+			if( !evolution_exists ){
+				pet->evolution_data[targetId] = evolution;
+			}
+		}
+	}
+
+	if( !exists ){
+		this->put( mob_id, pet );
+	}
+
+	return 1;
+}
+
+/**
+ * Clear pet support bonuses from memory
+ * @param sd: Pet owner
+ */
+void pet_clear_support_bonuses(map_session_data *sd) {
+	nullpo_retv(sd);
+
+	if (!sd->pd)
+		return;
+
+	pet_data *pd = sd->pd;
+
+	if (pd->a_skill) {
+		aFree(pd->a_skill);
+		pd->a_skill = nullptr;
+	}

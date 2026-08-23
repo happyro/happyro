@@ -1,0 +1,123 @@
+ */
+void bg_queue_on_accept_invite(map_session_data *sd)
+{
+	nullpo_retv(sd);
+
+	std::shared_ptr<s_battleground_queue> queue = bg_search_queue(sd->bg_queue_id);
+
+	if (queue == nullptr) {
+		ShowError("bg_queue_on_accept_invite: Couldn't find player %s in battlegrounds queue.\n", sd->status.name);
+		return;
+	}
+
+	queue->accepted_players++;
+	clif_bg_queue_ack_lobby(true, mapindex_id2name(queue->map->mapindex), mapindex_id2name(queue->map->mapindex), sd);
+
+	if (queue->state == QUEUE_STATE_ACTIVE) // Battleground is already active
+		bg_join_active(sd, queue);
+	else if (queue->state == QUEUE_STATE_SETUP_DELAY) {
+		if (queue->accepted_players == queue->required_players * 2) {
+			if (queue->tid_expire != INVALID_TIMER) {
+				delete_timer(queue->tid_expire, bg_on_ready_expire);
+				queue->tid_expire = INVALID_TIMER;
+			}
+
+			// Check player's current position for mapflag check
+			if (battle_config.bgqueue_nowarp_mapflag > 0 && bg_mapflag_check(queue))
+				return;
+
+			queue->tid_start = add_timer(gettick() + battleground_db.find(queue->id)->start_delay * 1000, bg_on_ready_start, 0, (intptr_t)queue->queue_id);
+		}
+	}
+}
+
+/**
+ * Begin the Battleground from the given queue
+ * @param queue: Battleground queue
+ */
+void bg_queue_start_battleground(std::shared_ptr<s_battleground_queue> queue)
+{
+	if (queue == nullptr)
+		return;
+
+	std::shared_ptr<s_battleground_type> bg = battleground_db.find(queue->id);
+
+	if (!bg) {
+		bg_queue_clear(queue, true);
+		ShowError("bg_queue_start_battleground: Could not find battleground ID %d in battlegrounds database.\n", queue->id);
+		return;
+	}
+
+	// Check player's current position for mapflag check
+	if (battle_config.bgqueue_nowarp_mapflag > 0 && bg_mapflag_check(queue))
+		return;
+
+	uint16 map_idx = queue->map->mapindex;
+	int32 bg_team_1 = bg_create(map_idx, &queue->map->team1);
+	int32 bg_team_2 = bg_create(map_idx, &queue->map->team2);
+
+	for (const auto &sd : queue->teama_members) {
+		clif_bg_queue_entry_init(sd);
+		bg_team_join(bg_team_1, sd, true);
+	}
+
+	for (const auto &sd : queue->teamb_members) {
+		clif_bg_queue_entry_init(sd);
+		bg_team_join(bg_team_2, sd, true);
+	}
+
+	mapreg_setreg(add_str(queue->map->team1.bg_id_var.c_str()), bg_team_1);
+	mapreg_setreg(add_str(queue->map->team2.bg_id_var.c_str()), bg_team_2);
+	npc_event_do(queue->map->bgcallscript.c_str());
+	queue->state = QUEUE_STATE_ACTIVE;
+
+	bg_queue_clear(queue, false);
+}
+
+/**
+ * Initialize a Battleground queue
+ * @param bg_id: Battleground ID
+ * @param req_players: Required amount of players
+ * @return s_battleground_queue*
+ */
+static void bg_queue_create(int32 bg_id, int32 req_players)
+{
+	auto queue = std::make_shared<s_battleground_queue>();
+
+	queue->queue_id = bg_queue_count++;
+	queue->id = bg_id;
+	queue->required_players = req_players;
+	queue->accepted_players = 0;
+	queue->tid_expire = INVALID_TIMER;
+	queue->tid_start = INVALID_TIMER;
+	queue->tid_requeue = INVALID_TIMER;
+	queue->state = QUEUE_STATE_SETUP;
+
+	bg_queues.push_back(queue);
+}
+
+/**
+ * Initialize the Battleground data
+ */
+void do_init_battleground(void)
+{
+	if (battle_config.feature_bgqueue) {
+		battleground_db.load();
+
+		for (const auto &bg : battleground_db)
+			bg_queue_create(bg.first, bg.second->required_players);
+	}
+
+	add_timer_func_list(bg_send_xy_timer, "bg_send_xy_timer");
+	add_timer_func_list(bg_on_ready_loopback, "bg_on_ready_loopback");
+	add_timer_func_list(bg_on_ready_expire, "bg_on_ready_expire");
+	add_timer_func_list(bg_on_ready_start, "bg_on_ready_start");
+	add_timer_interval(gettick() + battle_config.bg_update_interval, bg_send_xy_timer, 0, 0, battle_config.bg_update_interval);
+}
+
+/**
+ * Clear the Battleground data from memory
+ */
+void do_final_battleground(void)
+{
+}

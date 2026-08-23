@@ -1,0 +1,500 @@
+				if( sd != nullptr ){
+					sd->update_look( LOOK_WEAPON );
+					sd->update_look( LOOK_SHIELD );
+				}
+
+				if( sc != nullptr ){
+					if( vd->look[LOOK_CLOTHES_COLOR] != 0 ){
+						if (sc->option&OPTION_WEDDING && battle_config.wedding_ignorepalette)
+							vd->look[LOOK_CLOTHES_COLOR] = 0;
+						if (sc->option&OPTION_XMAS && battle_config.xmas_ignorepalette)
+							vd->look[LOOK_CLOTHES_COLOR] = 0;
+						if (sc->option&(OPTION_SUMMER|OPTION_SUMMER2) && battle_config.summer_ignorepalette)
+							vd->look[LOOK_CLOTHES_COLOR] = 0;
+						if (sc->option&OPTION_HANBOK && battle_config.hanbok_ignorepalette)
+							vd->look[LOOK_CLOTHES_COLOR] = 0;
+						if (sc->option&OPTION_OKTOBERFEST && battle_config.oktoberfest_ignorepalette)
+							vd->look[LOOK_CLOTHES_COLOR] = 0;
+					}
+
+					if( vd->look[LOOK_BODY2] != 0 && sc->option&OPTION_COSTUME ){
+						vd->look[LOOK_BODY2] = 0;
+					}
+				}
+				break;
+			case LOOK_HAIR:
+			case LOOK_HEAD_BOTTOM:
+			case LOOK_HEAD_TOP:
+			case LOOK_HEAD_MID:
+			case LOOK_HAIR_COLOR:
+				vd->look[type] = val;
+				break;
+			case LOOK_CLOTHES_COLOR:
+				if( val != 0 && sc != nullptr ){
+					if (sc->option&OPTION_WEDDING && battle_config.wedding_ignorepalette)
+						val = 0;
+					if (sc->option&OPTION_XMAS && battle_config.xmas_ignorepalette)
+						val = 0;
+					if (sc->option&(OPTION_SUMMER|OPTION_SUMMER2) && battle_config.summer_ignorepalette)
+						val = 0;
+					if (sc->option&OPTION_HANBOK && battle_config.hanbok_ignorepalette)
+						val = 0;
+					if (sc->option&OPTION_OKTOBERFEST && battle_config.oktoberfest_ignorepalette)
+						val = 0;
+				}
+				vd->look[LOOK_CLOTHES_COLOR] = val;
+				break;
+			case LOOK_SHOES:
+#if PACKETVER > 3
+				if (sd) {
+					int32 n;
+					if((n = sd->equip_index[EQI_SHOES]) >= 0 && sd->inventory_data[n]) {
+						if(sd->inventory_data[n]->view_id > 0)
+							val = sd->inventory_data[n]->view_id;
+						else
+							val = sd->inventory.u.items_inventory[n].nameid;
+					} else
+						val = 0;
+				}
+#endif
+				//Shoes? No packet uses this....
+				break;
+			case LOOK_BODY:
+				// unknown purpose, dont send something
+				return;
+			case LOOK_ROBE:
+#if PACKETVER < 20110111
+				return;
+#else
+				vd->look[LOOK_ROBE] = val;
+#endif
+				break;
+			case LOOK_BODY2:
+#if PACKETVER < 20150513
+				return;
+#else
+				if( sc != nullptr && sc->option&OPTION_COSTUME ){
+ 					val = sd->status.class_;
+				}
+
+ 				vd->look[LOOK_BODY2] = val;
+				break;
+#endif
+	}
+
+	// prevent leaking the presence of GM-hidden objects
+	if( sc && sc->option&OPTION_INVISIBLE )
+		target = SELF;
+
+#if PACKETVER < 4
+	if( target != SELF && clif_npc_mayapurple( *bl ) ){
+		target = SELF;
+	}
+
+	clif_sprite_change(bl, bl->id, type, val, 0, target);
+#else
+	if (bl->type != BL_NPC) {
+		if (type == LOOK_WEAPON || type == LOOK_SHIELD) {
+			type = LOOK_WEAPON;
+			val = (vd ? vd->look[LOOK_WEAPON] : 0);
+			val2 = (vd ? vd->look[LOOK_SHIELD] : 0);
+		}
+		if (disguised(bl)) {
+			clif_sprite_change(bl, bl->id, type, val, val2, AREA_WOS);
+			clif_sprite_change(bl, disguised_bl_id(bl->id), type, val, val2, SELF);
+		} else
+			clif_sprite_change(bl, bl->id, type, val, val2, target);
+	} else
+		unit_refresh(bl);
+#endif
+}
+
+
+//Sends a change-base-look packet required for traps as they are triggered.
+void clif_changetraplook( const block_list* bl, int32 val ) {
+	clif_sprite_change(bl, bl->id, LOOK_BASE, val, 0, AREA);
+}
+
+/// Character status (ZC_STATUS).
+/// 00bd <stpoint>.W <str>.B <need str>.B <agi>.B <need agi>.B <vit>.B <need vit>.B
+///     <int>.B <need int>.B <dex>.B <need dex>.B <luk>.B <need luk>.B <atk>.W <atk2>.W
+///     <matk min>.W <matk max>.W <def>.W <def2>.W <mdef>.W <mdef2>.W <hit>.W
+///     <flee>.W <flee2>.W <crit>.W <aspd>.W <aspd2>.W
+void clif_initialstatus( map_session_data& sd ) {
+	PACKET_ZC_STATUS packet{};
+
+	packet.packetType = HEADER_ZC_STATUS;
+
+	packet.point = min(sd.status.status_point, INT16_MAX);
+	packet.str = min(sd.status.str, UINT8_MAX);
+	packet.standardStr = pc_need_status_point( &sd, SP_STR, 1 );
+	packet.agi = min(sd.status.agi, UINT8_MAX);
+	packet.standardAgi = pc_need_status_point( &sd, SP_AGI,1 );
+	packet.vit = min(sd.status.vit, UINT8_MAX);
+	packet.standardVit = pc_need_status_point( &sd, SP_VIT,1 );
+	packet.int_ = min(sd.status.int_, UINT8_MAX);
+	packet.standardInt = pc_need_status_point( &sd, SP_INT,1 );
+	packet.dex = min(sd.status.dex, UINT8_MAX);
+	packet.standardDex = pc_need_status_point( &sd, SP_DEX,1 );
+	packet.luk = min(sd.status.luk, UINT8_MAX);
+	packet.standardLuk = pc_need_status_point( &sd, SP_LUK,1 );
+
+	packet.attPower = pc_leftside_atk( &sd );
+	packet.refiningPower = pc_rightside_atk( &sd );
+	packet.max_mattPower = pc_rightside_matk( &sd );
+	packet.min_mattPower = pc_leftside_matk( &sd );
+	packet.itemdefPower = pc_leftside_def( &sd );
+	packet.plusdefPower = pc_rightside_def( &sd );
+	packet.mdefPower = pc_leftside_mdef( &sd );
+
+#ifdef RENEWAL
+	packet.plusmdefPower = pc_rightside_mdef( &sd );
+#else
+	// Negative check for Frenzy'ed characters.
+	packet.plusmdefPower = std::max( pc_rightside_mdef( &sd ), 0 );
+#endif
+
+	packet.hitSuccessValue = sd.battle_status.hit;
+	packet.avoidSuccessValue = sd.battle_status.flee;
+	packet.plusAvoidSuccessValue = sd.battle_status.flee2 / 10;
+	packet.criticalSuccessValue = sd.battle_status.cri / 10;
+	packet.ASPD = sd.battle_status.amotion;
+	packet.plusASPD = 0;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+
+	clif_updatestatus(sd, SP_STR);
+	clif_updatestatus(sd, SP_AGI);
+	clif_updatestatus(sd, SP_VIT);
+	clif_updatestatus(sd, SP_INT);
+	clif_updatestatus(sd, SP_DEX);
+	clif_updatestatus(sd, SP_LUK);
+
+	clif_updatestatus(sd, SP_ATTACKRANGE);
+	clif_updatestatus(sd, SP_ASPD);
+
+#ifdef RENEWAL
+	clif_updatestatus(sd, SP_POW);
+	clif_updatestatus(sd, SP_STA);
+	clif_updatestatus(sd, SP_WIS);
+	clif_updatestatus(sd, SP_SPL);
+	clif_updatestatus(sd, SP_CON);
+	clif_updatestatus(sd, SP_CRT);
+	clif_updatestatus(sd, SP_PATK);
+	clif_updatestatus(sd, SP_SMATK);
+	clif_updatestatus(sd, SP_RES);
+	clif_updatestatus(sd, SP_MRES);
+	clif_updatestatus(sd, SP_HPLUS);
+	clif_updatestatus(sd, SP_CRATE);
+	clif_updatestatus(sd, SP_TRAITPOINT);
+	clif_updatestatus(sd, SP_AP);
+	clif_updatestatus(sd, SP_MAXAP);
+	clif_updatestatus(sd, SP_UPOW);
+	clif_updatestatus(sd, SP_USTA);
+	clif_updatestatus(sd, SP_UWIS);
+	clif_updatestatus(sd, SP_USPL);
+	clif_updatestatus(sd, SP_UCON);
+	clif_updatestatus(sd, SP_UCRT);
+#endif
+}
+
+
+/// Marks an ammunition item in inventory as equipped.
+/// 013c <index>.W (ZC_EQUIP_ARROW)
+void clif_arrowequip( const map_session_data& sd ) {
+#if PACKETVER >= 20121128
+	clif_status_change(&sd, EFST_CLIENT_ONLY_EQUIP_ARROW, 1, INFINITE_TICK, 0, 0, 0);
+#endif
+
+	PACKET_ZC_EQUIP_ARROW packet{};
+
+	packet.packetType = HEADER_ZC_EQUIP_ARROW;
+
+	// Inventory index of the arrow
+	packet.index = client_index( sd.equip_index[EQI_AMMO] );
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Ammunition action message.
+/// 013b <type>.W (ZC_ACTION_FAILURE)
+/// type:
+///     0 = MsgStringTable[242]="Please equip the proper ammunition first."
+///     1 = MsgStringTable[243]="You can't Attack or use Skills because your Weight Limit has been exceeded."
+///     2 = MsgStringTable[244]="You can't use Skills because Weight Limit has been exceeded."
+///     3 = assassin, baby_assassin, assassin_cross => MsgStringTable[1040]="You have equipped throwing daggers."
+///         gunslinger => MsgStringTable[1175]="Bullets have been equipped."
+///         NOT ninja => MsgStringTable[245]="Ammunition has been equipped."
+void clif_arrow_fail( const map_session_data& sd, e_action_failure type ) {
+	PACKET_ZC_ACTION_FAILURE packet{};
+
+	packet.packetType = HEADER_ZC_ACTION_FAILURE;
+	packet.type = static_cast<decltype(packet.type)>(type);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Presents a list of items, that can be processed by Arrow Crafting (ZC_MAKINGARROW_LIST).
+/// 01ad <packet len>.W { <name id>.W }*
+void clif_arrow_create_list( map_session_data& sd ){
+	PACKET_ZC_MAKINGARROW_LIST* p = reinterpret_cast<PACKET_ZC_MAKINGARROW_LIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_MAKINGARROW_LIST;
+	p->packetLength = sizeof( *p );
+
+	int32 count = 0;
+
+	for (const auto &it : skill_arrow_db) {
+		t_itemid nameid = it.second->nameid;
+
+		if( !item_db.exists( nameid ) ){
+			continue;
+		}
+
+		int32 index = pc_search_inventory( &sd, nameid );
+
+		if( index < 0 ){
+			continue;
+		}
+
+		if( sd.inventory.u.items_inventory[index].equip ){
+			continue;
+		}
+
+		if( !sd.inventory.u.items_inventory[index].identify ){
+			continue;
+		}
+
+		p->items[count].itemId = client_nameid( nameid );
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+		count++;
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+
+	if( count > 0 ){
+		sd.menuskill_id = AC_MAKINGARROW;
+		sd.menuskill_val = count;
+	}
+}
+
+
+/// Notifies the client, about the result of an status change request.
+/// 00bc <status id>.W <result>.B <value>.B (ZC_STATUS_CHANGE_ACK)
+/// status id:
+///     SP_STR ~ SP_LUK and SP_POW ~ SP_CRT
+/// result:
+///     0 = failure
+///     1 = success
+void clif_statusupack( const map_session_data& sd, int32 type, bool success, int32 val ) {
+	PACKET_ZC_STATUS_CHANGE_ACK packet{};
+
+	packet.packetType = HEADER_ZC_STATUS_CHANGE_ACK;
+	packet.sp = static_cast<decltype(packet.sp)>(type);
+	packet.ok = success;
+	packet.value = cap_value(val, 0, UINT8_MAX);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Notifies the client about the result of a request to equip an item.
+/// 00aa <index>.W <equip location>.W <result>.B (ZC_REQ_WEAR_EQUIP_ACK)
+/// 00aa <index>.W <equip location>.W <view id>.W <result>.B (PACKETVER >= 20100629)
+/// 08d0 <index>.W <equip location>.W <view id>.W <result>.B (ZC_REQ_WEAR_EQUIP_ACK2)
+/// 0999 <index>.W <equip location>.L <view id>.W <result>.B (ZC_ACK_WEAR_EQUIP_V5)
+/// @ok: //inversed forv2 v5
+///     0 = failure
+///     1 = success
+///     2 = failure due to low level
+void clif_equipitemack( const map_session_data& sd, uint8 flag, int32 index, int32 pos ){
+	PACKET_ZC_REQ_WEAR_EQUIP_ACK p = {};
+
+	p.PacketType = HEADER_ZC_REQ_WEAR_EQUIP_ACK;
+	p.index = client_index( index );
+	p.wearLocation = pos;
+#if PACKETVER_MAIN_NUM >= 20101123 || PACKETVER_RE_NUM >= 20100629
+	if( flag == ITEM_EQUIP_ACK_OK && sd.inventory_data[index]->equip&EQP_VISIBLE ){
+		p.wItemSpriteNumber = sd.inventory_data[index]->look;
+	}else{
+		p.wItemSpriteNumber = 0;
+	}
+#endif
+	p.result = flag;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Notifies the client about the result of a request to take off an item.
+/// 00ac <index>.W <equip location>.W <result>.B (ZC_REQ_TAKEOFF_EQUIP_ACK)
+/// 08d1 <index>.W <equip location>.W <result>.B (ZC_REQ_TAKEOFF_EQUIP_ACK2)
+/// 099a <index>.W <equip location>.L <result>.B (ZC_ACK_TAKEOFF_EQUIP_V5)
+/// @success : //inversed for v2 v5
+///     0 = failure
+///     1 = success
+void clif_unequipitemack( const map_session_data& sd, uint16 server_index, int32 pos, bool success ){
+#if PACKETVER >= 20110824
+	success = !success;
+#endif
+
+	PACKET_ZC_REQ_TAKEOFF_EQUIP_ACK p{};
+
+	p.packetType = HEADER_ZC_REQ_TAKEOFF_EQUIP_ACK;
+	p.index = client_index(server_index);
+	p.wearLocation = static_cast<decltype(p.wearLocation)>(pos);
+	p.flag = success;
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Notifies clients in the area about an special/visual effect.
+/// 019b <id>.L <effect id>.L (ZC_NOTIFY_EFFECT)
+/// effect id:
+///     0 = base level up
+///     1 = job level up
+///     2 = refine failure
+///     3 = refine success
+///     4 = game over
+///     5 = pharmacy success
+///     6 = pharmacy failure
+///     7 = base level up (super novice)
+///     8 = job level up (super novice)
+///     9 = base level up (taekwon)
+void clif_misceffect( const block_list& bl, e_notify_effect type ){
+	PACKET_ZC_NOTIFY_EFFECT packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_EFFECT;
+	packet.aid = bl.id;
+	packet.effectId = static_cast<decltype(packet.effectId)>(type);
+
+	clif_send( &packet, sizeof( packet ), &bl, AREA );
+}
+
+
+/// Notifies clients in the area of a state change.
+/// 0119 <id>.L <body state>.W <health state>.W <effect state>.W <pk mode>.B (ZC_STATE_CHANGE)
+/// 0229 <id>.L <body state>.W <health state>.W <effect state>.L <pk mode>.B (ZC_STATE_CHANGE3)
+void clif_changeoption_target( const block_list* bl, const block_list* target ){
+	nullpo_retv( bl );
+
+	const status_change* sc = status_get_sc( bl );
+
+	//How can an option change if there's no sc?
+	if( sc == nullptr ){
+		return;
+	}
+
+	const map_session_data* sd = BL_CAST( BL_PC, bl );
+
+	PACKET_ZC_STATE_CHANGE p = {};
+
+	p.packetType = HEADER_ZC_STATE_CHANGE;
+	p.AID = bl->id;
+	p.bodyState = sc->opt1;
+	p.healthState = sc->opt2;
+	p.effectState = sc->option;
+	p.isPKModeON = sd ? sd->status.karma : false;
+
+	if( target == nullptr ){
+		if( disguised( bl ) ){
+			clif_send( &p, sizeof( p ), bl, AREA_WOS );
+			p.AID = disguised_bl_id( p.AID );
+			clif_send( &p, sizeof( p ), bl, SELF );
+			p.AID = disguised_bl_id( p.AID );
+			p.effectState = OPTION_INVISIBLE;
+			clif_send( &p, sizeof( p ), bl, SELF );
+		}else{
+			clif_send( &p, sizeof( p ), bl, AREA );
+		}
+
+		//Whenever we send "changeoption" to the client, the provoke icon is lost
+		//There is probably an option for the provoke icon, but as we don't know it, we have to do this for now
+		if( sc->getSCE(SC_PROVOKE) ){
+			const struct TimerData *td = get_timer( sc->getSCE(SC_PROVOKE)->timer );
+
+			clif_status_change( bl, status_db.getIcon(SC_PROVOKE), 1, ( !td ? INFINITE_TICK : DIFF_TICK( td->tick, gettick() ) ), 0, 0, 0 );
+		}
+	}else{
+		if( disguised( bl ) ){
+			p.AID = disguised_bl_id( p.AID );
+			clif_send( &p, sizeof( p ), target, SELF );
+			p.AID = disguised_bl_id( p.AID );
+			p.effectState = OPTION_INVISIBLE;
+			clif_send( &p, sizeof( p ), target, SELF );
+		}else{
+			clif_send( &p, sizeof( p ), target, SELF );
+		}
+	}
+}
+
+
+/// Displays status change effects on NPCs/monsters.
+/// 028a <id>.L <effect state>.L <level>.L <showEFST>.L (ZC_NPC_SHOWEFST_UPDATE)
+void clif_changeoption2( const block_list& bl ){
+	const status_change* sc = status_get_sc(&bl);
+	if (!sc)
+		return; //How can an option change if there's no sc?
+
+	PACKET_ZC_NPC_SHOWEFST_UPDATE packet{};
+
+	packet.packetType = HEADER_ZC_NPC_SHOWEFST_UPDATE;
+	packet.gid = bl.id;
+	packet.effectState = sc->option;
+	packet.level = clif_setlevel(&bl);
+	packet.showEFST = sc->opt3;
+
+	if (disguised(&bl)) {
+		clif_send( &packet, sizeof( packet ), &bl, AREA_WOS );
+		
+		packet.gid = disguised_bl_id( bl.id );
+		clif_send( &packet, sizeof( packet ), &bl, SELF );
+		
+		packet.gid = bl.id;
+		packet.effectState = OPTION_INVISIBLE;
+		clif_send( &packet, sizeof( packet ), &bl, SELF );
+	} else {
+		clif_send( &packet, sizeof( packet ), &bl, AREA );
+	}
+}
+
+
+/// Notifies the client about the result of an item use request.
+/// 00a8 <index>.W <amount>.W <result>.B (ZC_USE_ITEM_ACK)
+/// 01c8 <index>.W <name id>.W <id>.L <amount>.W <result>.B (ZC_USE_ITEM_ACK2)
+void clif_useitemack( const map_session_data* sd, int32 index, int32 amount, bool ok ){
+	nullpo_retv( sd );
+
+	int32 fd = sd->fd;
+
+	if( !session_isActive( fd ) ){
+		return;
+	}
+
+	if( index < 0 || index >= MAX_INVENTORY || sd->inventory.u.items_inventory[index].nameid == 0 || sd->inventory_data[index] == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_USE_ITEM_ACK p = {};
+
+	p.packetType = useItemAckType;
+	p.index = index + 2;
+#if PACKETVER > 3
+	p.itemId = client_nameid( sd->inventory.u.items_inventory[index].nameid );
+	p.AID = sd->id;
+#endif
+	p.amount = amount;
+	p.result = ok;
+
+	if( !ok ){
+		clif_send( &p, sizeof(p), sd, SELF );
+	}else{
+		clif_send( &p, sizeof(p), sd, AREA );
+	}
+}
+
+
+/// Inform client whether chatroom creation was successful or not.

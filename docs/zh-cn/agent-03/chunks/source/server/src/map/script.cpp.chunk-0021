@@ -1,0 +1,500 @@
+* traitstatusup2 <stat>,<amount>{,<char_id>};
+**/
+BUILDIN_FUNC(traitstatusup2)
+{
+	map_session_data *sd;
+
+	if (!script_charid2sd(4, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	int32 type = script_getnum( st, 2 );
+
+	if( type < SP_POW || type > SP_CRT ){
+		ShowError( "buildin_traitstatusup2: Unknown trait type %d\n", type );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	pc_traitstatusup2( sd, type, script_getnum( st, 3 ) );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// See 'doc/item_bonus.txt'
+///
+/// bonus <bonus type>,<val1>;
+/// bonus2 <bonus type>,<val1>,<val2>;
+/// bonus3 <bonus type>,<val1>,<val2>,<val3>;
+/// bonus4 <bonus type>,<val1>,<val2>,<val3>,<val4>;
+/// bonus5 <bonus type>,<val1>,<val2>,<val3>,<val4>,<val5>;
+BUILDIN_FUNC(bonus)
+{
+	int32 type;
+	int32 val1 = 0;
+	int32 val2 = 0;
+	int32 val3 = 0;
+	int32 val4 = 0;
+	int32 val5 = 0;
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS; // no player attached
+
+	type = script_getnum(st,2);
+	switch( type ) {
+		case SP_AUTOSPELL:
+		case SP_AUTOSPELL_WHENHIT:
+		case SP_AUTOSPELL_ONSKILL:
+		case SP_SKILL_ATK:
+		case SP_SKILL_HEAL:
+		case SP_SKILL_HEAL2:
+		case SP_ADD_SKILL_BLOW:
+		case SP_CASTRATE:
+		case SP_ADDEFF_ONSKILL:
+		case SP_SKILL_USE_SP_RATE:
+		case SP_SKILL_COOLDOWN:
+		case SP_SKILL_FIXEDCAST:
+		case SP_SKILL_VARIABLECAST:
+		case SP_VARCASTRATE:
+		case SP_FIXCASTRATE:
+		case SP_SKILL_DELAY:
+		case SP_SKILL_USE_SP:
+		case SP_SUB_SKILL:
+			// these bonuses support skill names
+			if (script_isstring(st, 3)) {
+				const char *name = script_getstr(st, 3);
+
+				if (!(val1 = skill_name2id(name))) {
+					ShowError("buildin_bonus: Invalid skill name %s passed to item bonus. Skipping.\n", name);
+					return SCRIPT_CMD_FAILURE;
+				}
+			} else {
+				val1 = script_getnum(st, 3);
+
+				if (strcmpi(script_getfuncname(st), "bonus") && !skill_get_index(val1)) { // Only check skill ID for bonus2, bonus3, bonus4, or bonus5
+					ShowError("buildin_bonus: Invalid skill ID %d passed to item bonus. Skipping.\n", val1);
+					return SCRIPT_CMD_FAILURE;
+				}
+			}
+			break;
+		default:
+			if (script_hasdata(st, 3))
+				val1 = script_getnum(st, 3);
+			break;
+	}
+
+	switch( script_lastdata(st)-2 ) {
+		case 0:
+		case 1:
+			pc_bonus(sd, type, val1);
+			break;
+		case 2:
+			val2 = script_getnum(st,4);
+			pc_bonus2(sd, type, val1, val2);
+			break;
+		case 3:
+			val2 = script_getnum(st,4);
+			val3 = script_getnum(st,5);
+			pc_bonus3(sd, type, val1, val2, val3);
+			break;
+		case 4:
+			if( type == SP_AUTOSPELL_ONSKILL && script_isstring(st, 4) )
+				val2 = skill_name2id(script_getstr(st,4)); // 2nd value can be skill name
+			else
+				val2 = script_getnum(st,4);
+
+			val3 = script_getnum(st,5);
+			val4 = script_getnum(st,6);
+			pc_bonus4(sd, type, val1, val2, val3, val4);
+			break;
+		case 5:
+			if( type == SP_AUTOSPELL_ONSKILL && script_isstring(st, 4) )
+				val2 = skill_name2id(script_getstr(st,4)); // 2nd value can be skill name
+			else
+				val2 = script_getnum(st,4);
+
+			val3 = script_getnum(st,5);
+			val4 = script_getnum(st,6);
+			val5 = script_getnum(st,7);
+			pc_bonus5(sd, type, val1, val2, val3, val4, val5);
+			break;
+		default:
+			ShowDebug("buildin_bonus: unexpected number of arguments (%d)\n", (script_lastdata(st) - 1));
+			break;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(autobonus)
+{
+	uint32 dur, pos;
+	int16 rate;
+	uint16 atk_type = 0;
+	TBL_PC* sd;
+	const char *bonus_script, *other_script = nullptr;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS; // no player attached
+
+	if (current_equip_combo_pos)
+		pos = current_equip_combo_pos;
+	else
+		pos = sd->inventory.u.items_inventory[current_equip_item_index].equip;
+
+	rate = script_getnum(st,3);
+	dur = script_getnum(st,4);
+	bonus_script = script_getstr(st,2);
+	if( !rate || !dur || !pos || !bonus_script )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( script_hasdata(st,5) )
+		atk_type = script_getnum(st,5);
+	if( script_hasdata(st,6) )
+		other_script = script_getstr(st,6);
+
+	if( pc_addautobonus(sd->autobonus, bonus_script, rate, dur, atk_type, other_script, pos, false) )
+	{
+		script_add_autobonus(bonus_script);
+		if( other_script )
+			script_add_autobonus(other_script);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(autobonus2)
+{
+	uint32 dur, pos;
+	int16 rate;
+	uint16 atk_type = 0;
+	TBL_PC* sd;
+	const char *bonus_script, *other_script = nullptr;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS; // no player attached
+
+	if (current_equip_combo_pos)
+		pos = current_equip_combo_pos;
+	else
+		pos = sd->inventory.u.items_inventory[current_equip_item_index].equip;
+
+	rate = script_getnum(st,3);
+	dur = script_getnum(st,4);
+	bonus_script = script_getstr(st,2);
+	if( !rate || !dur || !pos || !bonus_script )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( script_hasdata(st,5) )
+		atk_type = script_getnum(st,5);
+	if( script_hasdata(st,6) )
+		other_script = script_getstr(st,6);
+
+	if( pc_addautobonus(sd->autobonus2, bonus_script, rate,dur, atk_type, other_script, pos, false) )
+	{
+		script_add_autobonus(bonus_script);
+		if( other_script )
+			script_add_autobonus(other_script);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(autobonus3)
+{
+	uint32 dur, pos;
+	int16 rate;
+	uint16 skill_id = 0;
+	TBL_PC* sd;
+	const char *bonus_script, *other_script = nullptr;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS; // no player attached
+
+	if (current_equip_combo_pos)
+		pos = current_equip_combo_pos;
+	else
+		pos = sd->inventory.u.items_inventory[current_equip_item_index].equip;
+
+	rate = script_getnum(st,3);
+	dur = script_getnum(st,4);
+	if (script_isstring(st, 5)) {
+		const char *name = script_getstr(st, 5);
+
+		if (!(skill_id = skill_name2id(name))) {
+			ShowError("buildin_autobonus3: Invalid skill name %s passed to item bonus. Skipping.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		skill_id = script_getnum(st, 5);
+
+		if (!skill_get_index(skill_id)) {
+			ShowError("buildin_autobonus3: Invalid skill ID %d passed to item bonus. Skipping.\n", skill_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	bonus_script = script_getstr(st,2);
+	if( !rate || !dur || !pos || !bonus_script )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( script_hasdata(st,6) )
+		other_script = script_getstr(st,6);
+
+	if( pc_addautobonus(sd->autobonus3, bonus_script, rate, dur, skill_id, other_script, pos, true) )
+	{
+		script_add_autobonus(bonus_script);
+		if( other_script )
+			script_add_autobonus(other_script);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(petautobonus) {
+	map_session_data *sd;
+
+	if (!script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE; // No player attached
+
+	const char *command = script_getfuncname(st);
+
+	if (sd->pd == nullptr) {
+		ShowError("buildin_%s: Requires an active pet.\n", command);
+		return SCRIPT_CMD_FAILURE; // No pet attached to player
+	}
+
+	std::string bonus_script = script_getstr(st, 2);
+	int16 rate = script_getnum(st, 3);
+	uint32 dur = script_getnum(st, 4);
+
+	if (!rate || !dur || bonus_script.empty())
+		return SCRIPT_CMD_FAILURE;
+
+	uint16 atk_type = 0;
+	std::string other_script = {};
+	bool bonus2 = false;
+
+	if (strcmpi(command, "petautobonus2") == 0)
+		bonus2 = true;
+
+	if (script_hasdata(st, 5))
+		atk_type = script_getnum(st, 5);
+	if (script_hasdata(st, 6))
+		other_script = script_getstr(st, 6);
+
+	if (pet_addautobonus(bonus2 ? sd->pd->autobonus2 : sd->pd->autobonus, bonus_script, rate, dur, atk_type, other_script, false)) {
+		script_add_petautobonus(bonus_script);
+		if (!other_script.empty())
+			script_add_petautobonus(other_script);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(petautobonus3) {
+	map_session_data *sd;
+
+	if (!script_rid2sd(sd))
+		return SCRIPT_CMD_SUCCESS; // No player attached
+
+	if (sd->pd == nullptr) {
+		ShowError("buildin_petautobonus3: Requires an active pet.\n");
+		return SCRIPT_CMD_FAILURE; // No pet attached to player
+	}
+
+	std::string bonus_script = script_getstr(st, 2);
+	int16 rate = script_getnum(st, 3);
+	uint32 dur = script_getnum(st, 4);
+
+	if (!rate || !dur || bonus_script.empty())
+		return SCRIPT_CMD_SUCCESS;
+
+	uint16 skill_id = 0;
+	std::string other_script = {};
+
+	if (script_isstring(st, 5)) {
+		const char *name = script_getstr(st, 5);
+
+		if (!(skill_id = skill_name2id(name))) {
+			ShowError("buildin_petautobonus3: Invalid skill name %s passed to item bonus. Skipping.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		skill_id = script_getnum(st, 5);
+
+		if (!skill_get_index(skill_id)) {
+			ShowError("buildin_petautobonus3: Invalid skill ID %d passed to item bonus. Skipping.\n", skill_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (script_hasdata(st, 6))
+		other_script = script_getstr(st, 6);
+
+	if (pet_addautobonus(sd->pd->autobonus3, bonus_script, rate, dur, skill_id, other_script, true)) {
+		script_add_petautobonus(bonus_script);
+		if (!other_script.empty())
+			script_add_petautobonus(other_script);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(plagiarizeskill)
+{
+	TBL_PC *sd;
+
+	if (script_rid2sd(sd))
+		script_pushint(st, pc_skill_plagiarism(*sd, script_getnum(st, 2), script_getnum(st, 3)));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(plagiarizeskillreset)
+{
+	TBL_PC *sd;
+
+	if (script_rid2sd(sd))
+		script_pushint(st, pc_skill_plagiarism_reset(*sd, script_getnum(st, 2)));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Changes the level of a player skill.
+/// <flag> defaults to 1
+/// <flag>=0 : set the level of the skill
+/// <flag>=1 : set the temporary level of the skill
+/// <flag>=2 : add to the level of the skill
+///
+/// skill <skill id>,<level>,<flag>
+/// skill <skill id>,<level>
+/// skill "<skill name>",<level>,<flag>
+/// skill "<skill name>",<level>
+BUILDIN_FUNC(skill)
+{
+	int32 id;
+	int32 level;
+	int32 flag = ADDSKILL_TEMP;
+	TBL_PC* sd;
+	const char* command = script_getfuncname(st);
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;// no player attached, report source
+
+	if (strcmpi(command, "addtoskill") == 0)
+		flag = ADDSKILL_TEMP_ADDLEVEL;
+
+	id = ( script_isstring(st, 2) ? skill_name2id(script_getstr(st,2)) : script_getnum(st,2) );
+	level = script_getnum(st,3);
+	if( script_hasdata(st,4) )
+		flag = script_getnum(st,4);
+	pc_skill(sd, id, level, (enum e_addskill_type)flag);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Increases the level of a guild skill.
+///
+/// guildskill <skill id>,<amount>;
+/// guildskill "<skill name>",<amount>;
+BUILDIN_FUNC(guildskill)
+{
+	int32 id;
+	int32 level;
+	TBL_PC* sd;
+	int32 i;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;// no player attached, report source
+
+	id = ( script_isstring(st, 2) ? skill_name2id(script_getstr(st,2)) : script_getnum(st,2) );
+	level = script_getnum(st,3);
+	for( i=0; i < level; i++ )
+		guild_skillup(sd, id);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the level of the player skill.
+///
+/// getskilllv(<skill id>) -> <level>
+/// getskilllv("<skill name>") -> <level>
+BUILDIN_FUNC(getskilllv)
+{
+	int32 id;
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;// no player attached, report source
+
+	id = ( script_isstring(st, 2) ? skill_name2id(script_getstr(st,2)) : script_getnum(st,2) );
+	script_pushint(st, pc_checkskill(sd,id));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the level of the guild skill.
+///
+/// getgdskilllv(<guild id>,<skill id>) -> <level>
+/// getgdskilllv(<guild id>,"<skill name>") -> <level>
+BUILDIN_FUNC(getgdskilllv)
+{
+	int32 guild_id;
+	uint16 skill_id;
+
+	guild_id = script_getnum(st,2);
+	skill_id = ( script_isstring(st, 3) ? skill_name2id(script_getstr(st,3)) : script_getnum(st,3) );
+	auto g = guild_search(guild_id);
+	if (!g)
+		script_pushint(st, -1);
+	else
+		script_pushint(st, guild_checkskill(g->guild,skill_id));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the 'basic_skill_check' setting.
+/// This config determines if the server checks the skill level of NV_BASIC
+/// before allowing the basic actions.
+///
+/// basicskillcheck() -> <bool>
+BUILDIN_FUNC(basicskillcheck)
+{
+	script_pushint(st, battle_config.basic_skill_check);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the GM level of the player.
+///
+/// getgmlevel({<char_id>}) -> <level>
+BUILDIN_FUNC(getgmlevel)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	script_pushint(st, pc_get_group_level(sd));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the group ID of the player.
+///
+/// getgroupid({<char_id>}) -> <int>
+BUILDIN_FUNC(getgroupid)
+{
+	TBL_PC* sd;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+	script_pushint(st, pc_get_group_id(sd));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Terminates the execution of this script instance.
+///
+/// end
+BUILDIN_FUNC(end)
+{
+	TBL_PC* sd;
+
+	sd = map_id2sd(st->rid);
+

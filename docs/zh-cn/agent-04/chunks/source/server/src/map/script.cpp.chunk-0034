@@ -1,0 +1,500 @@
+	switch (type) {
+		case BL_PC:	//Get Character Position
+			if ((script_isstring(st, 6) && script_nick2sd(6, sd)) || script_mapid2sd(6, sd))
+				bl = sd;
+			break;
+		case BL_NPC:	//Get NPC Position
+			if (script_hasdata(st, 6)) {
+				npc_data *nd;
+
+				if (script_isstring(st, 6))
+					nd = npc_name2id(script_getstr(st, 6));
+				else
+					nd = map_id2nd(script_getnum(st, 6));
+				if (nd)
+					bl = nd;
+			} else //In case the origin is not an NPC?
+				bl = map_id2bl(st->oid);
+			break;
+		case BL_PET:	//Get Pet Position
+			if (((script_isstring(st, 6) && script_nick2sd(6, sd)) || script_mapid2sd(6, sd)) && sd->pd)
+				bl = sd->pd;
+			break;
+		case BL_HOM:	//Get Homun Position
+			if (((script_isstring(st, 6) && script_nick2sd(6, sd)) || script_mapid2sd(6, sd)) && sd->hd)
+				bl = sd->hd;
+			break;
+		case BL_MER: //Get Mercenary Position
+			if (((script_isstring(st, 6) && script_nick2sd(6, sd)) || script_mapid2sd(6, sd)) && sd->md)
+				bl = sd->md;
+			break;
+		case BL_ELEM: //Get Elemental Position
+			if (((script_isstring(st, 6) && script_nick2sd(6, sd)) || script_mapid2sd(6, sd)) && sd->ed)
+				bl = sd->ed;
+			break;
+		default:
+			ShowWarning("script: buildin_getmapxy: Invalid type %d.\n", type);
+			script_pushint(st,-1);
+			return SCRIPT_CMD_FAILURE;
+	}
+	if (!bl) { //No object found.
+		script_pushint(st,-1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	x= bl->x;
+	y= bl->y;
+	if (bl->m >= 0)
+		safestrncpy(mapname, map_getmapdata(bl->m)->name, MAP_NAME_LENGTH);
+	else
+		memset(mapname, '\0', sizeof(mapname));
+
+	//Set MapName$
+	num=st->stack->stack_data[st->start+2].u.num;
+	name=get_str(script_getvarid(num));
+	prefix=*name;
+
+	if(not_server_variable(prefix)){
+		if( !script_rid2sd(sd) ){
+			ShowError( "buildin_getmapxy: variable '%s' for mapname is not a server variable, but no player is attached!", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else
+		sd=nullptr;
+	set_reg_str( st, sd, num, name, mapname, script_getref( st, 2 ) );
+
+	//Set MapX
+	num=st->stack->stack_data[st->start+3].u.num;
+	name=get_str(script_getvarid(num));
+	prefix=*name;
+
+	if(not_server_variable(prefix)){
+		if( !script_rid2sd(sd) ){
+			ShowError( "buildin_getmapxy: variable '%s' for mapX is not a server variable, but no player is attached!", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else
+		sd=nullptr;
+	set_reg_num( st, sd, num, name, x, script_getref( st, 3 ) );
+
+	//Set MapY
+	num=st->stack->stack_data[st->start+4].u.num;
+	name=get_str(script_getvarid(num));
+	prefix=*name;
+
+	if(not_server_variable(prefix)){
+		if( !script_rid2sd(sd) ){
+			ShowError( "buildin_getmapxy: variable '%s' for mapY is not a server variable, but no player is attached!", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else
+		sd=nullptr;
+	set_reg_num( st, sd, num, name, y, script_getref( st, 4 ) );
+
+	//Return Success value
+	script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the map name of given map ID.
+///
+/// mapid2name <map ID>;
+BUILDIN_FUNC(mapid2name)
+{
+	uint16 m = script_getnum(st, 2);
+
+	if (m >= MAX_MAP_PER_SERVER) {
+		script_pushconststr(st, "");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushstrcopy(st, map_mapid2mapname(m));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the map ID of given map name.
+///
+/// mapname2id <"map name">;
+BUILDIN_FUNC(mapname2id)
+{
+	const char* map_name = script_getstr(st, 2);
+	int16 mapid = map_mapname2mapid(map_name);
+	if (mapid < 0 || mapid >= MAX_MAP_PER_SERVER) {
+		// Note: no error message here, as map_mapname2mapid will already have reported an error message.
+		script_pushint(st, -1); 
+		return SCRIPT_CMD_FAILURE;
+	}
+	script_pushint(st, mapid); 
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Allows player to write NPC logs (i.e. Bank NPC, etc) [Lupus]
+ *------------------------------------------*/
+BUILDIN_FUNC(logmes)
+{
+	const char *str;
+	map_session_data* sd = map_id2sd(st->rid);
+
+	str = script_getstr(st,2);
+	if( sd ){
+		log_npc(sd,str);
+	}else{
+		npc_data* nd = map_id2nd(st->oid);
+
+		if( !nd ){
+			ShowError( "buildin_logmes: Invalid usage without player or npc.\n" );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		log_npc(nd,str);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(summon)
+{
+	int32 _class, timeout=0;
+	const char *str,*event="";
+	map_session_data* sd;
+	t_tick tick = gettick();
+
+	if (!script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE;
+
+	str	=script_getstr(st,2);
+	_class=script_getnum(st,3);
+	if( script_hasdata(st,4) )
+		timeout=script_getnum(st,4);
+	if( script_hasdata(st,5) ){
+		event=script_getstr(st,5);
+		check_event(st, event);
+	}
+
+	mob_data* md = mob_once_spawn_sub( sd, sd->m, sd->x, sd->y, str, _class, event, SZ_SMALL, AI_NONE );
+
+	if( md == nullptr ){
+		ShowError( "buildin_summon: Invalid mob ID %d.\n", _class );
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	clif_skill_poseffect( *sd, AM_CALLHOMUN, 1, sd->x, sd->y, tick );
+
+	md->master_id = sd->id;
+	md->special_state.ai = AI_ATTACK;
+	if( md->deletetimer != INVALID_TIMER ){
+		delete_timer( md->deletetimer, mob_timer_delete );
+	}
+	md->deletetimer = add_timer( tick + ( timeout > 0 ? timeout : 60000 ), mob_timer_delete, md->id, 0 );
+
+	// Now it is ready for spawning.
+	mob_spawn( md );
+	clif_specialeffect( md,EF_ENTRY2,AREA );
+	sc_start4( nullptr,md, SC_MODECHANGE, 100, 1, 0, MD_AGGRESSIVE, 0, 60000 );
+
+	script_pushint( st, md->id );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Checks whether it is daytime/nighttime
+ *------------------------------------------*/
+BUILDIN_FUNC(isnight)
+{
+	script_pushint(st,(night_flag == 1));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(isday)
+{
+	script_pushint(st,(night_flag == 0));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*================================================
+ * Check how many items/cards in the list are
+ * equipped - used for 2/15's cards patch [celest]
+ *------------------------------------------------*/
+BUILDIN_FUNC(isequippedcnt)
+{
+	TBL_PC *sd;
+
+	if (!script_rid2sd(sd)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	int32 ret = 0;
+	int32 total = script_lastdata(st);
+	std::vector<int32> list(total);
+
+	for (int32 i = 2; i <= total; ++i) {
+		int32 id = script_getnum(st,i);
+		if (id <= 0)
+			continue;
+		if (std::find(list.begin(), list.end(), id) != list.end())
+			continue;
+		list.push_back(id);
+
+		for (int16 j = 0; j < EQI_MAX; j++) {
+			int16 index = sd->equip_index[j];
+			if (index < 0)
+				continue;
+			if (pc_is_same_equip_index((enum equip_index)j, sd->equip_index, index))
+				continue;
+
+			if (!sd->inventory_data[index])
+				continue;
+
+			if (itemdb_type(id) != IT_CARD) { //No card. Count amount in inventory.
+				if (sd->inventory_data[index]->nameid == id)
+					ret += sd->inventory.u.items_inventory[index].amount;
+			} else { //Count cards.
+				if (itemdb_isspecial(sd->inventory.u.items_inventory[index].card[0]))
+					continue; //No cards
+				for (int16 k = 0; k < MAX_SLOTS; k++) {
+					if (sd->inventory.u.items_inventory[index].card[k] == id)
+						ret++; //[Lupus]
+				}
+			}
+		}
+	}
+
+	script_pushint(st,ret);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*================================================
+ * Check whether another card has been
+ * equipped - used for 2/15's cards patch [celest]
+ * -- Items checked cannot be reused in another
+ * card set to prevent exploits
+ *------------------------------------------------*/
+BUILDIN_FUNC(isequipped)
+{
+	TBL_PC *sd;
+	int32 i, id = 1;
+	int32 ret = -1;
+	//Original hash to reverse it when full check fails.
+	uint32 setitem_hash = 0, setitem_hash2 = 0;
+
+	if (!script_rid2sd(sd)) { //If the player is not attached it is a script error anyway... but better prevent the map server from crashing...
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	setitem_hash = sd->bonus.setitem_hash;
+	setitem_hash2 = sd->bonus.setitem_hash2;
+	for (i=0; id!=0; i++) {
+		int32 flag = 0;
+		int16 j;
+		FETCH (i+2, id) else id = 0;
+		if (id <= 0)
+			continue;
+		for (j=0; j<EQI_MAX; j++) {
+			int16 index = sd->equip_index[j];
+			if(index < 0)
+				continue;
+			if (pc_is_same_equip_index((enum equip_index)i, sd->equip_index, index))
+				continue;
+
+			if(!sd->inventory_data[index])
+				continue;
+
+			if (itemdb_type(id) != IT_CARD) {
+				if (sd->inventory_data[index]->nameid != id)
+					continue;
+				flag = 1;
+				break;
+			} else { //Cards
+				int16 k;
+				if (itemdb_isspecial(sd->inventory.u.items_inventory[index].card[0]))
+					continue;
+
+				for (k = 0; k < MAX_SLOTS; k++)
+				{	//New hash system which should support up to 4 slots on any equipment. [Skotlex]
+					uint32 hash = 0;
+					if (sd->inventory.u.items_inventory[index].card[k] != id)
+						continue;
+
+					hash = 1<<((j<5?j:j-5)*4 + k);
+					// check if card is already used by another set
+					if ( ( j < 5 ? sd->bonus.setitem_hash : sd->bonus.setitem_hash2 ) & hash)
+						continue;
+
+					// We have found a match
+					flag = 1;
+					// Set hash so this card cannot be used by another
+					if (j<5)
+						sd->bonus.setitem_hash |= hash;
+					else
+						sd->bonus.setitem_hash2 |= hash;
+					break;
+				}
+			}
+			if (flag) break; //Card found
+		}
+		if (ret == -1)
+			ret = flag;
+		else
+			ret &= flag;
+		if (!ret) break;
+	}
+	if (!ret) {//When check fails, restore original hash values. [Skotlex]
+		sd->bonus.setitem_hash = setitem_hash;
+		sd->bonus.setitem_hash2 = setitem_hash2;
+	}
+	script_pushint(st,ret);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*================================================
+ * Check how many given inserted cards in the CURRENT
+ * weapon - used for 2/15's cards patch [Lupus]
+ *------------------------------------------------*/
+BUILDIN_FUNC(cardscnt)
+{
+	TBL_PC *sd;
+	int32 i, k, id = 1;
+	int32 ret = 0;
+	int32 index;
+
+	if( !script_rid2sd(sd) ){
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	for (i=0; id!=0; i++) {
+		FETCH (i+2, id) else id = 0;
+		if (id <= 0)
+			continue;
+
+		index = current_equip_item_index; //we get CURRENT WEAPON inventory index from status.cpp [Lupus]
+		if(index < 0) continue;
+
+		if(!sd->inventory_data[index])
+			continue;
+
+		if(itemdb_type(id) != IT_CARD) {
+			if (sd->inventory_data[index]->nameid == id)
+				ret+= sd->inventory.u.items_inventory[index].amount;
+		} else {
+			if (itemdb_isspecial(sd->inventory.u.items_inventory[index].card[0]))
+				continue;
+			for (k=0; k < MAX_SLOTS; k++) {
+				if (sd->inventory.u.items_inventory[index].card[k] == id)
+					ret++;
+			}
+		}
+	}
+	script_pushint(st,ret);
+//	script_pushint(st,current_equip_item_index);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*=======================================================
+ * Returns the refined number of the current item, or an
+ * item with inventory index specified
+ *-------------------------------------------------------*/
+BUILDIN_FUNC(getrefine)
+{
+	TBL_PC *sd;
+	if (script_rid2sd(sd)){
+		if( current_equip_item_index == -1 ){
+			script_pushint(st, 0);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		script_pushint(st,sd->inventory.u.items_inventory[current_equip_item_index].refine);
+	}else
+		script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*=======================================================
+ * Day/Night controls
+ *-------------------------------------------------------*/
+BUILDIN_FUNC(night)
+{
+	if (night_flag != 1) map_night_timer(night_timer_tid, 0, 0, 1);
+	return SCRIPT_CMD_SUCCESS;
+}
+BUILDIN_FUNC(day)
+{
+	if (night_flag != 0) map_day_timer(day_timer_tid, 0, 0, 1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * unequip <equipment slot>{,<char_id>};
+ * @author [Spectre]
+ **/
+BUILDIN_FUNC(unequip) {
+	int32 pos;
+	TBL_PC *sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	pos = script_getnum(st,2);
+	if (equip_index_check(pos)) {
+		int16 i = pc_checkequip(sd,equip_bitmask[pos]);
+		if (i >= 0) {
+			pc_unequipitem(sd,i,1|2);
+			script_pushint(st, 1);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+	ShowError("buildin_unequip: No item equipped at pos %d (CID=%d/AID=%d).\n", pos, sd->status.char_id, sd->status.account_id);
+	script_pushint(st, 0);
+	return SCRIPT_CMD_FAILURE;
+}
+
+/**
+ * equip <item id>{,<char_id>};
+ **/
+BUILDIN_FUNC(equip) {
+	TBL_PC *sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	t_itemid nameid = script_getnum(st,2);
+	std::shared_ptr<item_data> id = item_db.find(nameid);
+
+	if (id != nullptr) {
+		int32 i;
+
+		ARR_FIND( 0, MAX_INVENTORY, i, sd->inventory.u.items_inventory[i].nameid == nameid );
+		if (i < MAX_INVENTORY) {
+			pc_equipitem(sd,i,id->equip);
+			script_pushint(st,1);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+
+	ShowError("buildin_equip: Item %u cannot be equipped\n",nameid);
+	script_pushint(st,0);
+	return SCRIPT_CMD_FAILURE;
+}
+
+BUILDIN_FUNC(autoequip)
+{
+	t_itemid nameid=script_getnum(st,2);
+	int32 flag=script_getnum(st,3);
+	std::shared_ptr<item_data> id = item_db.find(nameid);
+
+	if( id == nullptr )
+	{
+		ShowError("buildin_autoequip: Invalid item '%u'.\n", nameid);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !itemdb_isequip2(id.get()) )
+	{
+		ShowError("buildin_autoequip: Item '%u' cannot be equipped.\n", nameid);
+		return SCRIPT_CMD_FAILURE;

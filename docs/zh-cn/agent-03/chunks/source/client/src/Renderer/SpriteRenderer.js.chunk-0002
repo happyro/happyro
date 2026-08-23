@@ -1,0 +1,103 @@
+		_depthMask = true;
+		_groupId++;
+	}
+
+	/**
+	 * Unbind 3D Context
+	 *
+	 * @param {object} gl context
+	 */
+	static unbind(gl) {
+		const attribute = _program.attribute;
+
+		gl.disableVertexAttribArray(attribute.aPosition);
+		gl.disableVertexAttribArray(attribute.aTextureCoord);
+	}
+
+	/**
+	 * Prepare to render on 2D context.
+	 *
+	 * @param {object} ctx canvas context
+	 * @param {number} x position
+	 * @param {number} y position
+	 */
+	static bind2DContext(ctx, x, y) {
+		_ctx = ctx;
+		_pos[0] = x;
+		_pos[1] = y;
+
+		this.render = RenderCanvas2D;
+		this.xSize = 5;
+		this.ySize = 5;
+	}
+
+	/**
+	 * Executes a render block with an isolated depth state.
+	 *
+	 * Temporarily overrides depth test, depth write mask, and depth correction
+	 * flags, executes the given function, then restores the previous GL state.
+	 *
+	 * This prevents depth state leakage between render passes and ensures
+	 * deterministic layered rendering.
+	 *
+	 * @param {boolean} use depthTest enable.
+	 * @param {boolean} use depthMask enable.
+	 * @param {boolean} use disableDepthCorrection enable.
+	 * @param {function} execute function with this parameters before restore gl state.
+	 */
+	static runWithDepth(depthTest, depthMask, depthCorrection, fn) {
+		if (!_gl) {
+			fn();
+			return;
+		}
+
+		const prevDepthTest = _depthTest;
+		const prevDepthMask = _depthMask;
+		const prevDepthCorrection = this.disableDepthCorrection;
+
+		if (_depthTest !== depthTest) {
+			_depthTest = depthTest;
+
+			if (depthTest) {
+				_gl.enable(_gl.DEPTH_TEST);
+			} else {
+				_gl.disable(_gl.DEPTH_TEST);
+			}
+		}
+
+		if (_depthMask !== depthMask) {
+			_depthMask = depthMask;
+			_gl.depthMask(depthMask);
+		}
+
+		if (this.disableDepthCorrection !== depthCorrection) {
+			this.disableDepthCorrection = depthCorrection;
+		}
+
+		fn();
+
+		if (_depthTest !== prevDepthTest) {
+			_depthTest = prevDepthTest;
+
+			if (prevDepthTest) {
+				_gl.enable(_gl.DEPTH_TEST);
+			} else {
+				_gl.disable(_gl.DEPTH_TEST);
+			}
+		}
+
+		if (_depthMask !== prevDepthMask) {
+			_depthMask = prevDepthMask;
+			_gl.depthMask(prevDepthMask);
+		}
+
+		if (this.disableDepthCorrection !== prevDepthCorrection) {
+			this.disableDepthCorrection = prevDepthCorrection;
+		}
+	}
+}
+
+/**
+ * Export
+ */
+export default SpriteRenderer;

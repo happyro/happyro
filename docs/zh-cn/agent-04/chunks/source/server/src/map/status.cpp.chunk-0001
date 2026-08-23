@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "status.hpp"
+
+#include <cmath>
+#include <cstdlib>
+#include <functional>
+#include <string>
+
+#include <common/cbasetypes.hpp>
+#include <common/ers.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "battle.hpp"
+#include "battleground.hpp"
+#include "clif.hpp"
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "itemdb.hpp"
+#include "map.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "path.hpp"
+#include "pc.hpp"
+#include "pc_groups.hpp"
+#include "pet.hpp"
+#include "script.hpp"
+
+using namespace rathena;
+
+// Regen related flags.
+enum e_regen {
+	RGN_NONE = 0x00,
+	RGN_HP   = 0x01,
+	RGN_SP   = 0x02,
+	RGN_SHP  = 0x04,
+	RGN_SSP  = 0x08,
+};
+
+static struct status_data dummy_status;
+
+/// Delayed Status Structure
+struct s_delay_status {
+	int32 src_id;
+	int32 bl_id;
+	sc_type type;
+	int32 val1;
+	int32 val2;
+	int32 val3;
+	int32 val4;
+	int32 tick;
+	uint8 flag;
+};
+
+int32 delay_status_index = 0;
+// delay_status : delay_status_index -> data
+std::unordered_map<int32, std::shared_ptr<s_delay_status>> delay_status;
+
+int16 current_equip_item_index; /// Contains inventory index of an equipped item. To pass it into the EQUP_SCRIPT [Lupus]
+uint32 current_equip_combo_pos; /// For combo items we need to save the position of all involved items here
+int32 current_equip_card_id; /// To prevent card-stacking (from jA) [Skotlex]
+// We need it for new cards 15 Feb 2005, to check if the combo cards are insrerted into the CURRENT weapon only to avoid cards exploits
+int16 current_equip_opt_index; /// Contains random option index of an equipped item. [Secret]
+
+uint16 SCDisabled[SC_MAX]; ///< List of disabled SC on map zones. [Cydh]
+
+static uint16 status_calc_str(block_list *,status_change *,int32);
+static uint16 status_calc_agi(block_list *,status_change *,int32);
+static uint16 status_calc_vit(block_list *,status_change *,int32);
+static uint16 status_calc_int(block_list *,status_change *,int32);
+static uint16 status_calc_dex(block_list *,status_change *,int32);
+static uint16 status_calc_luk(block_list *,status_change *,int32);
+static uint16 status_calc_pow(block_list *, status_change *, int32);
+static uint16 status_calc_sta(block_list *, status_change *, int32);
+static uint16 status_calc_wis(block_list *, status_change *, int32);
+static uint16 status_calc_spl(block_list *, status_change *, int32);
+static uint16 status_calc_con(block_list *, status_change *, int32);
+static uint16 status_calc_crt(block_list *, status_change *, int32);
+static int32 status_calc_batk(block_list *, status_change *, int32);
+static uint16 status_calc_watk(block_list *,status_change *,int32);
+static int16 status_calc_hit(block_list *,status_change *,int32);
+static int16 status_calc_critical(block_list *,status_change *,int32);
+static int16 status_calc_flee(block_list *,status_change *,int32);
+static int16 status_calc_flee2(block_list *,status_change *,int32);
+static defType status_calc_def(block_list *bl, status_change *sc, int32);
+static int16 status_calc_def2(block_list *,status_change *,int32);
+static defType status_calc_mdef(block_list *bl, status_change *sc, int32);
+static int16 status_calc_mdef2(block_list *,status_change *,int32);
+static uint16 status_calc_speed(block_list *,status_change *,int32);
+static int16 status_calc_aspd_rate(block_list *,status_change *,int32);
+#ifdef RENEWAL_ASPD
+static int16 status_calc_aspd(block_list *bl, status_change *sc, bool fixed);
+#endif
+static int16 status_calc_fix_aspd(block_list *bl, status_change *sc, int32);
+static int16 status_calc_patk(block_list *, status_change *, int32);
+static int16 status_calc_smatk(block_list *, status_change *, int32);
+static int16 status_calc_res(block_list *, status_change *, int32);
+static int16 status_calc_mres(block_list *, status_change *, int32);
+static int16 status_calc_hplus(block_list *, status_change *, int32);
+static int16 status_calc_crate(block_list *, status_change *, int32);
+static uint32 status_calc_maxhp(block_list *bl, uint64 maxhp);
+static uint32 status_calc_maxsp(block_list *bl, uint64 maxsp);
+static uint32 status_calc_maxap(block_list *bl, uint64 maxap);
+static unsigned char status_calc_element(block_list *bl, status_change *sc, int32 element);
+static unsigned char status_calc_element_lv(block_list *bl, status_change *sc, int32 lv);
+static int32 status_calc_mode(block_list *bl, status_change *sc, int32 mode);
+static int32 status_get_hpbonus(block_list *bl, enum e_status_bonus type);
+static int32 status_get_spbonus(block_list *bl, enum e_status_bonus type);
+static int32 status_get_apbonus(block_list *bl, enum e_status_bonus type);
+static uint32 status_calc_maxhp_pc( map_session_data& sd, uint32 vit );
+static uint32 status_calc_maxsp_pc( map_session_data& sd, uint32 int_ );
+static uint32 status_calc_maxap_pc( map_session_data& sd );
+static int32 status_get_sc_interval(enum sc_type type);
+static bool status_change_start_post_delay(block_list* src, block_list* bl, sc_type type, int32 val1, int32 val2, int32 val3, int32 val4, int32 tick, uint8 flag);
+
+static bool status_change_isDisabledOnMap_(sc_type type, bool mapIsVS, bool mapIsPVP, bool mapIsGVG, bool mapIsBG, uint32 mapZone, bool mapIsTE);
+#define status_change_isDisabledOnMap(type, m) ( status_change_isDisabledOnMap_((type), mapdata_flag_vs2((m)), m->getMapFlag(MF_PVP) != 0, mapdata_flag_gvg2_no_te((m)), m->getMapFlag(MF_BATTLEGROUND) != 0, (m->zone << 3) != 0, mapdata_flag_gvg2_te((m))) )
+
+const std::string RefineDatabase::getDefaultLocation(){
+	return std::string( db_path ) + "/refine.yml";
+}
+
+uint64 RefineDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	std::string group_name;
+
+	if( !this->asString( node, "Group", group_name ) ){
+		return 0;
+	}
+
+	std::string group_name_constant = "REFINE_TYPE_" + group_name;
+	int64 constant;
+
+	if( !script_get_constant( group_name_constant.c_str(), &constant ) ){
+		this->invalidWarning(node["Group"], "Unknown refine group %s, skipping.\n", group_name.c_str() );
+		return 0;
+	}
+
+	uint16 group_id = static_cast<uint16>( constant );
+
+	std::shared_ptr<s_refine_info> info = this->find( group_id );
+	bool exists = info != nullptr;
+
+	if( !exists ){
+		info = std::make_shared<s_refine_info>();
+	}
+
+	if( this->nodeExists( node, "Levels" ) ){
+		const auto& levelsNode = node["Levels"];
+		for( const auto& levelNode : levelsNode ){
+			uint16 level;
+
+			if( !this->asUInt16( levelNode, "Level", level ) ){
+				return 0;
+			}
+
+			std::shared_ptr<s_refine_levels_info> levels_info = util::umap_find( info->levels, level );
+			bool levels_exists = levels_info != nullptr;
+
+			if( !levels_exists ){
+				levels_info = std::make_shared<s_refine_levels_info>();
+				levels_info->level = level;
+			}
+
+			if( this->nodeExists( levelNode, "RefineLevels" ) ){
+				const auto& refineLevelsNode = levelNode["RefineLevels"];
+				for( const auto& refineLevelNode : refineLevelsNode ){
+					uint16 refine_level;
+
+					if( !this->asUInt16( refineLevelNode, "Level", refine_level ) ){
+						return 0;
+					}
+
+					if( refine_level == 0 || refine_level > MAX_REFINE ){
+						this->invalidWarning( refineLevelNode["Level"], "Refine level %hu is invalid, skipping.\n", refine_level );
+						return 0;
+					}
+
+					// Database is 1 based, code is 0 based
+					refine_level -= 1;
+
+					std::shared_ptr<s_refine_level_info> level_info = util::umap_find( levels_info->levels, refine_level );
+					bool level_exists = level_info != nullptr;
+
+					if( !level_exists ){
+						level_info = std::make_shared<s_refine_level_info>();
+						level_info->level = refine_level;
+					}
+
+					if( this->nodeExists( refineLevelNode, "Bonus" ) ){
+						uint32 bonus;
+
+						if( !this->asUInt32( refineLevelNode, "Bonus", bonus ) ){
+							return 0;
+						}
+
+						level_info->bonus = bonus;
+					}else{
+						if( !level_exists ){
+							level_info->bonus = 0;
+						}
+					}
+
+					if( this->nodeExists( refineLevelNode, "RandomBonus" ) ){
+						uint32 bonus;
+
+						if( !this->asUInt32( refineLevelNode, "RandomBonus", bonus ) ){
+							return 0;
+						}
+
+						level_info->randombonus_max = bonus;
+					}else{
+						if( !level_exists ){
+							level_info->randombonus_max = 0;
+						}
+					}
+
+					if( this->nodeExists( refineLevelNode, "BlacksmithBlessingAmount" ) ){
+						uint16 amount;
+
+						if( !this->asUInt16( refineLevelNode, "BlacksmithBlessingAmount", amount ) ){
+							return 0;
+						}
+
+						if( amount > MAX_AMOUNT ){
+							this->invalidWarning( refineLevelNode["BlacksmithBlessingAmount"], "Blacksmith Blessing amount %hu too high, capping to MAX_AMOUNT.\n", amount );
+							amount = MAX_AMOUNT;
+						}
+
+						level_info->blessing_amount = amount;
+					}else{
+						if( !level_exists ){
+							level_info->blessing_amount = 0;
+						}
+					}
+
+					if (this->nodeExists(refineLevelNode, "BroadcastSuccess")) {
+						bool bcast;
+						if (!this->asBool(refineLevelNode, "BroadcastSuccess", bcast)) {
+							return 0;
+						}
+						level_info->broadcast_success = bcast;
+					}
+					else {
+						if (!level_exists) {
+							level_info->broadcast_success = false;
+						}
+					}
+
+					if (this->nodeExists(refineLevelNode, "BroadcastFailure")) {
+						bool bcast;
+						if (!this->asBool(refineLevelNode, "BroadcastFailure", bcast)) {
+							return 0;
+						}
+						level_info->broadcast_failure = bcast;
+					}
+					else {
+						if (!level_exists) {
+							level_info->broadcast_failure = false;
+						}
+					}
+
+					if( this->nodeExists( refineLevelNode, "Chances" ) ){
+						const auto& chancesNode = refineLevelNode["Chances"];
+						for( const auto& chanceNode : chancesNode ){
+							std::string cost_name;
+
+							if( !this->asString( chanceNode, "Type", cost_name ) ){
+								return 0;
+							}
+
+							std::string cost_name_constant = "REFINE_COST_" + cost_name;
+
+							if( !script_get_constant( cost_name_constant.c_str(), &constant ) ){
+								this->invalidWarning( chanceNode["Type"], "Unknown refine cost type %s, skipping.\n", cost_name.c_str() );
+								return 0;
+							}
+
+							if( constant >= REFINE_COST_MAX ){
+								this->invalidWarning( chanceNode["Type"], "Refine cost type %s is unsupported, skipping.\n", cost_name.c_str() );
+								return 0;
+							}
+
+							uint16 index = (uint16)constant;
+
+							std::shared_ptr<s_refine_cost> cost = util::umap_find( level_info->costs, index );
+							bool cost_exists = cost != nullptr;
+
+							if( !cost_exists ){
+								cost = std::make_shared<s_refine_cost>();
+								cost->index = index;
+							}
+
+							if( this->nodeExists( chanceNode, "Rate" ) ){
+								uint16 rate;
+
+								if( !this->asUInt16Rate( chanceNode, "Rate", rate ) ){
+									return 0;
+								}
+
+								cost->chance = rate;
+							}else{
+								if( !cost_exists ){
+									cost->chance = 0;
+								}
+							}
+
+							if( this->nodeExists( chanceNode, "Price" ) ){
+								uint32 price;
+
+								if( !this->asUInt32( chanceNode, "Price", price ) ){
+									return 0;
+								}
+
+								if( price > MAX_ZENY ){
+									this->invalidWarning( chanceNode["Price"], "Price is above MAX_ZENY, capping...\n" );
+									price = MAX_ZENY;
+								}
+
+								cost->zeny = price;
+							}else{
+								if( !cost_exists ){
+									cost->zeny = 0;
+								}
+							}
+
+							if( this->nodeExists( chanceNode, "Material" ) ){
+								std::string item_name;
+
+								if( !this->asString( chanceNode, "Material", item_name ) ){
+									return 0;
+								}
+
+								std::shared_ptr<item_data> id = item_db.search_aegisname( item_name.c_str() );
+
+								if( id == nullptr ){
+									this->invalidWarning( chanceNode["Material"], "Unknown refine material %s, skipping.\n", item_name.c_str() );
+									return 0;
+								}
+
+								cost->nameid = id->nameid;
+							}else{
+								if( !cost_exists ){
+									cost->nameid = 0;
+								}
+							}
+
+							if( this->nodeExists( chanceNode, "BreakingRate" ) ){
+								uint16 breaking_rate;
+
+								if( !this->asUInt16Rate( chanceNode, "BreakingRate", breaking_rate ) ){
+									return 0;
+								}
+
+								cost->breaking_rate = breaking_rate;
+							}else{
+								if( !cost_exists ){
+									cost->breaking_rate = 0;
+								}
+							}
+
+							if( this->nodeExists( chanceNode, "DowngradeAmount" ) ){
+								uint16 downgrade_amount;
+
+								if( !this->asUInt16( chanceNode, "DowngradeAmount", downgrade_amount ) ){
+									return 0;
+								}
+
+								if( downgrade_amount > MAX_REFINE ){
+									this->invalidWarning( chanceNode["DowngradeAmount"], "Downgrade amount %hu is invalid, skipping.\n", downgrade_amount );
+									return 0;
+								}
+
+								cost->downgrade_amount = downgrade_amount;
+							}else{
+								if( !cost_exists ){
+									cost->downgrade_amount = 0;
+								}
+							}
+
+							if( !cost_exists ){
+								level_info->costs[index] = cost;
+							}
+						}
+					}
+
+					if( !level_exists ){
+						levels_info->levels[refine_level] = level_info;
+					}
+				}
+			}
+
+			if( !levels_exists ){
+				info->levels[level] = levels_info;
+			}
+		}
+	}
+
+	if( !exists ){
+		this->put( group_id, info );
+	}
+
+	return 1;
+}
+
+std::shared_ptr<s_refine_level_info> RefineDatabase::findLevelInfoSub( const struct item_data& data, struct item& item, uint16 refine ){
+	// Check if the item can be refined
+	if( data.flag.no_refine ){
+		return nullptr;
+	}
+
+	// Cap the refine level
+	if( refine > MAX_REFINE ){
+		refine = MAX_REFINE;
+	}
+
+	e_refine_type type;
+	uint16 level;
+
+	if( !this->calculate_refine_info( data, type, level ) ){
+		return nullptr;
+	}
+
+	std::shared_ptr<s_refine_info> info = this->find( type );
+
+	if( info == nullptr ){
+		return nullptr;
+	}
+
+	std::shared_ptr<s_refine_levels_info> levels_info = util::umap_find( info->levels, level );
+
+	if( levels_info == nullptr ){
+		return nullptr;
+	}
+
+	return util::umap_find( levels_info->levels, refine );
+}
+
+std::shared_ptr<s_refine_level_info> RefineDatabase::findLevelInfo( const struct item_data& data, struct item& item ){
+	// Check the current refine level
+	if( item.refine >= MAX_REFINE ){
+		return nullptr;
+	}
+
+	return this->findLevelInfoSub( data, item, item.refine );
+}
+
+std::shared_ptr<s_refine_level_info> RefineDatabase::findCurrentLevelInfo( const struct item_data& data, struct item& item ){
+	if( item.refine > 0 ){
+		return this->findLevelInfoSub( data, item, item.refine - 1 );
+	}else{
+		return nullptr;
+	}
+}
+
+bool RefineDatabase::calculate_refine_info( const struct item_data& data, e_refine_type& refine_type, uint16& level ){
+	if( data.type == IT_WEAPON ){
+		refine_type = REFINE_TYPE_WEAPON;
+		level = data.weapon_level;
+
+		return true;
+	}else if( data.type == IT_ARMOR ){
+		refine_type = REFINE_TYPE_ARMOR;
+		level = data.armor_level;
+
+		return true;
+	}else if( data.type == IT_SHADOWGEAR ){
+		if( data.equip == EQP_SHADOW_WEAPON ){
+			refine_type = REFINE_TYPE_SHADOW_WEAPON;
+		}else{
+			refine_type = REFINE_TYPE_SHADOW_ARMOR;
+		}
+		level = 1;
+
+		return true;
+	}else{
+		return false;
+	}
+}
+
+RefineDatabase refine_db;
+
+const std::string SizeFixDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/size_fix.yml";
+}
+
+/**
+ * Reads and parses an entry from size_fix.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */

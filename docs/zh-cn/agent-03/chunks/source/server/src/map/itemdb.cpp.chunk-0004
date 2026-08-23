@@ -1,0 +1,500 @@
+}
+
+/**
+ * Check if an item exists from a group in a player's inventory
+ * @param group_id: Item Group ID
+ * @return Item's index if found or -1 otherwise
+ */
+int16 ItemGroupDatabase::item_exists_pc(map_session_data *sd, uint16 group_id)
+{
+	std::shared_ptr<s_item_group_db> group = this->find(group_id);
+
+	if (group == nullptr || group->random.empty())
+		return -1;
+
+	for (const auto &random : group->random) {
+		for (const auto &it : random.second->data) {
+			int16 item_position = pc_search_inventory(sd, it.second->nameid);
+
+			if (item_position != -1)
+				return item_position;
+		}
+	}
+
+	return -1;
+}
+
+const std::string LaphineSynthesisDatabase::getDefaultLocation(){
+	return std::string( db_path ) + "/laphine_synthesis.yml";
+}
+
+uint64 LaphineSynthesisDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	t_itemid item_id;
+
+	{
+		std::string name;
+
+		if( !this->asString( node, "Item", name ) ){
+			return 0;
+		}
+
+		std::shared_ptr<item_data> id = item_db.search_aegisname( name.c_str() );
+
+		if( id == nullptr ){
+			this->invalidWarning( node["Item"], "Unknown item \"%s\".\n", name.c_str() );
+			return 0;
+		}
+
+		item_id = id->nameid;
+	}
+
+	std::shared_ptr<s_laphine_synthesis> entry = this->find( item_id );
+	bool exists = entry != nullptr;
+
+	if( !exists ){
+		if( !this->nodesExist( node, { "RewardGroup", "Requirements" } ) ){
+			return 0;
+		}
+
+		entry = std::make_shared<s_laphine_synthesis>();
+		entry->item_id = item_id;
+	}
+
+	if( this->nodeExists( node, "RewardGroup" ) ){
+		std::string name;
+
+		if( !this->asString( node, "RewardGroup", name ) ){
+			return 0;
+		}
+
+		int64 constant;
+
+		if( !script_get_constant( ( "IG_" + name ).c_str(), &constant ) ){
+			this->invalidWarning( node["RewardGroup"], "Unknown reward group \"%s\".\n", name.c_str() );
+			return 0;
+		}
+
+		if( !itemdb_group.exists( (uint16)constant ) ){
+			this->invalidWarning( node["RewardGroup"], "Unknown reward group ID \"%" PRId64 "\".\n", constant );
+			return 0;
+		}
+
+		entry->rewardGroupId = (uint16)constant;
+	}else{
+		if( !exists ){
+			entry->rewardGroupId = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "RequiredRequirementsCount" ) ){
+		uint16 amount;
+
+		if( !this->asUInt16( node, "RequiredRequirementsCount", amount ) ){
+			return 0;
+		}
+
+		entry->requiredRequirements = amount;
+	}else{
+		if( !exists ){
+			entry->requiredRequirements = 1;
+		}
+	}
+
+	if( this->nodeExists( node, "Requirements" ) ){
+		for( const ryml::NodeRef& requirementNode : node["Requirements"] ){
+			std::string name;
+
+			if( !this->asString( requirementNode, "Item", name ) ){
+				return 0;
+			}
+
+			std::shared_ptr<item_data> id = item_db.search_aegisname( name.c_str() );
+
+			if( id == nullptr ){
+				this->invalidWarning( requirementNode["Item"], "Unknown item \"%s\".\n", name.c_str() );
+				return 0;
+			}
+
+			std::shared_ptr<s_laphine_synthesis_requirement> requirement = util::umap_find( entry->requirements, id->nameid );
+			bool requirement_exists = requirement != nullptr;
+
+			if( !requirement_exists ){
+				requirement = std::make_shared<s_laphine_synthesis_requirement>();
+				requirement->item_id = id->nameid;
+			}
+
+			if( this->nodeExists( requirementNode, "Amount" ) ){
+				uint16 amount;
+
+				if( !this->asUInt16( requirementNode, "Amount", amount ) ){
+					return 0;
+				}
+
+				if( amount > MAX_AMOUNT ){
+					this->invalidWarning( requirementNode["Amount"], "Amount %hu is too high, capping to MAX_AMOUNT...\n", amount );
+					amount = MAX_AMOUNT;
+				}
+
+				requirement->amount = amount;
+			}else{
+				if( !requirement_exists ){
+					requirement->amount = 1;
+				}
+			}
+
+			if( !requirement_exists ){
+				entry->requirements[id->nameid] = requirement;
+			}
+		}
+	}
+
+	if( this->nodeExists( node, "MinimumRefine" ) ){
+		uint16 refine;
+
+		if( !this->asUInt16( node, "MinimumRefine", refine ) ){
+			return 0;
+		}
+
+		if( refine > MAX_REFINE ){
+			this->invalidWarning( node["MinimumRefine"], "Minimum refine %hu is too high, capping to MAX_REFINE...\n", refine );
+			refine = MAX_REFINE;
+		}
+
+		entry->minimumRefine = refine;
+	}else{
+		if( !exists ){
+			entry->minimumRefine = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "MaximumRefine" ) ){
+		uint16 refine;
+
+		if( !this->asUInt16( node, "MaximumRefine", refine ) ){
+			return 0;
+		}
+
+		if( refine > MAX_REFINE ){
+			this->invalidWarning( node["MaximumRefine"], "Maximum refine %hu is too high, capping to MAX_REFINE...\n", refine );
+			refine = MAX_REFINE;
+		}
+
+		entry->maximumRefine = refine;
+	}else{
+		if( !exists ){
+			entry->maximumRefine = MAX_REFINE;
+		}
+	}
+
+	if( !exists ){
+		this->put( entry->item_id, entry );
+	}
+
+	return 1;
+}
+
+LaphineSynthesisDatabase laphine_synthesis_db;
+
+const std::string LaphineUpgradeDatabase::getDefaultLocation(){
+	return std::string( db_path ) + "/laphine_upgrade.yml";
+}
+
+uint64 LaphineUpgradeDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	t_itemid item_id;
+
+	{
+		std::string name;
+
+		if( !this->asString( node, "Item", name ) ){
+			return 0;
+		}
+
+		std::shared_ptr<item_data> id = item_db.search_aegisname( name.c_str() );
+
+		if( id == nullptr ){
+			this->invalidWarning( node["Item"], "Unknown item \"%s\".\n", name.c_str() );
+			return 0;
+		}
+
+		item_id = id->nameid;
+	}
+
+	std::shared_ptr<s_laphine_upgrade> entry = this->find( item_id );
+	bool exists = entry != nullptr;
+
+	if( !exists ){
+		if( !this->nodesExist( node, { "TargetItems" } ) ){
+			return 0;
+		}
+
+		entry = std::make_shared<s_laphine_upgrade>();
+		entry->item_id = item_id;
+	}
+
+	if( this->nodeExists( node, "RandomOptionGroup" ) ){
+		std::string name;
+
+		if( !this->asString( node, "RandomOptionGroup", name ) ){
+			return 0;
+		}
+
+		uint16 id;
+
+		if( !random_option_group.option_get_id( name, id ) ){
+			this->invalidWarning( node["RandomOptionGroup"], "Unknown random option group \"%s\".\n", name.c_str() );
+			return 0;
+		}
+
+		entry->randomOptionGroup = random_option_group.find( id );
+	}else{
+		if( !exists ){
+			entry->randomOptionGroup = nullptr;
+		}
+	}
+
+	if( this->nodeExists( node, "TargetItems" ) ){
+		for( const ryml::NodeRef& targetNode : node["TargetItems"] ){
+			std::string name;
+
+			if( !this->asString( targetNode, "Item", name ) ){
+				return 0;
+			}
+
+			std::shared_ptr<item_data> id = item_db.search_aegisname( name.c_str() );
+
+			if( id == nullptr ){
+				this->invalidWarning( targetNode["Item"], "Unknown item \"%s\".\n", name.c_str() );
+				return 0;
+			}
+
+			if( !util::vector_exists( entry->target_item_ids, id->nameid ) ){
+				entry->target_item_ids.push_back( id->nameid );
+			}
+		}
+	}
+
+	if( this->nodeExists( node, "MinimumRefine" ) ){
+		uint16 refine;
+
+		if( !this->asUInt16( node, "MinimumRefine", refine ) ){
+			return 0;
+		}
+
+		if( refine > MAX_REFINE ){
+			this->invalidWarning( node["MinimumRefine"], "Minimum refine %hu is too high, capping to MAX_REFINE...\n", refine );
+			refine = MAX_REFINE;
+		}
+
+		entry->minimumRefine = refine;
+	}else{
+		if( !exists ){
+			entry->minimumRefine = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "MaximumRefine" ) ){
+		uint16 refine;
+
+		if( !this->asUInt16( node, "MaximumRefine", refine ) ){
+			return 0;
+		}
+
+		if( refine > MAX_REFINE ){
+			this->invalidWarning( node["MaximumRefine"], "Maximum refine %hu is too high, capping to MAX_REFINE...\n", refine );
+			refine = MAX_REFINE;
+		}
+
+		entry->maximumRefine = refine;
+	}else{
+		if( !exists ){
+			entry->maximumRefine = MAX_REFINE;
+		}
+	}
+
+	if( this->nodeExists( node, "RequiredRandomOptions" ) ){
+		uint16 amount;
+
+		if( !this->asUInt16( node, "RequiredRandomOptions", amount ) ){
+			return 0;
+		}
+
+		if( amount > MAX_ITEM_RDM_OPT ){
+			this->invalidWarning( node["RequiredRandomOptions"], "Required random option amount %hu is too high, capping to MAX_ITEM_RDM_OPT...\n", amount );
+			amount = MAX_ITEM_RDM_OPT;
+		}
+
+		entry->requiredRandomOptions = amount;
+	}else{
+		if( !exists ){
+			entry->requiredRandomOptions = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "CardsAllowed" ) ){
+		bool allowed;
+
+		if( !this->asBool( node, "CardsAllowed", allowed ) ){
+			return 0;
+		}
+
+		entry->cardsAllowed = allowed;
+	}else{
+		if( !exists ){
+			entry->cardsAllowed = false;
+		}
+	}
+
+	if( this->nodeExists( node, "ResultRefine" ) ){
+		uint16 refine;
+
+		if( !this->asUInt16( node, "ResultRefine", refine ) ){
+			return 0;
+		}
+
+		if( refine > MAX_REFINE ){
+			this->invalidWarning( node["ResultRefine"], "Result refine %hu is too high, capping to MAX_REFINE...\n", refine );
+			refine = MAX_REFINE;
+		}
+
+		entry->resultRefine = refine;
+	}else{
+		if( !exists ){
+			entry->resultRefine = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "ResultRefineMinimum" ) ){
+		uint16 refine;
+
+		if( !this->asUInt16( node, "ResultRefineMinimum", refine ) ){
+			return 0;
+		}
+
+		if( refine > MAX_REFINE ){
+			this->invalidWarning( node["ResultRefineMinimum"], "Result refine minimum %hu is too high, capping to MAX_REFINE...\n", refine );
+			refine = MAX_REFINE;
+		}
+
+		entry->resultRefineMinimum = refine;
+	}else{
+		if( !exists ){
+			entry->resultRefineMinimum = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "ResultRefineMaximum" ) ){
+		uint16 refine;
+
+		if( !this->asUInt16( node, "ResultRefineMaximum", refine ) ){
+			return 0;
+		}
+
+		if( refine > MAX_REFINE ){
+			this->invalidWarning( node["ResultRefineMaximum"], "Result refine maximum %hu is too high, capping to MAX_REFINE...\n", refine );
+			refine = MAX_REFINE;
+		}
+
+		entry->resultRefineMaximum = refine;
+	}else{
+		if( !exists ){
+			entry->resultRefineMaximum = 0;
+		}
+	}
+
+	if( !exists ){
+		this->put( entry->item_id, entry );
+	}
+
+	return 1;
+}
+
+LaphineUpgradeDatabase laphine_upgrade_db;
+
+const std::string ItemReformDatabase::getDefaultLocation(){
+	return std::string( db_path ) + "/item_reform.yml";
+}
+
+uint64 ItemReformDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	t_itemid item_id;
+
+	{
+		std::string name;
+
+		if( !this->asString( node, "Item", name ) ){
+			return 0;
+		}
+
+		std::shared_ptr<item_data> id = item_db.search_aegisname( name.c_str() );
+
+		if( id == nullptr ){
+			this->invalidWarning( node["Item"], "Unknown item \"%s\".\n", name.c_str() );
+			return 0;
+		}
+
+		item_id = id->nameid;
+	}
+
+	std::shared_ptr<s_item_reform> entry = this->find( item_id );
+	bool exists = entry != nullptr;
+
+	if( !exists ){
+		if( !this->nodesExist( node, { "BaseItems" } ) ){
+			return 0;
+		}
+
+		entry = std::make_shared<s_item_reform>();
+		entry->item_id = item_id;
+	}
+
+	if( this->nodeExists( node, "BaseItems" ) ){
+		for( const ryml::NodeRef& baseNode : node["BaseItems"] ){
+			t_itemid base_itemid;
+
+			{
+				std::string name;
+
+				if( !this->asString( baseNode, "BaseItem", name ) ){
+					return 0;
+				}
+
+				std::shared_ptr<item_data> id = item_db.search_aegisname( name.c_str() );
+
+				if( id == nullptr ){
+					this->invalidWarning( baseNode["BaseItem"], "Unknown item \"%s\".\n", name.c_str() );
+					return 0;
+				}
+
+				base_itemid = id->nameid;
+			}
+
+			std::shared_ptr<s_item_reform_base> base = util::umap_find( entry->base_items, base_itemid );
+			bool base_exists = base != nullptr;
+
+			if( !base_exists ){
+				if( !this->nodesExist( baseNode, { "ResultItem" } ) ){
+					return 0;
+				}
+
+				base = std::make_shared<s_item_reform_base>();
+				base->item_id = base_itemid;
+			}
+
+			if( this->nodeExists( baseNode, "MinimumRefine" ) ){
+				uint16 refine;
+
+				if( !this->asUInt16( baseNode, "MinimumRefine", refine ) ){
+					return 0;
+				}
+
+				if( refine > MAX_REFINE ){
+					this->invalidWarning( baseNode["MinimumRefine"], "Minimum refine %hu is too high, capping to MAX_REFINE...\n", refine );
+					refine = MAX_REFINE;
+				}
+
+				base->minimumRefine = refine;
+			}else{
+				if( !base_exists ){
+					base->minimumRefine = 0;
+				}
+			}
+

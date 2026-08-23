@@ -1,0 +1,182 @@
+					return false; // No command found. Display as normal message.
+
+				info = get_atcommandinfo_byname(atcommand_alias_db.checkAlias(command + 1));
+				if (!info || info->char_groups[sd->group->index] == 0)  // If we can't use or doesn't exist: don't even display the command failed message
+					return false;
+			}
+
+			sprintf(output, msg_txt(sd,1388), charcommand_symbol); // Charcommand failed (usage: %c<command> <char name> <parameters>).
+			clif_displaymessage(fd, output);
+			return true;
+		}
+
+		ssd = map_nick2sd(charname,true);
+		if (ssd == nullptr) {
+			sprintf(output, msg_txt(sd,1389), command); // %s failed. Player not found.
+			clif_displaymessage(fd, output);
+			return true;
+		}
+
+		if (n > 2)
+			sprintf(atcmd_msg, "%s %s", command, params);
+		else
+			sprintf(atcmd_msg, "%s", command);
+	}
+
+	if (battle_config.idletime_option&IDLE_ATCOMMAND)
+		sd->idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_ATCOMMAND)
+		sd->idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_ATCOMMAND)
+		sd->idletime_mer = last_tick;
+
+	//Clearing these to be used once more.
+	memset(command, '\0', sizeof(command));
+	memset(params, '\0', sizeof(params));
+
+	//check to see if any params exist within this command
+	if( sscanf(atcmd_msg, "%255s %255[^\n]", command, params) < 2 )
+		params[0] = '\0';
+
+	if (type == 1 && (sd->state.block_action & PCBLOCK_COMMANDS)) {
+		sprintf(output,msg_txt(sd,154), command); // %s failed.
+		clif_displaymessage(fd, output);
+		return true;
+	}
+
+	// @commands (script based)
+	if((type == 1 || type == 3) && atcmd_binding_count > 0) {
+		struct atcmd_binding_data *binding = get_atcommandbind_byname(command);
+
+		// Check if the binding isn't nullptr and there is a NPC event, level of usage met, et cetera
+		if( binding != nullptr && binding->npc_event[0] &&
+			((is_atcommand && pc_get_group_level(sd) >= binding->level) ||
+			 (!is_atcommand && pc_get_group_level(sd) >= binding->level2)))
+		{
+			// Check if self or character invoking; if self == character invoked, then self invoke.
+			npc_do_atcmd_event(ssd, command, params, binding->npc_event);
+			return true;
+		}
+	}
+
+	//Grab the command information and check for the proper GM level required to use it or if the command exists
+	info = get_atcommandinfo_byname(atcommand_alias_db.checkAlias(command + 1));
+	if (info == nullptr) {
+		if (pc_get_group_level(sd) == 0) // TODO: remove or replace with proper permission
+			return false;
+
+		sprintf(output, msg_txt(sd,153), command); // "%s is Unknown Command."
+		clif_displaymessage(fd, output);
+		atcommand_get_suggestions(sd, command + 1, is_atcommand);
+		return true;
+	}
+
+	//check restriction
+	if (info->restriction) {
+		if (info->restriction&ATCMD_NOCONSOLE && type == 2) //console prevent
+			return true;
+		if (info->restriction&ATCMD_NOSCRIPT && (type == 0 || type == 3)) //scripts prevent
+			return true;
+		if (info->restriction&ATCMD_NOAUTOTRADE && (type == 0 || type == 3)
+			&& ((is_atcommand && sd && sd->state.autotrade) || (ssd && ssd->state.autotrade)))
+			return true;
+	}
+
+	// type == 1 : player invoked
+	if (type == 1) {
+		if ((is_atcommand && info->at_groups[sd->group->index] == 0) ||
+			(!is_atcommand && info->char_groups[sd->group->index] == 0) )
+			return false;
+
+		if( pc_isdead(sd) && pc_has_permission(sd,PC_PERM_DISABLE_CMD_DEAD) ) {
+			clif_displaymessage(fd, msg_txt(sd,1393)); // You can't use commands while dead
+			return true;
+		}
+	}
+
+	//Attempt to use the command
+	if ( (info->func(fd, ssd, command, params) != 0) )
+	{
+		sprintf(output,msg_txt(sd,154), command); // %s failed.
+		clif_displaymessage(fd, output);
+		return true;
+	}
+
+	//Log only if successful.
+	log_atcommand(sd, is_atcommand ? atcmd_msg : message);
+
+	return true;
+}
+
+void atcommand_db_load_groups(){
+	DBIterator *iter = db_iterator(atcommand_db);
+	AtCommandInfo* cmd;
+	size_t pc_group_max = player_group_db.size();
+
+	for (cmd = (AtCommandInfo*)dbi_first(iter); dbi_exists(iter); cmd = (AtCommandInfo*)dbi_next(iter)) {
+		cmd->at_groups = (char*)aMalloc( pc_group_max * sizeof(char) );
+		cmd->char_groups = (char*)aMalloc( pc_group_max * sizeof(char) );
+
+		for( auto& it : player_group_db ){
+			cmd->at_groups[it.second->index] = it.second->can_use_command( cmd->command, COMMAND_ATCOMMAND );
+			cmd->char_groups[it.second->index] = it.second->can_use_command( cmd->command, COMMAND_CHARCOMMAND );
+		}
+	}
+
+	dbi_destroy(iter);
+}
+void atcommand_db_clear(void) {
+
+	if (atcommand_db != nullptr) {
+		DBIterator *iter = db_iterator(atcommand_db);
+		AtCommandInfo* cmd;
+
+		for (cmd = (AtCommandInfo*)dbi_first(iter); dbi_exists(iter); cmd = (AtCommandInfo*)dbi_next(iter)) {
+			aFree(cmd->at_groups);
+			aFree(cmd->char_groups);
+		}
+
+		dbi_destroy(iter);
+
+		db_destroy(atcommand_db);
+	}
+
+	atcommand_alias_db.clear();
+}
+
+void atcommand_doload(void) {
+	atcommand_db_clear();
+	atcommand_db = stridb_alloc((DBOptions)(DB_OPT_DUP_KEY|DB_OPT_RELEASE_DATA), ATCOMMAND_LENGTH);
+	atcommand_basecommands(); //fills initial atcommand_db with known commands
+	atcommand_alias_db.load();
+
+#if defined(BUILDBOT)
+	DBIterator* atcommand_iter = db_iterator( atcommand_db );
+
+	for( AtCommandInfo* command_info = static_cast<AtCommandInfo*>( dbi_first( atcommand_iter ) ); dbi_exists( atcommand_iter ); command_info = static_cast<AtCommandInfo*>( dbi_next( atcommand_iter ) ) ){
+		// Attempt to find the command
+		std::shared_ptr<s_atcommand_alias_info> info = atcommand_alias_db.find( command_info->command );
+
+		// Failed to find the help property in the configuration file
+		if( info == nullptr ){
+			ShowError( "atcommand_doload: No entry for atcommand \"%s\" found in \"%s\"\n", command_info->command, atcommand_alias_db.getDefaultLocation().c_str() );
+			continue;
+		}
+
+		if( info->help.empty() ){
+			ShowError( "atcommand_doload: No help for atcommand \"%s\" contained in \"%s\"\n", command_info->command, atcommand_alias_db.getDefaultLocation().c_str() );
+			continue;
+		}
+	}
+
+	dbi_destroy( atcommand_iter );
+#endif
+}
+
+void do_init_atcommand(void) {
+	atcommand_doload();
+}
+
+void do_final_atcommand(void) {
+	atcommand_db_clear();
+}

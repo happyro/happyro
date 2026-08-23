@@ -1,0 +1,500 @@
+	cd->last_point.y = accessible_map.y;
+
+	mapserver = char_search_mapserver( cd->last_point.map, -1, -1 );
+
+	// No mapserver found for our accessible map
+	if( mapserver < 0 ){
+		chclif_reject( fd, 0 ); // rejected from server
+		return 1;
+	}
+
+	int32 map_fd;
+
+	// Send NEW auth packet [Kevin]
+	// FIXME: is this case even possible? [ultramage]
+	if( ( map_fd = map_server[mapserver].fd ) < 1 || session[map_fd] == nullptr ){
+		ShowError( "parse_char: Attempting to write to invalid session %d! Map Server #%d disconnected.\n", map_fd, mapserver );
+		map_server[mapserver] = {};
+		map_server[mapserver].fd = -1;
+		chclif_send_auth_result( fd, 1 ); // Send server closed.
+		return 1;
+	}
+
+	chclif_send_map_data( fd, cd, mapserver );
+
+	// create temporary auth entry
+	std::shared_ptr<struct auth_node> node = std::make_shared<struct auth_node>();
+
+	node->account_id = sd.account_id;
+	node->char_id = cd->char_id;
+	node->login_id1 = sd.login_id1;
+	node->login_id2 = sd.login_id2;
+	node->sex = sd.sex;
+	node->expiration_time = sd.expiration_time;
+	node->group_id = sd.group_id;
+	node->ip = session[fd]->client_addr;
+
+	char_get_authdb()[node->account_id] = node;
+
+	return true;
+#else
+	return false;
+#endif
+}
+
+void chclif_accessible_maps( int32 fd ){
+#if PACKETVER >= 20100714
+	PACKET_HC_NOTIFY_ACCESSIBLE_MAPNAME* p = reinterpret_cast<PACKET_HC_NOTIFY_ACCESSIBLE_MAPNAME*>( packet_buffer );
+
+	p->packetType = HEADER_HC_NOTIFY_ACCESSIBLE_MAPNAME;
+	p->packetLength = sizeof( *p );
+
+	int32 count = 0;
+	for( s_point_str& accessible_map : accessible_maps ){
+		PACKET_HC_NOTIFY_ACCESSIBLE_MAPNAME_sub& entry = p->maps[count];
+
+		if( int32 mapserver = char_search_mapserver( accessible_map.map, -1, -1 ); mapserver < 0 ){
+			entry.status = 1;
+		}else{
+			entry.status = 0;
+		}
+
+		mapindex_getmapname_ext( accessible_map.map, entry.map );
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( entry ) );
+		count++;
+	}
+
+	socket_send( fd, p );
+#else
+	chclif_send_auth_result( fd, 1 ); // 01 = Server closed
+#endif
+}
+
+bool chclif_parse_charselect( int32 fd, struct char_session_data& sd ){
+	const PACKET_CH_SELECT_CHAR* p = reinterpret_cast<PACKET_CH_SELECT_CHAR*>( RFIFOP( fd, 0 ) );
+
+	int32 server_id;
+
+	ARR_FIND( 0, ARRAYLENGTH(map_server), server_id, session_isValid(map_server[server_id].fd) && !map_server[server_id].maps.empty() );
+	// Map-server not available, tell the client to wait (client wont close, char select will respawn)
+	if (server_id == ARRAYLENGTH(map_server)) {
+		chclif_accessible_maps( fd );
+		return 1;
+	}
+
+	// Check if the character exists and is not scheduled for deletion
+	int slot = p->slot;
+	char* data;
+
+	if ( SQL_SUCCESS != Sql_Query(sql_handle, "SELECT `char_id` FROM `%s` WHERE `account_id`='%d' AND `char_num`='%d' AND `delete_date` = 0", schema_config.char_db, sd.account_id, slot)
+		|| SQL_SUCCESS != Sql_NextRow(sql_handle)
+		|| SQL_SUCCESS != Sql_GetData(sql_handle, 0, &data, NULL) )
+	{	//Not found?? May be forged packet.
+		Sql_ShowDebug(sql_handle);
+		Sql_FreeResult(sql_handle);
+		chclif_reject(fd, 0); // rejected from server
+		return 1;
+	}
+
+	uint32 char_id = atoi(data);
+	Sql_FreeResult(sql_handle);
+
+	// Prevent select a char while retrieving guild bound items
+	if (sd.flag&1) {
+		chclif_reject(fd, 0); // rejected from server
+		return 1;
+	}
+
+	/* client doesn't let it get to this point if you're banned, so its a forged packet */
+	if( sd.found_char[slot] == char_id && sd.unban_time[slot] > time(nullptr) ) {
+		chclif_reject(fd, 0); // rejected from server
+		return 1;
+	}
+
+	/* set char as online prior to loading its data so 3rd party applications will realise the sql data is not reliable */
+	char_set_char_online(-2,char_id,sd.account_id);
+
+	struct mmo_charstatus char_dat;
+	if( !char_mmo_char_fromsql(char_id, &char_dat, true) ) { /* failed? set it back offline */
+		char_set_char_offline(char_id, sd.account_id);
+		/* failed to load something. REJECT! */
+		chclif_reject(fd, 0); // rejected from server
+		return 1;
+	}
+
+	//Have to switch over to the DB instance otherwise data won't propagate [Kevin]
+	std::shared_ptr<struct mmo_charstatus> cd = util::umap_find( char_get_chardb(), char_id );
+
+	if (charserv_config.log_char) {
+		char esc_name[NAME_LENGTH*2+1];
+
+		Sql_EscapeStringLen(sql_handle, esc_name, char_dat.name, strnlen(char_dat.name, NAME_LENGTH));
+		if( SQL_ERROR == Sql_Query(sql_handle, "INSERT INTO `%s`(`time`, `account_id`,`char_num`,`name`) VALUES (NOW(), '%d', '%d', '%s')",
+			schema_config.charlog_db, sd.account_id, slot, esc_name) )
+			Sql_ShowDebug(sql_handle);
+	}
+	ShowInfo("Selected char: (Account %d: %d - %s)\n", sd.account_id, slot, char_dat.name);
+
+	// searching map server
+	int i = char_search_mapserver( cd->last_point.map, -1, -1 );
+
+	// if map is not found, we check major cities
+	if( i < 0 ){
+#if PACKETVER >= 20100714
+		// Let the user select a map
+		chclif_accessible_maps( fd );
+
+		return 0;
+#else
+		// Try to select a map for the user
+		uint16 j;
+		//First check that there's actually a map server online.
+		ARR_FIND( 0, ARRAYLENGTH(map_server), j, session_isValid(map_server[j].fd) && !map_server[j].maps.empty() );
+		if (j == ARRAYLENGTH(map_server)) {
+			ShowInfo("Connection Closed. No map servers available.\n");
+			chclif_send_auth_result(fd,1); // 01 = Server closed
+			return 1;
+		}
+
+		for( struct s_point_str& accessible_map : accessible_maps ){
+			i = char_search_mapserver( accessible_map.map, -1, -1 );
+
+			// Found a map-server for a map
+			if( i >= 0 ){
+				ShowWarning( "Unable to find map-server for '%s', sending to major city '%s'.\n", cd->last_point.map, accessible_map.map );
+				memcpy( &cd->last_point, &accessible_map, sizeof( cd->last_point ) );
+				break;
+			}
+		}
+
+		if( i < 0 ){
+			ShowInfo( "Connection Closed. No map server available that has a major city, and unable to find map-server for '%s'.\n", cd->last_point.map );
+			chclif_send_auth_result(fd,1); // 01 = Server closed
+			return 1;
+		}
+#endif
+	}
+
+	//Send NEW auth packet [Kevin]
+	//FIXME: is this case even possible? [ultramage]
+	if( !session_isValid( map_server[i].fd ) ){
+		ShowError( "parse_char: Attempting to write to invalid session %d! Map Server #%d disconnected.\n", map_server[i].fd, i );
+		map_server[i] = {};
+		map_server[i].fd = -1;
+		chclif_send_auth_result(fd,1);  //Send server closed.
+		return 1;
+	}
+
+	chclif_send_map_data( fd, cd, i );
+
+	// create temporary auth entry
+	std::shared_ptr<struct auth_node> node = std::make_shared<struct auth_node>();
+
+	node->account_id = sd.account_id;
+	node->char_id = cd->char_id;
+	node->login_id1 = sd.login_id1;
+	node->login_id2 = sd.login_id2;
+	node->sex = sd.sex;
+	node->expiration_time = sd.expiration_time;
+	node->group_id = sd.group_id;
+	node->ip = session[fd]->client_addr;
+
+	char_get_authdb()[node->account_id] = node;
+
+	return 1;
+}
+
+void chclif_createnewchar_refuse( int fd, int error ){
+	// deny character creation
+	PACKET_HC_REFUSE_MAKECHAR p = {};
+
+	p.packetType = HEADER_HC_REFUSE_MAKECHAR;
+
+	switch ( error ) {
+		// 'Charname already exists' (-1)
+		case -1:
+			p.error = 0x00;
+			break;
+		// 'Char creation denied' (-2)
+		case -2:
+			p.error = 0xFF;
+			break;
+		// 'You are underaged' (-3)
+		case -3:
+			p.error = 0x01;
+			break;
+		//  'You are not elegible to open the Character Slot' (-4)
+		case -4:
+			p.error = 0x03;
+			break;
+		/* Unused: 0x02 = Symbols in Character Names are forbidden [Ind]*/
+	}
+
+	socket_send( fd, p );
+}
+
+void chclif_createnewchar( int fd, mmo_charstatus& char_dat ){
+	// send to player
+	PACKET_HC_ACCEPT_MAKECHAR p = {};
+
+	p.packetType = HEADER_HC_ACCEPT_MAKECHAR;
+	char_mmo_char_tobuf( p.character, char_dat );
+
+	socket_send( fd, p );
+}
+
+// S 0970 <name>.24B <slot>.B <hair color>.W <hair style>.W
+// S 0067 <name>.24B <str>.B <agi>.B <vit>.B <int>.B <dex>.B <luk>.B <slot>.B <hair color>.W <hair style>.W
+// S 0a39 <name>.24B <slot>.B <hair color>.W <hair style>.W <starting job ID>.W <Unknown>.(W or 2 B's)??? <sex>.B
+bool chclif_parse_createnewchar( int32 fd, struct char_session_data& sd ){
+	// Check if character creation is turned off
+	if( charserv_config.char_new == 0 ){ 
+		chclif_createnewchar_refuse( fd, -2 );
+		return true;
+	}
+
+	char name[NAME_LENGTH];
+	int32 str, agi, vit, int_, dex, luk;
+	int32 slot;
+	int32 hair_color;
+	int32 hair_style;
+	int32 start_job;
+	int32 sex;
+
+	const PACKET_CH_MAKE_CHAR* p = reinterpret_cast<PACKET_CH_MAKE_CHAR*>( RFIFOP( fd, 0 ) );
+
+	// Sent values
+	safestrncpy( name, p->name, NAME_LENGTH );
+	slot = p->slot;
+	hair_color = p->hair_color;
+	hair_style = p->hair_style;
+
+#if PACKETVER >= 20151001
+	// Sent values
+	start_job = p->job;
+	sex = p->sex;
+
+	// Default values
+	str = 1;
+	agi = 1;
+	vit = 1;
+	int_ = 1;
+	dex = 1;
+	luk = 1;
+#elif PACKETVER >= 20120307
+	// Default values
+	str = 1;
+	agi = 1;
+	vit = 1;
+	int_ = 1;
+	dex = 1;
+	luk = 1;
+	start_job = JOB_NOVICE;
+	sex = sd.sex;
+#else
+	// Sent values
+	str = p->str;
+	agi = p->agi;
+	vit = p->vit;
+	int_ = p->int_;
+	dex = p->dex;
+	luk = p->luk;
+
+	// Default values
+	start_job = JOB_NOVICE;
+	sex = sd.sex;
+#endif
+
+	int char_id = char_make_new_char( &sd, name, str, agi, vit, int_, dex, luk, slot, hair_color, hair_style, start_job, sex );
+
+	if( char_id < 0 ){
+		chclif_createnewchar_refuse( fd, char_id );
+		return true;
+	}
+
+	// retrieve data
+	struct mmo_charstatus char_dat;
+
+	// Only the short data is needed.
+	char_mmo_char_fromsql( char_id, &char_dat, false );
+
+	chclif_createnewchar( fd, char_dat );
+
+	// add new entry to the chars list
+	sd.found_char[char_dat.slot] = char_id;
+
+	return true;
+}
+
+/**
+ * Inform client that his deletion request was refused
+ * 0x70 <ErrorCode>B HC_REFUSE_DELETECHAR
+ * @param fd
+ * @param ErrorCode
+ *	00 = Incorrect Email address
+ *	01 = Invalid Slot
+ *	02 = In a party or guild
+ */
+void chclif_refuse_delchar(int32 fd, uint8 errCode){
+	PACKET_HC_REFUSE_DELETECHAR p = {};
+
+	p.packetType = HEADER_HC_REFUSE_DELETECHAR;
+	p.error = errCode;
+
+	socket_send( fd, p );
+}
+
+void chclif_delchar( int32 fd ){
+	PACKET_HC_ACCEPT_DELETECHAR p = {};
+
+	p.packetType = HEADER_HC_ACCEPT_DELETECHAR;
+
+	socket_send( fd, p );
+}
+
+bool chclif_parse_delchar( int fd, struct char_session_data& sd ){
+	const PACKET_CH_DELETE_CHAR* p = reinterpret_cast<PACKET_CH_DELETE_CHAR*>( RFIFOP( fd, 0 ) );
+
+	char email[40];
+	uint32 cid = p->CID;
+
+	ShowInfo(CL_RED "Request Char Deletion: " CL_GREEN "%u (%u)" CL_RESET "\n", sd.account_id, cid);
+	safestrncpy( email, p->key, sizeof( email ) );
+
+	if (!chclif_delchar_check(&sd, email, charserv_config.char_config.char_del_option)) {
+		chclif_refuse_delchar(fd,0); // 00 = Incorrect Email address
+		return true;
+	}
+
+	/* Delete character */
+	switch( char_delete(&sd,cid) ){
+		case CHAR_DELETE_OK:
+			// Char successfully deleted.
+			chclif_delchar( fd );
+			break;
+		case CHAR_DELETE_DATABASE:
+		case CHAR_DELETE_BASELEVEL:
+		case CHAR_DELETE_TIME:
+			chclif_refuse_delchar(fd, 0);
+			break;
+		case CHAR_DELETE_NOTFOUND:
+			chclif_refuse_delchar(fd, 1);
+			break;
+		case CHAR_DELETE_GUILD:
+		case CHAR_DELETE_PARTY:
+			chclif_refuse_delchar(fd, 2);
+			break;
+	}
+
+	return true;
+}
+
+// Client keep-alive packet (every 12 seconds)
+// R 0187 <account ID>.l
+bool chclif_parse_keepalive( int32 fd, char_session_data& sd ){
+	const PACKET_PING* p = reinterpret_cast<PACKET_PING*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd.account_id ){
+		return false;
+	}
+
+	return true;
+}
+
+// Tells the client if the name was accepted or not
+// 028e <result>.W (HC_ACK_IS_VALID_CHARNAME)
+// result:
+//		0 = name is not OK
+//		1 = name is OK
+void chclif_reqrename_response( int32 fd, bool name_valid ){
+	PACKET_HC_ACK_IS_VALID_CHARNAME p = {};
+
+	p.packetType = HEADER_HC_ACK_IS_VALID_CHARNAME;
+	p.result = name_valid;
+
+	socket_send( fd, p );
+}
+
+// Request for checking the new name on character renaming
+// 028d <account ID>.l <char ID>.l <new name>.24B (CH_REQ_IS_VALID_CHARNAME)
+bool chclif_parse_reqrename( int32 fd, char_session_data& sd ){
+	const PACKET_CH_REQ_IS_VALID_CHARNAME* p = reinterpret_cast<PACKET_CH_REQ_IS_VALID_CHARNAME*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd.account_id ){
+		return false;
+	}
+
+	size_t i;
+
+	ARR_FIND( 0, MAX_CHARS, i, sd.found_char[i] == p->CID );
+
+	if( i == MAX_CHARS ){
+		return true;
+	}
+
+	char name[NAME_LENGTH];
+
+	safestrncpy( name, p->new_name, NAME_LENGTH );
+
+	normalize_name( name, TRIM_CHARS );
+
+	char esc_name[NAME_LENGTH * 2 + 1];
+
+	Sql_EscapeStringLen( sql_handle, esc_name, name, strnlen( name, NAME_LENGTH ) );
+
+	if( char_check_char_name( name, esc_name ) != 0 ){
+		chclif_reqrename_response( fd, false );
+
+		return true;	
+	}
+
+	// Name is okay
+	safestrncpy( sd.new_name, name, NAME_LENGTH );
+
+	chclif_reqrename_response( fd, true );
+
+	return 1;
+}
+
+
+TIMER_FUNC(charblock_timer){
+	struct char_session_data* sd=nullptr;
+	int32 i=0;
+	ARR_FIND( 0, fd_max, i, session[i] && (sd = (struct char_session_data*)session[i]->session_data) && sd->account_id == id);
+
+	if(sd == nullptr || sd->charblock_timer==INVALID_TIMER) //has disconected or was required to stop
+		return 0;
+	if (sd->charblock_timer != tid){
+		sd->charblock_timer = INVALID_TIMER;
+		return 0;
+	}
+	chclif_block_character( i, *sd );
+	return 0;
+}
+
+/*
+ * 0x20d <PacketLength>.W <TAG_CHARACTER_BLOCK_INFO>24B (HC_BLOCK_CHARACTER)
+ * <GID>L <szExpireDate>20B (TAG_CHARACTER_BLOCK_INFO)
+ */
+void chclif_block_character( int32 fd, char_session_data& sd){
+	time_t now = time( nullptr );
+
+	PACKET_HC_BLOCK_CHARACTER* p = reinterpret_cast<PACKET_HC_BLOCK_CHARACTER*>( packet_buffer );
+
+	p->packetType = HEADER_HC_BLOCK_CHARACTER;
+	p->packetLength = sizeof( *p );
+
+	for( size_t i = 0, j = 0; i < MAX_CHARS; i++ ){
+		if( sd.found_char[i] == -1 )
+			continue;
+		if( sd.unban_time[i] ){
+			if( sd.unban_time[i] > now ){
+				PACKET_HC_BLOCK_CHARACTER_sub& character = p->characters[j];
+
+				character.CID = sd.found_char[i];
+				timestamp2string( character.unblock_time, sizeof( character.unblock_time ), sd.unban_time[i], "%Y-%m-%d %H:%M:%S" );
+
+				p->packetLength += sizeof( character );
+				j++;
+			}else{

@@ -1,0 +1,500 @@
+		case SC_KI_SUL_RAMPAGE:
+			tick_time = 100;
+			val4 = tick / 1000;
+			break;
+		case SC_BLESSING_OF_M_CREATURES:
+			val2 = val1 * 10;
+			break;
+		case SC_COLORS_OF_HYUN_ROK_BUFF:
+			val2 = 50;
+			break;
+		case SC_STAR_BURST:
+			tick_time = status_get_sc_interval(type);
+			val4 = tick - tick_time; // Remaining time
+			break;
+		case SC_WILD_WALK:
+			val2 = (1 + val1 / 2) * 25;
+			val3 = 50 + 50 * val1;
+			break;
+		case SC_OVERCOMING_CRISIS:
+			val2 = 3 * val1;
+			val3 = 15000 * val1;
+			break;
+
+		default:
+			if (calc_flag.none() && scdb->skill_id == 0 && scdb->icon == EFST_BLANK && scdb->opt1 == OPT1_NONE && scdb->opt2 == OPT2_NONE && scdb->state.none() && scdb->flag.none() && scdb->endonstart.empty() && scdb->endreturn.empty() && scdb->fail.empty() && scdb->endonend.empty()) {
+				// Status change with no calc, no icon, and no skill associated...?
+				ShowWarning("status_change_start: Status %s (%d) is bare. Add the NoWarning flag to suppress this message.\n", script_get_constant_str("SC_", type), type);
+				return false;
+			}
+	} else // Special considerations when loading SC data.
+		switch( type ) {
+			case SC_WEDDING:
+			case SC_XMAS:
+			case SC_SUMMER:
+			case SC_HANBOK:
+			case SC_OKTOBERFEST:
+			case SC_DRESSUP:
+				if( !vd )
+					break;
+				clif_changelook(bl,LOOK_BASE,vd->look[LOOK_BASE]);
+				clif_changelook(bl,LOOK_WEAPON,0);
+				clif_changelook(bl,LOOK_SHIELD,0);
+				clif_changelook(bl,LOOK_CLOTHES_COLOR,vd->look[LOOK_CLOTHES_COLOR]);
+				clif_changelook(bl,LOOK_BODY2,vd->look[LOOK_BODY2]);
+				break;
+			case SC_STONE:
+			case SC_STONEWAIT:
+			case SC_POISON:
+			case SC_DPOISON:
+			case SC_BLEEDING:
+			case SC_BURNING:
+			case SC_TOXIN:
+				tick_time = tick;
+				tick = tick_time + max(val4, 0);
+				break;
+			case SC_DEATHHURT:
+				if (val3 == 1)
+					break;
+				tick_time = tick;
+				tick = tick_time + max(val4, 0);
+				[[fallthrough]];
+			case SC_MAGICMUSHROOM:
+			case SC_PYREXIA:
+			case SC_LEECHESEND:
+				if (val3 == 0)
+					break;
+				tick_time = tick;
+				tick = tick_time + max(val4, 0);
+				break;
+			case SC_SWORDCLAN:
+			case SC_ARCWANDCLAN:
+			case SC_GOLDENMACECLAN:
+			case SC_CROSSBOWCLAN:
+			case SC_JUMPINGCLAN:
+			case SC_CLAN_INFO:
+				// If the player still has a clan status, but was removed from his clan
+				if( sd && sd->status.clan_id == 0 ){
+					return false;
+				}
+				break;
+			case SC_SERVANTWEAPON:
+			case SC_ABYSSFORCEWEAPON:
+				tick_time = tick;
+				tick = tick_time + max(val4, 0);
+				break;
+		}
+
+	if (sd && current_equip_combo_pos > 0 && tick == INFINITE_TICK) {
+		ShowWarning("sc_start: Item combo of item #%u contains an INFINITE_TICK duration. Skipping bonus.\n", sd->inventory_data[pc_checkequip(sd, current_equip_combo_pos)]->nameid);
+		return false;
+	}
+
+	/* [Ind] */
+	if (scdb->flag[SCF_DISPLAYPC] || scdb->flag[SCF_DISPLAYNPC]) {
+		int32 dval1 = 0, dval2 = 0, dval3 = 0;
+
+		switch (type) {
+			case SC_ALL_RIDING:
+				dval1 = 1;
+				break;
+			case SC_CLAN_INFO:
+				dval1 = val1;
+				dval2 = val2;
+				dval3 = val3;
+				break;
+			default: /* All others: just copy val1 */
+				dval1 = val1;
+				break;
+		}
+		status_display_add(bl,type,dval1,dval2,dval3);
+	}
+
+	//SC that force player to stand if is sitting
+	if (scdb->flag[SCF_SETSTAND] && sd && pc_issit(sd))
+		pc_setstand(sd, true);
+
+	//SC that make stop attacking [LuzZza]
+	if (scdb->flag[SCF_STOPATTACKING])
+		unit_stop_attack(bl);
+
+	//SC that make stop walking
+	if (scdb->flag[SCF_STOPWALKING]) {
+		switch (type) {
+			case SC__MANHOLE:
+				if (bl->type == BL_PC || !unit_blown_immune(bl,0x1))
+					unit_stop_walking( bl, USW_FIXPOS );
+				break;
+			case SC_VACUUM_EXTREME:
+				if (bl->type != BL_PC && unit_blown_immune(bl, 0x1) == UB_KNOCKABLE) {
+					unit_stop_walking( bl, USW_FIXPOS );
+					unit_stop_attack(bl);
+				}
+				break;
+			case SC_FREEZE:
+			case SC_STUN:
+			case SC_STONE:
+				if (sc->getSCE(SC_DANCING)) {
+					unit_stop_walking( bl, USW_FIXPOS );
+					status_change_end(bl, SC_DANCING);
+				}
+				break;
+			default:
+				if (!unit_blown_immune(bl,0x1))
+					unit_stop_walking( bl, USW_FIXPOS );
+				break;
+		}
+	}
+
+	//SC that make stop casting
+	if (battle_config.sc_castcancel&bl->type && scdb->flag[SCF_STOPCASTING])
+		unit_skillcastcancel(bl,0);
+
+	if(scdb->opt1 != OPT1_NONE) sc->opt1 = scdb->opt1;
+	sc->opt2 |= scdb->opt2;
+	sc->opt3 |= scdb->opt3;
+	sc->option |= scdb->look;
+
+	std::bitset<SCF_MAX> opt_flag = scdb->flag;
+	uint16 disable_opt_flag = false;
+
+	switch(type) {
+		case SC_DANCING:
+			if ((val1&0xFFFF) == CG_MOONLIT)
+				sc->opt3 |= OPT3_MOONLIT;
+			break;
+	}
+
+	// On Aegis, when turning on a status change, first goes the option packet, then the sc packet.
+	if (!disable_opt_flag && (opt_flag[SCF_SENDOPTION] || opt_flag[SCF_ONTOUCH] || opt_flag[SCF_UNITMOVE] || opt_flag[SCF_NONPLAYER] || opt_flag[SCF_SENDLOOK])) {
+		clif_changeoption(bl);
+		if(sd && opt_flag[SCF_SENDLOOK]) {
+			clif_changelook(bl,LOOK_BASE,vd->look[LOOK_BASE]);
+			clif_changelook(bl,LOOK_WEAPON,0);
+			clif_changelook(bl,LOOK_SHIELD,0);
+			clif_changelook(bl,LOOK_CLOTHES_COLOR,vd->look[LOOK_CLOTHES_COLOR]);
+		}
+	}
+
+	if (calc_flag[SCB_DYE]) { // Reset DYE color
+		if (vd && vd->look[LOOK_CLOTHES_COLOR]) {
+			val4 = vd->look[LOOK_CLOTHES_COLOR];
+			clif_changelook(bl,LOOK_CLOTHES_COLOR,0);
+		}
+		calc_flag.reset(SCB_DYE);
+	}
+
+	if (!(flag&SCSTART_NOICON) && !(flag&SCSTART_LOADED && scdb->flag[SCF_DISPLAYPC] || scdb->flag[SCF_DISPLAYNPC])) {
+		int32 status_icon = scdb->icon;
+
+#if PACKETVER < 20151104
+		if (status_icon == EFST_WEAPONPROPERTY)
+			status_icon = EFST_ATTACK_PROPERTY_NOTHING + val1; // Assign status icon for older clients
+#endif
+
+		clif_status_change(bl, status_icon, 1, tick, scdb->flag[SCF_SENDVAL1] ? val1 : 1, scdb->flag[SCF_SENDVAL2] ? val2 : 0, scdb->flag[SCF_SENDVAL3] ? val3 : 0);
+	}
+
+	// Used as temporary storage for scs with interval ticks, so that the actual duration is sent to the client first.
+	if( tick_time )
+		tick = tick_time;
+
+	status_change_entry* sce = sc->getSCE(type);
+	bool sc_isnew = true;
+
+	if (sce != nullptr) {
+		if( sce->timer != INVALID_TIMER )
+			delete_timer(sce->timer, status_change_timer);
+		sc_isnew = false;
+	} else {
+		// New sc
+		sce = sc->createSCE(type);
+	}
+	sce->val1 = val1;
+	sce->val2 = val2;
+	sce->val3 = val3;
+	sce->val4 = val4;
+	if (tick >= 0)
+		sce->timer = add_timer(gettick() + tick, status_change_timer, bl->id, type);
+	else
+		sce->timer = INVALID_TIMER; // Infinite duration
+
+	if (calc_flag.any()) {
+		if (sd != nullptr) {
+			switch(type) {
+				// Statuses that adjust HP/SP and heal after starting
+				case SC_BERSERK:
+				case SC_MERC_HPUP:
+				case SC_MERC_SPUP:
+				// Status needs to be updated immediately and not at the end of the damage
+				case SC_EXTREMITYFIST:
+					status_calc_bl_(bl, calc_flag, SCO_FORCE);
+					break;
+				default:
+					if (!sd->state.connect_new)
+						status_calc_bl_(bl, calc_flag);
+					break;
+			}
+		} else
+			status_calc_bl_(bl, calc_flag);
+	}
+
+	// Non-zero
+	if( sc_isnew && scdb->state.any() ){
+		status_calc_state( *bl, *sc, scdb, true );
+	}
+
+	if (sd != nullptr && sd->pd != nullptr)
+		pet_sc_check(sd, type); // Skotlex: Pet Status Effect Healing
+
+	// 1st thing to execute when loading status
+	switch (type) {
+		case SC_BERSERK:
+			if (!(sce->val2)) { // Don't heal if already set
+				status_heal(bl, status->max_hp, 0, 1); // Do not use percent_heal as this healing must override BERSERK's block.
+				status_set_sp(bl, 0, 0); // Damage all SP
+			}
+			sce->val2 = 5 * status->max_hp / 100;
+			break;
+		case SC_RUN:
+			{
+				struct unit_data *ud = unit_bl2ud(bl);
+
+				if( ud )
+					ud->state.running = unit_run(bl, nullptr, SC_RUN);
+			}
+			break;
+		case SC_BOSSMAPINFO:
+			if( sd == nullptr ){
+				return false;
+			}else{
+				mob_data* boss_md = map_id2boss( sce->val1 );
+
+				if( boss_md == nullptr ){
+					return false;
+				}
+
+				// Not on same map anymore
+				if( sd->m != boss_md->m ){
+					return false;
+				// Boss is alive
+				}else if( boss_md->prev != nullptr ){
+					sce->val2 = 0;
+					clif_bossmapinfo( *sd, boss_md, BOSS_INFO_ALIVE_WITHMSG );
+				// Boss is dead
+				}else if( boss_md->spawn_timer != INVALID_TIMER ){
+					sce->val2 = 1;
+					clif_bossmapinfo( *sd, boss_md, BOSS_INFO_DEAD );
+				}
+			}
+			break;
+		case SC_FULL_THROTTLE:
+		case SC_MERC_HPUP:
+			status_percent_heal(bl, 100, 0); // Recover Full HP
+			break;
+		case SC_MERC_SPUP:
+			status_percent_heal(bl, 0, 100); // Recover Full SP
+			break;
+		case SC_WUGDASH:
+			{
+				struct unit_data *ud = unit_bl2ud(bl);
+
+				if( ud )
+					ud->state.running = unit_run(bl, sd, SC_WUGDASH);
+			}
+			break;
+		case SC_COMBO:
+			switch(sce->val1) {
+			case TK_STORMKICK:
+				skill_combo_toggle_inf( bl, TK_JUMPKICK, INF_PASSIVE_SKILL );
+				clif_skill_nodamage(bl,*bl,TK_READYSTORM,1);
+				break;
+			case TK_DOWNKICK:
+				skill_combo_toggle_inf( bl, TK_JUMPKICK, INF_PASSIVE_SKILL );
+				clif_skill_nodamage(bl,*bl,TK_READYDOWN,1);
+				break;
+			case TK_TURNKICK:
+				skill_combo_toggle_inf( bl, TK_JUMPKICK, INF_PASSIVE_SKILL );
+				clif_skill_nodamage(bl,*bl,TK_READYTURN,1);
+				break;
+			case TK_COUNTER:
+				skill_combo_toggle_inf( bl, TK_JUMPKICK, INF_PASSIVE_SKILL );
+				clif_skill_nodamage(bl,*bl,TK_READYCOUNTER,1);
+				break;
+			default: // Rest just toggle inf to enable autotarget
+				skill_combo_toggle_inf(bl,sce->val1,INF_SELF_SKILL);
+				break;
+			}
+			break;
+		case SC_C_MARKER:
+			//Send mini-map, don't wait for first timer triggered
+			if (src->type == BL_PC) {
+				clif_crimson_marker(*(map_session_data *)(src), *bl, false);
+			}
+			break;
+		case SC_ITEMSCRIPT: // Shows Buff Icons
+			if (sd)
+				clif_status_change(bl, (efst_type)val2, 1, tick, 0, 0, 0);
+			break;
+		case SC_GVG_GIANT:
+		case SC_GVG_GOLEM:
+		case SC_GVG_STUN:
+		case SC_GVG_STONE:
+		case SC_GVG_FREEZ:
+		case SC_GVG_SLEEP:
+		case SC_GVG_CURSE:
+		case SC_GVG_SILENCE:
+		case SC_GVG_BLIND:
+			if (val1 || val2)
+				status_zap(bl, val1 ? val1 : 0, val2 ? val2 : 0);
+			break;
+	}
+
+	if( opt_flag[SCF_ONTOUCH] && sd && !sd->npc_ontouch_.empty() )
+		npc_touchnext_areanpc(sd,false); // Run OnTouch_ on next char in range
+
+	return true;
+}
+
+/**
+ * End all statuses except those listed
+ * TODO: May be useful for dispel instead resetting a list there
+ * @param src: Source of the status change [PC|MOB|HOM|MER|ELEM|NPC]
+ * @param type: Changes behaviour of the function
+ * 	0: PC killed -> Place here statuses that do not dispel on death.
+ * 	1: If for some reason status_change_end decides to still keep the status when quitting.
+ * 	2: Do clif_changeoption()
+ * 	3: Do not remove some permanent/time-independent effects
+ * @return 1: Success 0: Fail
+ */
+int32 status_change_clear(block_list* bl, int32 type)
+{
+	status_change* sc;
+
+	sc = status_get_sc(bl);
+
+	if (!sc)
+		return 0;
+
+	// Cleaning all extras vars
+	sc->comet_x = 0;
+	sc->comet_y = 0;
+#ifndef RENEWAL
+	sc->sg_counter = 0;
+#endif
+
+	if (sc->empty())
+		return 0;
+
+	for (const auto &it : status_db) {
+		sc_type status = static_cast<sc_type>(it.first);
+
+		if (!sc->getSCE(status))
+			continue;
+		if (type == 0) { // Type 0: PC killed
+			if (it.second->flag[SCF_NOREMOVEONDEAD]) {
+				switch (status) {
+					case SC_ELEMENTALCHANGE: // Only when its Holy or Dark that it doesn't dispell on death
+						if (sc->getSCE(status)->val2 != ELE_HOLY && sc->getSCE(status)->val2 != ELE_DARK)
+							break;
+					default:
+						continue;
+				}
+			}
+		}
+
+		if (type == 3 && it.second->flag[SCF_NOCLEARBUFF])
+			continue;
+
+		status_change_end(bl, status);
+		if( type == 1 && sc->getSCE(status) ) { // If for some reason status_change_end decides to still keep the status when quitting. [Skotlex]
+			sc->deleteSCE(status);
+		}
+	}
+
+	sc->opt1 = 0;
+	sc->opt2 = 0;
+	sc->opt3 = 0;
+
+	if( type == 0 || type == 2 )
+		clif_changeoption(bl);
+
+	return 1;
+}
+
+/**
+ * End a specific status after checking
+ * @param bl: Source of the status change [PC|MOB|HOM|MER|ELEM|NPC]
+ * @param type: Status change (SC_*)
+ * @param tid: Timer
+ * @param file: Used for dancing save
+ * @param line: Used for dancing save
+ * @return 1: Success 0: Fail
+ */
+int32 status_change_end( block_list* bl, enum sc_type type, int32 tid ){
+	nullpo_ret(bl);
+
+	status_change* sc = status_get_sc( bl );
+
+	if( sc == nullptr ){
+		return 0;
+	}
+
+	// To be able to store a copy of the already freed status change
+	int32 val1;
+	int32 val2;
+	int32 val3;
+	int32 val4;
+
+	if( status_change_entry* sce = sc->getSCE( type ); sce != nullptr ){
+		if (sce->timer != tid && tid != INVALID_TIMER)
+			return 0;
+
+		if (tid == INVALID_TIMER) {
+			if (type == SC_ENDURE && sce->val4)
+				// Do not end infinite endure.
+				return 0;
+			if (type == SC_SPIDERWEB) {
+				//Delete the unit group first to expire found in the status change
+				std::shared_ptr<s_skill_unit_group> group, group2;
+				t_tick tick = gettick();
+				int32 pos = 1;
+				if (sce->val2)
+					if (!(group = skill_id2group(sce->val2)))
+						sce->val2 = 0;
+				if (sce->val3) {
+					if (!(group2 = skill_id2group(sce->val3)))
+						sce->val3 = 0;
+					else if (!group || ((group->limit - DIFF_TICK(tick, group->tick)) > (group2->limit - DIFF_TICK(tick, group2->tick)))) {
+						group = group2;
+						pos = 2;
+					}
+				}
+				if (sce->val4) {
+					if (!(group2 = skill_id2group(sce->val4)))
+						sce->val4 = 0;
+					else if (!group || ((group->limit - DIFF_TICK(tick, group->tick)) > (group2->limit - DIFF_TICK(tick, group2->tick)))) {
+						group = group2;
+						pos = 3;
+					}
+				}
+				if (pos == 1)
+					sce->val2 = 0;
+				else if (pos == 2)
+					sce->val3 = 0;
+				else if (pos == 3)
+					sce->val4 = 0;
+				if (group)
+					skill_delunitgroup(group);
+				if (!status_isdead(*bl) && (sce->val2 || sce->val3 || sce->val4))
+					return 0; //Don't end the status change yet as there are still unit groups associated with it
+			}
+		}
+
+		// Store a copy, if access is required later
+		val1 = sce->val1;
+		val2 = sce->val2;
+		val3 = sce->val3;
+		val4 = sce->val4;
+
+		sc->deleteSCE( type );

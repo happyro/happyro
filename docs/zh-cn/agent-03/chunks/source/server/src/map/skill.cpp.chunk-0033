@@ -1,0 +1,347 @@
+		arrow = std::make_shared<s_skill_arrow_db>();
+		arrow->nameid = nameid;
+	}
+
+	const auto& MakeNode = node["Make"];
+
+	for (const auto &it : MakeNode) {
+		std::string item_name;
+
+		if (!this->asString(it, "Item", item_name))
+			return 0;
+
+		std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+		if (item == nullptr) {
+			this->invalidWarning(it["Item"], "Item %s does not exist.\n", item_name.c_str());
+			return 0;
+		}
+
+		uint16 amount;
+
+		if (!this->asUInt16(it, "Amount", amount))
+			return 0;
+
+		if (amount == 0) {
+			if (arrow->created.erase(item->nameid) == 0)
+				this->invalidWarning(it["Amount"], "Failed to remove %s, the entry doesn't exist in Source %s.\n", item_name.c_str(), source_name.c_str());
+			continue;
+		}
+		if (amount > MAX_AMOUNT) {
+			this->invalidWarning(it["Amount"], "Amount %hu exceeds %hu, skipping.\n", amount, MAX_AMOUNT);
+			continue;
+		}
+
+		arrow->created[item->nameid] = amount;
+	}
+
+	if (!exists)
+		this->put(nameid, arrow);
+
+	return 1;
+}
+
+const std::string AbraDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/abra_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the abra_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 AbraDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string skill_name;
+
+	if (!this->asString(node, "Skill", skill_name))
+		return 0;
+
+	uint16 skill_id = skill_name2id(skill_name.c_str());
+
+	if (!skill_id) {
+		this->invalidWarning(node["Skill"], "Invalid Abra skill name \"%s\", skipping.\n", skill_name.c_str());
+		return 0;
+	}
+
+	if (!skill_get_inf(skill_id)) {
+		this->invalidWarning(node["Skill"], "Passive skill %s cannot be casted by Abra.\n", skill_name.c_str());
+		return 0;
+	}
+
+	std::shared_ptr<s_skill_abra_db> abra = this->find(skill_id);
+	bool exists = abra != nullptr;
+
+	if (!exists) {
+		abra = std::make_shared<s_skill_abra_db>();
+		abra->skill_id = skill_id;
+	}
+
+	if (this->nodeExists(node, "Probability")) {
+		const auto& probNode = node["Probability"];
+		uint16 probability;
+
+		if (!probNode.is_seq()) {
+			if (!this->asUInt16Rate(probNode, "Probability", probability))
+				return 0;
+
+			abra->per.fill(probability);
+		} else {
+			abra->per.fill(0);
+
+			for (const auto& it : probNode) {
+				uint16 skill_lv;
+
+				if (!this->asUInt16(it, "Level", skill_lv))
+					continue;
+
+				if (skill_lv > MAX_SKILL_LEVEL) {
+					this->invalidWarning(probNode["Level"], "Probability Level exceeds the maximum skill level of %d, skipping.\n", MAX_SKILL_LEVEL);
+					return 0;
+				}
+
+				if (!this->asUInt16Rate(it, "Probability", probability))
+					continue;
+
+				abra->per[skill_lv - 1] = probability;
+			}
+		}
+	} else {
+		if (!exists)
+			abra->per.fill(500);
+	}
+
+	if (!exists)
+		this->put(skill_id, abra);
+
+	return 1;
+}
+
+/** Reads change material db
+ * Structure: ProductID,BaseRate,MakeAmount1,MakeAmountRate1...,MakeAmount5,MakeAmountRate5
+ */
+static bool skill_parse_row_changematerialdb( char* split[], size_t columns, size_t current ){
+	uint16 id = atoi(split[0]);
+	t_itemid nameid = strtoul(split[1], nullptr, 10);
+	int16 rate = atoi(split[2]);
+	bool found = false;
+	int32 x, y;
+
+	if (id >= MAX_SKILL_CHANGEMATERIAL_DB) {
+		ShowError("skill_parse_row_changematerialdb: Maximum amount of entries reached (%d), increase MAX_SKILL_CHANGEMATERIAL_DB\n",MAX_SKILL_CHANGEMATERIAL_DB);
+		return false;
+	}
+
+	// Clear previous data, for importing support
+	if (skill_changematerial_db[id].nameid > 0) {
+		found = true;
+		memset(&skill_changematerial_db[id], 0, sizeof(skill_changematerial_db[id]));
+	}
+
+	// Import just for clearing/disabling from original data
+	// NOTE: If import for disabling, better disable list from produce_db instead of here, or creation just failed with deleting requirements.
+	if (nameid == 0) {
+		memset(&skill_changematerial_db[id], 0, sizeof(skill_changematerial_db[id]));
+		//ShowInfo("skill_parse_row_changematerialdb: Change Material list with ID %d removed from list.\n", id);
+		return true;
+	}
+
+	// Entry must be exists in skill_produce_db and with required skill GN_CHANGEMATERIAL
+	for (x = 0; x < MAX_SKILL_PRODUCE_DB; x++) {
+		if (skill_produce_db[x].nameid == nameid)
+			if( skill_produce_db[x].req_skill == GN_CHANGEMATERIAL )
+				break;
+	}
+
+	if (x >= MAX_SKILL_PRODUCE_DB) {
+		ShowError("skill_parse_row_changematerialdb: Not supported item ID (%u) for Change Material. \n", nameid);
+		return false;
+	}
+
+	skill_changematerial_db[id].nameid = nameid;
+	skill_changematerial_db[id].rate = rate;
+
+	for (x = 3, y = 0; x+1 < columns && split[x] && split[x+1] && y < MAX_SKILL_CHANGEMATERIAL_SET; x += 2, y++) {
+		skill_changematerial_db[id].qty[y] = atoi(split[x]);
+		skill_changematerial_db[id].qty_rate[y] = atoi(split[x+1]);
+	}
+
+	if (!found)
+		skill_changematerial_count++;
+
+	return true;
+}
+
+/**
+ * Reads skill damage adjustment
+ * @author [Lilith]
+ */
+static bool skill_parse_row_skilldamage( char* split[], size_t columns, size_t current ){
+	int64 caster_tmp;
+	uint16 id;
+	int32 caster, value;
+	char *result;
+
+	trim(split[0]);
+	if (ISDIGIT(split[0][0])) {
+		value = strtol(split[0], &result, 10);
+
+		if (*result) {
+			ShowError("skill_parse_row_skilldamage: Invalid skill %s given, skipping.\n", result);
+			return false;
+		}
+
+		id = value;
+	} else
+		id = skill_name2id(split[0]);
+
+	std::shared_ptr<s_skill_db> skill = skill_db.find(id);
+
+	if (!skill)
+		return false;
+
+	skill->damage = {};
+	trim(split[1]);
+	if (ISDIGIT(split[1][0])) {
+		value = strtol(split[1], &result, 10);
+
+		if (*result) {
+			ShowError("skill_parse_row_skilldamage: Invalid caster %s given for skill %d, skipping.\n", result, id);
+			return false;
+		}
+
+		caster = value;
+	} else { // Try to parse caster as constant
+		if (!script_get_constant(split[1], &caster_tmp)) {
+			ShowError("skill_parse_row_skilldamage: Invalid caster constant given for skill %d, skipping.\n", id);
+			return false;
+		}
+		caster = static_cast<uint16>(caster_tmp);
+	}
+	skill->damage.caster |= caster;
+
+	value = strtol(split[2], &result, 10);
+
+	if (*result) {
+		ShowError("skill_parse_row_skilldamage: Invalid map %s given for skill %d, skipping.\n", result, id);
+		return false;
+	}
+
+	skill->damage.map |= value;
+
+	for(int32 offset = 3, i = SKILLDMG_PC; i < SKILLDMG_MAX && offset < columns; i++, offset++ ){
+		value = strtol(split[offset], &result, 10);
+
+		if (*result && *result != ' ') {
+			ShowError("skill_parse_row_skilldamage: Invalid damage %s given for skill %d, defaulting to 0.\n", result, id);
+			value = 0;
+		}
+		skill->damage.rate[i] = cap_value(value, -100, 100000);
+	}
+
+	return true;
+}
+
+/** Reads skill database files */
+static void skill_readdb(void) {
+	int32 i;
+	const char* dbsubpath[] = {
+		"",
+		"/" DBIMPORT,
+		//add other path here
+	};
+
+	memset(skill_produce_db,0,sizeof(skill_produce_db));
+	memset(skill_changematerial_db,0,sizeof(skill_changematerial_db));
+	skill_produce_count = skill_changematerial_count = 0;
+
+	skill_db.load();
+
+	for(i=0; i<ARRAYLENGTH(dbsubpath); i++){
+		size_t n1 = strlen(db_path)+strlen(dbsubpath[i])+1;
+		size_t n2 = strlen(db_path)+strlen(DBPATH)+strlen(dbsubpath[i])+1;
+		char* dbsubpath1 = (char*)aMalloc(n1+1);
+		char* dbsubpath2 = (char*)aMalloc(n2+1);
+
+		if (i == 0) {
+			safesnprintf(dbsubpath1,n1,"%s%s",db_path,dbsubpath[i]);
+			safesnprintf(dbsubpath2,n2,"%s/%s%s",db_path,DBPATH,dbsubpath[i]);
+		} else {
+			safesnprintf(dbsubpath1,n1,"%s%s",db_path,dbsubpath[i]);
+			safesnprintf(dbsubpath2,n1,"%s%s",db_path,dbsubpath[i]);
+		}
+
+		sv_readdb(dbsubpath2, "skill_nocast_db.txt"   , ',',   2,  2, -1, skill_parse_row_nocastdb, i > 0);
+
+		sv_readdb(dbsubpath2, "produce_db.txt"        , ',',   5,  5+2*MAX_PRODUCE_RESOURCE, MAX_SKILL_PRODUCE_DB, skill_parse_row_producedb, i > 0);
+		sv_readdb(dbsubpath1, "skill_changematerial_db.txt" , ',',   5,  5+2*MAX_SKILL_CHANGEMATERIAL_SET, MAX_SKILL_CHANGEMATERIAL_DB, skill_parse_row_changematerialdb, i > 0);
+		sv_readdb(dbsubpath1, "skill_damage_db.txt"         , ',',   4,  3+SKILLDMG_MAX, -1, skill_parse_row_skilldamage, i > 0);
+
+		aFree(dbsubpath1);
+		aFree(dbsubpath2);
+	}
+
+	abra_db.load();
+	magic_mushroom_db.load();
+	reading_spellbook_db.load();
+	skill_arrow_db.load();
+
+	skill_init_unit_layout();
+	skill_init_nounit_layout();
+}
+
+void skill_reload (void) {
+	skill_db.clear();
+	abra_db.clear();
+	magic_mushroom_db.clear();
+	reading_spellbook_db.clear();
+	skill_arrow_db.clear();
+
+	skill_readdb();
+
+	/* lets update all players skill tree : so that if any skill modes were changed they're properly updated */
+	s_mapiterator *iter = mapit_getallusers();
+
+	for( map_session_data *sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter) ) {
+		pc_validate_skill(sd);
+		clif_skillinfoblock(*sd);
+	}
+	mapit_free(iter);
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+void do_init_skill(void)
+{
+	skill_readdb();
+
+	skillunit_db = idb_alloc(DB_OPT_BASE);
+	skillusave_db = idb_alloc(DB_OPT_RELEASE_DATA);
+	bowling_db = idb_alloc(DB_OPT_BASE);
+	skill_timer_ers  = ers_new(sizeof(struct skill_timerskill),"skill.cpp::skill_timer_ers",ERS_CACHE_OPTIONS);
+
+	ers_chunk_size(skill_timer_ers, 150);
+
+	add_timer_func_list(skill_unit_timer,"skill_unit_timer");
+	add_timer_func_list(skill_castend_id,"skill_castend_id");
+	add_timer_func_list(skill_castend_pos,"skill_castend_pos");
+	add_timer_func_list(skill_timerskill,"skill_timerskill");
+	add_timer_func_list(skill_blockpc_end, "skill_blockpc_end");
+	add_timer_func_list(skill_keep_using, "skill_keep_using");
+
+	add_timer_interval(gettick()+SKILLUNITTIMER_INTERVAL,skill_unit_timer,0,0,SKILLUNITTIMER_INTERVAL);
+}
+
+void do_final_skill(void)
+{
+	skill_db.clear();
+	abra_db.clear();
+	magic_mushroom_db.clear();
+	reading_spellbook_db.clear();
+	skill_arrow_db.clear();
+
+	db_destroy(skillunit_db);
+	db_destroy(skillusave_db);
+	db_destroy(bowling_db);
+	ers_destroy(skill_timer_ers);
+}

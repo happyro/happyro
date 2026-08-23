@@ -1,0 +1,500 @@
+			regen->rate.sp += 100;
+	}
+#endif
+	if (sc->getSCE(SC_SIRCLEOFNATURE))
+		regen->rate.hp += sc->getSCE(SC_SIRCLEOFNATURE)->val2;
+	if (sc->getSCE(SC_SONGOFMANA))
+		regen->rate.sp += sc->getSCE(SC_SONGOFMANA)->val3;
+}
+
+void status_calc_state_sub( block_list& bl, status_change& sc, bool start, std::shared_ptr<s_status_change_db> scdb_main, bool& restriction, e_scs_flag flag, e_scs_flag flag_conditional, std::function<bool ( block_list&, status_change&, bool&, const sc_type, const status_change_entry& )> func_switch ){
+	// If starting and unconditional no further checks are needed
+	if( start && scdb_main->state[flag] ){
+		restriction = true;
+		return;
+	}
+
+	// Otherwise remove the restriction
+	restriction = false;
+
+	// And check all remaining active status changes, if the restriction should still be active
+	for( const auto& it : sc ){
+		std::shared_ptr<s_status_change_db> scdb_other = status_db.find( it.first );
+
+		if( scdb_other == nullptr ){
+			continue;
+		}
+
+		// If it is unconditional we can already restore the restriction and return early
+		if( scdb_other->state[flag] ){
+			restriction = true;
+			return;
+		}
+
+		// If there is no conditional restriction, skip the status change
+		if( !scdb_other->state[flag_conditional] ){
+			continue;
+		}
+
+		// Check the conditional restrictions
+		if( !func_switch( bl, sc, restriction, it.first, it.second ) ){
+			const char* constant_sc = script_get_constant_str( "SC_", it.first );
+
+			if( constant_sc == nullptr ){
+				constant_sc = "Unknown";
+			}
+
+			const char* constant_scs = script_get_constant_str( "SCS_", flag_conditional );
+
+			if( constant_scs == nullptr ){
+				constant_scs = "Unknown";
+			}
+
+			ShowError( "status_calc_state_sub: status \"%s\" is defined with \"%s\", but the condition is not implemented.\n", constant_sc, constant_scs );
+			continue;
+		}
+
+		// Cancel the loop as soon as possible and return early
+		if( restriction ){
+			return;
+		}
+	}
+}
+
+/**
+ * Applies a state to a unit - See [StatusChangeStateTable]
+ * @param bl: Object to change state on [PC|MOB|HOM|MER|ELEM]
+ * @param sc: Object's status change data
+ * @param scdb: Database information of the status change
+ * @param start: (true) start state, (false) remove state
+ */
+void status_calc_state( block_list& bl, status_change& sc, std::shared_ptr<s_status_change_db> scdb, bool start ){
+	/// No sc at all, we can zero without any extra weight over our conciousness
+	if( sc.empty() ) {
+		sc.cant = {};
+		return;
+	}
+
+	static std::function<bool ( block_list&, status_change&, bool&, const sc_type, const status_change_entry& )> func_not_impl = []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+		// No conditional restrictions implemented yet
+		return false;
+	};
+
+	// Can't move
+	if( scdb->state[SCS_NOMOVE] || scdb->state[SCS_NOMOVECOND] ){
+		status_calc_state_sub( bl, sc, start, scdb, sc.cant.move, SCS_NOMOVE, SCS_NOMOVECOND, []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+			// Check the specific conditions
+			switch( type ){
+				case SC_GOSPEL:
+					if( sce.val4 == BCT_SELF ){
+						// Cannot move while gospel is in effect
+						restriction = true;
+					}
+					break;
+
+#ifndef RENEWAL
+				case SC_BASILICA:
+					if( sce.val4 == bl.id ){
+						// Basilica caster cannot move
+						restriction = true;
+					}
+					break;
+
+				case SC_GRAVITATION:
+					if( sce.val3 == BCT_SELF ){
+						restriction = true;
+					}
+					break;
+#endif
+
+				case SC_CAMOUFLAGE:
+					if( sce.val1 < 3 ){
+						restriction = true;
+					}
+					break;
+
+				case SC_MAGNETICFIELD:
+					if( sce.val2 != bl.id ){
+						restriction = true;
+					}
+					break;
+
+				case SC_FEAR:
+					if( sce.val2 > 0 ){
+						restriction = true;
+					}
+					break;
+
+				case SC_HIDING:
+					if( bl.type != BL_PC ){
+						restriction = true;
+					}else if( pc_checkskill( (map_session_data*)( &bl ), RG_TUNNELDRIVE ) <= 0 ){
+						restriction = true;
+					}
+					break;
+
+				case SC_DANCING:
+					if( sce.val4 != 0 ){
+#ifdef RENEWAL
+						// In Renewal the restiction only applies for CG_MOONLIT and CG_HERMODE
+						if( ( sce.val1 & 0xFFFF ) != CG_MOONLIT && ( sce.val1 & 0xFFFF ) != CG_HERMODE ){
+							break;
+						}
+#else
+						// In Pre-Renewal all Ensambles should apply the restriction.
+						// Unless you have SC_LONGING, then the restiction only applies for CG_MOONLIT and CG_HERMODE
+						if( sc.getSCE( SC_LONGING ) != nullptr && ( sce.val1 & 0xFFFF ) != CG_MOONLIT && ( sce.val1 & 0xFFFF ) != CG_HERMODE ){
+							break;
+						}
+#endif
+						restriction = true;
+					}
+					break;
+
+				case SC_LONGING:
+					// Does not do anything. SC_LONGING is just defined with SCS_NOMOVECOND to trigger a recalculation with the conditions under SC_DANCING above
+					break;
+
+				case SC_CRYSTALIZE:
+					if( bl.type != BL_MOB ){
+						restriction = true;
+					}
+					break;
+
+				default:
+					return false;
+			}
+
+			return true;
+		} );
+	}
+
+	// Can't use skills
+	if( scdb->state[SCS_NOCAST] || scdb->state[SCS_NOCASTCOND] ){
+		status_calc_state_sub( bl, sc, start, scdb, sc.cant.cast, SCS_NOCAST, SCS_NOCASTCOND, []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+			// Check the specific conditions
+			switch( type ){
+				case SC_WINKCHARM:
+					if (bl.type != BL_PC) {
+						restriction = true;
+					}
+					break;
+
+				case SC_OBLIVIONCURSE:
+					if( sce.val3 == 1 ){
+						restriction = true;
+					}
+					break;
+
+				default:
+					return false;
+			}
+
+			return true;
+		} );
+	}
+
+	// Can't chat
+	if( scdb->state[SCS_NOCHAT] || scdb->state[SCS_NOCHATCOND] ){
+		status_calc_state_sub( bl, sc, start, scdb, sc.cant.chat, SCS_NOCHAT, SCS_NOCHATCOND, []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+			// Check the specific conditions
+			switch( type ){
+				case SC_NOCHAT:
+					if( ( sce.val1&MANNER_NOCHAT ) != 0 ){
+						restriction = true;
+					}
+					break;
+
+				default:
+					return false;
+			}
+
+			return true;
+		} );
+	}
+
+	// Can't attack
+	if( scdb->state[SCS_NOATTACK] || scdb->state[SCS_NOATTACKCOND] ){
+		status_calc_state_sub( bl, sc, start, scdb, sc.cant.attack, SCS_NOATTACK, SCS_NOATTACKCOND, []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+			// Check the specific conditions
+			switch( type ){
+				case SC_DANCING:
+					// Normal songs prevent attacks; Ensembles prevent attacks as long Longing is not active
+					if (sce.val4 == 0 || !sc.hasSCE(SC_LONGING))
+						restriction = true;
+					break;
+
+				case SC_LONGING:
+					// Does not do anything. SC_LONGING is just defined with SCS_NOATTACKCOND to trigger a recalculation with the conditions under SC_DANCING above
+					break;
+
+				default:
+					return false;
+			}
+
+			return true;
+		} );
+	}
+
+	// Can't warp
+	if( scdb->state[SCS_NOWARP] || scdb->state[SCS_NOWARPCOND] ){
+		status_calc_state_sub( bl, sc, start, scdb, sc.cant.warp, SCS_NOWARP, SCS_NOWARPCOND, func_not_impl );
+	}
+
+	// Player-only states
+	if( bl.type == BL_PC ) {
+		// Can't pick-up items
+		if( scdb->state[SCS_NOPICKITEM] || scdb->state[SCS_NOPICKITEMCOND] ){
+			status_calc_state_sub( bl, sc, start, scdb, sc.cant.pickup, SCS_NOPICKITEM, SCS_NOPICKITEMCOND, []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+				// Check the specific conditions
+				switch( type ){
+					case SC_NOCHAT:
+						if( ( sce.val1&MANNER_NOITEM ) != 0 ){
+							restriction = true;
+						}
+						break;
+
+					default:
+						return false;
+				}
+
+				return true;
+			} );
+		}
+
+		// Can't drop items
+		if( scdb->state[SCS_NODROPITEM] || scdb->state[SCS_NODROPITEMCOND] ){
+			status_calc_state_sub( bl, sc, start, scdb, sc.cant.drop, SCS_NODROPITEM, SCS_NODROPITEMCOND, []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+				// Check the specific conditions
+				switch( type ){
+					case SC_NOCHAT:
+						if( ( sce.val1&MANNER_NOITEM ) != 0 ){
+							restriction = true;
+						}
+						break;
+
+					default:
+						return false;
+				}
+
+				return true;
+			} );
+		}
+
+		// Can't equip item
+		if( scdb->state[SCS_NOEQUIPITEM] || scdb->state[SCS_NOEQUIPITEMCOND] ){
+			status_calc_state_sub( bl, sc, start, scdb, sc.cant.equip, SCS_NOEQUIPITEM, SCS_NOEQUIPITEMCOND, func_not_impl );
+		}
+
+		// Can't unequip item
+		if( scdb->state[SCS_NOUNEQUIPITEM] || scdb->state[SCS_NOUNEQUIPITEMCOND] ){
+			status_calc_state_sub( bl, sc, start, scdb, sc.cant.unequip, SCS_NOUNEQUIPITEM, SCS_NOUNEQUIPITEMCOND, func_not_impl );
+		}
+
+		// Can't consume item
+		if( scdb->state[SCS_NOCONSUMEITEM] || scdb->state[SCS_NOCONSUMEITEMCOND] ){
+			status_calc_state_sub( bl, sc, start, scdb, sc.cant.consume, SCS_NOCONSUMEITEM, SCS_NOCONSUMEITEMCOND, []( block_list& bl, status_change& sc, bool& restriction, const sc_type type, const status_change_entry& sce ) -> bool {
+				// Check the specific conditions
+				switch( type ){
+					case SC_GRAVITATION:
+						if( sce.val3 == BCT_SELF ){
+							restriction = true;
+						}
+						break;
+
+					case SC_NOCHAT:
+						if( ( sce.val1&MANNER_NOITEM ) != 0 ){
+							restriction = true;
+						}
+						break;
+
+					default:
+						return false;
+				}
+
+				return true;
+			} );
+		}
+
+		// Can't lose exp
+		if( scdb->state[SCS_NODEATHPENALTY] || scdb->state[SCS_NODEATHPENALTYCOND] ){
+			status_calc_state_sub( bl, sc, start, scdb, sc.cant.deathpenalty, SCS_NODEATHPENALTY, SCS_NODEATHPENALTYCOND, func_not_impl );
+		}
+
+		// Can't sit/stand/talk to NPC
+		if( scdb->state[SCS_NOINTERACT] || scdb->state[SCS_NOINTERACTCOND] ){
+			status_calc_state_sub( bl, sc, start, scdb, sc.cant.interact, SCS_NOINTERACT, SCS_NOINTERACTCOND, func_not_impl );
+		}
+	}
+}
+
+/**
+ * Recalculates parts of an objects status according to specified flags
+ * See [set_sc] [add_sc]
+ * @param bl: Object whose status has changed [PC|MOB|HOM|MER|ELEM]
+ * @param flag: Which status has changed on bl
+ */
+void status_calc_bl_main(block_list& bl, std::bitset<SCB_MAX> flag)
+{
+	const struct status_data *b_status = status_get_base_status(&bl); // Base Status
+	status_data* status = status_get_status_data(bl); // Battle Status
+	status_change *sc = status_get_sc(&bl);
+	TBL_PC *sd = BL_CAST(BL_PC,&bl);
+	int32 temp;
+
+	if (!b_status || !status)
+		return;
+
+	/** [Playtester]
+	* This needs to be done even if there is currently no status change active, because
+	* we need to update the speed on the client when the last status change ends.
+	**/
+	if(flag[SCB_SPEED]) {
+		struct unit_data *ud = unit_bl2ud(&bl);
+		/** [Skotlex]
+		* Re-walk to adjust speed (we do not check if walktimer != INVALID_TIMER
+		* because if you step on something while walking, the moment this
+		* piece of code triggers the walk-timer is set on INVALID_TIMER)
+		**/
+		if (ud)
+			ud->state.change_walk_target = 1;
+	}
+
+	if(flag[SCB_STR]) {
+		status->str = status_calc_str(&bl, sc, b_status->str);
+		flag.set(SCB_BATK);
+		if( bl.type == BL_HOM )
+			flag.set(SCB_WATK);
+	}
+
+	if(flag[SCB_AGI]) {
+		status->agi = status_calc_agi(&bl, sc, b_status->agi);
+		flag.set(SCB_FLEE);
+#ifdef RENEWAL
+		flag.set(SCB_DEF2);
+#endif
+		if( bl.type&(BL_PC|BL_HOM) ) {
+			flag.set(SCB_ASPD);
+			flag.set(SCB_DSPD);
+		}
+	}
+
+	if(flag[SCB_VIT]) {
+		status->vit = status_calc_vit(&bl, sc, b_status->vit);
+		flag.set(SCB_DEF2);
+		flag.set(SCB_MDEF2);
+		if( bl.type&(BL_PC|BL_HOM|BL_MER|BL_ELEM) )
+			flag.set(SCB_MAXHP);
+		if( bl.type == BL_HOM )
+			flag.set(SCB_DEF);
+	}
+
+	if(flag[SCB_INT]) {
+		status->int_ = status_calc_int(&bl, sc, b_status->int_);
+		flag.set(SCB_MATK);
+		flag.set(SCB_MDEF2);
+		if( bl.type&(BL_PC|BL_HOM|BL_MER|BL_ELEM) )
+			flag.set(SCB_MAXSP);
+		if( bl.type == BL_HOM )
+			flag.set(SCB_MDEF);
+	}
+
+	if(flag[SCB_DEX]) {
+		status->dex = status_calc_dex(&bl, sc, b_status->dex);
+		flag.set(SCB_BATK);
+		flag.set(SCB_HIT);
+#ifdef RENEWAL
+		flag.set(SCB_MATK);
+		flag.set(SCB_MDEF2);
+#endif
+		if( bl.type&(BL_PC|BL_HOM) )
+			flag.set(SCB_ASPD);
+		if( bl.type == BL_HOM )
+			flag.set(SCB_WATK);
+	}
+
+	if(flag[SCB_LUK]) {
+		status->luk = status_calc_luk(&bl, sc, b_status->luk);
+		flag.set(SCB_BATK);
+		flag.set(SCB_CRI);
+		flag.set(SCB_FLEE2);
+#ifdef RENEWAL
+		flag.set(SCB_MATK);
+		flag.set(SCB_HIT);
+		flag.set(SCB_FLEE);
+#endif
+	}
+
+#ifdef RENEWAL
+	if (flag[SCB_POW]) {
+		status->pow = status_calc_pow(&bl, sc, b_status->pow);
+		flag.set(SCB_BATK);
+		flag.set(SCB_PATK);
+	}
+
+	if (flag[SCB_STA]) {
+		status->sta = status_calc_sta(&bl, sc, b_status->sta);
+		flag.set(SCB_RES);
+	}
+
+	if (flag[SCB_WIS]) {
+		status->wis = status_calc_wis(&bl, sc, b_status->wis);
+		flag.set(SCB_MRES);
+	}
+
+	if (flag[SCB_SPL]) {
+		status->spl = status_calc_spl(&bl, sc, b_status->spl);
+		flag.set(SCB_MATK);
+		flag.set(SCB_SMATK);
+	}
+
+	if (flag[SCB_CON]) {
+		status->con = status_calc_con(&bl, sc, b_status->con);
+		flag.set(SCB_HIT);
+		flag.set(SCB_FLEE);
+		flag.set(SCB_PATK);
+		flag.set(SCB_SMATK);
+	}
+
+	if (flag[SCB_CRT]) {
+		status->crt = status_calc_crt(&bl, sc, b_status->crt);
+		flag.set(SCB_HPLUS);
+		flag.set(SCB_CRATE);
+	}
+#endif
+
+	if(flag[SCB_BATK] && b_status->batk) {
+		int32 lv = status_get_lv(&bl);
+		status->batk = status_base_atk(&bl, status, lv);
+		// Calculate the difference of old and new base attack in the base status
+		// Then add the same difference to the base attack of battle status
+		temp = b_status->batk - status_base_atk(&bl, b_status, lv);
+		status->batk += temp;
+
+		status->batk = status_calc_batk(&bl, sc, status->batk);
+	}
+
+	if(flag[SCB_WATK]) {
+#ifndef RENEWAL
+		status->rhw.atk = status_calc_watk(&bl, sc, b_status->rhw.atk);
+		if (!sd) // Should not affect weapon refine bonus
+			status->rhw.atk2 = status_calc_watk(&bl, sc, b_status->rhw.atk2);
+
+		if (sd && sd->bonus.weapon_atk_rate)
+			status->rhw.atk += status->rhw.atk * sd->bonus.weapon_atk_rate / 100;
+		if(b_status->lhw.atk) {
+			if (sd) {
+				sd->state.lr_flag = LR_FLAG_WEAPON;
+				status->lhw.atk = status_calc_watk(&bl, sc, b_status->lhw.atk);
+				sd->state.lr_flag = LR_FLAG_NONE;
+			} else {
+				status->lhw.atk = status_calc_watk(&bl, sc, b_status->lhw.atk);
+				status->lhw.atk2= status_calc_watk(&bl, sc, b_status->lhw.atk2);
+			}
+		}
+#else
+		if(!b_status->watk) { // We only have left-hand weapon
+			status->watk = 0;
+			status->watk2 = status_calc_watk(&bl, sc, b_status->watk2);
+		}
+		else status->watk = status_calc_watk(&bl, sc, b_status->watk);

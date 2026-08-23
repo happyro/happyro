@@ -1,0 +1,500 @@
+	if( idx < 0 || idx >= MAX_INVENTORY ) {
+		ShowWarning("Character %s trying to set invalid item index in auctions.\n", sd->status.name);
+		return;
+	}
+
+	if( amount != 1 || amount > sd->inventory.u.items_inventory[idx].amount ) { // By client, amount is always set to 1. Maybe this is a future implementation.
+		ShowWarning("Character %s trying to set invalid amount in auctions.\n", sd->status.name);
+		return;
+	}
+
+	std::shared_ptr<item_data> id = item_db.find(sd->inventory.u.items_inventory[idx].nameid);
+
+	if( id != nullptr && !(id->type == IT_ARMOR || id->type == IT_PETARMOR || id->type == IT_WEAPON || id->type == IT_CARD || id->type == IT_ETC || id->type == IT_SHADOWGEAR) )
+	{ // Consumable or pets are not allowed
+		clif_Auction_setitem(sd->fd, idx, true);
+		return;
+	}
+
+	if( !pc_can_give_items(sd) || sd->inventory.u.items_inventory[idx].expire_time ||
+			!sd->inventory.u.items_inventory[idx].identify ||
+			(sd->inventory.u.items_inventory[idx].bound && !pc_can_give_bounded_items(sd)) ||
+			!itemdb_available(sd->inventory.u.items_inventory[idx].nameid) ||
+			!itemdb_canauction(&sd->inventory.u.items_inventory[idx],pc_get_group_level(sd)) ) { // Quest Item or something else
+		clif_Auction_setitem(sd->fd, idx, true);
+		return;
+	}
+
+	sd->auction.index = idx;
+	sd->auction.amount = amount;
+	clif_Auction_setitem(fd, idx + 2, false);
+}
+
+/// Result from an auction action (ZC_AUCTION_RESULT).
+/// 0250 <result>.B
+/// result:
+///     0 = You have failed to bid into the auction
+///     1 = You have successfully bid in the auction
+///     2 = The auction has been canceled
+///     3 = An auction with at least one bidder cannot be canceled
+///     4 = You cannot register more than 5 items in an auction at a time
+///     5 = You do not have enough Zeny to pay the Auction Fee
+///     6 = You have won the auction
+///     7 = You have failed to win the auction
+///     8 = You do not have enough Zeny
+///     9 = You cannot place more than 5 bids at a time
+void clif_Auction_message(int32 fd, unsigned char flag)
+{
+	WFIFOHEAD(fd,packet_len(0x250));
+	WFIFOW(fd,0) = 0x250;
+	WFIFOB(fd,2) = flag;
+	WFIFOSET(fd,packet_len(0x250));
+}
+
+
+/// Result of the auction close request (ZC_AUCTION_ACK_MY_SELL_STOP).
+/// 025e <result>.W
+/// result:
+///     0 = You have ended the auction
+///     1 = You cannot end the auction
+///     2 = Auction ID is incorrect
+void clif_Auction_close(int32 fd, unsigned char flag)
+{
+	WFIFOHEAD(fd,packet_len(0x25e));
+	WFIFOW(fd,0) = 0x25d;  // BUG: The client identifies this packet as 0x25d (CZ_AUCTION_REQ_MY_SELL_STOP)
+	WFIFOW(fd,2) = flag;
+	WFIFOSET(fd,packet_len(0x25e));
+}
+
+
+/// Request to add an auction.
+/// 024d <now money>.L <max money>.L <delete hour>.W (CZ_AUCTION_ADD)
+void clif_parse_Auction_register( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20050808
+	const PACKET_CZ_AUCTION_ADD* p = reinterpret_cast<PACKET_CZ_AUCTION_ADD*>( RFIFOP( fd, 0 ) );
+
+	struct auction_data auction;
+
+	if( !battle_config.feature_auction )
+		return;
+
+	auction.price = p->now_money;
+	auction.buynow = p->max_money;
+	auction.hours = p->hours;
+
+	// Invalid Situations...
+	if( sd->auction.amount < 1 ) {
+		ShowWarning("Character %s trying to register auction without item.\n", sd->status.name);
+		return;
+	}
+
+	if( auction.price >= auction.buynow ) {
+		ShowWarning("Character %s trying to alter auction prices.\n", sd->status.name);
+		return;
+	}
+
+	if( auction.hours < 1 || auction.hours > 48 ) {
+		ShowWarning("Character %s trying to enter an invalid time for auction.\n", sd->status.name);
+		return;
+	}
+
+	// Auction checks...
+	if( sd->inventory.u.items_inventory[sd->auction.index].bound && !pc_can_give_bounded_items(sd) ) {
+		clif_displaymessage(sd->fd, msg_txt(sd,293));
+		clif_Auction_message(fd, 2); // The auction has been canceled
+		return;
+	}
+	if( sd->status.zeny < (auction.hours * battle_config.auction_feeperhour) ) {
+		clif_Auction_message(fd, 5); // You do not have enough zeny to pay the Auction Fee.
+		return;
+	}
+
+	if( auction.buynow > battle_config.auction_maximumprice ) { // Zeny Limits
+		auction.buynow = battle_config.auction_maximumprice;
+		if( auction.price >= auction.buynow )
+			auction.price = auction.buynow - 1;
+	}
+
+	auction.auction_id = 0;
+	auction.seller_id = sd->status.char_id;
+	safestrncpy(auction.seller_name, sd->status.name, sizeof(auction.seller_name));
+	auction.buyer_id = 0;
+	memset(auction.buyer_name, '\0', sizeof(auction.buyer_name));
+
+	if( sd->inventory.u.items_inventory[sd->auction.index].nameid == 0 || sd->inventory.u.items_inventory[sd->auction.index].amount < sd->auction.amount )
+	{
+		clif_Auction_message(fd, 2); // The auction has been canceled
+		return;
+	}
+
+	std::shared_ptr<item_data> id = item_db.find(sd->inventory.u.items_inventory[sd->auction.index].nameid);
+
+	if( id == nullptr )
+	{ // Just in case
+		clif_Auction_message(fd, 2); // The auction has been canceled
+		return;
+	}
+
+	safestrncpy(auction.item_name, id->ename.c_str(), sizeof(auction.item_name));
+	auction.type = id->type;
+	memcpy(&auction.item, &sd->inventory.u.items_inventory[sd->auction.index], sizeof(struct item));
+	auction.item.amount = 1;
+	auction.timestamp = 0;
+
+	if( !intif_Auction_register(&auction) )
+		clif_Auction_message(fd, 4); // No Char Server? lets say something to the client
+	else
+	{
+		int32 zeny = auction.hours*battle_config.auction_feeperhour;
+
+		pc_delitem(sd, sd->auction.index, sd->auction.amount, 1, 6, LOG_TYPE_AUCTION);
+		sd->auction.amount = 0;
+
+		pc_payzeny(sd, zeny, LOG_TYPE_AUCTION);
+	}
+#endif
+}
+
+
+/// Cancels an auction (CZ_AUCTION_ADD_CANCEL).
+/// 024e <auction id>.L
+void clif_parse_Auction_cancel(int32 fd, map_session_data *sd){
+	uint32 auction_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	intif_Auction_cancel(sd->status.char_id, auction_id);
+}
+
+
+/// Closes an auction (CZ_AUCTION_REQ_MY_SELL_STOP).
+/// 025d <auction id>.L
+void clif_parse_Auction_close(int32 fd, map_session_data *sd){
+	uint32 auction_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	intif_Auction_close(sd->status.char_id, auction_id);
+}
+
+
+/// Places a bid on an auction.
+/// 024f <auction id>.L <money>.L (CZ_AUCTION_BUY)
+void clif_parse_Auction_bid( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20050718
+	const PACKET_CZ_AUCTION_BUY* p = reinterpret_cast<PACKET_CZ_AUCTION_BUY*>( RFIFOP( fd, 0 ) );
+
+	if( !pc_can_give_items(sd) ){
+		clif_displaymessage( sd->fd, msg_txt( sd, 246 ) ); // Your GM level doesn't authorize you to perform this action.
+		return;
+	}
+		
+	// Check if char server is down (bugreport:1138)
+	if( CheckForCharServer() ){
+		clif_Auction_message(fd, 0); // You have failed to bid into the auction
+		return;
+	}
+
+	if( pc_payzeny( sd, p->money, LOG_TYPE_AUCTION ) != 0 ){
+		clif_Auction_message( fd, 8 ); // You do not have enough zeny
+		return;
+	}
+
+	intif_Auction_bid( sd->status.char_id, sd->status.name, p->auction_id, p->money );
+#endif
+}
+
+
+/// Auction Search.
+/// 0251 <search type>.W <auction id>.L <search text>.24B <page number>.W (CZ_AUCTION_ITEM_SEARCH)
+/// search type:
+///     0 = armor
+///     1 = weapon
+///     2 = card
+///     3 = misc
+///     4 = name search
+///     5 = auction id search
+void clif_parse_Auction_search(int32 fd, map_session_data* sd){
+#if PACKETVER >= 20051107
+	const PACKET_CZ_AUCTION_ITEM_SEARCH* p = reinterpret_cast<PACKET_CZ_AUCTION_ITEM_SEARCH*>( RFIFOP( fd, 0 ) );
+
+	if( !battle_config.feature_auction )
+		return;
+
+	clif_parse_Auction_cancelreg(fd, sd);
+
+	char search_text[NAME_LENGTH];
+
+	safestrncpy( search_text, p->text, sizeof( search_text ) );
+
+	intif_Auction_requestlist( sd->status.char_id, p->type, p->auction_id, search_text, p->page );
+#endif
+}
+
+
+/// Requests list of own currently active bids or auctions (CZ_AUCTION_REQ_MY_INFO).
+/// 025c <type>.W
+/// type:
+///     0 = sell (own auctions)
+///     1 = buy (own bids)
+void clif_parse_Auction_buysell(int32 fd, map_session_data* sd)
+{
+	int16 type = RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0]) + 6;
+
+	if( !battle_config.feature_auction )
+		return;
+
+	clif_parse_Auction_cancelreg(fd, sd);
+
+	intif_Auction_requestlist(sd->status.char_id, type, 0, "", 1);
+}
+
+
+/// CASH/POINT SHOP
+///
+
+void clif_cashshop_open( map_session_data* sd, int32 tab ){
+#if PACKETVER_MAIN_NUM >= 20101123 || PACKETVER_RE_NUM >= 20120328 || defined(PACKETVER_ZERO)
+	nullpo_retv( sd );
+
+	PACKET_ZC_SE_CASHSHOP_OPEN p = {};
+
+	p.packetType = HEADER_ZC_SE_CASHSHOP_OPEN;
+	p.cashPoints = sd->cashPoints;
+	p.kafraPoints = sd->kafraPoints;
+#if PACKETVER_MAIN_NUM >= 20200129 || PACKETVER_RE_NUM >= 20200205 || PACKETVER_ZERO_NUM >= 20191224
+	p.tab = tab;
+#endif
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+void clif_parse_cashshop_open_request( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20101123 || PACKETVER_RE_NUM >= 20120328 || defined(PACKETVER_ZERO)
+	nullpo_retv( sd );
+
+	int32 tab = 0;
+
+#if PACKETVER >= 20191224
+	const PACKET_CZ_SE_CASHSHOP_OPEN2* p = reinterpret_cast<PACKET_CZ_SE_CASHSHOP_OPEN2*>( RFIFOP( fd, 0 ) );
+
+	tab = p->tab;
+#endif
+
+	if (map_getmapflag(sd->m, MF_NOCASHSHOP)) {
+		clif_displaymessage(fd, msg_txt(sd, 451)); // Cash Shop is disabled on this map.
+		return;
+	}
+
+	sd->state.cashshop_open = true;
+	sd->npc_shopid = -1; // Set npc_shopid when using cash shop from "cash shop" button [Aelys|Susu] bugreport:96
+
+	clif_cashshop_open( sd, tab );
+#endif
+}
+
+void clif_parse_cashshop_close( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20101123 || PACKETVER_RE_NUM >= 20120328 || defined(PACKETVER_ZERO)
+	sd->state.cashshop_open = false;
+	sd->npc_shopid = 0; // Reset npc_shopid when using cash shop from "cash shop" button [Aelys|Susu] bugreport:96
+	// No need to do anything here
+#endif
+}
+
+//0846 <tabid>.W (CZ_REQ_SE_CASH_TAB_CODE))
+//08c0 <len>.W <openIdentity>.L <itemcount>.W (ZC_ACK_SE_CASH_ITEM_LIST2)
+void clif_parse_CashShopReqTab(int32 fd, map_session_data *sd) {
+#if PACKETVER_MAIN_NUM >= 20100824 || PACKETVER_RE_NUM >= 20100824 || defined(PACKETVER_ZERO)
+	const PACKET_CZ_REQ_SE_CASH_TAB_CODE* p_in = reinterpret_cast<PACKET_CZ_REQ_SE_CASH_TAB_CODE*>( RFIFOP( fd, 0 ) );
+
+// TODO: most likely wrong answer packet. Most likely HEADER_ZC_ACK_SE_CASH_ITEM_LIST (0x847) would be correct [Lemongrass]
+// [4144] packet exists only in 2011 and was dropped after
+#if PACKETVER >= 20110222 && PACKETVER < 20120000
+	std::shared_ptr<s_cash_item_tab> tab = cash_shop_db.find( static_cast<e_cash_shop_tab>( p_in->tab ) );
+
+	if( tab == nullptr ){
+		return;
+	}
+
+	// Skip empty tabs, the client only expects filled ones
+	if( tab->items.empty() ){
+		return;
+	}
+
+#if !(PACKETVER_SUPPORTS_SALES)
+	if( tab->tab == CASHSHOP_TAB_SALE ){
+		return;
+	}
+#endif
+
+	PACKET_ZC_ACK_SE_CASH_ITEM_LIST2* p = reinterpret_cast<PACKET_ZC_ACK_SE_CASH_ITEM_LIST2*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_ACK_SE_CASH_ITEM_LIST2;
+	p->packetLength = sizeof( *p );
+	p->tab = tab->tab;
+	p->count = 0;
+
+	for( std::shared_ptr<s_cash_item> item : tab->items ){
+		p->items[p->count].itemId = client_nameid( item->nameid );
+		p->items[p->count].price = item->price;
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+		p->count++;
+	}
+
+	clif_send( p, p->packetLength, sd, SELF );
+#endif
+#endif
+}
+
+//08ca <len>.W <itemcount> W <tabcode>.W (ZC_ACK_SCHEDULER_CASHITEM)
+void clif_cashshop_list( map_session_data& sd ){
+	for( const auto& pair : cash_shop_db ){
+		std::shared_ptr<s_cash_item_tab> tab = pair.second;
+
+		// Skip empty tabs, the client only expects filled ones
+		if( tab->items.empty() ){
+			continue;
+		}
+
+#if !(PACKETVER_SUPPORTS_SALES)
+		if( tab->tab == CASHSHOP_TAB_SALE ){
+			continue;
+		}
+#endif
+
+		PACKET_ZC_ACK_SCHEDULER_CASHITEM* p = reinterpret_cast<PACKET_ZC_ACK_SCHEDULER_CASHITEM*>( packet_buffer );
+
+		p->packetType = HEADER_ZC_ACK_SCHEDULER_CASHITEM;
+		p->packetLength = sizeof( *p );
+		p->count = 0;
+		p->tabNum = tab->tab;
+
+		for( std::shared_ptr<s_cash_item> item : tab->items ){
+			p->items[p->count].itemId = client_nameid( item->nameid );
+			p->items[p->count].price = item->price;
+#ifdef ENABLE_CASHSHOP_PREVIEW_PATCH
+			struct item_data* id = itemdb_search( item->nameid );
+
+			if( id == nullptr ){
+				p->items[p->count].location = 0;
+				p->items[p->count].viewSprite = 0;
+			}else{
+				p->items[p->count].location = pc_equippoint_sub( &sd, id );
+				p->items[p->count].viewSprite = id->look;
+			}
+#endif
+			p->count++;
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+
+			if( ( static_cast<size_t>( p->packetLength ) + sizeof( p->items[0] ) ) >= INT16_MAX ){
+				// Send current data
+				clif_send( p, p->packetLength, &sd, SELF );
+
+				// Start a new packet
+				p->count = 0;
+				p->packetLength = sizeof( *p );
+			}
+		}
+
+		clif_send( p, p->packetLength, &sd, SELF );
+	}
+}
+
+void clif_parse_cashshop_list_request( int32 fd, map_session_data* sd ){
+	if( !sd->status.cashshop_sent ) {
+		clif_cashshop_list( *sd );
+#if PACKETVER_SUPPORTS_SALES
+		sale_notify_login(sd);
+#endif
+		sd->status.cashshop_sent = true;
+	}
+}
+
+/// List of items offered in a cash shop (ZC_PC_CASH_POINT_ITEMLIST).
+/// 0287 <packet len>.W <cash point>.L { <sell price>.L <discount price>.L <item type>.B <name id>.W }*
+/// 0287 <packet len>.W <cash point>.L <kafra point>.L { <sell price>.L <discount price>.L <item type>.B <name id>.W }* (PACKETVER >= 20070711)
+void clif_cashshop_show( map_session_data& sd, const npc_data& nd ){
+	sd.npc_shopid = nd.id;
+
+	int32 cost[2] = { 0, 0 };
+
+	npc_shop_currency_type( &sd, &nd, cost, true );
+
+	PACKET_ZC_PC_CASH_POINT_ITEMLIST* p = reinterpret_cast<PACKET_ZC_PC_CASH_POINT_ITEMLIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_PC_CASH_POINT_ITEMLIST;
+	p->packetLength = sizeof( *p );
+	p->cashPoints = cost[0];
+#if PACKETVER >= 20070711
+	p->kafraPoints = cost[1];
+#endif
+
+	for( int32 i = 0; i < nd.u.shop.count; i++ ) {
+		struct item_data* id = itemdb_search( nd.u.shop.shop_item[i].nameid );
+
+		p->items[i].price = nd.u.shop.shop_item[i].value;
+		p->items[i].discountPrice = nd.u.shop.shop_item[i].value; // Discount Price
+		p->items[i].itemType = itemtype( id->nameid );
+		p->items[i].itemId = client_nameid( id->nameid );
+#ifdef ENABLE_OLD_CASHSHOP_PREVIEW_PATCH
+		p->items[i].location = pc_equippoint_sub( &sd, id );
+		p->items[i].viewSprite = id->look;
+		memset( p->items[i].unused, 0, sizeof( p->items[i].unused ) );
+#endif
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+}
+
+/// Cashshop Buy Ack (ZC_PC_CASH_POINT_UPDATE).
+/// 0289 <cash point>.L <error>.W
+/// 0289 <cash point>.L <kafra point>.L <error>.W (PACKETVER >= 20070711)
+/// error:
+///     0 = The deal has successfully completed. (ERROR_TYPE_NONE)
+///     1 = The Purchase has failed because the NPC does not exist. (ERROR_TYPE_NPC)
+///     2 = The Purchase has failed because the Kafra Shop System is not working correctly. (ERROR_TYPE_SYSTEM)
+///     3 = You are over your Weight Limit. (ERROR_TYPE_INVENTORY_WEIGHT)
+///     4 = You cannot purchase items while you are in a trade. (ERROR_TYPE_EXCHANGE)
+///     5 = The Purchase has failed because the Item Information was incorrect. (ERROR_TYPE_ITEM_ID)
+///     6 = You do not have enough Kafra Credit Points. (ERROR_TYPE_MONEY)
+///     7 = You can purchase up to 10 items. (ERROR_TYPE_AMOUNT)
+///     8 = Some items could not be purchased. (ERROR_TYPE_PURCHASE_FAIL)
+void clif_cashshop_ack(map_session_data* sd, int32 error)
+{
+	int32 fd, cost[2] = { 0, 0 };
+	npc_data *nd;
+
+	nullpo_retv(sd);
+
+	fd = sd->fd;
+	nd = map_id2nd(sd->npc_shopid);
+
+	npc_shop_currency_type(sd, nd, cost, false);
+
+	WFIFOHEAD(fd, packet_len(0x289));
+	WFIFOW(fd,0) = 0x289;
+	WFIFOL(fd,2) = cost[0];
+#if PACKETVER < 20070711
+	WFIFOW(fd,6) = TOW(error);
+#else
+	WFIFOL(fd,6) = cost[1];
+	WFIFOW(fd,10) = TOW(error);
+#endif
+	WFIFOSET(fd, packet_len(0x289));
+}
+
+void clif_cashshop_result( const map_session_data* sd, t_itemid item_id, uint16 result ){
+#if PACKETVER_MAIN_NUM >= 20101123 || PACKETVER_RE_NUM >= 20120328 || defined( PACKETVER_ZERO )
+	nullpo_retv( sd );
+
+	PACKET_ZC_SE_PC_BUY_CASHITEM_RESULT packet = {};
+
+	packet.packetType = HEADER_ZC_SE_PC_BUY_CASHITEM_RESULT;
+	if( item_id != 0 ){
+		packet.itemId = client_nameid( item_id );
+	}else{
+		packet.itemId = 0;
+	}
+	packet.result = result;
+	packet.cashPoints = sd->cashPoints;
+	packet.kafraPoints = sd->kafraPoints;
+
+	clif_send( &packet, sizeof( packet ), sd, SELF );

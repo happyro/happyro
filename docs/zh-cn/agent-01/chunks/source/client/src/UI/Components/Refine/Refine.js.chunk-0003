@@ -1,0 +1,500 @@
+		onHideContRefineButtons();
+		clearRefineStates();
+	}
+}
+
+/**
+ * Handles clearing of material components after requesting to refine
+ */
+function clearMaterials() {
+	const root = _root();
+
+	const successEl = root.querySelector('.success');
+	if (successEl) {
+		successEl.innerHTML = '';
+		successEl.style.display = 'none';
+	}
+	const refineZeny = root.querySelector('.refine_zeny');
+	if (refineZeny) {
+		refineZeny.innerHTML = '';
+	}
+
+	root.querySelectorAll('.materials .item').forEach(el => {
+		el.style.display = 'none';
+	});
+	root.querySelectorAll('.bsb .item').forEach(el => {
+		el.style.display = 'none';
+	});
+
+	const selectedMat = root.querySelector('.selected_mat');
+	if (selectedMat) {
+		selectedMat.innerHTML = '';
+	}
+	const bsbSelected = root.querySelector('.bsb_selected');
+	if (bsbSelected) {
+		bsbSelected.innerHTML = '';
+	}
+
+	root.querySelectorAll('.mat_overlay').forEach(el => el.classList.remove('selected'));
+	root.querySelectorAll('.bsb_overlay').forEach(el => el.classList.remove('selected'));
+
+	const refineButton = root.querySelector('.refine_button');
+	if (refineButton) {
+		refineButton.style.display = 'none';
+	}
+}
+
+/**
+ * Show a message in .info_msg
+ * @param {number} messageID - The message ID to retrieve from DB
+ * @param {number} timeout - The duration to show the message, in seconds (0 for infinite)
+ * @param {string} type - The type of message ('error' or 'info')
+ */
+function showMessage(messageID, timeout, type) {
+	const root = _root();
+	const message = DB.getMessage(messageID);
+	let messageClass;
+
+	switch (type) {
+		case 'error':
+			messageClass = 'red';
+			break;
+		case 'info':
+			messageClass = 'blue';
+			break;
+		default:
+			messageClass = 'red';
+			break;
+	}
+
+	if (Refine.messageTimeOut) {
+		clearTimeout(Refine.messageTimeOut);
+	}
+
+	const infoMsg = root.querySelector('.info_msg');
+	if (infoMsg) {
+		infoMsg.classList.remove('red', 'blue');
+		infoMsg.textContent = message;
+		infoMsg.classList.add(messageClass);
+	}
+
+	const someNotifs = root.querySelector('.some_notifs');
+	if (someNotifs) {
+		someNotifs.style.display = 'block';
+	}
+
+	if (timeout > 0) {
+		Refine.messageTimeOut = setTimeout(() => {
+			if (infoMsg) {
+				infoMsg.classList.remove(messageClass);
+			}
+			if (someNotifs) {
+				someNotifs.style.display = 'none';
+			}
+		}, timeout * 1000);
+	}
+}
+
+/**
+ * Send the server request to refine the item
+ */
+function onRequestRefine() {
+	const root = _root();
+	const item = Inventory.getUI().getItemByIndex(refine_item_index);
+	const material = Inventory.getUI().getItemById(refine_item_mat);
+
+	if (!item) {
+		return;
+	}
+
+	if (!material) {
+		return;
+	}
+
+	if (Session.zeny < refine_fee) {
+		showMessage(2968, 3, 'error');
+		return;
+	}
+
+	if (!Refine.hammer) {
+		clearMaterials();
+	}
+
+	Refine.hammer++;
+
+	const refineButton = root.querySelector('.refine_button');
+	if (refineButton) {
+		refineButton.style.display = 'none';
+	}
+
+	const itemToRefineName = root.querySelector('.item_to_refine_name');
+	if (itemToRefineName) {
+		itemToRefineName.style.display = 'none';
+	}
+	const successEl = root.querySelector('.success');
+	if (successEl) {
+		successEl.style.display = 'none';
+	}
+
+	refine_ongoing = 1;
+
+	const pkt = new PACKET.CZ.REQ_REFINING();
+	pkt.index = refine_item_index;
+	pkt.itemId = refine_item_mat;
+	pkt.blacksmithBlessing = refine_bsb;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Handles the received refine result packet
+ * @param {pkt} - PACKET.ZC.ACK_ITEMREFINING
+ */
+Refine.onRefineResult = function onRefineResult(pkt) {
+	const root = _root();
+
+	if (pkt) {
+		const backButton = root.querySelector('.back_button');
+		if (backButton) {
+			backButton.style.display = 'none';
+		}
+		const refineCont = root.querySelector('.refine_cont');
+		if (refineCont) {
+			refineCont.style.display = 'none';
+		}
+
+		const item = Inventory.getUI().removeItem(pkt.itemIndex, 1);
+		if (item) {
+			item.RefiningLevel = pkt.RefiningLevel;
+			Inventory.getUI().addItem(item);
+		}
+
+		stopCurrentLoop();
+
+		refine_result = pkt.result;
+
+		switch (pkt.result) {
+			case 0:
+				refine_can_cont = 1;
+				onAnimateResult('success', () => {
+					onUpdateRefineUI('success');
+					startLoopingPhase('success_wait');
+				});
+				break;
+			case 1:
+			case 3:
+				onShowFailure(pkt.result);
+				break;
+			case 2:
+				onShowFailure(pkt.result);
+				break;
+		}
+	}
+};
+
+/**
+ * Handles animation for failure and pass to UI if downgrade or fail
+ */
+function onShowFailure(result) {
+	const showResult = result === 2 ? 'downgrade' : 'fail';
+
+	onAnimateResult('fail', () => {
+		onUpdateRefineUI(showResult);
+		startLoopingPhase('fail_wait');
+	});
+}
+
+/**
+ * Handles animation sequences depending on Refine result
+ */
+function onAnimateResult(result, callback) {
+	function runSuccessSequence() {
+		if (refine_bsb) {
+			controlPhase('processa', false, 50, () => {
+				controlPhase('success', false, 50, callback);
+			});
+		} else {
+			controlPhase('processb', false, 50, () => {
+				controlPhase('success', false, 50, callback);
+			});
+		}
+	}
+
+	function runFailSequence() {
+		if (refine_bsb) {
+			controlPhase('processa', false, 50, () => {
+				controlPhase('fail', false, 50, callback);
+			});
+		} else {
+			controlPhase('processb', false, 50, () => {
+				controlPhase('fail', false, 50, callback);
+			});
+		}
+	}
+
+	switch (result) {
+		case 'success':
+			runSuccessSequence();
+			break;
+		case 'fail':
+			runFailSequence();
+			break;
+		default:
+			if (callback) {
+				callback();
+			}
+			break;
+	}
+}
+
+/**
+ * Store and start phase animation
+ */
+function startLoopingPhase(phase) {
+	currentLoopHandle = controlPhase(phase, true, 75);
+}
+
+/**
+ * Function to stop current stored on-going phase animation
+ */
+function stopCurrentLoop() {
+	if (currentLoopHandle) {
+		clearTimeout(currentLoopHandle);
+		currentLoopHandle = null;
+	}
+	if (Refine.imageLoopTimeout) {
+		clearTimeout(Refine.imageLoopTimeout);
+		Refine.imageLoopTimeout = null;
+	}
+}
+
+/**
+ * Handles how the UI changes depending on Refine result
+ */
+function onUpdateRefineUI(result) {
+	const root = _root();
+
+	onHideContRefineButtons();
+
+	switch (result) {
+		case 'success': {
+			const backSuccess = root.querySelector('.back_success');
+			if (backSuccess) {
+				backSuccess.style.display = 'block';
+			}
+			const successEl = root.querySelector('.success');
+			if (successEl) {
+				successEl.textContent = DB.getMessage(2971);
+				successEl.style.display = 'block';
+			}
+			ChatBox.addText(DB.getMessage(498), ChatBox.TYPE.BLUE, ChatBox.FILTER.PUBLIC_LOG);
+			break;
+		}
+		case 'fail': {
+			onCheckItemBroken();
+			const backFail = root.querySelector('.back_fail');
+			if (backFail) {
+				backFail.style.display = 'block';
+			}
+			const successEl = root.querySelector('.success');
+			if (successEl) {
+				successEl.textContent = DB.getMessage(2972);
+				successEl.style.display = 'block';
+			}
+			ChatBox.addText(DB.getMessage(499), ChatBox.TYPE.BLUE, ChatBox.FILTER.PUBLIC_LOG);
+			break;
+		}
+		case 'downgrade': {
+			onCheckItemBroken();
+			const backFail = root.querySelector('.back_fail');
+			if (backFail) {
+				backFail.style.display = 'block';
+			}
+			const successEl = root.querySelector('.success');
+			if (successEl) {
+				successEl.textContent = DB.getMessage(2972);
+				successEl.style.display = 'block';
+			}
+			ChatBox.addText(DB.getMessage(1537), ChatBox.TYPE.BLUE, ChatBox.FILTER.PUBLIC_LOG);
+			break;
+		}
+		default:
+			break;
+	}
+
+	const refineTextCont = root.querySelector('.refine_text_cont');
+	if (refineTextCont) {
+		refineTextCont.style.display = 'block';
+	}
+
+	if (refine_result_div) {
+		const resultEl = root.querySelector(`.${refine_result_div}`);
+		if (resultEl) {
+			resultEl.style.display = 'block';
+		}
+	}
+
+	if (refine_can_cont && !refine_new_mats && !refine_item_broken) {
+		const chanceRate = root.querySelector('.chance_rate');
+		if (chanceRate) {
+			chanceRate.textContent = DB.getMessage(3285).replace('%d%', refine_current_chance);
+			chanceRate.style.display = 'block';
+		}
+		const refineZenyCont = root.querySelector('.refine_zeny_cont');
+		if (refineZenyCont) {
+			refineZenyCont.textContent = refine_current_zeny;
+			refineZenyCont.style.display = 'block';
+		}
+	}
+
+	if (refine_no_mats) {
+		showMessage(3243, 3, 'error');
+	}
+	if (refine_no_zeny) {
+		showMessage(3244, 3, 'error');
+	}
+	if (refine_no_bsb) {
+		showMessage(3245, 3, 'error');
+	}
+
+	const backButton = root.querySelector('.back_button');
+	if (backButton) {
+		backButton.style.display = 'block';
+	}
+	const refineCont = root.querySelector('.refine_cont');
+	if (refineCont) {
+		refineCont.style.display = 'block';
+	}
+
+	if (!refine_item_broken) {
+		const refineditem = Inventory.getUI().getItemByIndex(refine_item_index);
+		if (refineditem) {
+			const itemToRefineName = root.querySelector('.item_to_refine_name');
+			if (itemToRefineName) {
+				itemToRefineName.textContent = DB.getItemName(refineditem);
+			}
+		}
+	}
+
+	const itemToRefineName = root.querySelector('.item_to_refine_name');
+	if (itemToRefineName) {
+		itemToRefineName.style.display = 'block';
+	}
+
+	refine_ongoing = 0;
+}
+
+/**
+ * Handles hiding all buttons used in Continous Refine
+ */
+function onHideContRefineButtons() {
+	const root = _root();
+
+	const backButton = root.querySelector('.back_button');
+	if (backButton) {
+		backButton.style.display = 'none';
+	}
+	const refineCont = root.querySelector('.refine_cont');
+	if (refineCont) {
+		refineCont.style.display = 'none';
+	}
+	const backSuccess = root.querySelector('.back_success');
+	if (backSuccess) {
+		backSuccess.style.display = 'none';
+	}
+	const backFail = root.querySelector('.back_fail');
+	if (backFail) {
+		backFail.style.display = 'none';
+	}
+	const successContEnabled = root.querySelector('.success_refine_cont_enabled');
+	if (successContEnabled) {
+		successContEnabled.style.display = 'none';
+	}
+	const successContDisabled = root.querySelector('.success_refine_cont_disabled');
+	if (successContDisabled) {
+		successContDisabled.style.display = 'none';
+	}
+	const failContEnabled = root.querySelector('.fail_refine_cont_enabled');
+	if (failContEnabled) {
+		failContEnabled.style.display = 'none';
+	}
+	const failContDisabled = root.querySelector('.fail_refine_cont_disabled');
+	if (failContDisabled) {
+		failContDisabled.style.display = 'none';
+	}
+	const refineTextCont = root.querySelector('.refine_text_cont');
+	if (refineTextCont) {
+		refineTextCont.style.display = 'none';
+	}
+	const chanceRate = root.querySelector('.chance_rate');
+	if (chanceRate) {
+		chanceRate.style.display = 'none';
+	}
+	const refineZenyCont = root.querySelector('.refine_zeny_cont');
+	if (refineZenyCont) {
+		refineZenyCont.style.display = 'none';
+	}
+}
+
+/**
+ * Check if the item being refined is broken
+ */
+function onCheckItemBroken() {
+	const root = _root();
+	const refineditem = Inventory.getUI().getItemByIndex(refine_item_index);
+	if (!refineditem) {
+		refine_result_div = 'fail_refine_cont_disabled';
+		const itemToRefineName = root.querySelector('.item_to_refine_name');
+		if (itemToRefineName) {
+			itemToRefineName.textContent = DB.getMessage(3246);
+		}
+		refine_item_broken = 1;
+		return true;
+	} else {
+		refine_item_broken = 0;
+		return false;
+	}
+}
+
+/**
+ * Handles event when Back button was pressed during Continous Refine
+ */
+function onCancelContRefine() {
+	const root = _root();
+
+	Refine.hammer = 0;
+	onHideContRefineButtons();
+	stopCurrentLoop();
+
+	if (!refine_item_broken) {
+		onPopulateMaterials();
+		const isbsbenabled = blacksmithBlessing ? 'a' : 'b';
+		controlPhase(`ready${isbsbenabled}`, false, 250);
+	} else {
+		onRemoveItem(true);
+	}
+
+	const refineButton = root.querySelector('.refine_button');
+	if (refineButton) {
+		refineButton.style.display = 'block';
+	}
+	const successEl = root.querySelector('.success');
+	if (successEl) {
+		successEl.innerHTML = initialsuccess;
+		successEl.style.display = 'block';
+	}
+}
+
+/**
+ * Get item info (open description window)
+ */
+function onItemInfo(event) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+
+	const ITID = parseInt(this.getAttribute('data-index'), 10);
+	const item = Inventory.getUI().getItemById(ITID)
+		? Inventory.getUI().getItemById(ITID)
+		: Inventory.getUI().getItemByIndex(ITID);
+
+	if (!item) {
+		return;

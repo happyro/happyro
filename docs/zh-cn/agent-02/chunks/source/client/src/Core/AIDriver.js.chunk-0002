@@ -1,0 +1,151 @@
+										resolve();
+									})
+									.catch(reject);
+							} catch (error) {
+								console.error('[require] : ', error);
+								reject(error);
+							}
+						},
+						reject
+					);
+				});
+				return promise;
+			}
+
+			ctx.require = customRequire;
+
+			// Preload AI files to ensure they are cached before execution
+			for (const filename of fileList) {
+				if (!loadedFiles[filename]) {
+					loadedFiles[filename] = filename;
+					const promise = new Promise((resolve, reject) => {
+						Client.loadFile(
+							filename,
+							function (file) {
+								try {
+									if (Configs.get('debugAI', false)) {
+										console.log('Loading file "' + filename + '"...');
+									}
+									const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+									const text = TextEncoding.decode(buffer);
+
+									const nestedPromises = [];
+									for (const line of text.split('\n')) {
+										if (line.includes('dofile')) {
+											const loadFile = line
+												.replace('dofile', '')
+												.replaceAll('(', '')
+												.replaceAll(')', '')
+												.replace(/['"]/g, '')
+												.trim();
+											const nestedPromise = customRequire(loadFile, true);
+											nestedPromises.push(nestedPromise);
+										}
+									}
+
+									Promise.all(nestedPromises)
+										.then(() => {
+											lua.mountFile('./' + filename, buffer);
+											resolve();
+										})
+										.catch(reject);
+								} catch (error) {
+									console.error('[prepareAIFiles] : ', error);
+									reject(error);
+								}
+							},
+							reject
+						);
+					});
+					loadPromises.push(promise);
+				}
+			}
+		}
+
+		async function doFiles(fileList, lua) {
+			await Promise.all(loadPromises);
+			for (const key in fileList) {
+				await lua.doFileSync(fileList[key]);
+			}
+		}
+
+		try {
+			AIDriver.HO_AI = DB.getHOAI_VM();
+			AIDriver.MER_AI = DB.getMERAI_VM();
+			AIDriver.default_HO_AI = DB.getDefaultHOAI_VM();
+			AIDriver.default_MER_AI = DB.getDefaultMERAI_VM();
+			AIDriver.addCTX();
+
+			console.log('Loading Default HOAI...');
+			let files = ['AI/Util.lua', 'AI/Const.lua', 'AI/AI.lua'];
+			let AI_M = 'AI/AI_M.lua';
+			preloadFiles(files, AIDriver.default_HO_AI);
+			await doFiles(files, AIDriver.default_HO_AI);
+
+			console.log('Loading Default MERAI...');
+			loadedFiles = {};
+			loadPromises = [];
+			files.pop();
+			files.push(AI_M);
+			preloadFiles(files, AIDriver.default_MER_AI);
+			await doFiles(files, AIDriver.default_MER_AI);
+
+			files = ['AI/USER_AI/Util.lua', 'AI/USER_AI/Const.lua', 'AI/USER_AI/AI.lua'];
+			AI_M = 'AI/USER_AI/AI_M.lua';
+			console.log('Loading Custom HOAI...');
+			preloadFiles(files, AIDriver.HO_AI);
+			await doFiles(files, AIDriver.HO_AI);
+
+			console.log('Loading Custom MERAI...');
+			loadedFiles = {};
+			loadPromises = [];
+			files.pop();
+			files.push(AI_M);
+			preloadFiles(files, AIDriver.MER_AI);
+			await doFiles(files, AIDriver.MER_AI);
+		} catch (error) {
+			console.warn('[AIDriver] AI files not available, skipping AI initialization:', error.message || error);
+			if (typeof onEnd === 'function') {
+				onEnd();
+			}
+			return;
+		}
+
+		AIDriver.ready = true;
+
+		if (typeof onEnd === 'function') {
+			onEnd();
+		}
+	};
+
+	static exec = (code, homunculus = true) => {
+		try {
+			//console.log('exec', code);
+			if (!AIDriver.ready) {
+				return;
+			}
+
+			let lua;
+			if (homunculus) {
+				if (Session.homCustomAI) {
+					lua = AIDriver.HO_AI;
+				} else {
+					lua = AIDriver.default_HO_AI;
+				}
+			} else {
+				if (Session.merCustomAI) {
+					lua = AIDriver.MER_AI;
+				} else {
+					lua = AIDriver.default_MER_AI;
+				}
+			}
+			lua.doStringSync(code);
+		} catch (e) {
+			console.error('%c[AI] %cAI Error: ', 'color:#DD0078', 'color:inherit', e);
+		}
+	};
+	// this is called in some place of code
+	static reset = () => {};
+}
+
+export default AIDriver;

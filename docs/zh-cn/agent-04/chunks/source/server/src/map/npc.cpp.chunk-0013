@@ -1,0 +1,384 @@
+	}
+}
+
+void npc_read_event_script(void)
+{
+	int32 i;
+
+	script_event.clear();
+
+	for (i = 0; i < NPCE_MAX; i++)
+	{
+		DBIterator* iter;
+		DBKey key;
+		DBData *data;
+		char name[EVENT_NAME_LENGTH];
+
+		safesnprintf(name,EVENT_NAME_LENGTH,"::%s", npc_get_script_event_name(i));
+
+		iter = db_iterator(ev_db);
+		for( data = iter->first(iter,&key); iter->exists(iter); data = iter->next(iter,&key) )
+		{
+			const char* p = key.str;
+			struct event_data* ed = (struct event_data*)db_data2ptr(data);
+
+			if( (p=strchr(p,':')) && strcmpi(name,p)==0 ){
+				struct script_event_s evt;
+
+				evt.event = ed;
+				evt.event_name = key.str;
+
+				script_event[static_cast<enum npce_event>(i)].push_back(evt);
+			}
+		}
+		dbi_destroy(iter);
+	}
+
+	if (battle_config.etc_log) {
+		//Print summary.
+		for (i = 0; i < NPCE_MAX; i++)
+			ShowInfo("%" PRIuPTR " '%s' events.\n", script_event[static_cast<enum npce_event>(i)].size(), npc_get_script_event_name(i));
+	}
+}
+
+void npc_clear_pathlist(void) {
+	struct npc_path_data *npd = nullptr;
+	DBIterator *path_list = db_iterator(npc_path_db);
+
+	/* free all npc_path_data filepaths */
+	for( npd = (struct npc_path_data *)dbi_first(path_list); dbi_exists(path_list); npd = (struct npc_path_data *)dbi_next(path_list) ) {
+		if( npd->path )
+			aFree(npd->path);
+	}
+
+	dbi_destroy(path_list);
+}
+
+//Clear then reload npcs files
+int32 npc_reload(void) {
+	int32 npc_new_min = npc_id;
+	struct s_mapiterator* iter;
+	block_list* bl;
+
+	/* clear guild flag cache */
+	guild_flags_clear();
+
+	npc_clear_pathlist();
+
+	db_clear(npc_path_db);
+
+	db_clear(npcname_db);
+	db_clear(ev_db);
+
+	//Remove all npcs/mobs. [Skotlex]
+
+#if PACKETVER >= 20131223
+	npc_market_fromsql();
+#endif
+
+	iter = mapit_geteachiddb();
+	for( bl = (block_list*)mapit_first(iter); mapit_exists(iter); bl = (block_list*)mapit_next(iter) ) {
+		switch(bl->type) {
+		case BL_NPC:
+			if( bl->id != fake_nd->id )// don't remove fake_nd
+				npc_unload((npc_data *)bl, false);
+			break;
+		case BL_MOB:
+			unit_free(bl,CLR_OUTSIGHT);
+			break;
+		}
+	}
+	mapit_free(iter);
+
+	// dynamic check by [random]
+	if( battle_config.dynamic_mobs ){
+		for (int32 i = 0; i < map_num; i++) {
+			for( int16 j = 0; j < MAX_MOB_LIST_PER_MAP; j++ ){
+				struct map_data *mapdata = map_getmapdata(i);
+
+				if (mapdata->moblist[j] != nullptr) {
+					aFree(mapdata->moblist[j]);
+					mapdata->moblist[j] = nullptr;
+				}
+				if( mapdata->mob_delete_timer != INVALID_TIMER )
+				{ // Mobs were removed anyway,so delete the timer [Inkfish]
+					delete_timer(mapdata->mob_delete_timer, map_removemobs_timer);
+					mapdata->mob_delete_timer = INVALID_TIMER;
+				}
+
+				if( mapdata->npc_num > 0 ){
+					ShowWarning( "npc_reload: %d npcs weren't removed at map %s!\n", mapdata->npc_num, mapdata->name );
+				}
+			}
+		}
+	}
+
+	// clear mob spawn lookup index
+	mob_clear_spawninfo();
+
+	npc_warp = npc_shop = npc_script = 0;
+	npc_mob = npc_cache_mob = npc_delay_mob = 0;
+
+	// reset mapflags
+	map_flags_init();
+
+	npc_loadsrcfiles();
+
+	stylist_db.reload();
+	barter_db.reload();
+
+	//Re-read the NPC Script Events cache.
+	npc_read_event_script();
+
+	/* refresh guild castle flags on both woe setups */
+	npc_event_doall( script_config.agit_init_event_name );
+	npc_event_doall( script_config.agit_init2_event_name );
+	npc_event_doall( script_config.agit_init3_event_name );
+
+	//Execute the OnInit event for freshly loaded npcs. [Skotlex]
+	npc_event_runall(script_config.init_event_name);
+
+	map_data_copyall();
+	do_reload_instance();
+
+	// Execute rest of the startup events if connected to char-server. [Lance]
+	if(!CheckForCharServer()){
+		npc_event_runall(script_config.inter_init_event_name);
+	}
+
+#if PACKETVER >= 20131223
+	npc_market_checkall();
+#endif
+	return 0;
+}
+
+//Unload all npc in the given file
+bool npc_unloadfile( const char* path ) {
+	DBIterator * iter = db_iterator(npcname_db);
+	npc_data* nd = nullptr;
+	bool found = false;
+
+	for( nd = (npc_data*)dbi_first(iter); dbi_exists(iter); nd = (npc_data*)dbi_next(iter) ) {
+		if( nd->path && strcasecmp(nd->path,path) == 0 ) {
+			found = true;
+			npc_unload_duplicates(nd);/* unload any npcs which could duplicate this but be in a different file */
+			npc_unload(nd, true);
+		}
+	}
+
+	dbi_destroy(iter);
+
+	if(npc_remove_mob_spawns( path )){
+		found = true;
+	}
+
+	if( found ) /* refresh event cache */
+		npc_read_event_script();
+
+	npc_delsrcfile(path);
+
+	return found;
+}
+
+bool npc_remove_mob_spawns(const char* path) {
+	int32 spawn_count = {};
+	int32 unit_count = {};
+
+	auto remove_spawn_info = [&]( spawn_data& spawn, uint16 qty ){
+		auto it = mob_spawn_data.find( spawn.id );
+
+		if( it != mob_spawn_data.end() ){
+			uint16 mapindex = map_id2index( spawn.m );
+
+			it->second.erase( std::remove_if( it->second.begin(), it->second.end(), [&]( spawn_info& spawninfo ){
+				if( spawninfo.mapindex == mapindex ){
+					spawninfo.qty -= qty;
+					spawn_count += qty;
+					return spawninfo.qty == 0;
+				}
+
+				return false;
+			} ), it->second.end() );
+		}
+	};
+
+	// Remove spawned mobs
+	s_mapiterator* iter = mapit_geteachmob();
+
+	for( block_list* bl = mapit_first( iter ); mapit_exists( iter ); bl = mapit_next( iter ) ){
+		mob_data* md = reinterpret_cast<mob_data*>( bl );
+
+		if( md->spawn != nullptr && !strcmp( md->spawn->filepath, path ) ){
+			if( !battle_config.dynamic_mobs )
+				remove_spawn_info( *md->spawn, 1 );
+			unit_free( bl, CLR_OUTSIGHT );
+			unit_count++;
+		}
+	}
+
+	mapit_free(iter);
+
+	//dynamic mobs cleaning
+	if (battle_config.dynamic_mobs) {
+		for (int32 i = 0; i < map_num; i++) {
+			map_data* mapdata = map_getmapdata(i);
+
+			for (int16 j = 0; j < MAX_MOB_LIST_PER_MAP; j++) {
+				spawn_data* mob = mapdata->moblist[j];
+
+				if (mob != nullptr && !strcmp(mob->filepath, path)) {
+					npc_cache_mob -= mob->num;
+					remove_spawn_info( *mob, mob->num );
+
+					aFree(mapdata->moblist[j]);
+					mapdata->moblist[j] = nullptr;
+
+					if (mapdata->mob_delete_timer != INVALID_TIMER) {
+						delete_timer(mapdata->mob_delete_timer, map_removemobs_timer);
+						mapdata->mob_delete_timer = INVALID_TIMER;
+					}
+				}
+			}
+		}
+	}
+
+	// Sort spawns by spawn quantity
+	for( auto& pair : mob_spawn_data ){
+		std::sort( pair.second.begin(), pair.second.end(), []( const spawn_info& a, const spawn_info& b ) -> bool{
+			return a.qty > b.qty;
+		} );
+	}
+
+	if(spawn_count > 0 || unit_count > 0)
+		ShowInfo("%d mobs and %d spawns were removed.\n",unit_count,spawn_count);
+
+	return spawn_count > 0 || unit_count > 0;
+}
+
+void do_clear_npc(void) {
+	db_clear(npcname_db);
+	db_clear(ev_db);
+}
+
+/*==========================================
+ * Destructor
+ *------------------------------------------*/
+void do_final_npc(void) {
+	npc_clear_pathlist();
+	script_event.clear();
+	ev_db->destroy(ev_db, nullptr);
+	npcname_db->destroy(npcname_db, nullptr);
+	npc_path_db->destroy(npc_path_db, nullptr);
+#if PACKETVER >= 20131223
+	NPCMarketDB->destroy(NPCMarketDB, npc_market_free);
+#endif
+	stylist_db.clear();
+	barter_db.clear();
+	ers_destroy(timer_event_ers);
+	ers_destroy(npc_sc_display_ers);
+	npc_src_files.clear();
+}
+
+static void npc_debug_warps_sub(npc_data* nd)
+{
+	int16 m;
+	if (nd->type != BL_NPC || nd->subtype != NPCTYPE_WARP || nd->m < 0)
+		return;
+
+	m = map_mapindex2mapid(nd->u.warp.mapindex);
+	if (m < 0) return; //Warps to another map, nothing to do about it.
+	if (nd->u.warp.x == 0 && nd->u.warp.y == 0) return; // random warp
+
+	struct map_data *mapdata = map_getmapdata(m);
+	struct map_data *mapdata_nd = map_getmapdata(nd->m);
+
+	if (map_getcell(m, nd->u.warp.x, nd->u.warp.y, CELL_CHKNPC)) {
+		ShowWarning("Warp %s at %s(%d,%d) warps directly on top of an area npc at %s(%d,%d)\n",
+			nd->name,
+			mapdata_nd->name, nd->x, nd->y,
+			mapdata->name, nd->u.warp.x, nd->u.warp.y
+			);
+	}
+	if (map_getcell(m, nd->u.warp.x, nd->u.warp.y, CELL_CHKNOPASS)) {
+		ShowWarning("Warp %s at %s(%d,%d) warps to a non-walkable tile at %s(%d,%d)\n",
+			nd->name,
+			mapdata_nd->name, nd->x, nd->y,
+			mapdata->name, nd->u.warp.x, nd->u.warp.y
+			);
+	}
+}
+
+static void npc_debug_warps(void){
+	for (int32 i = 0; i < map_num; i++) {
+		struct map_data *mapdata = map_getmapdata(i);
+
+		for( int32 i = 0; i < mapdata->npc_num; i++ ){
+			npc_debug_warps_sub(mapdata->npc[i]);
+		}
+	}
+}
+
+/*==========================================
+ * npc initialization
+ *------------------------------------------*/
+void do_init_npc(void){
+	int32 i;
+
+	//Stock view data for normal npcs.
+	memset(&npc_viewdb, 0, sizeof(npc_viewdb));
+	npc_viewdb[0].look[LOOK_BASE] = JT_INVISIBLE; //Invisible class is stored here.
+	for( i = 1; i < MAX_NPC_CLASS; i++ )
+		npc_viewdb[i].look[LOOK_BASE] = i;
+	for( i = MAX_NPC_CLASS2_START; i < MAX_NPC_CLASS2_END; i++ )
+		npc_viewdb2[i - MAX_NPC_CLASS2_START].look[LOOK_BASE] = i;
+
+	ev_db = strdb_alloc((DBOptions)(DB_OPT_DUP_KEY|DB_OPT_RELEASE_DATA), EVENT_NAME_LENGTH);
+	npcname_db = strdb_alloc(DB_OPT_BASE, NPC_NAME_LENGTH+1);
+	npc_path_db = strdb_alloc((DBOptions)(DB_OPT_BASE|DB_OPT_DUP_KEY|DB_OPT_RELEASE_DATA),80);
+#if PACKETVER >= 20131223
+	NPCMarketDB = strdb_alloc(DB_OPT_BASE, NPC_NAME_LENGTH+1);
+	npc_market_fromsql();
+#endif
+
+	timer_event_ers = ers_new(sizeof(struct timer_event_data),"npc.cpp::timer_event_ers",ERS_OPT_NONE);
+	npc_sc_display_ers = ers_new(sizeof(struct sc_display_entry), "npc.cpp:npc_sc_display_ers", ERS_OPT_NONE);
+
+	npc_loadsrcfiles();
+
+	stylist_db.load();
+	barter_db.load();
+
+	// set up the events cache
+	npc_read_event_script();
+
+#if PACKETVER >= 20131223
+	npc_market_checkall();
+#endif
+
+	//Debug function to locate all endless loop warps.
+	if (battle_config.warp_point_debug)
+		npc_debug_warps();
+
+	add_timer_func_list(npc_event_do_clock,"npc_event_do_clock");
+	add_timer_func_list(npc_timerevent,"npc_timerevent");
+	add_timer_func_list( npc_dynamicnpc_removal_timer, "npc_dynamicnpc_removal_timer" );
+#ifdef SECURE_NPCTIMEOUT
+	add_timer_func_list( npc_secure_timeout_timer, "npc_secure_timeout_timer" );
+#endif
+
+	// Init dummy NPC
+	fake_nd = npc_create_npc( -1, 0, 0 );
+	fake_nd->class_ = JT_FAKENPC;
+	fake_nd->speed = DEFAULT_NPC_WALK_SPEED;
+	strcpy(fake_nd->name,"FAKE_NPC");
+	memcpy(fake_nd->exname, fake_nd->name, 9);
+
+	npc_script++;
+	fake_nd->type = BL_NPC;
+	fake_nd->subtype = NPCTYPE_SCRIPT;
+
+	strdb_put(npcname_db, fake_nd->exname, fake_nd);
+	fake_nd->u.scr.timerid = INVALID_TIMER;
+	map_addiddb(fake_nd);
+	// End of initialization
+}

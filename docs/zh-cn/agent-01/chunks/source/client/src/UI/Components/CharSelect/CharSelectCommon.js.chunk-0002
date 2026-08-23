@@ -1,0 +1,500 @@
+
+				// Success (clean up character)
+				case -1: {
+					const root = this.getRoot();
+
+					delete _slots[_index];
+					delete _entitySlots[_index];
+
+					let i = 0;
+					let count = _list.length;
+
+					while (i < count) {
+						if (_list[i].CharNum === _index) {
+							_list.splice(i, 1);
+							--count;
+						} else {
+							i++;
+						}
+					}
+
+					// Refresh UI
+					moveCursorTo(_index);
+					root.querySelector('.slotinfo .number').textContent = `${_list.length} / ${_maxSlots}`;
+					return;
+				}
+
+				default: // Others error ?
+				case 0: // Incorrect adress email
+					UIManager.showMessageBox(DB.getMessage(301), 'ok');
+					break;
+			}
+		}
+	};
+
+	/**
+	 * Adding a Character to the list
+	 *
+	 * @param {object} character data
+	 */
+	Component.addCharacter = function addCharacter(character) {
+		if (!('sex' in character) || character.sex === 99) {
+			character.sex = _sex;
+		}
+
+		if (gridLayout) {
+			_list.push(character);
+			_slots[character.CharNum] = character;
+
+			_entitySlots[character.CharNum] = new Entity();
+			_entitySlots[character.CharNum].set(character);
+			_entitySlots[character.CharNum].effectState =
+				_entitySlots[character.CharNum]._effectState & ~StatusConst.EffectState.INVISIBLE;
+			_entitySlots[character.CharNum].hideShadow = true;
+
+			Component.updateCharSlot(character.CharNum);
+			return;
+		}
+
+		//Adjust from remaining time to fixed datetime
+		if (deleteReservation && character.DeleteDate) {
+			const now = Math.floor(Date.now() / 1000);
+			const timer =
+				(PACKETVER.value > 20130000 && PACKETVER.value <= 20141022) || PACKETVER.value >= 20150513
+					? character.DeleteDate + now
+					: character.DeleteDate;
+			character.DeleteDate = timer;
+		}
+
+		_list.push(character);
+		_slots[character.CharNum] = character;
+
+		_entitySlots[character.CharNum] = new Entity();
+		_entitySlots[character.CharNum].set(character);
+		_entitySlots[character.CharNum].effectState =
+			_entitySlots[character.CharNum]._effectState & ~StatusConst.EffectState.INVISIBLE;
+
+		if (deleteReservation && (!packetverGatedDelete || PACKETVER.value >= 20100803)) {
+			if (_slots[character.CharNum].DeleteDate && Math.floor(_index / 3) === Math.floor(character.CharNum / 3)) {
+				const root = Component.getRoot();
+				const slotNum = ((character.CharNum + _maxSlots) % _maxSlots) + 1;
+				const countdown = root.querySelector(`.timedelete.slot${slotNum}`);
+				const entity = _entitySlots[character.CharNum];
+				if (countdown) {
+					countdown.dataset.datetime = _slots[character.CharNum].DeleteDate;
+					countdown.textContent = formatDatetime(_slots[character.CharNum].DeleteDate);
+					countdown.style.display = 'block';
+				}
+				entity.setAction({
+					action: entity.ACTION.SIT,
+					frame: 0,
+					play: true,
+					repeat: true
+				});
+			}
+		}
+	};
+
+	/**
+	 * Disable or Enable the UI.
+	 *
+	 * @param {boolean}
+	 */
+	Component.setUIEnabled = function setUIEnabled(value) {
+		_disable_UI = !value;
+	};
+
+	/**
+	 * Callback to use
+	 */
+	Component.onExitRequest = function onExitRequest() {};
+	Component.onDeleteRequest = function onDeleteRequest() {};
+	Component.onCreateRequest = function onCreateRequest() {};
+	Component.onConnectRequest = function onConnectRequest() {};
+	if (deleteReservation) {
+		Component.onDeleteReqDelay = function onDeleteReqDelay() {};
+		Component.onCancelDeleteRequest = function onCancelDeleteRequest() {};
+	}
+
+	/**
+	 * Generic method to handle mousedown on arrow
+	 *
+	 * @param {number} value to move
+	 */
+	function genericArrowDown(value) {
+		return event => {
+			moveCursorTo((_index + _maxSlots + value) % _maxSlots);
+			event.stopImmediatePropagation();
+			return false;
+		};
+	}
+
+	/**
+	 * Generic method to handle mousedown on canvas
+	 *
+	 * @param {number} value to move
+	 */
+	function genericCanvasDown(value) {
+		return event => {
+			if (gridLayout) {
+				moveCursorTo(value);
+			} else {
+				moveCursorTo(Math.floor(_index / 3) * 3 + value);
+			}
+			event.stopImmediatePropagation();
+			return false;
+		};
+	}
+
+	/**
+	 * Press "cancel" or ESCAPE key
+	 */
+	function cancel() {
+		if (_disable_UI === false) {
+			if (gridLayout) {
+				UIManager.showPromptBox(
+					DB.getMessage(17),
+					'ok',
+					'cancel',
+					() => {
+						Component.onExitRequest();
+						Component.clearAllSlots();
+					},
+					null
+				);
+				stopCountdownInterval();
+			} else {
+				UIManager.showPromptBox(
+					DB.getMessage(17),
+					'ok',
+					'cancel',
+					() => {
+						Component.onExitRequest();
+					},
+					null
+				);
+			}
+		}
+	}
+
+	/**
+	 * Jumping to Character creation window
+	 */
+	function create() {
+		if (_disable_UI === false) {
+			Component.onCreateRequest(_index);
+		}
+	}
+
+	/**
+	 * Select Player, connect
+	 */
+	function connect() {
+		if (_disable_UI === false) {
+			if (gridLayout) {
+				if (_slots[_index] && !_slots[_index].DeleteDate) {
+					_preferences.index = _index;
+					_preferences.save();
+					Component.onConnectRequest(_slots[_index]);
+					stopCountdownInterval();
+				}
+			} else if (_slots[_index]) {
+				_preferences.index = _index;
+				_preferences.save();
+				Component.onConnectRequest(_slots[_index]);
+			}
+		}
+	}
+
+	/**
+	 * Request to delete a character
+	 */
+	function reserve() {
+		if (_disable_UI === false) {
+			if (_slots[_index]) {
+				Component.off('keydown');
+				Component.onDeleteReqDelay(_slots[_index].GID);
+			}
+		}
+	}
+
+	/**
+	 * Delete a character
+	 */
+	function suppress() {
+		if (_disable_UI === false) {
+			if (_slots[_index]) {
+				Component.off('keydown');
+				Component.onDeleteRequest(_slots[_index].GID);
+			}
+		}
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Delete-reservation flow (V2 / V3 / V4)
+	 * ------------------------------------------------------------------ */
+
+	if (deleteReservation) {
+		/**
+		 * Result of Request in Deleting the Character
+		 *
+		 * @param {object} pkt - packet structure
+		 */
+		Component.reqdeleteAnswer = gridLayout
+			? function reqdeleteAnswer(pkt) {
+					this.on('keydown');
+					const deleteReservedDate = pkt.DeleteReservedDate;
+					const result = typeof pkt.Result === 'undefined' ? -1 : pkt.Result;
+					const info = _slots[_index];
+
+					switch (result) {
+						case 0: // 0: An unknown error has occurred.
+							return;
+
+						case 1: {
+							// 1: none/success
+							const now = Math.floor(Date.now() / 1000);
+							info.DeleteDate = deleteReservedDate + now;
+							requestdelete(_index, deleteReservedDate);
+							break;
+						}
+
+						case 3: // 3: A database error occurred.
+							return;
+
+						case 4: // 4: To delete a character you must withdraw from the guild.
+							UIManager.showMessageBox(DB.getMessage(1818), 'ok');
+							break;
+						case 5: // 5: To delete a character you must withdraw from the party.
+							UIManager.showMessageBox(DB.getMessage(1819), 'ok');
+							break;
+
+						default:
+							return;
+					}
+				}
+			: function reqdeleteAnswer(pkt) {
+					this.on('keydown');
+					const now = Math.floor(Date.now() / 1000);
+					const result = typeof pkt.Result === 'undefined' ? -1 : pkt.Result;
+					const info = _slots[_index];
+
+					switch (result) {
+						case 0: // 0: An unknown error has occurred.
+							return;
+
+						case 1: {
+							// 1: none/success
+							//Adjust from remaining time to fixed datetime
+							const timer =
+								(PACKETVER.value > 20130000 && PACKETVER.value <= 20141022) ||
+								PACKETVER.value >= 20150513
+									? pkt.DeleteReservedDate + now
+									: pkt.DeleteReservedDate;
+							info.DeleteDate = timer;
+							requestdelete(_index, timer);
+							break;
+						}
+
+						case 3: // 3: A database error occurred.
+							return;
+
+						case 4: // 4: To delete a character you must withdraw from the guild.
+							UIManager.showMessageBox(DB.getMessage(1818), 'ok');
+							break;
+						case 5: // 5: To delete a character you must withdraw from the party.
+							UIManager.showMessageBox(DB.getMessage(1819), 'ok');
+							break;
+
+						default:
+							return;
+					}
+				};
+	}
+
+	/**
+	 * When successfully requested for character deletion
+	 * Update UI and add timer
+	 */
+	function requestdelete(index, timer) {
+		const root = Component.getRoot();
+
+		if (gridLayout) {
+			// Make it sit
+			_entitySlots[index].action = 2;
+
+			// Add the timer
+			const countdown = root.querySelector(`.timedelete.slot${index}`);
+			if (countdown) {
+				countdown.dataset.duration = timer;
+				countdown.classList.remove('hidden');
+				countdown.style.display = 'block';
+			}
+
+			// Adjust the buttons
+			root.querySelector('.delete').style.display = 'none';
+			root.querySelector('.canceldelete').style.display = 'block';
+			root.querySelector('.finaldelete').style.display = 'block';
+			return;
+		}
+
+		const entity = _entitySlots[index];
+		let action;
+
+		const countdown = root.querySelector(`.timedelete.slot${(index % 3) + 1}`);
+		if (countdown) {
+			countdown.dataset.datetime = timer;
+			countdown.textContent = formatDatetime(timer);
+			countdown.style.display = 'block';
+			if (Math.floor(Date.now() / 1000) > timer) {
+				countdown.classList.remove('waitdelete');
+				countdown.classList.add('candelete');
+				action = entity.ACTION.DIE;
+			} else {
+				countdown.classList.remove('candelete');
+				countdown.classList.add('waitdelete');
+				action = entity.ACTION.SIT;
+			}
+		}
+
+		// Set action
+		entity.action = action;
+
+		// Adjust the buttons
+		root.querySelector('.delete').style.display = 'none';
+		root.querySelector('.canceldelete').style.display = 'block';
+		if (Math.floor(Date.now() / 1000) > timer) {
+			root.querySelector('.finaldelete').style.display = 'block';
+		} else {
+			root.querySelector('.finaldelete').style.display = 'none';
+		}
+	}
+
+	/**
+	 * Cancel reservation of character for deletion
+	 * Update UI and remove timer
+	 */
+	function removedelete() {
+		if (_slots[_index]) {
+			const root = Component.getRoot();
+
+			// Delete here as well? Though server should tell us this
+			_slots[_index].DeleteDate = 0;
+
+			if (gridLayout) {
+				// Make it stand
+				_entitySlots[_index].action = 0;
+				render();
+
+				// Remove the timer
+				const countdown = root.querySelector(`.timedelete.slot${_index}`);
+				if (countdown) {
+					countdown.dataset.duration = 0;
+					countdown.classList.add('hidden');
+					countdown.style.display = 'none';
+				}
+
+				// Adjust the buttons
+				root.querySelector('.canceldelete').style.display = 'none';
+				root.querySelector('.finaldelete').style.display = 'none';
+				root.querySelector('.delete').style.display = 'block';
+
+				// Send request to the server
+				Component.onCancelDeleteRequest(_slots[_index].GID);
+				return;
+			}
+
+			// Make it stand
+			_entitySlots[_index].action = _entitySlots[_index].ACTION.READYFIGHT;
+			render();
+
+			// Remove the timer
+			const countdown = root.querySelector(`.timedelete.slot${(_index % 3) + 1}`);
+			countdown.dataset.datetime = 0;
+			countdown.textContent = formatDatetime('');
+			countdown.style.display = 'none';
+
+			// Adjust the buttons
+			root.querySelector('.canceldelete').style.display = 'none';
+			root.querySelector('.finaldelete').style.display = 'none';
+			root.querySelector('.delete').style.display = 'block';
+
+			// Send request to the server
+			Component.onCancelDeleteRequest(_slots[_index].GID);
+		}
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Paginated variant (V1 / V2 / V3)
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * Draw a page selection ball (V3)
+	 */
+	function drawBall(btnContainer, index, sel) {
+		const btn = document.createElement('button');
+		btn.className = `btn_pageinfo btn_pageinfo${index}`;
+		btn.style.border = '0';
+		btn.style.width = '8px';
+		btn.style.height = '8px';
+		btn.style.backgroundColor = 'transparent';
+		btn.style.backgroundRepeat = 'no-repeat';
+		btn.style.cursor = 'pointer';
+
+		const imgEl = document.createElement('img');
+		imgEl.width = 8;
+
+		const imagePath = sel ? 'select_character/page_ball_fill.bmp' : 'select_character/page_ball_empty.bmp';
+		Client.loadFile(DB.INTERFACE_PATH + imagePath, data => {
+			btn.style.backgroundImage = `url("${data}")`;
+		});
+
+		btn.addEventListener('click', () => {
+			moveCursorTo((index - 1) * 3);
+		});
+
+		btnContainer.appendChild(btn);
+		btnContainer.appendChild(imgEl);
+	}
+
+	/**
+	 * Format delay date time (V2 / V3)
+	 */
+	function formatDatetime(epoch) {
+		const datetime = new Date(0);
+		datetime.setSeconds(epoch);
+
+		const month = datetime.getMonth() + 1;
+		const day = datetime.getDate();
+		const hours = datetime.getHours();
+		const minutes = datetime.getMinutes();
+		const seconds = datetime.getSeconds();
+
+		const formattedDatetime = DB.getMessage(2097)
+			.replace('%d', `${month}`)
+			.replace('%d', `${day}`)
+			.replace('%d', `${hours}`)
+			.replace('%d', `${minutes}`)
+			.replace('%d', `${seconds}`);
+
+		return formattedDatetime;
+	}
+
+	/**
+	 * Move cursor, update window value (V1 / V2 / V3)
+	 *
+	 * @param {number} index
+	 */
+	function moveCursorToPaginated(index) {
+		const root = Component.getRoot();
+		const charinfo = root.querySelector('.charinfo');
+
+		// Set the last entity to idle
+		let entity = _entitySlots[_index];
+		let info = _slots[_index];
+		let action;
+		if (entity) {
+			if (deleteReservation && info.DeleteDate && (!packetverGatedDelete || PACKETVER.value >= 20100803)) {
+				action = entity.ACTION.SIT;
+			} else {
+				action = entity.ACTION.IDLE;

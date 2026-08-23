@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#ifndef SKILL_HPP
+#define SKILL_HPP
+
+#include <array>
+#include <bitset>
+
+#include <common/cbasetypes.hpp>
+#include <common/database.hpp>
+#include <common/db.hpp>
+#include <common/ers.hpp>
+#include <common/mmo.hpp> // MAX_SKILL, struct square
+#include <common/timer.hpp>
+
+#include "map.hpp" // block_list
+
+enum damage_lv : uint8;
+enum sc_type : int16;
+enum send_target : uint8;
+enum e_damage_type : uint8;
+enum e_battle_flag : uint16;
+enum e_battle_check_target : uint32;
+class map_session_data;
+struct homun_data;
+struct s_skill_unit_group;
+struct status_change_entry;
+class status_change;
+class SkillImpl;
+
+extern struct eri* skill_timer_ers;
+extern DBMap* bowling_db;
+
+extern char dir_ka;
+
+#ifndef TIMERSKILL_INTERVAL
+	#define TIMERSKILL_INTERVAL	150
+#endif
+
+#define MAX_SKILL_PRODUCE_DB	300 /// Max Produce DB
+#define MAX_PRODUCE_RESOURCE	12 /// Max Produce requirements
+#define MAX_SKILL_LEVEL 13 /// Max Skill Level (for skill_db storage)
+#define MAX_MOBSKILL_LEVEL 100	/// Max monster skill level (on skill usage)
+#define MAX_SKILL_CRIMSON_MARKER 3 /// Max Crimson Marker targets (RL_C_MARKER)
+#define SKILL_NAME_LENGTH 40 /// Max Skill Name length
+#define SKILL_DESC_LENGTH 40 /// Max Skill Desc length
+
+/// Used with tracking the hitcount of Earthquake for skills that can avoid the first attack
+#define NPC_EARTHQUAKE_FLAG 0x800
+
+/// To control alternative skill scalings
+#define SKILL_ALTDMG_FLAG 0x10
+/// Make skill ignore requirement consumption [Muh]
+#define SKILL_NOCONSUME_REQ 0x20
+/// Make skill consume ammo, but not the unit [Muh]
+#define UNIT_NOCONSUME_AMMO 0x40
+
+/// Constants to identify a skill's nk value (damage properties)
+/// The NK value applies only to non INF_GROUND_SKILL skills
+/// when determining skill castend function to invoke.
+enum e_skill_nk : uint8 {
+	NK_NODAMAGE = 0,
+	NK_SPLASH,
+	NK_SPLASHSPLIT,
+	NK_IGNOREATKCARD,
+	NK_IGNOREELEMENT,
+	NK_IGNOREDEFENSE,
+	NK_IGNOREFLEE,
+	NK_IGNOREDEFCARD,
+	NK_CRITICAL,
+	NK_IGNORELONGCARD,
+	NK_SIMPLEDEFENSE,
+	NK_MAX,
+};
+
+/// Constants to identify the skill's inf value.
+enum e_skill_inf : uint16 {
+	INF_PASSIVE_SKILL = 0x00, // Used just for skill_db parsing
+	INF_ATTACK_SKILL  = 0x01,
+	INF_GROUND_SKILL  = 0x02,
+	INF_SELF_SKILL    = 0x04, // Skills casted on self where target is automatically chosen
+	// 0x08 not assigned
+	INF_SUPPORT_SKILL = 0x10,
+	INF_TRAP_SKILL    = 0x20,
+};
+
+/// Constants to identify the skill's inf2 value.
+enum e_skill_inf2 : uint8 {
+	INF2_ISQUEST = 0,
+	INF2_ISNPC, //NPC skills are those that players can't have in their skill tree.
+	INF2_ISWEDDING,
+	INF2_ISSPIRIT,
+	INF2_ISGUILD,
+	INF2_ISSONG,
+	INF2_ISENSEMBLE,
+	INF2_ISTRAP,
+	INF2_TARGETSELF, //Refers to ground placed skills that will target the caster as well (like Grandcross)
+	INF2_NOTARGETSELF,
+	INF2_PARTYONLY,
+	INF2_GUILDONLY,
+	INF2_NOTARGETENEMY,
+	INF2_ISAUTOSHADOWSPELL, // Skill that available for SC_AUTOSHADOWSPELL
+	INF2_ISCHORUS, // Chorus skill
+	INF2_IGNOREBGREDUCTION, // Skill that ignore bg reduction
+	INF2_IGNOREGVGREDUCTION, // Skill that ignore gvg reduction
+	INF2_DISABLENEARNPC, // disable to cast skill if near with NPC [Cydh]
+	INF2_TARGETTRAP, // can hit trap-type skill (INF2_ISTRAP) [Cydh]
+	INF2_IGNORELANDPROTECTOR, // Skill that can ignore Land Protector
+	INF2_ALLOWWHENHIDDEN, // Skill that can be use in hiding
+	INF2_ALLOWWHENPERFORMING, // Skill that can be use while in dancing state
+	INF2_TARGETEMPERIUM, // Skill that could hit emperium
+	INF2_IGNOREKAGEHUMI, // Skill blocked by kagehumi
+	INF2_ALTERRANGEVULTURE, // Skill range affected by AC_VULTURE
+	INF2_ALTERRANGESNAKEEYE, // Skill range affected by GS_SNAKEEYE
+	INF2_ALTERRANGESHADOWJUMP, // Skill range affected by NJ_SHADOWJUMP
+	INF2_ALTERRANGERADIUS, // Skill range affected by WL_RADIUS
+	INF2_ALTERRANGERESEARCHTRAP, // Skill range affected by RA_RESEARCHTRAP
+	INF2_IGNOREHOVERING, // Skill that does not affect user that has SC_HOVERING active
+	INF2_ALLOWONWARG, // Skill that can be use while riding warg
+	INF2_ALLOWONMADO, // Skill that can be used while on Madogear
+	INF2_TARGETMANHOLE, // Skill that can be used to target while under SC__MANHOLE effect
+	INF2_TARGETHIDDEN, // Skill that affects hidden targets
+	INF2_INCREASEDANCEWITHWUGDAMAGE, // Skill that is affected by SC_DANCEWITHWUG
+	INF2_IGNOREWUGBITE, // Skill blocked by RA_WUGBITE
+	INF2_IGNOREAUTOGUARD , // Skill is not blocked by SC_AUTOGUARD (physical-skill only)
+	INF2_IGNORECICADA, // Skill is not blocked by SC_UTSUSEMI or SC_BUNSINJYUTSU (physical-skill only)
+	INF2_SHOWSCALE, // Skill shows AoE area while casting
+	INF2_IGNOREGTB, // Skill ignores effect of GTB
+	INF2_TOGGLEABLE, // Skill can be toggled on and off (won't consume HP/SP when toggled off)
+	INF2_IGNORENONCRITATKBONUS, // Skill ignores the bonus of bNonCritAtkRate
+	INF2_MAX,
+};
+
+/// Constants for skill requirements
+enum e_skill_require : uint16 {
+	SKILL_REQ_HPCOST = 0x1,
+	SKILL_REQ_SPCOST = 0x2,
+	SKILL_REQ_HPRATECOST = 0x4,
+	SKILL_REQ_SPRATECOST = 0x8,
+	SKILL_REQ_MAXHPTRIGGER = 0x10,
+	SKILL_REQ_ZENYCOST = 0x20,
+	SKILL_REQ_WEAPON = 0x40,
+	SKILL_REQ_AMMO = 0x80,
+	SKILL_REQ_STATE = 0x100,
+	SKILL_REQ_STATUS = 0x200,
+	SKILL_REQ_SPIRITSPHERECOST = 0x400,
+	SKILL_REQ_ITEMCOST = 0x800,
+	SKILL_REQ_EQUIPMENT = 0x1000,
+	SKILL_REQ_APCOST = 0x2000,
+	SKILL_REQ_APRATECOST = 0x4000,
+};
+
+/// Constants for skill cast near NPC.
+enum e_skill_nonear_npc : uint8 {
+	SKILL_NONEAR_WARPPORTAL = 0x1,
+	SKILL_NONEAR_SHOP = 0x2,
+	SKILL_NONEAR_NPC = 0x4,
+	SKILL_NONEAR_TOMB = 0x8,
+};
+
+/// Constants for skill cast adjustments.
+enum e_skill_cast_flags : uint8 {
+	SKILL_CAST_IGNOREDEX = 0x1,
+	SKILL_CAST_IGNORESTATUS = 0x2,
+	SKILL_CAST_IGNOREITEMBONUS = 0x4,
+};
+
+/// Constants for skill copyable options.
+enum e_skill_copyable_option : uint8 {
+	SKILL_COPY_PLAGIARISM = 0x1,
+	SKILL_COPY_REPRODUCE = 0x2,
+};
+
+/// Constants for skill unit flags.
+enum e_skill_unit_flag : uint8 {
+	UF_NONE = 0,
+	UF_NOENEMY,	// If 'defunit_not_enemy' is set, the target is changed to 'friend'
+	UF_NOREITERATION,	// Spell cannot be stacked
+	UF_NOFOOTSET,	// Spell cannot be cast near/on targets
+	UF_NOOVERLAP,	// Spell effects do not overlap
+	UF_PATHCHECK,	// Only cells with a shootable path will be placed
+	UF_NOPC,	// May not target players
+	UF_NOMOB,	// May not target mobs
+	UF_SKILL,	// May target skills
+	UF_DANCE,	// Dance
+	UF_ENSEMBLE,	// Duet
+	UF_SONG,	// Song
+	UF_DUALMODE,	// Spells should trigger both ontimer and onplace/onout/onleft effects.
+	UF_NOKNOCKBACK,	// Skill unit cannot be knocked back
+	UF_RANGEDSINGLEUNIT,	// hack for ranged layout, only display center
+	UF_CRAZYWEEDIMMUNE,	// Immune to Crazy Weed removal
+	UF_REMOVEDBYFIRERAIN,	// removed by Fire Rain
+	UF_KNOCKBACKGROUP,	// knockback skill unit with its group instead of single unit
+	UF_HIDDENTRAP,	// Hidden trap [Cydh]
+	UF_MAX,
+};
+
+/// Time that's added to canact delay on castbegin and substracted on castend
+/// This is to prevent hackers from sending a skill packet after cast but before a timer triggers castend
+const t_tick SECURITY_CASTTIME = 100;
+
+/// Flags passed to skill_attack/skill_area_sub
+enum e_skill_display {
+	SD_LEVEL     = 0x1000, // skill_attack will send -1 instead of skill level (affects display of some skills)
+	SD_ANIMATION = 0x2000, // skill_attack will use '5' instead of the skill's 'type' (this makes skills show an animation). Also being used in skill_attack for splash skill (NK_SPLASH) to check status_check_skilluse
+	SD_SPLASH    = 0x4000, // skill_area_sub will count targets in skill_area_temp[2]
+	SD_PREAMBLE  = 0x8000, // skill_area_sub will transmit a 'magic' damage packet (-30000 dmg) for the first target selected
+};
+
+#define MAX_SKILL_ITEM_REQUIRE	10 /// Maximum required items
+#define MAX_SKILL_STATUS_REQUIRE 3 /// Maximum required statuses
+#define MAX_SKILL_EQUIP_REQUIRE 10 /// Maximum required equipped item
+
+/// Single skill requirement. !TODO: Cleanup the variable types
+struct s_skill_condition {
+	int32 hp;								///< HP cost
+	int32 mhp;								///< Max HP to trigger
+	int32 sp;								/// SP cost
+	int32 ap;								/// AP cost
+	int32 hp_rate;							/// HP cost (%)
+	int32 sp_rate;							/// SP cost (%)
+	int32 ap_rate;							/// AP cost (%)
+	int32 zeny;								/// Zeny cost
+	int32 weapon;							/// Weapon type. Combined bitmask of enum weapon_type (1<<weapon)
+	int32 ammo;								/// Ammo type. Combine bitmask of enum ammo_type (1<<ammo)
+	int32 ammo_qty;							/// Amount of ammo
+	int32 state;							/// State/condition. @see enum e_require_state
+	int32 spiritball;						/// Spiritball cost
+	t_itemid itemid[MAX_SKILL_ITEM_REQUIRE];	/// Required item
+	int32 amount[MAX_SKILL_ITEM_REQUIRE];	/// Amount of item
+	std::vector<t_itemid> eqItem;				/// List of equipped item
+	std::vector<sc_type> status;			/// List of Status required (SC)
+};
+
+/// Skill requirement structure.
+struct s_skill_require {
+	int32 hp[MAX_SKILL_LEVEL];				///< HP cost
+	int32 mhp[MAX_SKILL_LEVEL];				///< Max HP to trigger
+	int32 sp[MAX_SKILL_LEVEL];				/// SP cost
+	int32 ap[MAX_SKILL_LEVEL];				/// AP cost
+	int32 hp_rate[MAX_SKILL_LEVEL];			/// HP cost (%)
+	int32 sp_rate[MAX_SKILL_LEVEL];			/// SP cost (%)
+	int32 ap_rate[MAX_SKILL_LEVEL];			/// AP cost (%)
+	int32 zeny[MAX_SKILL_LEVEL];			/// Zeny cost
+	int32 weapon;							/// Weapon type. Combined bitmask of enum weapon_type (1<<weapon)
+	int32 ammo;								/// Ammo type. Combine bitmask of enum ammo_type (1<<ammo)
+	int32 ammo_qty[MAX_SKILL_LEVEL];		/// Amount of ammo
+	int32 state;							/// State/condition. @see enum e_require_state
+	int32 spiritball[MAX_SKILL_LEVEL];		/// Spiritball cost
+	t_itemid itemid[MAX_SKILL_ITEM_REQUIRE];	/// Required item
+	int32 amount[MAX_SKILL_ITEM_REQUIRE];	/// Amount of item
+	std::vector<t_itemid> eqItem;				/// List of equipped item
+	std::vector<sc_type> status;			/// List of Status required (SC)
+	bool itemid_level_dependent;			/// If the ItemCost is skill level dependent or not.
+};
+
+/// Skill Copyable structure.
+struct s_skill_copyable { // [Cydh]
+	uint8 option;
+	uint16 req_opt;
+};
+
+/// Database skills
+struct s_skill_db {
+	uint16 nameid;								///< Skill ID
+	char name[SKILL_NAME_LENGTH];				///< AEGIS_Name
+	char desc[SKILL_DESC_LENGTH];				///< English Name
+	int32 range[MAX_SKILL_LEVEL];				///< Range
+	e_damage_type hit;							///< Hit type
+	uint16 inf;									///< Inf: 0- passive, 1- enemy, 2- place, 4- self, 16- friend, 32- trap
+	e_element element[MAX_SKILL_LEVEL];			///< Element
+	std::bitset<NK_MAX> nk;						///< Damage properties
+	int32 splash[MAX_SKILL_LEVEL];				///< Splash effect
+	uint16 max;									///< Max level
+	int32 num[MAX_SKILL_LEVEL];					///< Number of hit
+	bool castcancel;							///< Cancel cast when being hit
+	uint16 cast_def_rate;						///< Def rate during cast a skill
+	e_battle_flag skill_type;					///< Skill type
+	int32 blewcount[MAX_SKILL_LEVEL];			///< Blew count
+	std::bitset<INF2_MAX> inf2;					///< Skill flags @see enum e_skill_inf2
+	int32 maxcount[MAX_SKILL_LEVEL];			///< Max number skill can be casted in same map
+
+	uint8 castnodex;							///< 1 - Not affected by dex, 2 - Not affected by SC, 4 - Not affected by item
+	uint8 delaynodex;							///< 1 - Not affected by dex, 2 - Not affected by SC, 4 - Not affected by item
+
+	// skill_nocast_db.txt
+	uint32 nocast;								///< Skill cannot be casted at this zone
+
+	int32 giveap[MAX_SKILL_LEVEL];				///< AP Given On Use
+
+	uint16 unit_id;								///< Unit ID. @see enum e_skill_unit_id
+	uint16 unit_id2;							///< Alternate unit ID. @see enum e_skill_unit_id
+	int32 unit_layout_type[MAX_SKILL_LEVEL];	///< Layout type. -1 is special layout, others are square with length*width: (val*2+1)^2
+	int32 unit_range[MAX_SKILL_LEVEL];			///< Unit cell effect range
+	int16 unit_interval;						///< Interval
+	int32 unit_target;							///< Unit target.
+	std::bitset<UF_MAX> unit_flag;				///< Unit flags.
+
+	int32 cast[MAX_SKILL_LEVEL];				///< Variable casttime
+	int32 delay[MAX_SKILL_LEVEL];				///< Global delay (delay before reusing all skills)
+	int32 walkdelay[MAX_SKILL_LEVEL];			///< Delay to walk after casting
+	int32 upkeep_time[MAX_SKILL_LEVEL];			///< Duration
+	int32 upkeep_time2[MAX_SKILL_LEVEL];		///< Duration2
+	int32 cooldown[MAX_SKILL_LEVEL];			///< Cooldown (delay before reusing same skill)
+#ifdef RENEWAL_CAST
+	int32 fixed_cast[MAX_SKILL_LEVEL];			///< If -1 means 20% than 'cast'
+#endif
+
+	struct s_skill_require require;				///< Skill requirement
+
+	uint16 unit_nonearnpc_range;				///< Additional range for UF_NONEARNPC or INF2_DISABLENEARNPC [Cydh]
+	uint16 unit_nonearnpc_type;					///< Type of NPC [Cydh]
+
+	struct s_skill_damage damage;
+	struct s_skill_copyable copyable;
+
+	int32 abra_probability[MAX_SKILL_LEVEL];
+	uint16 improvisedsong_rate;
+	sc_type sc;									///< Default SC for skill
+
+	std::unique_ptr<const SkillImpl> impl;
+};
+
+class SkillDatabase : public TypesafeCachedYamlDatabase <uint16, s_skill_db> {
+private:
+	/// Skill ID to Index lookup: skill_index = skill_get_index(skill_id) - [FWI] 20160423 the whole index thing should be removed.
+	uint16 skilldb_id2idx[(UINT16_MAX + 1)];
+	/// Skill count, also as last index
+	uint16 skill_num;
+
+	template<typename T, size_t S> bool parseNode(const std::string& nodeName, const std::string& subNodeName, const ryml::NodeRef& node, T(&arr)[S]);
+
+public:
+	SkillDatabase() : TypesafeCachedYamlDatabase("SKILL_DB", 4) {
+		this->clear();
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+	void clear() override;
+	void loadingFinished() override;
+
+	// Additional
+	uint16 get_index( uint16 skill_id, bool silent, const char* func, const char* file, int32 line );
+};
+
+extern SkillDatabase skill_db;
+
+#define MAX_SQUARE_LAYOUT		7	// 15*15 unit placement maximum
+#define MAX_SKILL_UNIT_LAYOUT	(48+MAX_SQUARE_LAYOUT)	// 47 special ones + the square ones
+#define MAX_SKILL_UNIT_LAYOUT2	17
+#define MAX_SKILL_UNIT_COUNT	((MAX_SQUARE_LAYOUT*2+1)*(MAX_SQUARE_LAYOUT*2+1))
+struct s_skill_unit_layout {
+	int32 count;
+	int32 dx[MAX_SKILL_UNIT_COUNT];
+	int32 dy[MAX_SKILL_UNIT_COUNT];
+};
+
+struct s_skill_nounit_layout {
+	int32 count;
+	int32 dx[MAX_SKILL_UNIT_COUNT];
+	int32 dy[MAX_SKILL_UNIT_COUNT];
+};
+
+#define MAX_SKILLTIMERSKILL 50
+struct skill_timerskill {
+	int32 timer;
+	int32 src_id;
+	int32 target_id;
+	int32 map;
+	int16 x,y;
+	uint16 skill_id,skill_lv;
+	int32 type; // a BF_ type (NOTE: some places use this as general-purpose storage...)
+	int32 flag;
+};
+
+/// Skill unit
+struct skill_unit : public block_list {
+	std::shared_ptr<s_skill_unit_group> group; /// Skill group reference
+	t_tick limit;
+	int32 val1, val2;
+	int16 range;
+	bool alive;
+	bool hidden;
+};
+
+/// Skill unit group
+struct s_skill_unit_group {
+	int32 src_id; /// Caster ID/RID, if player is account_id
+	int32 party_id; /// Party ID
+	int32 guild_id; /// Guild ID
+	int32 bg_id; /// Battleground ID
+	int32 map; /// Map
+	int32 target_flag; /// Holds BCT_* flag for battle_check_target
+	int32 bl_flag; /// Holds BL_* flag for map_foreachin* functions
+	t_tick tick; /// Tick when skill unit initialized
+	t_tick limit; /// Life time
+	int32 interval; /// Timer interval
+	uint16 skill_id, /// Skill ID
+		skill_lv; /// Skill level
+	int32 val1, val2, val3; /// Values
+	char *valstr; /// String value, used for HT_TALKIEBOX & RG_GRAFFITI
+	int32 unit_id; /// Unit ID (for client effect)
+	int32 group_id; /// Skill Group ID
+	int32 link_group_id; /// Linked group that should be deleted if this one is deleted
+	int32 unit_count, /// Number of unit at this group
+		alive_count; /// Number of alive unit
+	t_itemid item_id; /// Store item used.
+	skill_unit *unit; /// Skill Unit
+	struct {
+		unsigned ammo_consume : 1; // Need to consume ammo
+		unsigned song_dance : 2; //0x1 Song/Dance, 0x2 Ensemble
+		unsigned guildaura : 1; // Guild Aura
+	} state;
+
+	~s_skill_unit_group() {
+		if (this->unit)
+			map_freeblock(this->unit); // schedules deallocation of whole array (HACK)
+	}
+};
+
+#define MAX_SKILLUNITGROUPTICKSET 25
+struct skill_unit_group_tickset {
+	t_tick tick;
+	int32 id;
+};
+
+/// Ring of Nibelungen bonuses
+enum e_nibelungen_status : uint8 {
+	RINGNBL_ASPDRATE = 1,		///< ASPD + 20%
+	RINGNBL_ATKRATE,		///< Physical damage + 20%
+	RINGNBL_MATKRATE,		///< MATK + 20%
+	RINGNBL_HPRATE,			///< Maximum HP + 30%
+	RINGNBL_SPRATE,			///< Maximum SP + 30%
+	RINGNBL_ALLSTAT,		///< All stats + 15
+	RINGNBL_HIT,			///< HIT + 50
+	RINGNBL_FLEE,			///< FLEE + 50
+	RINGNBL_SPCONSUM,		///< SP consumption - 30%
+	RINGNBL_HPREGEN,		///< HP recovery + 100%
+	RINGNBL_SPREGEN,		///< SP recovery + 100%
+	RINGNBL_MAX,
+};
+
+/// Enum for skill_blown
+enum e_skill_blown	{
+	BLOWN_NONE					= 0x00,
+	BLOWN_DONT_SEND_PACKET		= 0x01, // Position update packets must not be sent to the client
+	BLOWN_IGNORE_NO_KNOCKBACK	= 0x02, // Ignores players' special_state.no_knockback
+	// These flags return 'count' instead of 0 if target is cannot be knocked back
+	BLOWN_NO_KNOCKBACK_MAP		= 0x04, // On a WoE/BG map
+	BLOWN_MD_KNOCKBACK_IMMUNE	= 0x08, // If target is MD_KNOCKBACK_IMMUNE
+	BLOWN_TARGET_NO_KNOCKBACK	= 0x10, // If target has 'special_state.no_knockback'
+	BLOWN_TARGET_BASILICA		= 0x20, // If target is in Basilica area
+};
+
+// Enum for skill_dance_overlap flag parameter
+enum e_dance_overlap : int32 {
+	OVERLAP_REMOVE = 0, // Skill unit is about to be removed, remove overlap marker from overlapping units on the cell if applicable
+	OVERLAP_SET, // Skill unit was placed, add overlap marker to overlapping units on the cell
+	OVERLAP_COUNT, // Don't change overlap marker, just count units overlapping with skill unit (excluding itself)
+};
+
+/// Create Database item
+struct s_skill_produce_db {
+	t_itemid nameid; /// Product ID
+	uint16 req_skill; /// Required Skill
+	unsigned char req_skill_lv, /// Required Skill Level
+		itemlv; /// Item Level
+	t_itemid mat_id[MAX_PRODUCE_RESOURCE]; /// Materials needed
+	uint16 mat_amount[MAX_PRODUCE_RESOURCE]; /// Amount of each materials
+};
+extern struct s_skill_produce_db skill_produce_db[MAX_SKILL_PRODUCE_DB];
+
+/// Creating database arrow
+struct s_skill_arrow_db {
+	t_itemid nameid; /// Material ID
+	std::unordered_map<t_itemid, uint16> created; /// Arrow created
+};
+
+class SkillArrowDatabase : public TypesafeYamlDatabase<t_itemid, s_skill_arrow_db> {
+public:
+	SkillArrowDatabase() : TypesafeYamlDatabase("CREATE_ARROW_DB", 1) {
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+};
+
+extern SkillArrowDatabase skill_arrow_db;
+
+/// Abracadabra database
+struct s_skill_abra_db {
+	uint16 skill_id; /// Skill ID
+	std::array<uint16, MAX_SKILL_LEVEL> per; /// Probability summoned
+};
+
+class AbraDatabase : public TypesafeYamlDatabase<uint16, s_skill_abra_db> {
+public:

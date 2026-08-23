@@ -1,0 +1,500 @@
+		switch (this.main.shadeType) {
+			default:
+
+			case RSM.SHADING.NONE:
+				this.calcNormal_NONE(face_normal);
+				this.generate_mesh_FLAT(vert, face_normal, mesh);
+				break;
+
+			case RSM.SHADING.FLAT:
+				this.calcNormal_FLAT(face_normal, normalMat, shadeGroupUsed);
+				this.generate_mesh_FLAT(vert, face_normal, mesh);
+				break;
+
+			case RSM.SHADING.SMOOTH:
+				this.calcNormal_FLAT(face_normal, normalMat, shadeGroupUsed);
+				this.calcNormal_SMOOTH(face_normal, shadeGroupUsed, shadeGroup);
+				this.generate_mesh_SMOOTH(vert, shadeGroup, mesh);
+				break;
+		}
+
+		return mesh;
+	}
+	/**
+	 * Generate default normals
+	 *
+	 * @param {Float32Array[]} out
+	 */
+	calcNormal_NONE(out) {
+		let i, count;
+		for (i = 1, count = out.length; i < count; i += 3) {
+			out[i] = -1;
+		}
+	}
+
+	/**
+	 * Generate FLAT normals
+	 *
+	 * @param {Float32Array[]} out
+	 * @param {mat4} normalMat
+	 * @param {Array} groupUsed
+	 */
+	calcNormal_FLAT(out, normalMat, groupUsed) {
+		let i, j, count;
+		let face;
+		const temp_vec = vec3.create();
+		const faces = this.faces;
+		const vertices = this.vertices;
+
+		for (i = 0, j = 0, count = faces.length; i < count; ++i, j += 3) {
+			face = faces[i];
+
+			vec3.calcNormal(vertices[face.vertidx[0]], vertices[face.vertidx[1]], vertices[face.vertidx[2]], temp_vec);
+
+			// (vec3)out = (mat4)normalMat * (vec3)temp_vec:
+			out[j] =
+				normalMat[0] * temp_vec[0] + normalMat[4] * temp_vec[1] + normalMat[8] * temp_vec[2] + normalMat[12];
+			out[j + 1] =
+				normalMat[1] * temp_vec[0] + normalMat[5] * temp_vec[1] + normalMat[9] * temp_vec[2] + normalMat[13];
+			out[j + 2] =
+				normalMat[2] * temp_vec[0] + normalMat[6] * temp_vec[1] + normalMat[10] * temp_vec[2] + normalMat[14];
+
+			groupUsed[face.smoothGroup] = true;
+		}
+	}
+
+	/**
+	 * Generate smooth normals
+	 *
+	 * @param {Float32Array[]} normal
+	 * @param {Array} groupUsed
+	 * @param {Array} group
+	 */
+	calcNormal_SMOOTH(normal, groupUsed, group) {
+		let i, j, k, l, v, x, y, z, len;
+		const size = this.vertices.length;
+		const faces = this.faces;
+		let face, norm;
+		const count = faces.length;
+
+		for (j = 0; j < 32; ++j) {
+			// Group not used, skip it
+			if (!groupUsed[j]) {
+				continue;
+			}
+
+			group[j] = new Float32Array(size * 3);
+			norm = group[j];
+
+			for (v = 0, l = 0; v < size; ++v, l += 3) {
+				x = 0;
+				y = 0;
+				z = 0;
+
+				for (i = 0, k = 0; i < count; ++i, k += 3) {
+					face = faces[i];
+					if (
+						face.smoothGroup === j &&
+						(face.vertidx[0] === v || face.vertidx[1] === v || face.vertidx[2] === v)
+					) {
+						x += normal[k];
+						y += normal[k + 1];
+						z += normal[k + 2];
+					}
+				}
+
+				// (vec3)norm = normalize( vec3(x,y,z) );
+				len = 1 / Math.sqrt(x * x + y * y + z * z);
+				norm[l] = x * len;
+				norm[l + 1] = y * len;
+				norm[l + 2] = z * len;
+			}
+		}
+	}
+
+	/**
+	 * Generate Mesh (with normals type FLAT)
+	 *
+	 * @param {Float32Array[]} vert
+	 * @param {Float32Array[]} norm
+	 * @param {Array} mesh
+	 */
+	generate_mesh_FLAT(vert, norm, mesh) {
+		let a, b, o, i, j, k, t, count;
+		const faces = this.faces;
+		const textures = this.textures;
+		const tver = this.tvertices;
+		const alpha = this.main.alpha;
+		const offset = [];
+		let face, idx, tidx, out;
+
+		// Setup mesh slot array
+		for (i = 0, count = textures.length; i < count; ++i) {
+			offset[textures[i]] = 0;
+		}
+
+		for (i = 0, o = 0, k = 0, count = faces.length; i < count; ++i, k += 3) {
+			face = faces[i];
+			idx = face.vertidx;
+			tidx = face.tvertidx;
+			t = textures[face.texid];
+			out = mesh[t];
+			o = offset[t];
+
+			for (j = 0; j < 3; j++, o += 9) {
+				a = idx[j] * 3;
+				b = tidx[j] * 6;
+				/* vec3 positions  */ out[o + 0] = vert[a + 0];
+				out[o + 1] = vert[a + 1];
+				out[o + 2] = vert[a + 2];
+				/* vec3 normals    */ out[o + 3] = norm[k + 0];
+				out[o + 4] = norm[k + 1];
+				out[o + 5] = norm[k + 2];
+				/* vec2 textCoords */ out[o + 6] = tver[b + 4];
+				out[o + 7] = tver[b + 5];
+				/* float alpha     */ out[o + 8] = alpha;
+			}
+
+			offset[t] = o;
+		}
+	}
+
+	/**
+	 * Generate Mesh (with normals type SMOOTH)
+	 *
+	 * @param {Float32Array[]} vert
+	 * @param {Array} shadeGroup
+	 * @param {Array} mesh
+	 */
+	generate_mesh_SMOOTH(vert, shadeGroup, mesh) {
+		let a, b, o, i, j, t, count;
+		const faces = this.faces;
+		const textures = this.textures;
+		const tver = this.tvertices;
+		const alpha = this.main.alpha;
+		const offset = [];
+		let norm, face, idx, tidx, out;
+
+		// Setup mesh slot array
+		for (i = 0, count = textures.length; i < count; ++i) {
+			offset[textures[i]] = 0;
+		}
+
+		for (i = 0, o = 0, count = faces.length; i < count; ++i) {
+			face = faces[i];
+			norm = shadeGroup[face.smoothGroup];
+			idx = face.vertidx;
+			tidx = face.tvertidx;
+
+			t = textures[face.texid];
+			out = mesh[t];
+			o = offset[t];
+
+			for (j = 0; j < 3; j++, o += 9) {
+				a = idx[j] * 3;
+				b = tidx[j] * 6;
+				/* vec3 positions  */ out[o + 0] = vert[a + 0];
+				out[o + 1] = vert[a + 1];
+				out[o + 2] = vert[a + 2];
+				/* vec3 normals    */ out[o + 3] = norm[a + 0];
+				out[o + 4] = norm[a + 1];
+				out[o + 5] = norm[a + 2];
+				/* vec2 textCoords */ out[o + 6] = tver[b + 4];
+				out[o + 7] = tver[b + 5];
+				/* float alpha     */ out[o + 8] = alpha;
+			}
+
+			offset[t] = o;
+		}
+	}
+}
+
+/**
+ * Model class loader
+ *
+ * @param {ArrayBuffer} data - optional
+ */
+class RSM {
+	constructor(data) {
+		if (data) {
+			this.load(data);
+		}
+	}
+
+	/**
+	 * Model Shading type
+	 */
+	static SHADING = {
+		NONE: 0,
+		FLAT: 1,
+		SMOOTH: 2
+	};
+
+	/**
+	 * Bounding Box
+	 */
+	static Box = Box;
+
+	/**
+	 * Loading RSM file
+	 *
+	 * @param {ArrayBuffer} data
+	 */
+	load(data) {
+		let i, count;
+		let posKeyframes;
+		let mainNodeName = null;
+		const textures = [];
+		const additionalTextures = [];
+
+		// Read header.
+		const fp = new BinaryReader(data);
+		const header = fp.readBinaryString(4);
+
+		if (header !== 'GRSM' && header !== 'GRSX') {
+			throw new Error(`RSM::load() - Incorrect header "${header}", must be "GRSM"`);
+		}
+
+		// Read infos
+		this.version = fp.readByte() + fp.readByte() / 10;
+		this.animLen = fp.readLong();
+		this.shadeType = fp.readLong();
+		this.main_node = null;
+
+		this.alpha = this.version >= 1.4 ? fp.readUByte() / 255.0 : 1.0;
+
+		// Read data based on version
+		if (this.version >= 2.3) {
+			this.frameRatePerSecond = fp.readFloat();
+			count = fp.readLong();
+
+			for (i = 0; i < count; i++) {
+				textures.push(fp.readBinaryString(fp.readLong()));
+			}
+		} else if (this.version >= 2.2) {
+			this.frameRatePerSecond = fp.readFloat();
+			count = fp.readLong();
+			for (i = 0; i < count; ++i) {
+				additionalTextures.push(fp.readBinaryString(fp.readLong()));
+			}
+
+			count = fp.readLong();
+
+			for (i = 0; i < count; i++) {
+				textures.push(fp.readBinaryString(fp.readLong()));
+			}
+		} else {
+			fp.seek(16, SEEK_CUR); // reserved
+			count = fp.readLong();
+			for (i = 0; i < count; ++i) {
+				additionalTextures.push(fp.readBinaryString(40));
+			}
+			mainNodeName = fp.readBinaryString(40);
+			textures.push(mainNodeName);
+		}
+
+		count = fp.readLong();
+		const nodes = new Array(count);
+		for (i = 0; i < count; ++i) {
+			nodes[i] = new RSM.Node(this, fp, count === 1);
+			if (mainNodeName && nodes[i].name === mainNodeName) {
+				this.main_node = nodes[i];
+			}
+		}
+
+		// In some custom models, the default name don't match nodes name.
+		// So by default, assume the main node is the first one.
+		if (this.main_node === null) {
+			this.main_node = nodes[0];
+		}
+
+		// Read poskeyframes
+		if (this.version < 1.6) {
+			count = fp.readLong();
+			posKeyframes = new Array(count);
+
+			for (i = 0; i < count; ++i) {
+				posKeyframes[i] = {
+					frame: fp.readLong(),
+					px: fp.readFloat(),
+					py: fp.readFloat(),
+					pz: fp.readFloat(),
+					data: fp.readFloat()
+				};
+			}
+
+			this.posKeyframes = posKeyframes;
+		} else {
+			this.posKeyframes = [];
+		}
+
+		// read Volume box
+		count = fp.offset >= fp.length ? 0 : fp.readLong();
+		const volumebox = new Array(count);
+
+		for (i = 0; i < count; ++i) {
+			volumebox[i] = {
+				size: [fp.readFloat(), fp.readFloat(), fp.readFloat()],
+				pos: [fp.readFloat(), fp.readFloat(), fp.readFloat()],
+				rot: [fp.readFloat(), fp.readFloat(), fp.readFloat()],
+				flag: this.version >= 1.3 ? fp.readLong() : 0
+			};
+		}
+
+		this.textures = additionalTextures;
+		this.nodes = nodes;
+		if (this.version >= 2.3) {
+			for (i = 0; i < this.main_node.textures.length; i++) {
+				if (!this.textures.includes(this.main_node.textures[i])) {
+					const texture = this.main_node.textures[i];
+					this.textures.push(texture);
+					this.main_node.textures[i] = this.textures.indexOf(texture);
+				}
+			}
+			this.nodes.forEach(node => {
+				for (i = 0; i < node.textures.length; i++) {
+					if (typeof node.textures[i] !== 'number') {
+						const texture = node.textures[i];
+						if (!this.textures.includes(texture)) {
+							this.textures.push(texture);
+						}
+						node.textures[i] = this.textures.indexOf(texture);
+					}
+				}
+			});
+		}
+		this.volumebox = volumebox;
+		this.instances = [];
+		this.box = new RSM.Box();
+		this.calcBoundingBox();
+	}
+
+	/**
+	 * Create a model instance
+	 *
+	 * @param {object} model
+	 * @param {number} width
+	 * @param {number} height
+	 */
+	createInstance(model, width, height) {
+		const matrix = mat4.create();
+
+		mat4.identity(matrix);
+		mat4.translate(matrix, matrix, [model.position[0] + width, model.position[1], model.position[2] + height]);
+		mat4.rotateZ(matrix, matrix, (model.rotation[2] / 180) * Math.PI);
+		mat4.rotateX(matrix, matrix, (model.rotation[0] / 180) * Math.PI);
+		mat4.rotateY(matrix, matrix, (model.rotation[1] / 180) * Math.PI);
+		mat4.scale(matrix, matrix, model.scale);
+
+		if (this.main_node.main.version >= 2.2) {
+			// Apply scaling based on the main node's flip attribute
+			mat4.scale(matrix, matrix, this.main_node.flip);
+
+			// Apply translation based on the main node's offset attribute
+			mat4.translate(matrix, matrix, this.main_node.offset);
+
+			// Apply translation upwards by the range value in the Y axis
+			mat4.translate(matrix, matrix, [0.0, this.box.range[1], 0.0]);
+
+			// Apply translation based on the box's offset attribute
+			mat4.translate(matrix, matrix, this.box.offset);
+		}
+
+		this.instances.push(matrix);
+	}
+
+	/**
+	 * Calculate model bounding box
+	 */
+	calcBoundingBox() {
+		let i, j;
+		const box = this.box;
+		const matrix = mat4.create();
+		const nodes = this.nodes;
+		const min = Math.min,
+			max = Math.max;
+		const count = nodes.length;
+
+		mat4.identity(matrix);
+		this.main_node.calcBoundingBox(matrix);
+
+		for (i = 0; i < 3; ++i) {
+			for (j = 0; j < count; ++j) {
+				box.max[i] = max(box.max[i], nodes[j].box.max[i]);
+				box.min[i] = min(box.min[i], nodes[j].box.min[i]);
+			}
+			box.offset[i] = (box.max[i] + box.min[i]) / 2.0;
+			box.range[i] = (box.max[i] - box.min[i]) / 2.0;
+			box.center[i] = box.min[i] + box.range[i];
+		}
+	}
+
+	/**
+	 * Compile Model
+	 */
+	compile() {
+		const nodes = this.nodes;
+		const instances = this.instances;
+
+		const node_count = nodes.length;
+		const instance_count = instances.length;
+		let i, j, k;
+
+		const meshes = new Array(node_count * instance_count);
+
+		// Generate Mesh
+		for (i = 0, k = 0; i < node_count; ++i) {
+			for (j = 0; j < instance_count; ++j, k++) {
+				meshes[k] = nodes[i].compile(instances[j]);
+			}
+		}
+
+		return {
+			meshes: meshes,
+			textures: this.textures
+		};
+	}
+
+	/**
+	 * Check if this model has animation keyframes
+	 *
+	 * @return {boolean}
+	 */
+	hasAnimation() {
+		if (this._hasanimation) {
+			return true;
+		}
+
+		for (let i = 0; i < this.nodes.length; i++) {
+			const node = this.nodes[i];
+			if (
+				(node.rotKeyframes && node.rotKeyframes.length > 0) ||
+				(node.posKeyframes && node.posKeyframes.length > 0) ||
+				(node.scaleKeyFrames && node.scaleKeyFrames.length > 0)
+			) {
+				this._hasanimation = true;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	static Node = Node;
+
+	/**
+	 * Compile Model at a specific animation frame
+	 *
+	 * @param {number} frame - Animation frame
+	 */
+	compileAtFrame(frame) {
+		const nodes = this.nodes;
+		const instances = this.instances;
+		const animLen = this.animLen || 1;
+
+		const node_count = nodes.length;
+		const instance_count = instances.length;
+		let i, j, k;
+
+		const meshes = new Array(node_count * instance_count);
+
+		// Generate Mesh at frame

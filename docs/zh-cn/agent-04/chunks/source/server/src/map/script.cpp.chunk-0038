@@ -1,0 +1,500 @@
+
+/*=======================================================
+ * Add or Update a mob drop temporarily [Akinari]
+ * Original Idea By: [Lupus]
+ *
+ * addmonsterdrop <mob_id or name>,<item_id>,<rate>,{<steal protected>,{<random option group id>}};
+ *
+ * If given an item the mob already drops, the rate
+ * is updated to the new rate. Rate range is 1-10000.
+ * Returns true if succeeded (added/updated a mob drop) false otherwise.
+ *-------------------------------------------------------*/
+BUILDIN_FUNC(addmonsterdrop)
+{
+	std::shared_ptr<s_mob_db> mob;
+
+	if (script_isstring(st, 2))
+		mob = mob_db.find(mobdb_searchname(script_getstr(st, 2)));
+	else
+		mob = mob_db.find(script_getnum(st, 2));
+
+	if (mob == nullptr) {
+		if (script_isstring(st, 2))
+			ShowError("addmonsterdrop: bad mob name given %s\n", script_getstr(st, 2));
+		else
+			ShowError("addmonsterdrop: bad mob id given %d\n", script_getnum(st, 2));
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	t_itemid item_id = script_getnum(st, 3);
+	std::shared_ptr<item_data> itm = item_db.find(item_id);
+
+	if (itm == nullptr) {
+		ShowError("addmonsterdrop: Nonexistant item %u requested.\n", item_id);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 rate = script_getnum(st, 4);
+
+	if (rate < 1 || rate > 10000) {
+		ShowError("addmonsterdrop: Invalid rate %d (min 1, max 10000).\n", rate);
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	std::shared_ptr<s_mob_drop> drop = nullptr;
+
+	for( std::shared_ptr<s_mob_drop>& entry : mob->dropitem ){
+		// If it equals item_id we update that drop
+		if( entry->nameid == item_id ){
+			drop = entry;
+			break;
+		}
+	}
+
+	bool exists = (drop != nullptr);
+
+	if( !exists ){
+		// No place to put the new drop
+		if( mob->dropitem.size() == MAX_MOB_DROP ){
+			script_pushint(st, false);
+			return SCRIPT_CMD_SUCCESS;
+		}
+
+		drop = std::make_shared<s_mob_drop>();
+	}
+
+	int32 steal_protected = 0;
+	int32 group = 0;
+
+	if (script_hasdata(st,5))
+		steal_protected = script_getnum(st, 5);
+	if (script_hasdata(st,6)) {
+		group = script_getnum(st, 6);
+
+		if (!random_option_group.exists(group)) {
+			ShowError("buildin_addmonsterdrop: Unknown random option group %d.\n", group);
+			script_pushint(st, false);
+			return SCRIPT_CMD_FAILURE;
+		}
+		if (itm->type != IT_WEAPON && itm->type != IT_ARMOR && itm->type != IT_SHADOWGEAR) {
+			ShowError("buildin_addmonsterdrop: Random option group can't be used with this type of item (item Id: %d).\n", item_id);
+			script_pushint(st, false);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	// Fill in the slot with the item and rate
+	drop->nameid = item_id;
+	drop->rate = rate;
+	drop->steal_protected = steal_protected > 0;
+	drop->randomopt_group = group;
+
+	if( !exists ){
+		mob->dropitem.push_back( drop );
+	}
+
+	// Reload the mob search data stored in the item_data
+	mob_reload_itemmob_data();
+
+	script_pushint(st, true);
+	return SCRIPT_CMD_SUCCESS;
+
+}
+
+/*=======================================================
+ * Delete a mob drop temporarily [Akinari]
+ * Original Idea By: [Lupus]
+ *
+ * delmonsterdrop <mob_id or name>,<item_id>;
+ *
+ * Returns 1 if succeeded (deleted a mob drop)
+ *-------------------------------------------------------*/
+BUILDIN_FUNC(delmonsterdrop)
+{
+	std::shared_ptr<s_mob_db> mob;
+
+	if(script_isstring(st, 2))
+		mob = mob_db.find(mobdb_searchname(script_getstr(st,2)));
+	else
+		mob = mob_db.find(script_getnum(st,2));
+
+	t_itemid item_id=script_getnum(st,3);
+
+	if(!item_db.exists(item_id)){
+		ShowError("delmonsterdrop: Nonexistant item %u requested.\n", item_id );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if(mob) { //We got a valid monster, check for item drop on monster
+		bool found = false;
+
+		for( auto it = mob->dropitem.begin(); it != mob->dropitem.end(); ){
+			if( (*it)->nameid == item_id) {
+				it = mob->dropitem.erase( it );
+				found = true;
+			}else{
+				it++;
+			}
+		}
+
+		if( found ){
+			// Reload the mob search data stored in the item_data
+			mob_reload_itemmob_data();
+			script_pushint(st,1);
+		}else{
+			//No drop on that monster
+			script_pushint(st,0);
+		}
+	} else {
+		ShowWarning("delmonsterdrop: bad mob id given %d\n",script_getnum(st,2));
+		return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+
+/*==========================================
+ * Returns a random mob_id
+ * type: Where to fetch from (see enum e_random_monster)
+ * flag: Type of checks to apply (see enum e_random_monster_flags)
+ * lv: Mob level to check against
+ *------------------------------------------*/
+BUILDIN_FUNC(getrandmobid)
+{
+	int32 type = script_getnum(st, 2);
+
+	if (type < MOBG_BRANCH_OF_DEAD_TREE || type >= MOBG_MAX) {
+		ShowWarning("buildin_getrandmobid: Invalid type %d.\n", type);
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 flag = script_hasdata(st, 3) ? script_getnum(st, 3) : RMF_MOB_NOT_BOSS;
+	if (flag < RMF_NONE || flag > RMF_ALL) {
+		ShowWarning("buildin_getrandmobid: Invalid flag %d.\n", flag);
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 lv;
+	if ( script_hasdata(st, 4) ) {
+		lv = script_getnum(st, 4);
+		
+		if (lv <= 0) {
+			ShowWarning("buildin_getrandmobid: Invalid level %d.\n", lv);
+			script_pushint(st, 0);
+			return SCRIPT_CMD_FAILURE;
+		}
+		
+		// If a level is provided, make sure it is respected
+		flag |= RMF_CHECK_MOB_LV;
+	} else {
+		lv = MAX_LEVEL;
+	}
+
+	script_pushint(st, mob_get_random_id(type, (enum e_random_monster_flags)flag, lv));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/*==========================================
+ * Returns some values of a monster [Lupus]
+ * Name, Level, race, size, etc...
+	getmonsterinfo(monsterID,queryIndex);
+	getmonsterinfo(monsterName,queryIndex);
+ *------------------------------------------*/
+BUILDIN_FUNC(getmonsterinfo)
+{
+	std::shared_ptr<s_mob_db> mob = nullptr;
+
+	if (script_isstring(st, 2))
+		mob = mobdb_search_aegisname(script_getstr(st, 2));
+	else {
+		uint16 mob_id = script_getnum(st, 2);
+
+		if (!mob_is_clone(mob_id)) {
+			mob = mob_db.find(mob_id);
+		}
+	}
+	
+	int32 type = script_getnum(st, 3);
+
+	if (mob == nullptr) {
+		//ShowError("buildin_getmonsterinfo: Wrong Monster ID: %i\n", mob_id);
+		if ( type == MOB_NAME ) // requested the name
+			script_pushconststr(st, "null");
+		else
+			script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch ( type ) {
+		case MOB_NAME:       script_pushstrcopy(st, mob->jname.c_str()); break;
+		case MOB_LV:         script_pushint(st, mob->lv); break;
+		case MOB_MAXHP:      script_pushint(st, mob->status.max_hp); break;
+		case MOB_MAXSP:      script_pushint(st, mob->status.max_sp); break;
+		case MOB_BASEEXP:    script_pushint(st, mob->base_exp); break;
+		case MOB_JOBEXP:     script_pushint(st, mob->job_exp); break;
+		case MOB_ATKMIN:     script_pushint(st, mob->status.rhw.atk); break;
+		case MOB_ATKMAX:     script_pushint(st, mob->status.rhw.atk2); break;
+		case MOB_DEF:        script_pushint(st, mob->status.def); break;
+		case MOB_MDEF:       script_pushint(st, mob->status.mdef); break;
+		case MOB_RES:        script_pushint(st, mob->status.res); break;
+		case MOB_MRES:       script_pushint(st, mob->status.mres); break;
+		case MOB_STR:        script_pushint(st, mob->status.str); break;
+		case MOB_AGI:        script_pushint(st, mob->status.agi); break;
+		case MOB_VIT:        script_pushint(st, mob->status.vit); break;
+		case MOB_INT:        script_pushint(st, mob->status.int_); break;
+		case MOB_DEX:        script_pushint(st, mob->status.dex); break;
+		case MOB_LUK:        script_pushint(st, mob->status.luk); break;
+		case MOB_SPEED:      script_pushint(st, mob->status.speed); break;
+		case MOB_ATKRANGE:   script_pushint(st, mob->status.rhw.range); break;
+		case MOB_SKILLRANGE: script_pushint(st, mob->range2); break;
+		case MOB_CHASERANGE: script_pushint(st, mob->range3); break;
+		case MOB_SIZE:	     script_pushint(st, mob->status.size); break;
+		case MOB_RACE:	     script_pushint(st, mob->status.race); break;
+		case MOB_ELEMENT:    script_pushint(st, mob->status.def_ele); break;
+		case MOB_ELEMENTLV:  script_pushint(st, mob->status.ele_lv); break;
+		case MOB_MODE:       script_pushint(st, mob->status.mode); break;
+		case MOB_MVPEXP:     script_pushint(st, mob->mexp); break;
+		case MOB_ID:         script_pushint(st, mob->id); break;
+		default:
+			ShowError( "buildin_getmonsterinfo: Invalid getmonsterinfo type '%d'.\n", type );
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Check player's vending/buyingstore/autotrade state
+ * checkvending({"<Player Name>"})
+ * @author [Nab4]
+ */
+BUILDIN_FUNC(checkvending) {
+	TBL_PC *sd = nullptr;
+
+	if (!script_nick2sd(2,sd) ) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	else {
+		int8 ret = 0;
+		if (sd->state.vending)
+			ret = 1;
+		else if (sd->state.buyingstore)
+			ret = 4;
+
+		if (sd->state.autotrade)
+			ret |= 2;
+		script_pushint(st, ret);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+BUILDIN_FUNC(checkchatting) // check chatting [Marka]
+{
+	TBL_PC *sd = nullptr;
+
+	if( script_nick2sd(2,sd) )
+		script_pushint(st,(sd->chatID != 0));
+	else
+		script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(checkidle)
+{
+	TBL_PC *sd = nullptr;
+
+	if( script_nick2sd(2,sd) )
+		script_pushint(st, DIFF_TICK(last_tick, sd->idletime));
+	else
+		script_pushint(st, 0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(checkidlehom)
+{
+	TBL_PC *sd = nullptr;
+
+	if( script_nick2sd(2,sd) )
+		script_pushint(st, DIFF_TICK(last_tick, sd->idletime_hom));
+	else
+		script_pushint(st, 0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(checkidlemer)
+{
+	TBL_PC *sd;
+
+	if( script_nick2sd(2,sd) )
+		script_pushint(st, DIFF_TICK(last_tick, sd->idletime_mer));
+	else
+		script_pushint(st, 0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(searchitem)
+{
+	script_data* data = script_getdata(st, 2);
+	const char *name = reference_getname(data);
+
+	if( !data_isreference(data) )
+	{
+		ShowError("buildin_searchitem: Argument %s is not a variable.\n", name);
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	if( is_string_variable(name) )
+	{// string array
+		ShowError("buildin_searchitem: Argument %s is not an integer array.\n", name);
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not supported
+	}
+
+	map_session_data *sd = nullptr;
+
+	if (not_server_variable(*name) && !script_rid2sd(sd))
+	{
+		return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	const char *itemname = script_getstr(st, 3);
+	std::map<t_itemid, std::shared_ptr<item_data>> items;
+
+	itemdb_searchname_array(items, MAX_SEARCH, itemname);
+
+	if (!items.empty()) {
+		int32 id = reference_getid(data);
+		int32 start = reference_getindex(data);
+
+		for (const auto &it : items) { // Set array
+			set_reg_num(st, sd, reference_uid(id, start), name, it.first, reference_getref(data));
+			start++;
+		}
+	}
+
+	script_pushint64(st, items.size());
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// [zBuffer] List of player cont commands --->
+BUILDIN_FUNC(rid2name)
+{
+	block_list *bl = nullptr;
+	int32 rid = script_getnum(st,2);
+	if((bl = map_id2bl(rid)))
+	{
+		switch(bl->type) {
+			case BL_MOB: script_pushstrcopy(st,((TBL_MOB*)bl)->name); break;
+			case BL_PC:  script_pushstrcopy(st,((TBL_PC*)bl)->status.name); break;
+			case BL_NPC: script_pushstrcopy(st,((TBL_NPC*)bl)->exname); break;
+			case BL_PET: script_pushstrcopy(st,((TBL_PET*)bl)->pet.name); break;
+			case BL_HOM: script_pushstrcopy(st,((TBL_HOM*)bl)->homunculus.name); break;
+			case BL_MER: script_pushstrcopy(st,((TBL_MER*)bl)->db->name.c_str()); break;
+			default:
+				ShowError("buildin_rid2name: BL type unknown.\n");
+				script_pushconststr(st,"");
+				break;
+		}
+	} else {
+		ShowError("buildin_rid2name: invalid RID\n");
+		script_pushconststr(st,"(null)");
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Toggle a unit from moving.
+ * pcblockmove(<unit_id>,<option>);
+ */
+BUILDIN_FUNC(pcblockmove)
+{
+	block_list *bl = nullptr;
+
+	if (script_getnum(st, 2))
+		bl = map_id2bl(script_getnum(st,2));
+	else
+		bl = map_id2bl(st->rid);
+
+	if (bl) {
+		struct unit_data *ud = unit_bl2ud(bl);
+
+		if (ud)
+			ud->state.blockedmove = script_getnum(st,3) > 0;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Toggle a unit from casting skills.
+ * pcblockskill(<unit_id>,<option>);
+ */
+BUILDIN_FUNC(pcblockskill)
+{
+	block_list *bl = nullptr;
+
+	if (script_getnum(st, 2))
+		bl = map_id2bl(script_getnum(st,2));
+	else
+		bl = map_id2bl(st->rid);
+
+	if (bl) {
+		struct unit_data *ud = unit_bl2ud(bl);
+
+		if (ud)
+			ud->state.blockedskill = script_getnum(st, 3) > 0;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(setpcblock)
+{
+	TBL_PC *sd;
+
+	if (script_mapid2sd(4, sd)) {
+		enum e_pcblock_action_flag type = (e_pcblock_action_flag)script_getnum(st, 2);
+
+		if (script_getnum(st, 3) > 0)
+			sd->state.block_action |= type;
+		else
+			sd->state.block_action &= ~type;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getpcblock)
+{
+	TBL_PC *sd;
+
+	if (script_mapid2sd(2, sd))
+		script_pushint(st, sd->state.block_action);
+	else
+		script_pushint(st, 0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(pcfollow)
+{
+	TBL_PC *sd;
+
+	if( script_mapid2sd(2,sd) )
+		pc_follow(sd, script_getnum(st,3));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(pcstopfollow)

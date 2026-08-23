@@ -1,0 +1,500 @@
+
+	TypesafeYamlDatabase::loadingFinished();
+}
+
+EnchantgradeDatabase enchantgrade_db;
+
+/**
+ * Get icon ID of SC
+ * @param type: SC type
+ * @return EFST ID
+ **/
+efst_type StatusDatabase::getIcon(sc_type type) {
+	std::shared_ptr<s_status_change_db> status = status_db.find(type);
+
+	return status ? status->icon : EFST_BLANK;
+}
+
+/**
+ * Get flag of SC (SCB value) for status_calc_ flag
+ * @param type: SC type
+ * @return cal_flag: Calc value 
+ **/
+std::bitset<SCB_MAX> StatusDatabase::getCalcFlag(sc_type type) {
+	std::shared_ptr<s_status_change_db> status = status_db.find(type);
+
+	return status ? status->calc_flag : std::bitset<SCB_MAX> {};
+}
+
+/**
+ * Get SC's EndOnStart list
+ * @param sc: SC type
+ * @return End list
+ **/
+std::vector<sc_type> StatusDatabase::getEndOnStart(sc_type type) {
+	std::shared_ptr<s_status_change_db> status = status_db.find(type);
+
+	return status ? status->endonstart : std::vector<sc_type> {};
+}
+
+/**
+ * Get BL type to display proper effect
+ * @param efst: EFST type
+ * @return BL types
+ **/
+uint16 status_efst_get_bl_type(enum efst_type efst) {
+	if (efst <= EFST_BLANK || efst >= EFST_MAX)
+		return BL_PC;
+	return status_db.StatusRelevantBLTypes[efst];
+}
+
+/**
+ * Returns the FIRST skill (in order of definition in initChangeTables) to use a given status change.
+ * Utilized for various duration lookups. Use with caution!
+ * @param sc The status to look up
+ * @return A skill associated with the status
+ **/
+uint16 StatusDatabase::getSkill(sc_type type) {
+	std::shared_ptr<s_status_change_db> status = status_db.find(type);
+
+	return status ? status->skill_id : 0;
+}
+
+/**
+ * Returns if a status change flag is active or not for a SC.
+ * @param sc: Status changes active on target
+ * @param flag: Flag to check for
+ * @return True if flag is set or false otherwise
+ */
+bool StatusDatabase::hasSCF(status_change *sc, e_status_change_flag flag) {
+	if (sc == nullptr || sc->empty() || flag == SCF_NONE)
+		return false;
+
+	for (const auto &status_it : *this) {
+		std::shared_ptr<s_status_change_db> status = status_it.second;
+
+		if (sc->getSCE(status->type) && status->flag[flag])
+			return true;
+	}
+
+	return false;
+}
+
+/**
+ * Returns the SCB_BATTLE constant.
+ * return SCB_BATTLE
+ */
+std::bitset<SCB_MAX> StatusDatabase::getSCB_BATTLE() {
+	return this->SCB_BATTLE;
+}
+
+/**
+ * Returns the SCB_ALL constant.
+ * @return SCB_ALL
+ */
+std::bitset<SCB_MAX> StatusDatabase::getSCB_ALL() {
+	return this->SCB_ALL;
+}
+
+/**
+ * Removes statuses from skills that aren't part of the new class skill tree.
+ * @param sd: Player data
+ */
+void StatusDatabase::changeSkillTree(map_session_data *sd, int32 class_) {
+	if (sd == nullptr)
+		return;
+
+	std::shared_ptr<s_skill_tree> tree = skill_tree_db.find(class_ > 0 ? class_ : sd->status.class_);
+
+	if (tree == nullptr)
+		return;
+
+	for (const auto &it : tree->skills) {
+		uint16 skill_id = it.first;
+		sc_type sc = skill_get_sc(skill_id);
+
+		if (sc > SC_COMMON_MAX && sc < SC_MAX && sd->sc.getSCE(sc))
+			status_change_end(sd, sc);
+	}
+}
+
+/**
+ * Validates if type is in SC ranges
+ * @param type: SC type
+ * @return True if type is in range, false otherwise
+ */
+bool StatusDatabase::validateStatus(sc_type type) {
+	if (type > SC_NONE && type < SC_MAX)
+		return true;
+
+	return false;
+}
+
+/**
+ * Removes a status based on the provided flag(s).
+ * @param bl: Target to remove status from
+ * @param flag: List of flags to check for removing
+ */
+void StatusDatabase::removeByStatusFlag(block_list *bl, std::vector<e_status_change_flag> flag) {
+	if (bl == nullptr || flag.empty())
+		return;
+
+	status_change *sc = status_get_sc(bl);
+
+	if (sc == nullptr || sc->empty())
+		return;
+
+	for (const auto &status_it : *this) {
+		std::shared_ptr<s_status_change_db> status = status_it.second;
+		sc_type type = status->type;
+
+		if (sc->getSCE(type)) {
+			for (const auto &flag_it : flag) {
+				if (status->flag[flag_it])
+					status_change_end(bl, type);
+			}
+		}
+	}
+}
+
+status_change_entry::status_change_entry(){
+	this->timer = INVALID_TIMER;
+	this->val1 = 0;
+	this->val2 = 0;
+	this->val3 = 0;
+	this->val4 = 0;
+}
+
+status_change_entry::~status_change_entry(){
+	if( this->timer != INVALID_TIMER ){
+		delete_timer( this->timer, status_change_timer );
+		this->timer = INVALID_TIMER;
+	}
+}
+
+status_change::status_change(){
+	this->option = OPTION_NOTHING;
+	this->opt3 = OPT3_NORMAL;
+	this->opt1 = OPT1_NONE;
+	this->opt2 = OPT2_NONE;
+	this->lastEffect = SC_NONE;
+	this->lastEffectTimer = INVALID_TIMER;
+	this->cant = {};
+	this->comet_x = 0;
+	this->comet_y = 0;
+#ifndef RENEWAL
+	this->sg_counter = 0;
+#endif
+	this->data = {};
+	this->lastStatus = { SC_NONE, nullptr };
+}
+
+bool status_change::hasSCE( enum sc_type type ) const{
+	return this->getSCE( type ) != nullptr;
+}
+
+/**
+ * Accessor for a status_change_entry in a status_change
+ */
+status_change_entry* status_change::getSCE( enum sc_type type ){
+	if( type == this->lastStatus.first ){
+		return this->lastStatus.second;
+	}
+
+	status_change_entry* sc = util::umap_find( this->data, type );
+
+	this->lastStatus.first = type;
+	this->lastStatus.second = sc;
+	
+	return this->lastStatus.second;
+}
+
+const status_change_entry* status_change::getSCE( sc_type type) const{
+	return const_cast<status_change*>(this)->getSCE(type);
+}
+
+status_change_entry* status_change::getSCE( uint32 type ){
+	return this->getSCE( static_cast<sc_type>( type ) );
+}
+
+const status_change_entry* status_change::getSCE( uint32 type) const{
+	return const_cast<status_change*>(this)->getSCE(type);
+}
+
+status_change_entry* status_change::createSCE( enum sc_type type ){
+	status_change_entry& sc = this->data[type];
+
+	this->lastStatus.first = type;
+	this->lastStatus.second = &sc;
+
+	return this->lastStatus.second;
+}
+
+/**
+ * free the sce, then clear it
+ */
+void status_change::deleteSCE(enum sc_type type) {
+	this->data.erase( type );
+
+	this->lastStatus.first = type;
+	this->lastStatus.second = nullptr;
+}
+
+bool status_change::empty() const{
+	return this->data.empty();
+}
+
+size_t status_change::size() const{
+	return this->data.size();
+}
+
+std::unordered_map<enum sc_type, status_change_entry>::const_iterator status_change::begin() const{
+	return this->data.begin();
+}
+
+std::unordered_map<enum sc_type, status_change_entry>::const_iterator status_change::end() const{
+	return this->data.end();
+}
+
+/** Creates dummy status */
+static void initDummyData(void) {
+	memset(&dummy_status, 0, sizeof(dummy_status));
+	dummy_status.hp =
+	dummy_status.max_hp =
+	dummy_status.max_sp =
+	dummy_status.str =
+	dummy_status.agi =
+	dummy_status.vit =
+	dummy_status.int_ =
+	dummy_status.dex =
+	dummy_status.luk =
+	dummy_status.hit = 1;
+	dummy_status.speed = 2000;
+	dummy_status.adelay = 4000;
+	dummy_status.amotion = 2000;
+	dummy_status.dmotion = 2000;
+	dummy_status.ele_lv = 1; // Min elemental level.
+	dummy_status.mode = MD_CANMOVE;
+}
+
+/**
+ * For copying a status_data structure from b to a, without overwriting current Hp, Sp, and Ap.
+ * @param a: Status data structure to copy from
+ * @param b: Status data structure to copy to
+ */
+static inline void status_cpy(struct status_data* a, const struct status_data* b)
+{
+	memcpy((void*)&a->max_hp, (const void*)&b->max_hp, sizeof(struct status_data)-(sizeof(a->hp)+sizeof(a->sp)+sizeof(a->ap)));
+}
+
+/**
+ * Sets HP to a given value
+ * Will always succeed (overrides heal impediment statuses) but can't kill an object
+ * @param bl: Object whose HP will be set [PC|MOB|HOM|MER|ELEM|NPC]
+ * @param hp: What the HP is to be set as
+ * @param flag: Used in case final value is higher than current
+ *		Use 2 to display healing effect
+ * @return heal or zapped HP if valid
+ */
+int32 status_set_hp(block_list *bl, uint32 hp, int32 flag)
+{
+	if (hp < 1)
+		return 0;
+
+	status_data* status = status_get_status_data(*bl);
+
+	if (status == &dummy_status)
+		return 0;
+
+	if (hp > status->max_hp)
+		hp = status->max_hp;
+	if (hp == status->hp)
+		return 0;
+	if (hp > status->hp)
+		return status_heal(bl, hp - status->hp, 0, 1|flag);
+	return status_zap(bl, status->hp - hp, 0);
+}
+
+/**
+ * Sets Max HP to a given value
+ * @param bl: Object whose Max HP will be set [PC|MOB|HOM|MER|ELEM|NPC]
+ * @param maxhp: What the Max HP is to be set as
+ * @param flag: Used in case final value is higher than current
+ *		Use 2 to display healing effect
+ * @return heal or zapped HP if valid
+ */
+int32 status_set_maxhp(block_list *bl, uint32 maxhp, int32 flag)
+{
+	int64 heal;
+
+	if (maxhp < 1)
+		return 0;
+
+	status_data* status = status_get_status_data(*bl);
+
+	if (status == &dummy_status)
+		return 0;
+
+	if (maxhp == status->max_hp)
+		return 0;
+
+	heal = maxhp - status->max_hp;
+	status->max_hp = maxhp;
+
+	if (heal > 0)
+		status_heal(bl, heal, 0, 1|flag);
+	else
+		status_zap(bl, -heal, 0);
+
+	return maxhp;
+}
+
+/**
+ * Sets SP to a given value
+ * @param bl: Object whose SP will be set [PC|HOM|MER|ELEM]
+ * @param sp: What the SP is to be set as
+ * @param flag: Used in case final value is higher than current
+ *		Use 2 to display healing effect		
+ * @return heal or zapped SP if valid
+ */
+int32 status_set_sp(block_list *bl, uint32 sp, int32 flag)
+{
+	status_data* status = status_get_status_data(*bl);
+
+	if (status == &dummy_status)
+		return 0;
+
+	if (sp > status->max_sp)
+		sp = status->max_sp;
+	if (sp == status->sp)
+		return 0;
+	if (sp > status->sp)
+		return status_heal(bl, 0, sp - status->sp, 1|flag);
+	return status_zap(bl, 0, status->sp - sp);
+}
+
+/**
+ * Sets Max SP to a given value
+ * @param bl: Object whose Max SP will be set [PC|HOM|MER|ELEM]
+ * @param maxsp: What the Max SP is to be set as
+ * @param flag: Used in case final value is higher than current
+ *		Use 2 to display healing effect
+ * @return heal or zapped HP if valid
+ */
+int32 status_set_maxsp(block_list *bl, uint32 maxsp, int32 flag)
+{
+	if (maxsp < 1)
+		return 0;
+
+	status_data* status = status_get_status_data(*bl);
+
+	if (status == &dummy_status)
+		return 0;
+
+	if (maxsp == status->max_sp)
+		return 0;
+	if (maxsp > status->max_sp)
+		status_heal(bl, maxsp - status->max_sp, 0, 1|flag);
+	else
+		status_zap(bl, status->max_sp - maxsp, 0);
+
+	status->max_sp = maxsp;
+	return maxsp;
+}
+
+/**
+* Sets AP to a given value
+* @param bl: Object whose AP will be set [PC|HOM|MER|ELEM]
+* @param ap: What the AP is to be set as
+* @param flag: Used in case final value is higher than current
+*		Use 2 to display healing effect
+* @return heal or zapped AP if valid
+*/
+int32 status_set_ap(block_list *bl, uint32 ap, int32 flag)
+{
+	status_data *status = status_get_status_data(*bl);
+
+	if (status == &dummy_status)
+		return 0;
+
+	if (ap > status->max_ap)
+		ap = status->max_ap;
+	if (ap == status->ap)
+		return 0;
+	if (ap > status->ap)
+		return status_heal(bl, 0, 0, ap - status->ap, 1 | flag);
+	return status_zap(bl, 0, 0, status->ap - ap);
+}
+
+/**
+* Sets Max AP to a given value
+* @param bl: Object whose Max AP will be set [PC|HOM|MER|ELEM]
+* @param maxap: What the Max AP is to be set as
+* @param flag: Used in case final value is higher than current
+*		Use 2 to display healing effect
+* @return heal or zapped AP if valid
+*/
+int32 status_set_maxap(block_list *bl, uint32 maxap, int32 flag)
+{
+	if (maxap < 1)
+		return 0;
+
+	status_data *status = status_get_status_data(*bl);
+
+	if (status == &dummy_status)
+		return 0;
+
+	if (maxap == status->max_ap)
+		return 0;
+	if (maxap > status->max_ap)
+		status_heal(bl, 0, 0, maxap - status->max_ap, 1 | flag);
+	else
+		status_zap(bl, 0, 0, status->max_ap - maxap);
+
+	status->max_ap = maxap;
+	return maxap;
+}
+
+/**
+ * Takes HP/SP from an Object
+ * @param bl: Object who will have HP/SP taken [PC|MOB|HOM|MER|ELEM]
+ * @param hp: How much HP to charge
+ * @param sp: How much SP to charge	
+ * @return hp+sp through status_damage()
+ * Note: HP/SP are integer values, not percentages. Values should be
+ *	 calculated either within function call or before
+ */
+int64 status_charge(block_list* bl, int64 hp, int64 sp)
+{
+	if(!(bl->type&BL_CONSUME))
+		return (int32)hp+sp; // Assume all was charged so there are no 'not enough' fails.
+	return status_damage(nullptr, bl, hp, sp, 0, 3, 0);
+}
+
+/**
+ * Inflicts damage on the target with the according walkdelay.
+ * @param src: Source object giving damage [PC|MOB|PET|HOM|MER|ELEM]
+ * @param target: Target of the damage
+ * @param dhp: How much damage to HP
+ * @param dsp: How much damage to SP
+ * @param dap: How much damage to AP
+ * @param walkdelay: Amount of time before object can walk again
+ * @param flag: Damage flag decides various options
+ *		flag&1: Passive damage - Does not trigger cancelling status changes
+ *		flag&2: Fail if there is not enough to subtract
+ *		flag&4: Mob does not give EXP/Loot if killed
+ *		flag&8: Used to damage SP of a dead character
+ *		flag&16: Coma damage - Log it as normal damage, but actually set HP/SP to 1
+ * @return hp+sp+ap
+ * Note: HP/SP/AP are integer values, not percentages. Values should be
+ *	 calculated either within function call or before
+ */
+int32 status_damage(block_list *src,block_list *target,int64 dhp, int64 dsp, int64 dap, t_tick walkdelay, int32 flag, uint16 skill_id)
+{
+	status_change *sc;
+	int32 hp = (int32)cap_value(dhp,INT_MIN,INT_MAX);
+	int32 sp = (int32)cap_value(dsp,INT_MIN,INT_MAX);
+	int32 ap = (int32)cap_value(dap,INT_MIN,INT_MAX);
+
+	nullpo_ret(target);
+

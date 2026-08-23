@@ -1,0 +1,500 @@
+
+	if(t_sd){
+		// @noask [LuzZza]
+		if(t_sd->state.noask) {
+			clif_noask_sub( *sd, *t_sd, 393 ); // Autorejected trade request from %s.
+			return;
+		}
+
+		if (t_sd->state.mail_writing) {
+			// Fake trading
+			clif_traderesponse(*sd,TRADE_ACK_BUSY);
+
+			return;
+		}
+	}
+
+	if( battle_config.basic_skill_check && pc_checkskill(sd,NV_BASIC) < 1 && pc_checkskill(sd, SU_BASIC_SKILL) < 1) {
+		clif_skill_fail( *sd, 1 );
+		return;
+	}
+
+	trade_traderequest(sd,t_sd);
+}
+
+
+/// Answer to a trade request (CZ_ACK_EXCHANGE_ITEM).
+/// 00e6 <result>.B
+/// result:
+///     3 = accepted
+///     4 = rejected
+void clif_parse_TradeAck(int32 fd,map_session_data *sd)
+{
+	trade_tradeack(sd,RFIFOB(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+}
+
+
+/// Request to add an item to current trade.
+/// 00e8 <index>.W <amount>.L (CZ_ADD_EXCHANGE_ITEM)
+void clif_parse_TradeAddItem(int32 fd,map_session_data *sd)
+{
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_ADD_EXCHANGE_ITEM* p = reinterpret_cast<PACKET_CZ_ADD_EXCHANGE_ITEM*>( RFIFOP( fd, 0 ) );
+
+	if( p->index == 0 ){
+		trade_tradeaddzeny( sd, p->amount );
+	}else{
+		trade_tradeadditem( sd, server_index( p->index ), static_cast<int16>( p->amount ) );
+	}
+}
+
+
+/// Request to lock items in current trade (CZ_CONCLUDE_EXCHANGE_ITEM).
+/// 00eb
+void clif_parse_TradeOk(int32 fd,map_session_data *sd)
+{
+	trade_tradeok(sd);
+}
+
+
+/// Request to cancel current trade (CZ_CANCEL_EXCHANGE_ITEM).
+/// 00ed
+void clif_parse_TradeCancel(int32 fd,map_session_data *sd)
+{
+	trade_tradecancel(sd);
+}
+
+
+/// Request to commit current trade (CZ_EXEC_EXCHANGE_ITEM).
+/// 00ef
+void clif_parse_TradeCommit(int32 fd,map_session_data *sd)
+{
+	trade_tradecommit(sd);
+}
+
+
+/// Request to stop chasing/attacking an unit (CZ_CANCEL_LOCKON).
+/// 0118
+void clif_parse_StopAttack(int32 fd,map_session_data *sd)
+{
+	unit_stop_attack( sd );
+	sd->ud.state.attack_continue = 0;
+}
+
+
+/// Request to move an item from inventory to cart.
+/// 0126 <index>.W <amount>.L (CZ_MOVE_ITEM_FROM_BODY_TO_CART)
+void clif_parse_PutItemToCart( int32 fd, map_session_data *sd ){
+	if (pc_istrading(sd) || !pc_iscarton(sd) || pc_cant_act2(sd))
+		return;
+	if (map_getmapflag(sd->m, MF_NOUSECART))
+		return;
+
+	const PACKET_CZ_MOVE_ITEM_FROM_BODY_TO_CART* p = reinterpret_cast<PACKET_CZ_MOVE_ITEM_FROM_BODY_TO_CART*>( RFIFOP( fd, 0 ) );
+
+	pc_putitemtocart( sd, server_index( p->index ), p->count);
+}
+
+
+/// Request to move an item from cart to inventory.
+/// 0127 <index>.W <amount>.L (CZ_MOVE_ITEM_FROM_CART_TO_BODY)
+void clif_parse_GetItemFromCart(int32 fd,map_session_data *sd)
+{
+	if( sd == nullptr ){
+		return;
+	}
+
+	if (!pc_iscarton(sd) || pc_cant_act2(sd))
+		return;
+	if (map_getmapflag(sd->m, MF_NOUSECART))
+		return;
+
+	const PACKET_CZ_MOVE_ITEM_FROM_CART_TO_BODY* p = reinterpret_cast<PACKET_CZ_MOVE_ITEM_FROM_CART_TO_BODY*>( RFIFOP( fd, 0 ) );
+
+	pc_getitemfromcart( sd, server_index( p->index ), p->amount );
+}
+
+
+/// Request to remove cart/falcon/peco/dragon/mado (CZ_REQ_CARTOFF).
+/// 012a
+void clif_parse_RemoveOption(int32 fd,map_session_data *sd)
+{
+	if( !(sd->sc.option&(OPTION_RIDING|OPTION_FALCON|OPTION_DRAGON|OPTION_MADOGEAR))
+#ifdef NEW_CARTS
+		&& sd->sc.getSCE(SC_PUSH_CART) )
+		pc_setcart(sd,0);
+#else
+		)
+		pc_setoption(sd,sd->sc.option&~OPTION_CART);
+#endif
+	else  // priority to remove this option before we can clear cart
+		pc_setoption(sd,sd->sc.option&~(OPTION_RIDING|OPTION_FALCON|OPTION_DRAGON|OPTION_MADOGEAR));
+}
+
+
+/// Request to select cart's visual look for new cart design (ZC_SELECTCART).
+/// 097f <Length>.W <identity>.L <type>.B
+void clif_SelectCart( const map_session_data* sd ) {
+#if PACKETVER >= 20150826
+	int32 i = 0, carts = 3;
+
+	int32 fd = sd->fd;
+	WFIFOHEAD(fd,8 + carts);
+	WFIFOW(fd,0) = 0x97f;
+	WFIFOW(fd,2) = 8 + carts;
+	WFIFOL(fd,4) = sd->status.account_id;
+	// Right now we have 10-12, tested it you can also enable selection for all cart styles here(1-12)
+	for( i = 0; i < carts; i++ ) {
+	WFIFOB(fd,8 + i) = 10 + i;
+	}
+	WFIFOSET(fd,8 + carts);
+#endif
+}
+
+
+/// Request to select cart's visual look for new cart design (CZ_SELECTCART).
+/// 0980 <identity>.L <type>.B
+void clif_parse_SelectCart(int32 fd,map_session_data *sd) {
+#if PACKETVER >= 20150826
+	int32 type;
+
+	// Check identity
+	if( !sd || pc_checkskill(sd,MC_CARTDECORATE) < 1 || RFIFOL(fd,2) != sd->status.account_id )
+	return;
+
+	type = (int32)RFIFOB(fd,6);
+
+	// Check type
+	if( type < 10 || type > 12 ) 
+		return;
+
+	pc_setcart(sd, type);
+#endif
+}
+
+
+/// Request to change cart's visual look (CZ_REQ_CHANGECART).
+/// 01af <num>.W
+void clif_parse_ChangeCart(int32 fd,map_session_data *sd)
+{// TODO: State tracking?
+	int32 type;
+
+	if( !sd || pc_checkskill(sd, MC_CHANGECART) < 1 )
+		return;
+
+#ifdef RENEWAL
+	if (sd->npc_id || pc_hasprogress(sd, WIP_DISABLE_SKILLITEM)) {
+		clif_msg( *sd, MSI_BUSY );
+		return;
+	}
+#endif
+
+	type = (int32)RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+
+	if( 
+#ifdef NEW_CARTS
+#if PACKETVER >= 20191106
+		(type == 13 && sd->status.base_level > 100) ||
+#endif
+		(type == 9 && sd->status.base_level > 130) ||
+		(type == 8 && sd->status.base_level > 120) ||
+		(type == 7 && sd->status.base_level > 110) ||
+		(type == 6 && sd->status.base_level > 100) ||
+#endif
+		(type == 5 && sd->status.base_level > 90) ||
+	    (type == 4 && sd->status.base_level > 80) ||
+	    (type == 3 && sd->status.base_level > 65) ||
+	    (type == 2 && sd->status.base_level > 40) ||
+	    (type == 1))
+		pc_setcart(sd, type);
+}
+
+
+/// Request to increase status (CZ_STATUS_CHANGE).
+/// 00bb <status id>.W <amount>.B
+/// status id:
+///     SP_STR ~ SP_LUK
+/// amount:
+///     Old clients always send 1 for this, even when using /str+ and the like.
+///     Newer clients (2013-12-23 and newer) send the correct amount.
+void clif_parse_StatusUp(int32 fd,map_session_data *sd)
+{
+	int32 increase_amount = RFIFOB(fd,packet_db[RFIFOW(fd,0)].pos[1]);
+
+	if( increase_amount < 0 ) {
+		ShowDebug("clif_parse_StatusUp: Negative 'increase' value sent by client! (fd: %d, value: %d)\n",
+			fd, increase_amount);
+	}
+	pc_statusup(sd,RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0]),increase_amount);
+}
+
+
+/// Request to increase trait status.
+/// 0b24 <status id>.W <amount>.W (CZ_ADVANCED_STATUS_CHANGE)
+/// status id:
+///     SP_POW ~ SP_CON
+/// amount:
+///     The amount to increase the trait status
+void clif_parse_traitstatus_up( int32 fd, map_session_data *sd ){
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+	const PACKET_CZ_ADVANCED_STATUS_CHANGE* p = reinterpret_cast<PACKET_CZ_ADVANCED_STATUS_CHANGE*>( RFIFOP( fd, 0 ) );
+
+	if( p->amount < 0 ){
+		ShowDebug( "clif_parse_traitstatus_up: Negative 'increase' value sent by client! %s (AID: %d, CID: %d, value: %d)\n", sd->status.name, sd->status.account_id, sd->status.char_id, p->amount );
+		return;
+	}
+
+	pc_traitstatusup( sd, p->type, p->amount );
+#endif
+}
+
+
+/// Request to increase level of a skill (CZ_UPGRADE_SKILLLEVEL).
+/// 0112 <skill id>.W
+void clif_parse_SkillUp(int32 fd,map_session_data *sd)
+{
+	pc_skillup(sd,RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+}
+
+static void clif_parse_UseSkillToId_homun(homun_data *hd, map_session_data *sd, t_tick tick, uint16 skill_id, uint16 skill_lv, int32 target_id)
+{
+	int32 lv;
+
+	if( !hd )
+		return;
+	if( skill_isNotOk_hom(hd, skill_id, skill_lv) ) {
+		clif_emotion(*hd, ET_THINK);
+		return;
+	}
+	if( hd->id != target_id && skill_get_inf(skill_id)&INF_SELF_SKILL )
+		target_id = hd->id;
+	if( hd->ud.skilltimer != INVALID_TIMER ) {
+		if( skill_id != SA_CASTCANCEL && skill_id != SO_SPELLFIST ) return;
+	} else if( DIFF_TICK(tick, hd->ud.canact_tick) < 0 ) {
+		clif_emotion(*hd, ET_THINK);
+		if (hd->master)
+			clif_skill_fail( *hd->master, skill_id, USESKILL_FAIL_SKILLINTERVAL );
+		return;
+	}
+
+	lv = hom_checkskill(hd, skill_id);
+	if( skill_lv > lv )
+		skill_lv = lv;
+	if( skill_lv )
+		unit_skilluse_id(hd, target_id, skill_id, skill_lv);
+}
+
+static void clif_parse_UseSkillToPos_homun(homun_data *hd, map_session_data *sd, t_tick tick, uint16 skill_id, uint16 skill_lv, int16 x, int16 y, int32 skillmoreinfo)
+{
+	int32 lv;
+	if( !hd )
+		return;
+	if( skill_isNotOk_hom(hd, skill_id, skill_lv) ) {
+		clif_emotion(*hd, ET_THINK);
+		return;
+	}
+	if( hd->ud.skilltimer != INVALID_TIMER ) {
+		if( skill_id != SA_CASTCANCEL && skill_id != SO_SPELLFIST ) return;
+	} else if( DIFF_TICK(tick, hd->ud.canact_tick) < 0 ) {
+		clif_emotion(*hd, ET_THINK );
+		if (hd->master)
+			clif_skill_fail( *hd->master, skill_id, USESKILL_FAIL_SKILLINTERVAL );
+		return;
+	}
+
+#ifndef RENEWAL
+	if (hd->sc.getSCE(SC_BASILICA))
+		return;
+#endif
+	lv = hom_checkskill(hd, skill_id);
+	if( skill_lv > lv )
+		skill_lv = lv;
+	if( skill_lv )
+		unit_skilluse_pos(hd, x, y, skill_id, skill_lv);
+}
+
+static void clif_parse_UseSkillToId_mercenary(s_mercenary_data *md, map_session_data *sd, t_tick tick, uint16 skill_id, uint16 skill_lv, int32 target_id)
+{
+	int32 lv;
+
+	if( !md )
+		return;
+	if( skill_isNotOk_mercenary(skill_id, *md) )
+		return;
+	if( md->id != target_id && skill_get_inf(skill_id)&INF_SELF_SKILL )
+		target_id = md->id;
+	if( md->ud.skilltimer != INVALID_TIMER )
+	{
+		if( skill_id != SA_CASTCANCEL && skill_id != SO_SPELLFIST ) return;
+	}
+	else if( DIFF_TICK(tick, md->ud.canact_tick) < 0 )
+		return;
+
+	lv = mercenary_checkskill(md, skill_id);
+	if( skill_lv > lv )
+		skill_lv = lv;
+	if( skill_lv )
+		unit_skilluse_id(md, target_id, skill_id, skill_lv);
+}
+
+static void clif_parse_UseSkillToPos_mercenary(s_mercenary_data *md, map_session_data *sd, t_tick tick, uint16 skill_id, uint16 skill_lv, int16 x, int16 y, int32 skillmoreinfo)
+{
+	int32 lv;
+	if( !md )
+		return;
+	if( skill_isNotOk_mercenary(skill_id, *md) )
+		return;
+	if( md->ud.skilltimer != INVALID_TIMER )
+		return;
+	if( DIFF_TICK(tick, md->ud.canact_tick) < 0 )
+	{
+		if (md->master)
+			clif_skill_fail( *md->master, skill_id, USESKILL_FAIL_SKILLINTERVAL );
+		return;
+	}
+
+#ifndef RENEWAL
+	if (md->sc.getSCE(SC_BASILICA))
+		return;
+#endif
+	lv = mercenary_checkskill(md, skill_id);
+	if( skill_lv > lv )
+		skill_lv = lv;
+	if( skill_lv )
+		unit_skilluse_pos(md, x, y, skill_id, skill_lv);
+}
+
+void clif_parse_skill_toid( map_session_data* sd, uint16 skill_id, uint16 skill_lv, int32 target_id ){
+	if( sd == nullptr ){
+		return;
+	}
+
+	t_tick tick = gettick();
+
+	if( skill_lv < 1 ) skill_lv = 1; //No clue, I have seen the client do this with guild skills :/ [Skotlex]
+
+	int32 inf = skill_get_inf(skill_id);
+	if (inf&INF_GROUND_SKILL || !inf)
+		return; //Using a ground/passive skill on a target? WRONG.
+
+	if (sd->state.block_action & PCBLOCK_SKILL) {
+		clif_msg( *sd, MSI_BUSY );
+		return;
+	}
+
+	if( SKILL_CHK_HOMUN(skill_id) ) {
+		clif_parse_UseSkillToId_homun(sd->hd, sd, tick, skill_id, skill_lv, target_id);
+		return;
+	}
+
+	if( SKILL_CHK_MERC(skill_id) ) {
+		clif_parse_UseSkillToId_mercenary(sd->md, sd, tick, skill_id, skill_lv, target_id);
+		return;
+	}
+
+	// Whether skill fails or not is irrelevant, the char ain't idle. [Skotlex]
+	// This is done here, because homunculi and mercenaries can be triggered by AI and not by the player itself
+	if (battle_config.idletime_option&IDLE_USESKILLTOID)
+		sd->idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_USESKILLTOID)
+		sd->idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_USESKILLTOID)
+		sd->idletime_mer = last_tick;
+
+	if( sd->npc_id ){
+		if( pc_hasprogress( sd, WIP_DISABLE_SKILLITEM ) || !sd->npc_item_flag || !( inf & INF_SELF_SKILL ) ){
+#ifdef RENEWAL
+			clif_msg( *sd, MSI_BUSY );
+#endif
+			return;
+		}
+	}
+
+	if ((pc_cant_act2(sd) || sd->chatID) && 
+		skill_id != RK_REFRESH && 
+		!( ( skill_id == SR_GENTLETOUCH_CURE || skill_id == SU_GROOMING ) && (sd->sc.opt1 == OPT1_STONE || sd->sc.opt1 == OPT1_FREEZE || sd->sc.opt1 == OPT1_STUN)) &&
+		!(sd->state.storage_flag && (inf&INF_SELF_SKILL))) //SELF skills can be used with the storage open, issue: 8027
+		return;
+
+	if( pc_issit(sd) )
+		return;
+
+	if( skill_isNotOk(skill_id, *sd) )
+		return;
+
+	if( sd->id != target_id && inf&INF_SELF_SKILL )
+		target_id = sd->id; // never trust the client
+
+	if( target_id < 0 && -target_id == sd->id ) // for disguises [Valaris]
+		target_id = sd->id;
+
+	if( sd->ud.skilltimer != INVALID_TIMER ) {
+		if( skill_id != SA_CASTCANCEL && skill_id != SO_SPELLFIST )
+			return;
+	} else if( DIFF_TICK(tick, sd->ud.canact_tick) < 0 ) {
+		if( sd->skillitem != skill_id ) {
+			clif_skill_fail( *sd, skill_id, USESKILL_FAIL_SKILLINTERVAL );
+			return;
+		}
+	}
+
+	if( sd->sc.option&OPTION_COSTUME )
+		return;
+
+#ifndef RENEWAL
+	if( sd->sc.getSCE(SC_BASILICA) && (skill_id != HP_BASILICA || sd->sc.getSCE(SC_BASILICA)->val4 != sd->id) )
+		return; // On basilica only caster can use Basilica again to stop it.
+#endif
+
+	if( sd->menuskill_id ) {
+		if( sd->menuskill_id == SA_TAMINGMONSTER ) {
+			clif_menuskill_clear(sd); //Cancel pet capture.
+		}else if( sd->menuskill_id == SG_FEEL ){
+			clif_menuskill_clear( sd ); // Cancel selection
+		}else if( sd->menuskill_id != SA_AUTOSPELL )
+			return; //Can't use skills while a menu is open.
+	}
+
+	if( sd->skillitem == skill_id ) {
+		if( skill_lv != sd->skillitemlv )
+			skill_lv = sd->skillitemlv;
+		if( !(inf&INF_SELF_SKILL) )
+			pc_delinvincibletimer(sd); // Target skills thru items cancel invincibility. [Inkfish]
+		unit_skilluse_id(sd, target_id, skill_id, skill_lv);
+		return;
+	}
+	sd->skillitem = sd->skillitemlv = 0;
+
+	if( SKILL_CHK_GUILD(skill_id) ) {
+		if (sd->guild != nullptr && (sd->state.gmaster_flag || skill_id == GD_CHARGESHOUT_BEATING))
+			skill_lv = guild_checkskill(sd->guild->guild, skill_id);
+		else
+			skill_lv = 0;
+	} else {
+		if( skill_id != ALL_EQSWITCH ){
+			skill_lv = min(pc_checkskill(sd, skill_id),skill_lv); //never trust client
+		}
+	}
+
+	pc_delinvincibletimer(sd);
+
+	if( skill_lv )
+		unit_skilluse_id(sd, target_id, skill_id, skill_lv);
+}
+
+
+/// Request to use a targeted skill.
+/// 0113 <skill lv>.W <skill id>.W <target id>.L (CZ_USE_SKILL)
+/// 0438 <skill lv>.W <skill id>.W <target id>.L (CZ_USE_SKILL2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_UseSkillToId( int32 fd, map_session_data *sd ){
+	// TODO: shuffle packet
+	struct s_packet_db* info = &packet_db[RFIFOW(fd, 0)];
+
+	clif_parse_skill_toid( sd, RFIFOW(fd, info->pos[1]), RFIFOW(fd, info->pos[0]), RFIFOL(fd, info->pos[2]) );
+}
+
+/*==========================================

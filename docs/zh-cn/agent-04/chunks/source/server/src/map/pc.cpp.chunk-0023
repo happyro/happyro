@@ -1,0 +1,500 @@
+	clif_changelook(sd, LOOK_HAIR, sd->vd.look[LOOK_HAIR]); // Update player's head (only matters when switching to or from Doram)
+#endif
+	clif_changelook( sd, LOOK_CLOTHES_COLOR, sd->vd.look[LOOK_CLOTHES_COLOR] );
+	clif_changelook( sd, LOOK_BODY2, sd->vd.look[LOOK_BODY2] );
+	
+	//Update skill tree.
+	pc_calc_skilltree(sd);
+	clif_skillinfoblock(*sd);
+
+	if (sd->ed)
+		elemental_delete(sd->ed);
+	if (sd->state.vending)
+		vending_closevending(sd);
+	if (sd->state.buyingstore)
+		buyingstore_close(sd);
+
+	map_foreachinmap(jobchange_killclone, sd->m, BL_MOB, sd->id);
+
+	//Remove peco/cart/falcon
+	i = sd->sc.option;
+	if( i&OPTION_RIDING && !pc_checkskill(sd, KN_RIDING) )
+		i&=~OPTION_RIDING;
+	if( i&OPTION_FALCON && !pc_checkskill(sd, HT_FALCON) )
+		i&=~OPTION_FALCON;
+	if( i&OPTION_DRAGON && !pc_checkskill(sd,RK_DRAGONTRAINING) )
+		i&=~OPTION_DRAGON;
+	if( i&OPTION_WUGRIDER && !pc_checkskill(sd,RA_WUGMASTERY) )
+		i&=~OPTION_WUGRIDER;
+	if( i&OPTION_WUG && !pc_checkskill(sd,RA_WUGMASTERY) )
+		i&=~OPTION_WUG;
+	if( i&OPTION_MADOGEAR ) //You do not need a skill for this.
+		i&=~OPTION_MADOGEAR;
+#ifndef NEW_CARTS
+	if( i&OPTION_CART && !pc_checkskill(sd, MC_PUSHCART) )
+		i&=~OPTION_CART;
+#else
+	if( sd->sc.getSCE(SC_PUSH_CART) && !pc_checkskill(sd, MC_PUSHCART) )
+		pc_setcart(sd, 0);
+#endif
+	if(i != sd->sc.option)
+		pc_setoption(sd, i);
+
+	if(hom_is_active(sd->hd) && !pc_checkskill(sd, AM_CALLHOMUN))
+		hom_vaporize(sd, HOM_ST_ACTIVE);
+
+	if (sd->sc.getSCE(SC_SPRITEMABLE) && !pc_checkskill(sd, SU_SPRITEMABLE))
+		status_change_end(sd, SC_SPRITEMABLE);
+	if (sd->sc.getSCE(SC_SOULATTACK) && !pc_checkskill(sd, SU_SOULATTACK))
+		status_change_end(sd, SC_SOULATTACK);
+	if( sd->sc.getSCE(SC_SPIRIT) ){
+		status_change_end( sd, SC_SPIRIT );
+	}
+
+	if(sd->status.manner < 0){
+		clif_changemanner( *sd );
+		clif_updatestatus(*sd,SP_MANNER);
+	}
+	status_calc_pc(sd,SCO_FORCE);
+	pc_checkallowskill(sd);
+	pc_equiplookall(sd);
+	pc_show_questinfo(sd);
+	achievement_update_objective(sd, AG_JOB_CHANGE, 2, sd->status.base_level, job);
+	if( sd->status.party_id ){
+		struct party_data* p;
+		
+		if( ( p = party_search( sd->status.party_id ) ) != nullptr ){
+			ARR_FIND(0, MAX_PARTY, i, p->party.member[i].char_id == sd->status.char_id);
+
+			if( i < MAX_PARTY ){
+				p->party.member[i].class_ = sd->status.class_;
+				clif_party_job_and_level( *sd );
+			}
+		}
+	}
+
+	chrif_save(sd, CSAVE_NORMAL);
+	//if you were previously famous, not anymore.
+	if (fame_flag)
+		chrif_buildfamelist();
+	else if (sd->status.fame > 0) {
+		//It may be that now they are famous?
+ 		switch (sd->class_&MAPID_SECONDMASK) {
+			case MAPID_BLACKSMITH:
+			case MAPID_ALCHEMIST:
+			case MAPID_TAEKWON:
+				chrif_buildfamelist();
+			break;
+		}
+	}
+
+	return true;
+}
+
+/*==========================================
+ * Tell client player sd has change equipment
+ *------------------------------------------*/
+void pc_equiplookall(map_session_data *sd)
+{
+	nullpo_retv(sd);
+
+	clif_changelook(sd,LOOK_WEAPON,0);
+	clif_changelook(sd,LOOK_SHOES,0);
+	clif_changelook(sd,LOOK_HEAD_BOTTOM,sd->status.head_bottom);
+	clif_changelook(sd,LOOK_HEAD_TOP,sd->status.head_top);
+	clif_changelook(sd,LOOK_HEAD_MID,sd->status.head_mid);
+	clif_changelook(sd,LOOK_ROBE, sd->status.robe);
+}
+
+/*==========================================
+ * Tell client player sd has change look (hair,equip...)
+ *------------------------------------------*/
+void pc_changelook(map_session_data *sd,int32 type,int32 val) {
+	nullpo_retv(sd);
+
+	switch(type) {
+	case LOOK_HAIR:	//Use the battle_config limits! [Skotlex]
+		val = cap_value(val, MIN_HAIR_STYLE, MAX_HAIR_STYLE);
+
+		if (sd->status.hair != val) {
+			sd->status.hair = val;
+			if (sd->status.guild_id) //Update Guild Window. [Skotlex]
+				intif_guild_change_memberinfo(sd->status.guild_id, sd->status.account_id, sd->status.char_id,
+				GMI_HAIR, &sd->status.hair, sizeof(sd->status.hair));
+		}
+		break;
+	case LOOK_WEAPON:
+		sd->status.weapon = val;
+		break;
+	case LOOK_HEAD_BOTTOM:
+		sd->status.head_bottom = val;
+		sd->setlook_head_bottom = val;
+		break;
+	case LOOK_HEAD_TOP:
+		sd->status.head_top = val;
+		sd->setlook_head_top = val;
+		break;
+	case LOOK_HEAD_MID:
+		sd->status.head_mid = val;
+		sd->setlook_head_mid = val;
+		break;
+	case LOOK_HAIR_COLOR:	//Use the battle_config limits! [Skotlex]
+		val = cap_value(val, MIN_HAIR_COLOR, MAX_HAIR_COLOR);
+
+		if (sd->status.hair_color != val) {
+			sd->status.hair_color = val;
+			if (sd->status.guild_id) //Update Guild Window. [Skotlex]
+				intif_guild_change_memberinfo(sd->status.guild_id, sd->status.account_id, sd->status.char_id,
+				GMI_HAIR_COLOR, &sd->status.hair_color, sizeof(sd->status.hair_color));
+		}
+		break;
+	case LOOK_CLOTHES_COLOR:	//Use the battle_config limits! [Skotlex]
+		val = cap_value(val, MIN_CLOTH_COLOR, MAX_CLOTH_COLOR);
+
+		sd->status.clothes_color = val;
+		break;
+	case LOOK_SHIELD:
+		sd->status.shield = val;
+		break;
+	case LOOK_SHOES:
+		break;
+	case LOOK_ROBE:
+		sd->status.robe = val;
+		sd->setlook_robe = val;
+		break;
+	case LOOK_BODY2:
+		if( !job_db.exists( val ) ){
+			return;
+		}
+
+		sd->status.body = val;
+		break;
+	}
+	clif_changelook(sd, type, val);
+}
+
+/*==========================================
+ * Give an option (type) to player (sd) and display it to client
+ *------------------------------------------*/
+void pc_setoption(map_session_data *sd,int32 type, int32 subtype)
+{
+	int32 p_type, new_look=0;
+	nullpo_retv(sd);
+	p_type = sd->sc.option;
+
+	//Option has to be changed client-side before the class sprite or it won't always work (eg: Wedding sprite) [Skotlex]
+	sd->sc.option=type;
+	clif_changeoption(sd);
+
+	if( (type&OPTION_RIDING && !(p_type&OPTION_RIDING)) || (type&OPTION_DRAGON && !(p_type&OPTION_DRAGON) && pc_checkskill(sd,RK_DRAGONTRAINING) > 0) )
+	{ // Mounting
+		clif_status_load(sd,EFST_RIDING,1);
+		status_calc_pc(sd,SCO_NONE);
+	}
+	else if( (!(type&OPTION_RIDING) && p_type&OPTION_RIDING) || (!(type&OPTION_DRAGON) && p_type&OPTION_DRAGON && pc_checkskill(sd,RK_DRAGONTRAINING) > 0) )
+	{ // Dismount
+		clif_status_load(sd,EFST_RIDING,0);
+		status_calc_pc(sd,SCO_NONE);
+	}
+
+#ifndef NEW_CARTS
+	if( type&OPTION_CART && !( p_type&OPTION_CART ) ) { //Cart On
+		clif_cartlist(sd);
+		clif_updatestatus(*sd, SP_CARTINFO);
+		if(pc_checkskill(sd, MC_PUSHCART) < 10)
+			status_calc_pc(sd,SCO_NONE); //Apply speed penalty.
+	} else if( !( type&OPTION_CART ) && p_type&OPTION_CART ){ //Cart Off
+		clif_clearcart(sd->fd);
+		if(pc_checkskill(sd, MC_PUSHCART) < 10)
+			status_calc_pc(sd,SCO_NONE); //Remove speed penalty.
+	}
+#endif
+
+	if (type&OPTION_FALCON && !(p_type&OPTION_FALCON)) //Falcon ON
+		clif_status_load(sd,EFST_FALCON,1);
+	else if (!(type&OPTION_FALCON) && p_type&OPTION_FALCON) //Falcon OFF
+		clif_status_load(sd,EFST_FALCON,0);
+
+	if( type&OPTION_WUGRIDER && !(p_type&OPTION_WUGRIDER) ) { // Mounting
+		clif_status_load(sd,EFST_WUGRIDER,1);
+		status_calc_pc(sd,SCO_NONE);
+	} else if( !(type&OPTION_WUGRIDER) && p_type&OPTION_WUGRIDER ) { // Dismount
+		clif_status_load(sd,EFST_WUGRIDER,0);
+		status_calc_pc(sd,SCO_NONE);
+	}
+
+	if( type&OPTION_MADOGEAR && !(p_type&OPTION_MADOGEAR) ) {
+		sc_start(sd, sd, SC_MADOGEAR, 100, subtype, INFINITE_TICK);
+	} else if( !(type&OPTION_MADOGEAR) && p_type&OPTION_MADOGEAR ) {
+		status_change_end(sd, SC_MADOGEAR);
+	}
+
+	if (type&OPTION_FLYING && !(p_type&OPTION_FLYING))
+		new_look = JOB_STAR_GLADIATOR2;
+	else if (!(type&OPTION_FLYING) && p_type&OPTION_FLYING)
+		new_look = -1;
+
+	if (sd->disguise || !new_look)
+		return; //Disguises break sprite changes
+
+	if (new_look < 0) { //Restore normal look.
+		status_set_viewdata(sd, sd->status.class_);
+		new_look = sd->vd.look[LOOK_BASE];
+	}
+
+	// Stop attacking on new view change (to prevent wedding/santa attacks).
+	unit_stop_attack( sd );
+	clif_changelook(sd,LOOK_BASE,new_look);
+	if (sd->vd.look[LOOK_CLOTHES_COLOR])
+		clif_changelook(sd,LOOK_CLOTHES_COLOR,sd->vd.look[LOOK_CLOTHES_COLOR]);
+	if( sd->vd.look[LOOK_BODY2] )
+		clif_changelook(sd,LOOK_BODY2,sd->vd.look[LOOK_BODY2]);
+	clif_skillinfoblock(*sd); // Skill list needs to be updated after base change.
+}
+
+/**
+ * Give player a cart
+ * @param sd Player
+ * @param type 0:Remove cart, 1 ~ MAX_CARTS: Cart type
+ **/
+bool pc_setcart(map_session_data *sd,int32 type) {
+#ifndef NEW_CARTS
+	int32 cart[6] = {0x0000,OPTION_CART1,OPTION_CART2,OPTION_CART3,OPTION_CART4,OPTION_CART5};
+	int32 option;
+#endif
+	nullpo_retr(false,sd);
+
+	if( type < 0 || type > MAX_CARTS )
+		return false;// Never trust the values sent by the client! [Skotlex]
+
+	if( pc_checkskill(sd,MC_PUSHCART) <= 0 && type != 0 )
+		return false;// Push cart is required
+
+#ifdef NEW_CARTS
+
+	switch( type ) {
+		case 0:
+			if( !sd->sc.getSCE(SC_PUSH_CART) )
+				return 0;
+			status_change_end(sd,SC_PUSH_CART);
+			clif_clearcart(sd->fd);
+			break;
+		default:/* everything else is an allowed ID so we can move on */
+			if( !sd->sc.getSCE(SC_PUSH_CART) ) { /* first time, so fill cart data */
+				clif_cartlist(sd);
+				status_calc_cart_weight(sd, (e_status_calc_weight_opt)(CALCWT_ITEM|CALCWT_MAXBONUS|CALCWT_CARTSTATE));
+			}
+			clif_updatestatus(*sd, SP_CARTINFO);
+			sc_start(sd, sd, SC_PUSH_CART, 100, type, 0);
+			break;
+	}
+
+	if(pc_checkskill(sd, MC_PUSHCART) < 10)
+		status_calc_pc(sd,SCO_NONE); //Recalc speed penalty.
+#else
+	// Update option
+	option = sd->sc.option;
+	option &= ~OPTION_CART;// clear cart bits
+	option |= cart[type]; // set cart
+	pc_setoption(sd, option);
+#endif
+
+	return true;
+}
+
+/*==========================================
+ * Give player a falcon
+ *------------------------------------------*/
+void pc_setfalcon(map_session_data* sd, int32 flag)
+{
+	if( flag ){
+		if( pc_checkskill(sd,HT_FALCON)>0 )	// add falcon if he have the skill
+			pc_setoption(sd,sd->sc.option|OPTION_FALCON);
+	} else if( pc_isfalcon(sd) ){
+		pc_setoption(sd,sd->sc.option&~OPTION_FALCON); // remove falcon
+	}
+}
+
+/*==========================================
+ *  Set player riding
+ *------------------------------------------*/
+void pc_setriding(map_session_data* sd, int32 flag)
+{
+	if( sd->sc.getSCE(SC_ALL_RIDING) )
+		return;
+
+	if( flag ){
+		if( pc_checkskill(sd,KN_RIDING) > 0 ) // add peco
+			pc_setoption(sd, sd->sc.option|OPTION_RIDING);
+	} else if( pc_isriding(sd) ){
+			pc_setoption(sd, sd->sc.option&~OPTION_RIDING);
+	}
+}
+
+/**
+ * Give player a mado
+ * @param sd: Player
+ * @param flag: Enable or disable mado
+ * @param type: See pc.hpp::e_mado_type (Default is MADO_ROBOT)
+ */
+void pc_setmadogear(map_session_data *sd, bool flag, e_mado_type type)
+{
+	if ((sd->class_ & MAPID_THIRDMASK) != MAPID_MECHANIC)
+		return;
+
+	if (flag) {
+		if (pc_checkskill(sd, NC_MADOLICENCE) > 0)
+			pc_setoption(sd, sd->sc.option | OPTION_MADOGEAR, type);
+	} else if (pc_ismadogear(sd)) {
+		pc_setoption(sd, sd->sc.option & ~OPTION_MADOGEAR);
+	}
+}
+
+/*==========================================
+ * Check if player can drop an item
+ *------------------------------------------*/
+bool pc_candrop(map_session_data *sd, struct item *item)
+{
+	if (sd->sc.cant.drop)
+		return false;
+	if( item && itemdb_ishatched_egg(item) )
+		return false;
+	if (pc_has_permission(sd, PC_PERM_TRADE_UNCONDITIONAL))	// no restriction
+		return true;
+	if( !pc_can_give_items(sd) )
+		return false;
+	if( item && (item->expire_time || (item->bound && !pc_can_give_bounded_items(sd))) )
+		return false;
+	return (itemdb_isdropable(item, pc_get_group_level(sd)));
+}
+
+/*==========================================
+ * Read '@type' variables (temporary numeric char reg)
+ *------------------------------------------*/
+int64 pc_readreg( const map_session_data* sd, int64 reg )
+{
+	return i64db_i64get(sd->regs.vars, reg);
+}
+
+/*==========================================
+ * Set '@type' variables (temporary numeric char reg)
+ *------------------------------------------*/
+bool pc_setreg(map_session_data* sd, int64 reg, int64 val)
+{
+	uint32 index = script_getvaridx(reg);
+
+	nullpo_retr(false, sd);
+
+	if( val ) {
+		i64db_i64put(sd->regs.vars, reg, val);
+		if( index )
+			script_array_update(&sd->regs, reg, false);
+	} else {
+		i64db_remove(sd->regs.vars, reg);
+		if( index )
+			script_array_update(&sd->regs, reg, true);
+	}
+
+	return true;
+}
+
+/*==========================================
+ * Read '@type$' variables (temporary string char reg)
+ *------------------------------------------*/
+char* pc_readregstr( const map_session_data* sd, int64 reg )
+{
+	struct script_reg_str *p = nullptr;
+
+	p = (struct script_reg_str *)i64db_get(sd->regs.vars, reg);
+
+	return p ? p->value : nullptr;
+}
+
+/*==========================================
+ * Set '@type$' variables (temporary string char reg)
+ *------------------------------------------*/
+bool pc_setregstr(map_session_data* sd, int64 reg, const char* str)
+{
+	struct script_reg_str *p = nullptr;
+	uint32 index = script_getvaridx(reg);
+	DBData prev;
+
+	nullpo_retr(false, sd);
+
+	if( str[0] ) {
+		p = ers_alloc(str_reg_ers, struct script_reg_str);
+
+		p->value = aStrdup(str);
+		p->flag.type = 1;
+
+		if (sd->regs.vars->put(sd->regs.vars, db_i642key(reg), db_ptr2data(p), &prev)) {
+			p = (struct script_reg_str *)db_data2ptr(&prev);
+			if( p->value )
+				aFree(p->value);
+			ers_free(str_reg_ers, p);
+		} else {
+			if( index )
+				script_array_update(&sd->regs, reg, false);
+		}
+	} else {
+		if (sd->regs.vars->remove(sd->regs.vars, db_i642key(reg), &prev)) {
+			p = (struct script_reg_str *)db_data2ptr(&prev);
+			if( p->value )
+				aFree(p->value);
+			ers_free(str_reg_ers, p);
+			if( index )
+				script_array_update(&sd->regs, reg, true);
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Serves the following variable types:
+ * - 'type' (permanent numeric char reg)
+ * - '#type' (permanent numeric account reg)
+ * - '##type' (permanent numeric account reg2)
+ **/
+int64 pc_readregistry( const map_session_data* sd , int64 reg )
+{
+	struct script_reg_num *p = nullptr;
+
+	if (!sd->vars_ok) {
+		ShowError("pc_readregistry: Trying to read reg %s before it's been loaded!\n", get_str(script_getvarid(reg)));
+		//This really shouldn't happen, so it's possible the data was lost somewhere, we should request it again.
+		//intif->request_registry(sd,type==3?4:type);
+		set_eof(sd->fd);
+		return 0;
+	}
+
+	p = (struct script_reg_num *)i64db_get(sd->regs.vars, reg);
+
+	return p ? p->value : 0;
+}
+
+/**
+ * Serves the following variable types:
+ * - 'type$' (permanent str char reg)
+ * - '#type$' (permanent str account reg)
+ * - '##type$' (permanent str account reg2)
+ **/
+char* pc_readregistry_str( const map_session_data* sd, int64 reg )
+{
+	struct script_reg_str *p = nullptr;
+
+	if (!sd->vars_ok) {
+		ShowError("pc_readregistry_str: Trying to read reg %s before it's been loaded!\n", get_str(script_getvarid(reg)));
+		//This really shouldn't happen, so it's possible the data was lost somewhere, we should request it again.
+		//intif->request_registry(sd,type==3?4:type);
+		set_eof(sd->fd);
+		return nullptr;
+	}
+
+	p = (struct script_reg_str *)i64db_get(sd->regs.vars, reg);
+
+	return p ? p->value : nullptr;
+}
+
+/**
+ * Serves the following variable types:

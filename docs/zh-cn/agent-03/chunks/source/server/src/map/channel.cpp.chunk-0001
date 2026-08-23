@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "channel.hpp"
+
+#include <cstdlib>
+
+#include <common/cbasetypes.hpp>
+#include <common/conf.hpp> //libconfig
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp> //set_eof
+#include <common/strlib.hpp> //safestrncpy
+#include <common/timer.hpp>  // DIFF_TICK
+
+#include "battle.hpp"
+#include "clif.hpp" //clif_chsys_msg
+#include "guild.hpp"
+#include "map.hpp" //msg_conf
+#include "pc.hpp"
+#include "pc_groups.hpp"
+
+static DBMap* channel_db; // channels
+
+struct Channel_Config channel_config;
+
+DBMap* channel_get_db(void){ return channel_db; }
+
+/**
+ * Create a channel
+ * - Will then add it in the channel_db if the type is not map or ally
+ * @param name: Channel name, can't be null
+ * @param pass: Channel password, can be null
+ * @param color: Display color
+ * @param chantype: Channel type
+ * @return nullptr on failure or Channel on success
+ */
+struct Channel* channel_create(struct Channel *tmp_chan) {
+	struct Channel* channel;
+
+	if (!tmp_chan->name[0])
+		return nullptr;
+
+	CREATE(channel, struct Channel, 1); //will exit on fail allocation
+	//channel->id = tmp_chan->id;
+	channel->users = idb_alloc(DB_OPT_BASE);
+	channel->banned = idb_alloc(static_cast<DBOptions>(DB_OPT_BASE|DB_OPT_RELEASE_DATA) );
+	channel->opt = tmp_chan->opt;
+	channel->type = tmp_chan->type;
+	channel->color = tmp_chan->color;
+	safestrncpy(channel->name, tmp_chan->name, CHAN_NAME_LENGTH); // Store channel cname without '#'
+	safestrncpy(channel->alias, tmp_chan->alias[0] ? tmp_chan->alias : tmp_chan->name, CHAN_NAME_LENGTH);
+	if (!tmp_chan->pass[0])
+		channel->pass[0] = '\0';
+	else
+		safestrncpy(channel->pass, tmp_chan->pass, CHAN_NAME_LENGTH);
+	channel->msg_delay = tmp_chan->msg_delay;
+
+	switch (channel->type) {
+		case CHAN_TYPE_MAP:
+			channel->m = tmp_chan->m;
+			break;
+		case CHAN_TYPE_ALLY:
+			channel->gid = tmp_chan->gid;
+			break;
+		case CHAN_TYPE_PRIVATE:
+			channel->char_id = tmp_chan->char_id;
+			[[fallthrough]];
+		default:
+			strdb_put(channel_db, channel->name, channel);
+			break;
+	}
+
+	if (battle_config.etc_log)
+		ShowInfo("Create channel %s alias %s type=%d, owner=%d/%d/%d\n",channel->name,channel->alias,channel->type,channel->char_id,channel->m,channel->gid);
+
+	return channel;
+}
+
+/**
+ * Allocates the proper settings depending on the channel type
+ * @param name: Channel name, can't be null
+ * @param pass: Channel password, can be null
+ * @param chantype: Channel type
+ * @param owner: Owner ID
+ * @return nullptr on failure or Channel on success
+ */
+struct Channel* channel_create_simple(char *name, char *pass, enum Channel_Type chantype, uint32 owner) {
+	struct Channel tmp_chan;
+	memset(&tmp_chan, 0, sizeof(struct Channel));
+
+	switch (chantype) {
+		case CHAN_TYPE_ALLY:
+			memcpy(&tmp_chan, &channel_config.ally_tmpl, sizeof(channel_config.ally_tmpl));
+			tmp_chan.gid = (int32)owner;
+			break;
+		case CHAN_TYPE_MAP:
+			memcpy(&tmp_chan, &channel_config.map_tmpl, sizeof(channel_config.map_tmpl));
+			tmp_chan.m = (uint16)owner;
+			break;
+		case CHAN_TYPE_PUBLIC:
+			safestrncpy(tmp_chan.name, name+1, sizeof(tmp_chan.name));
+			if (pass)
+				safestrncpy(tmp_chan.pass, pass, sizeof(tmp_chan.pass));
+			else
+				tmp_chan.pass[0] = '\0';
+			safestrncpy(tmp_chan.alias, name, sizeof(tmp_chan.name));
+			tmp_chan.type = CHAN_TYPE_PUBLIC;
+			tmp_chan.opt = CHAN_OPT_BASE;
+			tmp_chan.msg_delay = 1000;
+			tmp_chan.color = channel_getColor("Default");
+			break;
+		case CHAN_TYPE_PRIVATE:
+			safestrncpy(tmp_chan.name, name+1, sizeof(tmp_chan.name));
+			if (pass)
+				safestrncpy(tmp_chan.pass, pass, sizeof(tmp_chan.pass));
+			else
+				tmp_chan.pass[0] = '\0';
+			safestrncpy(tmp_chan.alias, name, sizeof(tmp_chan.name));
+			tmp_chan.type = CHAN_TYPE_PRIVATE;
+			tmp_chan.opt = channel_config.private_channel.opt;
+			tmp_chan.msg_delay = channel_config.private_channel.delay;
+			tmp_chan.color = channel_config.private_channel.color;
+			tmp_chan.char_id = owner;
+			break;
+		default:
+			return nullptr;
+	}
+
+	return channel_create(&tmp_chan);
+}
+
+/**
+ * Delete a channel
+ * - Checks if there is any user in channel and make them quit
+ * @param channel: Channel data
+ * @param force: Forcefully remove channel
+ * @return
+ *   0: Success
+ *  -1: Invalid channel
+ *  -2: Can't delete now
+ */
+int32 channel_delete(struct Channel *channel, bool force) {
+	if(!channel)
+		return -1;
+
+	// only delete those serv stop
+	if( !force && channel->type == CHAN_TYPE_PUBLIC && global_core->is_running() ){
+		return -2;
+	}
+
+	if( db_size(channel->users)) {
+		map_session_data *sd;
+		DBIterator *iter = db_iterator(channel->users);
+		for( sd = (map_session_data *)dbi_first(iter); dbi_exists(iter); sd = (map_session_data *)dbi_next(iter) ) { //for all users
+			channel_clean(channel,sd,1); //make all quit
+		}
+		dbi_destroy(iter);
+	}
+	if (battle_config.etc_log)
+		ShowInfo("Deleting channel %s alias %s type %d\n",channel->name,channel->alias,channel->type);
+	db_destroy(channel->users);
+	db_destroy(channel->banned);
+	if (channel->groups)
+		aFree(channel->groups);
+	channel->groups = nullptr;
+	channel->group_count = 0;
+	switch(channel->type){
+	case CHAN_TYPE_MAP:
+		map_getmapdata(channel->m)->channel = nullptr;
+		aFree(channel);
+		break;
+	case CHAN_TYPE_ALLY: {
+		auto g = guild_search(channel->gid);
+		if(g) g->channel = nullptr;
+		aFree(channel);
+		break;
+	}
+	default:
+		strdb_remove(channel_db, channel->name);
+		break;
+	}
+	return 0;
+}
+
+/**
+ * Make a player join a channel
+ * - Add player to channel user list
+ * - Add channel to user channel list
+ * @param channel: Channel data
+ * @param sd: Player data
+ * @return
+ *   0: Success
+ *  -1: Invalid channel or player
+ *  -2: Player already in channel
+ *  -3: Player banned
+ *  -4: Reached max limit
+ */
+int32 channel_join(struct Channel *channel, map_session_data *sd) {
+	if(!channel || !sd)
+		return -1;
+	if(sd->state.autotrade)
+		return 0; // fake success
+	if(channel_haspc(channel,sd)==1)
+		return -2;
+	if (!pc_has_permission(sd, PC_PERM_CHANNEL_ADMIN) && !channel_pccheckgroup(channel, sd->group_id))
+		return -2;
+
+	if(channel_haspcbanned(channel,sd)==1){
+		char output[CHAT_SIZE_MAX];
+		sprintf(output, msg_txt(sd,1438),channel->name); //You're currently banned from the '%s' channel.
+		clif_displaymessage(sd->fd, output);
+		return -3;
+	}
+
+	if (channel->type == CHAN_TYPE_PRIVATE && db_size(channel->users) >= channel_config.private_channel.max_member) {
+		char output[CHAT_SIZE_MAX];
+		sprintf(output, msg_txt(sd,760), channel->name, channel_config.private_channel.max_member); // You cannot join channel '%s'. Limit of %d has been met.
+		clif_displaymessage(sd->fd, output);
+		return -4;
+	}
+
+	RECREATE(sd->channels, struct Channel *, ++sd->channel_count);
+	sd->channels[ sd->channel_count - 1 ] = channel;
+	idb_put(channel->users, sd->status.char_id, sd);
+	RECREATE(sd->channel_tick, t_tick, sd->channel_count);
+	sd->channel_tick[sd->channel_count-1] = 0;
+
+	if( sd->stealth ) {
+		sd->stealth = false;
+	} else if( channel->opt & CHAN_OPT_ANNOUNCE_JOIN ) {
+		char output[CHAT_SIZE_MAX];
+		safesnprintf(output, CHAT_SIZE_MAX, msg_txt(sd,761), channel->alias, sd->status.name); // %s %s has joined.
+		clif_channel_msg(channel,output,channel->color);
+	}
+
+	/* someone is cheating, we kindly disconnect the bastard */
+	if( sd->channel_count > 200 ) {
+		set_eof(sd->fd);
+	}
+
+	return 0;
+}
+
+/**
+ * Make a player join the map channel
+ * - Create the map_channel if it does not exist
+ * @param sd: Player data
+ * @return
+ *  -1: Invalid player
+ *  -2: Player already in channel (channel_join)
+ *  -3: Player banned (channel_join)
+ */
+int32 channel_mjoin(map_session_data *sd) {
+	char mout[60];
+	if(!sd) return -1;
+
+	struct map_data *mapdata = map_getmapdata(sd->m);
+
+	if( !mapdata->channel ) {
+		mapdata->channel = channel_create_simple(nullptr,nullptr,CHAN_TYPE_MAP,sd->m);
+	}
+
+	if( mapdata->channel->opt & CHAN_OPT_ANNOUNCE_SELF ) {
+		sprintf(mout, msg_txt(sd,1435),mapdata->channel->name,mapdata->name); // You're now in the '#%s' channel for '%s'.
+		clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], mout, false, SELF);
+	}
+
+	return channel_join(mapdata->channel,sd);
+}
+
+/**
+ * Make all ally members of a guild join the guild channel
+ * - They only join if they are in their own guild channel (if not they probably left it)
+ * @param g: Guild data
+ * @return
+ *   0: Success
+ *  -1: Invalid guild or no channel for guild
+ */
+int32 channel_ajoin(MapGuild &g) {
+	int32 i, j;
+	map_session_data *pl_sd;
+
+	if (!g.channel)
+		return -1;
+	for (i = 0; i < MAX_GUILDALLIANCE; i++){
+		std::shared_ptr<MapGuild> ag; //allied guild
+		struct guild_alliance *ga = &g.guild.alliance[i]; //guild alliance
+		if(ga->guild_id && (ga->opposition==0) && (ag=guild_search(ga->guild_id))){
+			for (j = 0; j < ag->guild.max_member; j++){ //load all guildmember
+				pl_sd = ag->guild.member[j].sd;
+				if(channel_haspc(ag->channel,pl_sd)==1)  //only if they are in their own guildchan
+					channel_join(g.channel,pl_sd);
+			}
+		}
+	}
+	return 0;
+}
+
+/**
+ * Make a player join the guild channel
+ * - Create a guild channel if it does not exist
+ * @param sd: Player data
+ * @param flag: Join type (1 - Guild chat, 2 - Ally chat)
+ * @return
+ *   0: Success
+ *  -1: Invalid player
+ *  -2: Player has no guild attached
+ */
+int32 channel_gjoin(map_session_data *sd, int32 flag){
+	struct Channel *channel;
+
+	if(!sd || sd->state.autotrade) return -1;
+	auto &g = sd->guild;
+	if(!g) return -2;
+
+	channel = g->channel;
+	if(!channel){
+		channel = channel_create_simple(nullptr,nullptr,CHAN_TYPE_ALLY,g->guild.guild_id);
+		g->channel = channel;
+		channel_ajoin(*g);
+	}
+	if(flag&1) {
+		channel_join(channel,sd);	//join our guild chat
+	}
+	if(flag&2){
+		int32 i;
+		for (i = 0; i < MAX_GUILDALLIANCE; i++){
+			std::shared_ptr<MapGuild> ag; //allied guild
+			struct guild_alliance *ga = &g->guild.alliance[i]; //guild alliance
+			if(ga->guild_id && (ga->opposition==0) && (ag=guild_search(ga->guild_id)) ) //only join allies
+				channel_join(ag->channel,sd);
+		}
+	}
+	return 0;
+}
+
+/**
+ * Make player leave the channel and cleanup association
+ * - If no one remains in the chat, delete it
+ * @param channel: Channel data
+ * @param sd: Player data
+ * @param flag: Called from deletion process, do not recall delete
+ * @return
+ *  0: Success
+ * -1: Invalid player or channel
+ */
+int32 channel_clean(struct Channel *channel, map_session_data *sd, int32 flag) {
+	unsigned char i;
+
+	if(!channel || !sd)
+		return -1;
+
+	if( channel == sd->gcbind )
+		sd->gcbind = nullptr;
+
+	ARR_FIND(0, sd->channel_count, i, sd->channels[i] == channel);
+	if( i < sd->channel_count ) {
+		unsigned char cursor = i;
+		sd->channels[i] = nullptr;
+		sd->channel_tick[i] = 0;
+		for(; i < sd->channel_count; i++ ) { //slice move list down
+			if( sd->channels[i] == nullptr )
+				continue;
+			if(i != cursor) {
+				sd->channels[cursor] = sd->channels[i];
+				sd->channel_tick[cursor] = sd->channel_tick[i];
+			}
+			cursor++;
+		}
+		if ( !(sd->channel_count = cursor) ) { //if in no more chan delete db
+			aFree(sd->channels);
+			aFree(sd->channel_tick);
+			sd->channels = nullptr;
+			sd->channel_tick = nullptr;
+		}
+	}
+
+	idb_remove(channel->users,sd->status.char_id); //remove user for channel user list
+	//auto delete when no more user in
+	if( !db_size(channel->users) && !(flag&1) )
+		channel_delete(channel,false);
+
+	return 0;
+}
+
+/**
+ * Make a player leave a type of channel
+ * @param sd: Player data
+ * @param type: Quit type (1 - Quit guild channel, 2 - Quit ally channel, 4 - Quit map channel, 8 - Quit all users in channel)
+ * @return
+ *  0: Success
+ * -1: Invalid player
+ */
+int32 channel_pcquit(map_session_data *sd, int32 type){
+	int32 i;
+
+	//On closing state we could have clean all chan by sd but pcquit is more used to free unit when
+	//he quit a map_server, not call in map_quit cause we need to cleanup when we switch map-server as well
+	if(!sd) return -1;
+
+	// Leave all chat channels.
+	if(type&(1|2) && channel_config.ally_tmpl.name[0] && sd->guild){ //quit guild and ally chan
+		auto &g = sd->guild;
+		if(type&1 && channel_haspc(g->channel,sd)==1){
+			channel_clean(g->channel,sd,0); //leave guild chan
+		}
+		if(type&2){
+			for (i = 0; i < MAX_GUILDALLIANCE; i++) { //leave all alliance chan
+				std::shared_ptr<MapGuild> ag; //allied guild
+				if( g->guild.alliance[i].guild_id && (ag = guild_search(g->guild.alliance[i].guild_id) ) ) {
+					if(channel_haspc(ag->channel,sd) == 1)
+						channel_clean(ag->channel,sd,0);
+					break;
+				}
+			}
+		}
+	}
+
+	struct map_data *mapdata = map_getmapdata(sd->m);
+
+	if(type&4 && channel_config.map_tmpl.name[0] && channel_haspc(mapdata->channel,sd)==1){ //quit map chan
+		channel_clean(mapdata->channel,sd,0);
+	}
+	if(type&8 && sd->channel_count ) { //quit all chan
+		uint8 count = sd->channel_count;
+		for( i = count-1; i >= 0; i--) { //going backward to avoid shifting
+			channel_clean(sd->channels[i],sd,0);
+		}
+	}
+	return 0;
+}
+
+/**
+ * Format message from player to send to the channel
+ * - Also truncate extra characters if message is too long
+ * @param channel: Channel data
+ * @param sd: Player data
+ * @param msg: Message to send
+ * @return
+ *  0: Success
+ * -1: Invalid player, channel, or message
+ * -2: Delay message from last message
+ */
+int32 channel_send(struct Channel *channel, map_session_data *sd, const char *msg) {
+	int32 idx = 0;
+
+	if(!channel || !sd || !msg || (idx = channel_pc_haschan(sd, channel)) < 0)
+		return -1;
+
+	if(!pc_has_permission(sd, PC_PERM_CHANNEL_ADMIN) && channel->msg_delay != 0 && DIFF_TICK(sd->channel_tick[idx] + channel->msg_delay, gettick()) > 0) {
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,1455),false,SELF); //You're talking too fast!
+		return -2;
+	}
+	else {
+		char output[CHAT_SIZE_MAX];
+		unsigned long color = channel->color;
+		if((channel->opt&CHAN_OPT_COLOR_OVERRIDE) && sd->fontcolor && sd->fontcolor < channel_config.colors_count && channel_config.colors[sd->fontcolor])
+			color = channel_config.colors[sd->fontcolor];
+		safesnprintf(output, CHAT_SIZE_MAX, "%s %s : %s", channel->alias, sd->status.name, msg);
+		clif_channel_msg(channel,output,color);
+		sd->channel_tick[idx] = gettick();
+	}
+	return 0;
+}
+
+/**
+ * Check parameters for channel creation
+ * @param chname: Channel name
+ * @param chpass: Channel password
+ * @param type: Check types (1 - Check name # + length, 2 - Check if channel already exists, 4 - Check password length)
+ * @return
+ *  0: Success
+ * -1: Bad channel name
+ * -2: bad channel name length
+ * -3: Password given too long
+ * -4: Channel already exists
+ */
+int32 channel_chk(char *chname, char *chpass, int32 type){
+	if(type&1){ //check name
+		if( chname[0] != '#' )
+			return -1;
+		if ( strlen(chname) < 3 || strlen(chname) > CHAN_NAME_LENGTH )
+			return -2;
+		if( (type&2) && (
+			strcmpi(chname + 1,channel_config.map_tmpl.name) == 0
+			|| strcmpi(chname + 1,channel_config.ally_tmpl.name) == 0
+			|| strdb_exists(channel_db, chname + 1) )
+			) {
+			return -4;
+		}
+	}
+	if (type&4 && (chpass[0] != '\0' && strlen(chpass) > CHAN_NAME_LENGTH ) ) {
+		return -3;
+	}
+
+	return 0;
+}
+

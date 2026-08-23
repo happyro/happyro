@@ -1,0 +1,136 @@
+					closestEntity = entity;
+					distance = dst;
+				}
+			}
+		}
+	});
+
+	return closestEntity;
+}
+
+/**
+ * Returns the lowest HP entity to the source entity
+ *
+ * @param {entity} source entity
+ * @param {type} entity type to look for
+ */
+function getLowestHpEntity(sourceEntity, type) {
+	let lowestHpEntity = null;
+	let lowestHp = Infinity;
+
+	const srcX = sourceEntity.position[0];
+	const srcY = sourceEntity.position[1];
+	const view_range = GraphicsSettings.performanceMode ? GraphicsSettings.viewArea : 20;
+	const viewRangeSq = view_range * view_range;
+
+	_list.forEach(entity => {
+		if (
+			entity.GID !== sourceEntity.GID &&
+			entity.objecttype === type &&
+			entity.life &&
+			entity.life.hp > 0 &&
+			entity.action !== entity.ACTION.DIE &&
+			entity.remove_tick === 0
+		) {
+			const dx = entity.position[0] - srcX;
+			const dy = entity.position[1] - srcY;
+			const distSq = dx * dx + dy * dy;
+			if (distSq > viewRangeSq) {
+				return;
+			}
+
+			if (entity.life.hp < lowestHp) {
+				lowestHp = entity.life.hp;
+				lowestHpEntity = entity;
+			}
+		}
+	});
+
+	return lowestHpEntity;
+}
+
+/**
+ * Returns the distance between two entities based on direct walkpath
+ *
+ * @param {entity} from entity
+ * @param {entity} to entity
+ */
+function getPathDistance(fromEntity, toEntity) {
+	const out = [];
+	const count = PathFinding.search(
+		fromEntity.position[0] | 0,
+		fromEntity.position[1] | 0,
+		toEntity.position[0] | 0,
+		toEntity.position[1] | 0,
+		1,
+		out,
+		Altitude.TYPE.WALKABLE
+	);
+	return count;
+}
+
+const _lifeCache = new Map();
+
+function storeLife(gid, data) {
+	const existing = _lifeCache.get(gid) || {};
+	// Merge parcial: só atualiza campos que foram passados (não undefined)
+	if (data.hp !== undefined) existing.hp = data.hp;
+	if (data.hp_max !== undefined) existing.hp_max = data.hp_max;
+	if (data.sp !== undefined) existing.sp = data.sp;
+	if (data.sp_max !== undefined) existing.sp_max = data.sp_max;
+	if (data.hunger !== undefined) existing.hunger = data.hunger;
+	if (data.hunger_max !== undefined) existing.hunger_max = data.hunger_max;
+	_lifeCache.set(gid, existing);
+}
+
+function getLife(gid) {
+	return _lifeCache.get(gid) || null;
+}
+
+function removeLife(gid) {
+	_lifeCache.delete(gid);
+}
+
+function clearLifeCache() {
+	_lifeCache.clear();
+}
+
+const EntityManager = {
+	free: free,
+	add: addEntity,
+	remove: removeEntity,
+	removeGID: removeGID,
+	get: getEntity,
+	getByCID: getEntityByCID,
+	forEach: forEach,
+
+	getOverEntity: getOverEntity,
+	setOverEntity: setOverEntity,
+	getFocusEntity: getFocusEntity,
+	setFocusEntity: setFocusEntity,
+
+	getClosestEntity: getClosestEntity,
+	getLowestHpEntity: getLowestHpEntity,
+
+	storeLife: storeLife,
+	getLife: getLife,
+	removeLife: removeLife,
+	clearLifeCache: clearLifeCache,
+
+	render: render,
+	intersect: intersect,
+	setSupportPicking: setSupportPicking,
+
+	pendingTransformations: pendingTransformations,
+	storePendingTransform: storePendingTransform
+};
+
+/**
+ * Get access to manager from Entity object
+ */
+Entity.Manager = EntityManager;
+
+/**
+ * Export
+ */
+export default EntityManager;

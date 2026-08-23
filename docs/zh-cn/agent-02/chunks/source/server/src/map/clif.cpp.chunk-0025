@@ -1,0 +1,500 @@
+
+/// Request to pick up an item.
+/// 009f <id>.L (CZ_ITEM_PICKUP)
+/// 0362 <id>.L (CZ_ITEM_PICKUP2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_TakeItem(int32 fd, map_session_data *sd)
+{
+	flooritem_data *fitem;
+	int32 map_object_id;
+
+	// TODO: shuffle packet
+	map_object_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+
+	fitem = (flooritem_data*)map_id2bl(map_object_id);
+
+	do {
+		if (pc_isdead(sd)) {
+			clif_clearunit_area( *sd, CLR_DEAD );
+			break;
+		}
+
+		if (fitem == nullptr || fitem->type != BL_ITEM || fitem->m != sd->m)
+			break;
+
+		if (pc_cant_act(sd))
+			break;
+
+		if (!pc_takeitem(sd, fitem))
+			break;
+
+		return;
+	} while (0);
+	// Client REQUIRES a fail packet or you can no longer pick items.
+	clif_additem(sd,0,0,6);
+}
+
+
+/// Request to drop an item.
+/// 00a2 <index>.W <amount>.W (CZ_ITEM_THROW)
+/// 0363 <index>.W <amount>.W (CZ_ITEM_THROW2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_DropItem(int32 fd, map_session_data *sd){
+	// TODO: shuffle packet
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	int32 item_index  = RFIFOW(fd,info->pos[0]) -2;
+	int32 item_amount = RFIFOW(fd,info->pos[1]) ;
+
+	for(;;) {
+		if (pc_isdead(sd))
+			break;
+
+		if (pc_cant_act2(sd) || sd->npc_id)
+			break;
+
+		if (sd->sc.cant.drop)
+			break;
+
+		if (!pc_dropitem(sd, item_index, item_amount))
+			break;
+
+		if (battle_config.idletime_option&IDLE_DROPITEM)
+			sd->idletime = last_tick;
+		if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_DROPITEM)
+			sd->idletime_hom = last_tick;
+		if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_DROPITEM)
+			sd->idletime_mer = last_tick;
+
+		return;
+	}
+
+	//Because the client does not like being ignored.
+	clif_dropitem( *sd, item_index, 0 );
+}
+
+
+/// Request to use an item.
+/// 00a7 <index>.W <account id>.L (CZ_USE_ITEM)
+/// 0439 <index>.W <account id>.L (CZ_USE_ITEM2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_UseItem(int32 fd, map_session_data *sd)
+{
+	int32 n;
+
+	if (pc_isdead(sd)) {
+		clif_clearunit_area( *sd, CLR_DEAD );
+		return;
+	}
+
+	if ( (!sd->npc_id && pc_istrading(sd)) || sd->chatID || (sd->state.block_action & PCBLOCK_USEITEM) ) {
+		clif_msg( *sd, MSI_BUSY );
+		return;
+	}
+
+	//Whether the item is used or not is irrelevant, the char ain't idle. [Skotlex]
+	if (battle_config.idletime_option&IDLE_USEITEM)
+		sd->idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_USEITEM)
+		sd->idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_USEITEM)
+		sd->idletime_mer = last_tick;
+	n = RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0])-2;
+
+	if(n <0 || n >= MAX_INVENTORY)
+		return;
+	if (!pc_useitem(sd,n))
+		clif_useitemack(sd,n,0,false); //Send an empty ack packet or the client gets stuck.
+}
+
+
+/// Request to equip an item
+/// 00a9 <index>.W <position>.W (CZ_REQ_WEAR_EQUIP).
+/// 0998 <index>.W <position>.L (CZ_REQ_WEAR_EQUIP_V5)
+void clif_parse_EquipItem( int32 fd, map_session_data* sd ){
+	const PACKET_CZ_REQ_WEAR_EQUIP* p = reinterpret_cast<PACKET_CZ_REQ_WEAR_EQUIP*>( RFIFOP( fd, 0 ) );
+
+	if(pc_isdead(sd)) {
+		clif_clearunit_area( *sd, CLR_DEAD );
+		return;
+	}
+
+	uint16 index = server_index( p->index );
+
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	if((sd->npc_id && !sd->npc_item_flag) || (sd->state.block_action & PCBLOCK_EQUIP)) {
+		clif_msg_color( *sd, MSI_CAN_NOT_EQUIP_ITEM, color_table[COLOR_RED] );
+		return;
+	} else if (sd->state.storage_flag || sd->sc.opt1)
+		; //You can equip/unequip stuff while storage is open/under status changes
+	else if (pc_cant_act2(sd))
+		return;
+
+	if(!sd->inventory.u.items_inventory[index].identify) {
+		clif_equipitemack( *sd, ITEM_EQUIP_ACK_FAIL, index ); // fail
+		return;
+	}
+
+	if(!sd->inventory_data[index])
+		return;
+
+	if(sd->inventory_data[index]->type == IT_PETARMOR){
+		pet_equipitem(sd,index);
+		return;
+	}
+
+	if (battle_config.idletime_option&IDLE_USEITEM)
+		sd->idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_USEITEM)
+		sd->idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_USEITEM)
+		sd->idletime_mer = last_tick;
+
+	//Client doesn't send the position for ammo.
+	if(sd->inventory_data[index]->type == IT_AMMO)
+		pc_equipitem(sd,index,EQP_AMMO);
+	else{
+		pc_equipitem( sd, index, p->position );
+	}
+}
+
+
+/// Request to take off an equip (CZ_REQ_TAKEOFF_EQUIP).
+/// 00ab <index>.W
+void clif_parse_UnequipItem(int32 fd,map_session_data *sd)
+{
+	int32 index;
+
+	if(pc_isdead(sd)) {
+		clif_clearunit_area( *sd, CLR_DEAD );
+		return;
+	}
+
+	if((sd->npc_id && !sd->npc_item_flag) || (sd->state.block_action & PCBLOCK_EQUIP)) {
+		clif_msg_color( *sd, MSI_CAN_NOT_EQUIP_ITEM, color_table[COLOR_RED] );
+		return;
+	} else if (sd->state.storage_flag || sd->sc.opt1)
+		; //You can equip/unequip stuff while storage is open/under status changes
+	else if (pc_cant_act2(sd))
+		return;
+
+	index = RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0])-2;
+
+	if (battle_config.idletime_option&IDLE_USEITEM)
+		sd->idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd->hd && battle_config.idletime_hom_option&IDLE_USEITEM)
+		sd->idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd->md && battle_config.idletime_mer_option&IDLE_USEITEM)
+		sd->idletime_mer = last_tick;
+
+	pc_unequipitem(sd,index,1);
+}
+
+
+/// Request to start a conversation with an NPC.
+/// 0090 <id>.L <type>.B (CZ_CONTACTNPC)
+/// type:
+///     1 = click
+void clif_parse_NpcClicked( int32 fd, map_session_data* sd ){
+	const PACKET_CZ_CONTACTNPC* p = reinterpret_cast<PACKET_CZ_CONTACTNPC*>( RFIFOP( fd, 0 ) );
+
+	if( sd == nullptr ){
+		return;
+	}
+
+	if(pc_isdead(sd)) {
+		clif_clearunit_area( *sd, CLR_DEAD );
+		return;
+	}
+
+	if( pc_cant_act2(sd) || sd->npc_id || pc_hasprogress( sd, WIP_DISABLE_NPC ) ){
+#ifdef RENEWAL
+		clif_msg( *sd, MSI_BUSY );
+#endif
+		return;
+	}
+
+	if( sd->state.mail_writing )
+		return;
+
+	block_list* bl = map_id2bl( p->AID );
+
+	if( bl == nullptr ){
+		return;
+	}
+
+	switch (bl->type) {
+		case BL_MOB:
+		case BL_PC:
+			clif_parse_ActionRequest_sub( *sd, DMG_REPEAT, bl->id, gettick() );
+			break;
+		case BL_NPC:
+#ifdef RENEWAL
+			if (sd->ud.skill_id < RK_ENCHANTBLADE && sd->ud.skilltimer != INVALID_TIMER) { // Should only show an error message for non-3rd job skills with a running timer
+				clif_msg( *sd, MSI_BUSY );
+				break;
+			}
+#endif
+			if( bl->m != -1 ){ // the user can't click floating npcs directly (hack attempt)
+				npc_data* nd = (npc_data*)bl;
+
+				// Progressbar is running
+				if( nd->progressbar.timeout > 0 ){
+					return;
+				}
+
+				npc_click(sd,nd);
+			}
+			break;
+	}
+}
+
+
+/// Selection between buy/sell was made.
+/// 00c5 <id>.L <type>.B (CZ_ACK_SELECT_DEALTYPE)
+/// type:
+///     0 = buy
+///     1 = sell
+void clif_parse_NpcBuySellSelected( int32 fd, map_session_data* sd ){
+	const PACKET_CZ_ACK_SELECT_DEALTYPE* p = reinterpret_cast<PACKET_CZ_ACK_SELECT_DEALTYPE*>( RFIFOP( fd, 0 ) );
+
+	if( sd == nullptr ){
+		return;
+	}
+
+	if (sd->state.trading)
+		return;
+
+	npc_buysellsel( sd, p->GID, p->type );
+}
+
+
+/// Notification about the result of a purchase attempt from an NPC shop (ZC_PC_PURCHASE_RESULT).
+/// 00ca <result>.B
+/// result:
+///     0 = "The deal has successfully completed."
+///     1 = "You do not have enough zeny."
+///     2 = "You are over your Weight Limit."
+///     3 = "Out of the maximum capacity, you have too many items."
+///     9 = "Amounts are exceeded the possession of the item is not available for purchase."
+///    10 = "Props open-air store sales will be traded in RODEX"
+///    11 = "The exchange failed."
+///    12 = "The exchange was well done."
+///    13 = "The item is already sold and out of stock."
+///    14 = "There is not enough goods to exchange."
+void clif_npc_buy_result( map_session_data* sd, e_purchase_result result ){
+	PACKET_ZC_PC_PURCHASE_RESULT p = {};
+
+	p.packetType = HEADER_ZC_PC_PURCHASE_RESULT;
+	p.result = (uint8)result;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+
+/// Request to buy chosen items from npc shop.
+/// 00c8 <packet len>.W { <amount>.W <name id>.W }* (CZ_PC_PURCHASE_ITEMLIST)
+void clif_parse_NpcBuyListSend( int32 fd, map_session_data* sd ){
+	const PACKET_CZ_PC_PURCHASE_ITEMLIST *p = reinterpret_cast<PACKET_CZ_PC_PURCHASE_ITEMLIST*>( RFIFOP( fd, 0 ) );
+
+	uint16 n = ( p->packetLength - sizeof( *p ) ) / sizeof( p->items[0] );
+	e_purchase_result result;
+
+	if( sd->state.trading || !sd->npc_shopid )
+		result = e_purchase_result::PURCHASE_FAIL_MONEY;
+	else{
+		std::vector<s_npc_buy_list> items = {};
+
+		items.reserve( n );
+
+		for( uint16 i = 0; i < n; i++ ){
+			s_npc_buy_list item = {};
+
+			item.nameid = p->items[i].itemId;
+			item.qty = p->items[i].amount;
+
+			items.push_back( item );
+		}
+
+		result = npc_buylist( sd, items );
+	}
+
+	sd->npc_shopid = 0; //Clear shop data.
+	clif_npc_buy_result(sd, result);
+}
+
+
+/// Notification about the result of a sell attempt to an NPC shop (ZC_PC_SELL_RESULT).
+/// 00cb <result>.B
+/// result:
+///     0 = "The deal has successfully completed."
+///     1 = "The deal has failed."
+void clif_npc_sell_result(map_session_data* sd, unsigned char result)
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0xcb));
+	WFIFOW(fd,0) = 0xcb;
+	WFIFOB(fd,2) = result;
+	WFIFOSET(fd,packet_len(0xcb));
+}
+
+
+/// Request to sell chosen items to npc shop (CZ_PC_SELL_ITEMLIST).
+/// 00c9 <packet len>.W { <index>.W <amount>.W }*
+void clif_parse_NpcSellListSend(int32 fd,map_session_data *sd)
+{
+	int32 fail=0;
+	const PACKET_CZ_PC_SELL_ITEMLIST* p = reinterpret_cast<PACKET_CZ_PC_SELL_ITEMLIST*>( RFIFOP( fd, 0 ) );
+
+	int32 n = ( p->packetLength - sizeof( *p ) ) / sizeof( p->sellList[0] );
+	
+	if (sd->state.trading || !sd->npc_shopid)
+		fail = 1;
+	else
+		fail = npc_selllist(sd, n, p->sellList);
+
+	sd->npc_shopid = 0; //Clear shop data.
+	clif_npc_sell_result(sd, fail);
+}
+
+
+/// Chatroom creation request.
+/// 00d5 <packet len>.W <limit>.W <type>.B <passwd>.8B <title>.?B (CZ_CREATE_CHATROOM)
+/// type:
+///     0 = private
+///     1 = public
+void clif_parse_CreateChatRoom( int32 fd, map_session_data* sd){
+	const PACKET_CZ_CREATE_CHATROOM* p = reinterpret_cast<PACKET_CZ_CREATE_CHATROOM*>( RFIFOP( fd, 0 ) );
+
+	if( sd == nullptr ){
+		return;
+	}
+
+	if( sd->sc.getSCE( SC_NOCHAT ) && sd->sc.getSCE( SC_NOCHAT )->val1&MANNER_NOROOM ){
+		return;
+	}
+
+	if(battle_config.basic_skill_check && pc_checkskill(sd,NV_BASIC) < 4 && pc_checkskill(sd, SU_BASIC_SKILL) < 1) {
+		clif_skill_fail( *sd, 1, USESKILL_FAIL_LEVEL, 3 );
+		return;
+	}
+
+	if( npc_isnear(sd) ) {
+		// uncomment to send msg_txt.
+		//char output[150];
+		//sprintf(output, msg_txt(662), battle_config.min_npc_vendchat_distance);
+		//clif_displaymessage(sd->fd, output);
+		clif_skill_fail( *sd, 1, USESKILL_FAIL_THERE_ARE_NPC_AROUND );
+		return;
+	}
+
+	if( p->packetSize < sizeof( *p ) ){
+		// invalid input
+		return;
+	}
+
+	char password[CHATROOM_PASS_SIZE];
+
+	safestrncpy( password, p->password, sizeof( password ) );
+
+	char title[CHATROOM_TITLE_SIZE];
+
+	safestrncpy( title, p->title, std::min<size_t>( sizeof( title ), p->packetSize - sizeof( *p ) + 1 ) );
+
+	chat_createpcchat( sd, title, password, p->limit, p->type != 0 );
+}
+
+
+/// Chatroom join request.
+/// 00d9 <chat ID>.L <passwd>.8B (CZ_REQ_ENTER_ROOM)
+void clif_parse_ChatAddMember(int32 fd, map_session_data* sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_ENTER_ROOM* p = reinterpret_cast<PACKET_CZ_REQ_ENTER_ROOM*>( RFIFOP( fd, 0 ) );
+
+	chat_joinchat( sd, p->chat_id, p->password );
+}
+
+
+/// Chatroom properties adjustment request.
+/// 00de <packet len>.W <limit>.W <type>.B <passwd>.8B <title>.?B (CZ_CHANGE_CHATROOM)
+/// type:
+///     0 = private
+///     1 = public
+void clif_parse_ChatRoomStatusChange(int32 fd, map_session_data* sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_CHANGE_CHATROOM* p = reinterpret_cast<PACKET_CZ_CHANGE_CHATROOM*>( RFIFOP( fd, 0 ) );
+	size_t len = p->packetSize - sizeof( *p );
+
+	if( len <= 0 )
+		return; // invalid input
+
+	char s_password[CHATROOM_PASS_SIZE];
+	char s_title[CHATROOM_TITLE_SIZE];
+
+	safestrncpy( s_password, p->password, sizeof( s_password ) );
+	// NOTE: assumes that safestrncpy will not access the len+1'th byte
+	safestrncpy( s_title, p->title, std::min<size_t>( len + 1, CHATROOM_TITLE_SIZE ) );
+
+	chat_changechatstatus( sd, s_title, s_password, p->limit, p->type );
+}
+
+
+/// Request to change the chat room ownership (CZ_REQ_ROLE_CHANGE).
+/// 00e0 <role>.L <nick>.24B
+/// role:
+///     0 = owner
+///     1 = normal
+void clif_parse_ChangeChatOwner(int32 fd, map_session_data* sd)
+{
+	//int32 role = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	chat_changechatowner(sd,RFIFOCP(fd,packet_db[RFIFOW(fd,0)].pos[1]));
+}
+
+
+/// Request to expel a player from chat room (CZ_REQ_EXPEL_MEMBER).
+/// 00e2 <name>.24B
+void clif_parse_KickFromChat(int32 fd,map_session_data *sd)
+{
+	chat_kickchat(sd,RFIFOCP(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+}
+
+
+/// Request to leave the current chatroom (CZ_EXIT_ROOM).
+/// 00e3
+void clif_parse_ChatLeave(int32 fd, map_session_data* sd)
+{
+	chat_leavechat(sd,0);
+}
+
+// Handles notifying asker and rejecter of what has just occurred.
+// Type is used to determine the correct msg_txt to use
+void clif_noask_sub( const map_session_data& sd, const map_session_data& tsd, int32 type ){
+	char output[CHAT_SIZE_MAX];
+
+	// Your request has been rejected by autoreject option.
+	clif_messagecolor( &sd, color_table[COLOR_LIGHT_GREEN], msg_txt( &sd, 392 ), false, SELF );
+
+	// Notice that a request was rejected.
+	safesnprintf( output, CHAT_SIZE_MAX, msg_txt( &tsd, type ), sd.status.name );
+	clif_messagecolor( &tsd, color_table[COLOR_LIGHT_GREEN], output, false, SELF);
+}
+
+/// Request to begin a trade (CZ_REQ_EXCHANGE_ITEM).
+/// 00e4 <account id>.L
+void clif_parse_TradeRequest(int32 fd,map_session_data *sd)
+{
+	map_session_data *t_sd;
+
+	t_sd = map_id2sd(RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+
+	if(!sd->chatID && pc_cant_act(sd))
+		return; //You can trade while in a chatroom.

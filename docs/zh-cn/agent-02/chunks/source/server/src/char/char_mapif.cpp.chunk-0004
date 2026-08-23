@@ -1,0 +1,51 @@
+ * Resets all the data related to a server.
+ *  Actually destroys then recreates the struct.
+ * @param id: id of map-serv (should be >0, FIXME)
+ */
+void chmapif_server_reset(int32 id){
+	int32 j = 0;
+	unsigned char buf[INT16_MAX];
+	int32 fd = map_server[id].fd;
+
+	//Notify other map servers that this one is gone. [Skotlex]
+	WBUFW(buf,0) = 0x2b20;
+	WBUFL(buf,4) = htonl(map_server[id].ip);
+	WBUFW(buf,8) = htons(map_server[id].port);
+	for( std::string& map : map_server[id].maps ){
+		safestrncpy( WBUFCP( buf, 10 + j * MAP_NAME_LENGTH_EXT ), map.c_str(), MAP_NAME_LENGTH_EXT );
+		j++;
+	}
+	if (j > 0) {
+		WBUFW(buf,2) = j * MAP_NAME_LENGTH_EXT + 10;
+		chmapif_sendallwos(fd, buf, WBUFW(buf,2));
+	}
+
+	// Tag relevant chars as 'in disconnected' server.
+	for( const auto& pair : char_get_onlinedb() ){
+		char_db_setoffline( pair.second, id );
+	}
+
+	chmapif_server_destroy(id);
+	chmapif_server_init(id);
+}
+
+
+/**
+ * Called when the connection to Map Server is disconnected.
+ * @param id: id of map-serv (should be >0, FIXME)
+ */
+void chmapif_on_disconnect(int32 id){
+	ShowStatus("Map-server #%d has disconnected.\n", id);
+	chmapif_server_reset(id);
+}
+
+
+/**
+ * chmapif destructor
+ *  dealloc..., function called at exit of the char-serv
+ */
+void do_final_chmapif(void){
+	int32 i;
+	for( i = 0; i < ARRAYLENGTH(map_server); ++i )
+		chmapif_server_destroy(i);
+}

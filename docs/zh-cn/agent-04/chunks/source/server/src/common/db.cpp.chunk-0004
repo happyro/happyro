@@ -1,0 +1,500 @@
+	it->vtable.prev    = dbit_obj_prev;
+	it->vtable.exists  = dbit_obj_exists;
+	it->vtable.remove  = dbit_obj_remove;
+	it->vtable.destroy = dbit_obj_destroy;
+	/* Initial state (before the first entry) */
+	it->db = db;
+	it->ht_index = -1;
+	it->node = nullptr;
+	/* Lock the database */
+	db_free_lock(db);
+	return &it->vtable;
+}
+
+/**
+ * Returns true if the entry exists.
+ * @param self Interface of the database
+ * @param key Key that identifies the entry
+ * @return true is the entry exists
+ * @protected
+ * @see DBMap#exists
+ */
+static bool db_obj_exists(DBMap* self, DBKey key)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBNode *node;
+	bool found = false;
+
+	DB_COUNTSTAT(db_exists);
+	if (db == nullptr) return false; // nullpo candidate
+	if (!(db->options&DB_OPT_ALLOW_NULL_KEY) && db_is_key_null(db->type, key)) {
+		return false; // nullpo candidate
+	}
+
+	if (db->cache && db->cmp(key, db->cache->key, db->maxlen) == 0) {
+#if defined(DEBUG)
+		if (db->cache->deleted) {
+			ShowDebug("db_exists: Cache contains a deleted node. Please report this!!!\n");
+			return false;
+		}
+#endif
+		return true; // cache hit
+	}
+
+	db_free_lock(db);
+	node = db->ht[db->hash(key, db->maxlen)%HASH_SIZE];
+	while (node) {
+		int32 c = db->cmp(key, node->key, db->maxlen);
+		if (c == 0) {
+			if (!(node->deleted)) {
+				db->cache = node;
+				found = true;
+			}
+			break;
+		}
+		if (c < 0)
+			node = node->left;
+		else
+			node = node->right;
+	}
+	db_free_unlock(db);
+	return found;
+}
+
+/**
+ * Get the data of the entry identified by the key.
+ * @param self Interface of the database
+ * @param key Key that identifies the entry
+ * @return Data of the entry or nullptr if not found
+ * @protected
+ * @see DBMap#get
+ */
+static DBData* db_obj_get(DBMap* self, DBKey key)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBNode *node;
+	DBData *data = nullptr;
+
+	DB_COUNTSTAT(db_get);
+	if (db == nullptr) return nullptr; // nullpo candidate
+	if (!(db->options&DB_OPT_ALLOW_NULL_KEY) && db_is_key_null(db->type, key)) {
+		ShowError("db_get: Attempted to retrieve non-allowed nullptr key for db allocated at %s:%d\n",db->alloc_file, db->alloc_line);
+		return nullptr; // nullpo candidate
+	}
+
+	if (db->cache && db->cmp(key, db->cache->key, db->maxlen) == 0) {
+#if defined(DEBUG)
+		if (db->cache->deleted) {
+			ShowDebug("db_get: Cache contains a deleted node. Please report this!!!\n");
+			return nullptr;
+		}
+#endif
+		return &db->cache->data; // cache hit
+	}
+
+	db_free_lock(db);
+	node = db->ht[db->hash(key, db->maxlen)%HASH_SIZE];
+	while (node) {
+		int32 c = db->cmp(key, node->key, db->maxlen);
+		if (c == 0) {
+			if (!(node->deleted)) {
+				data = &node->data;
+				db->cache = node;
+			}
+			break;
+		}
+		if (c < 0)
+			node = node->left;
+		else
+			node = node->right;
+	}
+	db_free_unlock(db);
+	return data;
+}
+
+/**
+ * Get the data of the entries matched by <code>match</code>.
+ * It puts a maximum of <code>max</code> entries into <code>buf</code>.
+ * If <code>buf</code> is nullptr, it only counts the matches.
+ * Returns the number of entries that matched.
+ * NOTE: if the value returned is greater than <code>max</code>, only the
+ * first <code>max</code> entries found are put into the buffer.
+ * @param self Interface of the database
+ * @param buf Buffer to put the data of the matched entries
+ * @param max Maximum number of data entries to be put into buf
+ * @param match Function that matches the database entries
+ * @param ... Extra arguments for match
+ * @return The number of entries that matched
+ * @protected
+ * @see DBMap#vgetall
+ */
+static uint32 db_obj_vgetall(DBMap* self, DBData **buf, uint32 max, DBMatcher match, va_list args)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	uint32 i;
+	DBNode *node;
+	DBNode *parent;
+	uint32 ret = 0;
+
+	DB_COUNTSTAT(db_vgetall);
+	if (db == nullptr) return 0; // nullpo candidate
+	if (match == nullptr) return 0; // nullpo candidate
+
+	db_free_lock(db);
+	for (i = 0; i < HASH_SIZE; i++) {
+		// Match in the order: current node, left tree, right tree
+		node = db->ht[i];
+		while (node) {
+
+			if (!(node->deleted)) {
+				va_list argscopy;
+				va_copy(argscopy, args);
+				if (match(node->key, node->data, argscopy) == 0) {
+					if (buf && ret < max)
+						buf[ret] = &node->data;
+					ret++;
+				}
+				va_end(argscopy);
+			}
+
+			if (node->left) {
+				node = node->left;
+				continue;
+			}
+
+			if (node->right) {
+				node = node->right;
+				continue;
+			}
+
+			while (node) {
+				parent = node->parent;
+				if (parent && parent->right && parent->left == node) {
+					node = parent->right;
+					break;
+				}
+				node = parent;
+			}
+
+		}
+	}
+	db_free_unlock(db);
+	return ret;
+}
+
+/**
+ * Just calls {@link DBMap#vgetall}.
+ * Get the data of the entries matched by <code>match</code>.
+ * It puts a maximum of <code>max</code> entries into <code>buf</code>.
+ * If <code>buf</code> is nullptr, it only counts the matches.
+ * Returns the number of entries that matched.
+ * NOTE: if the value returned is greater than <code>max</code>, only the
+ * first <code>max</code> entries found are put into the buffer.
+ * @param self Interface of the database
+ * @param buf Buffer to put the data of the matched entries
+ * @param max Maximum number of data entries to be put into buf
+ * @param match Function that matches the database entries
+ * @param ... Extra arguments for match
+ * @return The number of entries that matched
+ * @protected
+ * @see DBMap#vgetall
+ * @see DBMap#getall
+ */
+static uint32 db_obj_getall(DBMap* self, DBData **buf, uint32 max, DBMatcher match, ...)
+{
+	va_list args;
+	uint32 ret;
+
+	DB_COUNTSTAT(db_getall);
+	if (self == nullptr) return 0; // nullpo candidate
+
+	va_start(args, match);
+	ret = self->vgetall(self, buf, max, match, args);
+	va_end(args);
+	return ret;
+}
+
+/**
+ * Get the data of the entry identified by the key.
+ * If the entry does not exist, an entry is added with the data returned by
+ * <code>create</code>.
+ * @param self Interface of the database
+ * @param key Key that identifies the entry
+ * @param create Function used to create the data if the entry doesn't exist
+ * @param args Extra arguments for create
+ * @return Data of the entry
+ * @protected
+ * @see DBMap#vensure
+ */
+static DBData* db_obj_vensure(DBMap* self, DBKey key, DBCreateData create, va_list args)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBNode *node;
+	DBNode *parent = nullptr;
+	uint32 hash;
+	int32 c = 0;
+	DBData *data = nullptr;
+
+	DB_COUNTSTAT(db_vensure);
+	if (db == nullptr) return nullptr; // nullpo candidate
+	if (create == nullptr) {
+		ShowError("db_ensure: Create function is nullptr for db allocated at %s:%d\n",db->alloc_file, db->alloc_line);
+		return nullptr; // nullpo candidate
+	}
+	if (!(db->options&DB_OPT_ALLOW_NULL_KEY) && db_is_key_null(db->type, key)) {
+		ShowError("db_ensure: Attempted to use non-allowed nullptr key for db allocated at %s:%d\n",db->alloc_file, db->alloc_line);
+		return nullptr; // nullpo candidate
+	}
+
+	if (db->cache && db->cmp(key, db->cache->key, db->maxlen) == 0)
+		return &db->cache->data; // cache hit
+
+	db_free_lock(db);
+	hash = db->hash(key, db->maxlen)%HASH_SIZE;
+	node = db->ht[hash];
+	while (node) {
+		c = db->cmp(key, node->key, db->maxlen);
+		if (c == 0) {
+			break;
+		}
+		parent = node;
+		if (c < 0)
+			node = node->left;
+		else
+			node = node->right;
+	}
+	// Create node if necessary
+	if (node == nullptr) {
+		va_list argscopy;
+		if (db->item_count == UINT32_MAX) {
+			ShowError("db_vensure: item_count overflow, aborting item insertion.\n"
+					"Database allocated at %s:%d",
+					db->alloc_file, db->alloc_line);
+				return nullptr;
+		}
+		DB_COUNTSTAT(db_node_alloc);
+		node = ers_alloc(db->nodes, struct dbn);
+		node->left = nullptr;
+		node->right = nullptr;
+		node->deleted = 0;
+		db->item_count++;
+		if (c == 0) { // hash entry is empty
+			node->color = BLACK;
+			node->parent = nullptr;
+			db->ht[hash] = node;
+		} else {
+			node->color = RED;
+			if (c < 0) { // put at the left
+				parent->left = node;
+				node->parent = parent;
+			} else { // put at the right
+				parent->right = node;
+				node->parent = parent;
+			}
+			if (parent->color == RED) // two consecutive RED nodes, must rebalance
+				db_rebalance(node, &db->ht[hash]);
+		}
+		// put key and data in the node
+		if (db->options&DB_OPT_DUP_KEY) {
+			node->key = db_dup_key(db, key);
+			if (db->options&DB_OPT_RELEASE_KEY)
+				db->release(key, node->data, DB_RELEASE_KEY);
+		} else {
+			node->key = key;
+		}
+		va_copy(argscopy, args);
+		node->data = create(key, argscopy);
+		va_end(argscopy);
+	}
+	data = &node->data;
+	db->cache = node;
+	db_free_unlock(db);
+	return data;
+}
+
+/**
+ * Just calls {@link DBMap#vensure}.
+ * Get the data of the entry identified by the key.
+ * If the entry does not exist, an entry is added with the data returned by
+ * <code>create</code>.
+ * @param self Interface of the database
+ * @param key Key that identifies the entry
+ * @param create Function used to create the data if the entry doesn't exist
+ * @param ... Extra arguments for create
+ * @return Data of the entry
+ * @protected
+ * @see DBMap#vensure
+ * @see DBMap#ensure
+ */
+static DBData* db_obj_ensure(DBMap* self, DBKey key, DBCreateData create, ...)
+{
+	va_list args;
+	DBData *ret = nullptr;
+
+	DB_COUNTSTAT(db_ensure);
+	if (self == nullptr) return nullptr; // nullpo candidate
+
+	va_start(args, create);
+	ret = self->vensure(self, key, create, args);
+	va_end(args);
+	return ret;
+}
+
+/**
+ * Put the data identified by the key in the database.
+ * Puts the previous data in out_data, if out_data is not nullptr. (unless data has been released)
+ * NOTE: Uses the new key, the old one is released.
+ * @param self Interface of the database
+ * @param key Key that identifies the data
+ * @param data Data to be put in the database
+ * @param out_data Previous data if the entry exists
+ * @return 1 if if the entry already exists, 0 otherwise
+ * @protected
+ * @see #db_malloc_dbn(void)
+ * @see DBMap#put
+ * FIXME: If this method fails shouldn't it return another value?
+ *        Other functions rely on this to know if they were able to put something [Panikon]
+ */
+static int32 db_obj_put(DBMap* self, DBKey key, DBData data, DBData *out_data)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBNode *node;
+	DBNode *parent = nullptr;
+	int32 c = 0, retval = 0;
+	uint32 hash;
+
+	DB_COUNTSTAT(db_put);
+	if (db == nullptr) return 0; // nullpo candidate
+	if (db->global_lock) {
+		ShowError("db_put: Database is being destroyed, aborting entry insertion.\n"
+				"Database allocated at %s:%d\n",
+				db->alloc_file, db->alloc_line);
+		return 0; // nullpo candidate
+	}
+	if (!(db->options&DB_OPT_ALLOW_NULL_KEY) && db_is_key_null(db->type, key)) {
+		ShowError("db_put: Attempted to use non-allowed nullptr key for db allocated at %s:%d\n",db->alloc_file, db->alloc_line);
+		return 0; // nullpo candidate
+	}
+	if (!(db->options&DB_OPT_ALLOW_NULL_DATA) && (data.type == DB_DATA_PTR && data.u.ptr == nullptr)) {
+		ShowError("db_put: Attempted to use non-allowed nullptr data for db allocated at %s:%d\n",db->alloc_file, db->alloc_line);
+		return 0; // nullpo candidate
+	}
+
+	if (db->item_count == UINT32_MAX) {
+		ShowError("db_put: item_count overflow, aborting item insertion.\n"
+				"Database allocated at %s:%d",
+				db->alloc_file, db->alloc_line);
+		return 0;
+	}
+	// search for an equal node
+	db_free_lock(db);
+	hash = db->hash(key, db->maxlen)%HASH_SIZE;
+	for (node = db->ht[hash]; node; ) {
+		c = db->cmp(key, node->key, db->maxlen);
+		if (c == 0) { // equal entry, replace
+			if (node->deleted) {
+				db_free_remove(db, node);
+			} else {
+				db->release(node->key, node->data, DB_RELEASE_BOTH);
+				if (out_data)
+					memcpy(out_data, &node->data, sizeof(*out_data));
+				retval = 1;
+			}
+			break;
+		}
+		parent = node;
+		if (c < 0) {
+			node = node->left;
+		} else {
+			node = node->right;
+		}
+	}
+	// allocate a new node if necessary
+	if (node == nullptr) {
+		DB_COUNTSTAT(db_node_alloc);
+		node = ers_alloc(db->nodes, struct dbn);
+		node->left = nullptr;
+		node->right = nullptr;
+		node->deleted = 0;
+		db->item_count++;
+		if (c == 0) { // hash entry is empty
+			node->color = BLACK;
+			node->parent = nullptr;
+			db->ht[hash] = node;
+		} else {
+			node->color = RED;
+			if (c < 0) { // put at the left
+				parent->left = node;
+				node->parent = parent;
+			} else { // put at the right
+				parent->right = node;
+				node->parent = parent;
+			}
+			if (parent->color == RED) // two consecutive RED nodes, must rebalance
+				db_rebalance(node, &db->ht[hash]);
+		}
+	}
+	// put key and data in the node
+	if (db->options&DB_OPT_DUP_KEY) {
+		node->key = db_dup_key(db, key);
+		if (db->options&DB_OPT_RELEASE_KEY)
+			db->release(key, data, DB_RELEASE_KEY);
+	} else {
+		node->key = key;
+	}
+	node->data = data;
+	db->cache = node;
+	db_free_unlock(db);
+	return retval;
+}
+
+/**
+ * Remove an entry from the database.
+ * Puts the previous data in out_data, if out_data is not nullptr. (unless data has been released)
+ * NOTE: The key (of the database) is released in {@link #db_free_add(DBMap_impl*,DBNode*,DBNode **)}.
+ * @param self Interface of the database
+ * @param key Key that identifies the entry
+ * @param out_data Previous data if the entry exists
+ * @return 1 if if the entry already exists, 0 otherwise
+ * @protected
+ * @see #db_free_add(DBMap_impl*,DBNode*,DBNode **)
+ * @see DBMap#remove
+ */
+static int32 db_obj_remove(DBMap* self, DBKey key, DBData *out_data)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBNode *node;
+	uint32 hash;
+	int32 retval = 0;
+
+	DB_COUNTSTAT(db_remove);
+	if (db == nullptr) return 0; // nullpo candidate
+	if (db->global_lock) {
+		ShowError("db_remove: Database is being destroyed. Aborting entry deletion.\n"
+				"Database allocated at %s:%d\n",
+				db->alloc_file, db->alloc_line);
+		return 0; // nullpo candidate
+	}
+	if (!(db->options&DB_OPT_ALLOW_NULL_KEY) && db_is_key_null(db->type, key)) {
+		ShowError("db_remove: Attempted to use non-allowed nullptr key for db allocated at %s:%d\n",db->alloc_file, db->alloc_line);
+		return 0; // nullpo candidate
+	}
+
+	db_free_lock(db);
+	hash = db->hash(key, db->maxlen)%HASH_SIZE;
+	for(node = db->ht[hash]; node; ){
+		int32 c = db->cmp(key, node->key, db->maxlen);
+		if (c == 0) {
+			if (!(node->deleted)) {
+				if (db->cache == node)
+					db->cache = nullptr;
+				db->release(node->key, node->data, DB_RELEASE_DATA);
+				if (out_data)
+					memcpy(out_data, &node->data, sizeof(*out_data));
+				retval = 1;
+				db_free_add(db, node, &db->ht[hash]);
+			}
+			break;
+		}
+		if (c < 0)
+			node = node->left;

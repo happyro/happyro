@@ -1,0 +1,100 @@
+	}
+
+	if (ItemCompare.ui) {
+		ItemCompare.remove();
+	}
+
+	if (ItemInfo.uid === item.ITID) {
+		ItemInfo.remove();
+		if (ItemCompare.ui) {
+			ItemCompare.remove();
+		}
+		return;
+	}
+
+	ItemInfo.append();
+	ItemInfo.uid = item.ITID;
+	ItemInfo.setItem(item);
+
+	const compareItem = Equipment.getUI().isInEquipList(item.location);
+
+	if (compareItem && Inventory.getUI().itemcomp) {
+		ItemCompare.prepare();
+		ItemCompare.append();
+		ItemCompare.uid = compareItem.ITID;
+		ItemCompare.setItem(compareItem);
+	}
+}
+
+/**
+ * Check if Refine UI is open
+ */
+Refine.isRefineOpen = function isRefineOpen() {
+	return !!(Refine._host && Refine._host.isConnected);
+};
+
+/**
+ * Start dragging an item
+ */
+function onItemDragStart(event) {
+	event.dataTransfer.setData('text', event.target.id);
+}
+
+/**
+ * End of dragging an item
+ */
+function onItemDragEnd(event) {
+	if (refine_ongoing) {
+		return;
+	}
+
+	const rect = Refine._host.getBoundingClientRect();
+	const mouseX = event.clientX;
+	const mouseY = event.clientY;
+
+	if (mouseX < rect.left || mouseX > rect.right || mouseY < rect.top || mouseY > rect.bottom) {
+		onRemoveItem(true);
+	}
+}
+
+/**
+ * Refine announcement received
+ * @param {object} pkt - PACKET.ZC.BROADCAST_ITEMREFINING_RESULT
+ */
+function onBroadcastRefineResult(pkt) {
+	if (pkt) {
+		const item = DB.getItemInfo(pkt.itemId);
+		const itemName = item.identifiedDisplayName;
+		let messageID;
+		switch (pkt.status) {
+			case 0:
+				messageID = 3272;
+				break;
+			case 1:
+				messageID = 3271;
+				break;
+			default:
+				break;
+		}
+
+		const message = DB.getMessage(messageID)
+			.replace('%s', pkt.charName)
+			.replace('%d', pkt.refineLevel)
+			.replace('%s', itemName);
+		ChatBox.addText(message, ChatBox.TYPE.ANNOUNCE, ChatBox.FILTER.PUBLIC_CHAT, '#FFB563');
+		Announce.append();
+		Announce.set(message, '#FFB563');
+	}
+}
+
+/**
+ * Packet Hooks to functions
+ */
+Network.hookPacket(PACKET.ZC.OPEN_REFINING_UI, onOpenRefineUI);
+Network.hookPacket(PACKET.ZC.REFINING_MATERIAL_LIST, onRefineUIUpdateMaterials);
+Network.hookPacket(PACKET.ZC.BROADCAST_ITEMREFINING_RESULT, onBroadcastRefineResult);
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(Refine);

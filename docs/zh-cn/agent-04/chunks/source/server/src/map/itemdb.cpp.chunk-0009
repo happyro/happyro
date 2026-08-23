@@ -1,0 +1,500 @@
+		}
+	}
+
+	// free the query result
+	Sql_FreeResult(mmysql_handle);
+
+	for (i = 0; i < MAX_ROULETTE_LEVEL; i++) {
+		int32 limit = MAX_ROULETTE_COLUMNS - i;
+
+		if (rd.items[i] == limit)
+			continue;
+
+		if (rd.items[i] > limit) {
+			ShowWarning("itemdb_parse_roulette_db: level %d has %d items, only %d supported, capping...\n", i + 1, rd.items[i], limit);
+			rd.items[i] = limit;
+			continue;
+		}
+
+		/** this scenario = rd.items[i] < limit **/
+		ShowWarning("itemdb_parse_roulette_db: Level %d has %d items, %d are required. Filling with Apples...\n", i + 1, rd.items[i], limit);
+
+		rd.items[i] = limit;
+		RECREATE(rd.nameid[i], t_itemid, rd.items[i]);
+		RECREATE(rd.qty[i], uint16, rd.items[i]);
+		RECREATE(rd.flag[i], int32, rd.items[i]);
+
+		for (j = 0; j < MAX_ROULETTE_COLUMNS - i; j++) {
+			if (rd.qty[i][j])
+				continue;
+
+			rd.nameid[i][j] = ITEMID_APPLE;
+			rd.qty[i][j] = 1;
+			rd.flag[i][j] = 0;
+		}
+	}
+
+	ShowStatus("Done reading '" CL_WHITE "%u" CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'.\n", count, roulette_table);
+
+	return true;
+}
+
+/**
+ * Free Roulette items
+ */
+static void itemdb_roulette_free(void) {
+	int32 i;
+
+	for (i = 0; i < MAX_ROULETTE_LEVEL; i++) {
+		if (rd.nameid[i])
+			aFree(rd.nameid[i]);
+		if (rd.qty[i])
+			aFree(rd.qty[i]);
+		if (rd.flag[i])
+			aFree(rd.flag[i]);
+		rd.nameid[i] = nullptr;
+		rd.qty[i] = nullptr;
+		rd.flag[i] = nullptr;
+		rd.items[i] = 0;
+	}
+}
+
+/**
+ * Convert SQL data to YAML Node
+ * @param str: Array of parsed SQL data
+ * @return True on success or false otherwise
+ */
+static bool itemdb_read_sqldb_sub(std::vector<std::string> str) {
+	ryml::Tree tree;
+	ryml::NodeRef rootNode = tree.rootref();
+	rootNode |= ryml::MAP;
+	int32 index = -1;
+
+	rootNode["Id"] << str[++index];
+	if (!str[++index].empty())
+		rootNode["AegisName"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Name"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Type"] << str[index];
+	if (!str[++index].empty())
+		rootNode["SubType"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Buy"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Sell"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Weight"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Attack"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Defense"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Range"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Slots"] << str[index];
+
+	ryml::NodeRef jobs = rootNode["Jobs"];
+	jobs |= ryml::MAP;
+
+	if (!str[++index].empty())
+		jobs["All"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Acolyte"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Alchemist"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Archer"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Assassin"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["BardDancer"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Blacksmith"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Crusader"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Gunslinger"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Hunter"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Knight"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Mage"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Merchant"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Monk"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Ninja"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Novice"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Priest"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Rogue"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Sage"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["SoulLinker"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["StarGladiator"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["SuperNovice"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Swordman"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Taekwon"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Thief"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Wizard"] << (std::stoi(str[index]) ? "true" : "false");
+
+	ryml::NodeRef classes = rootNode["Classes"];
+	classes |= ryml::MAP;
+
+	if (!str[++index].empty())
+		classes["All"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		classes["Normal"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		classes["Upper"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		classes["Baby"] << (std::stoi(str[index]) ? "true" : "false");
+
+	if (!str[++index].empty())
+		rootNode["Gender"] << str[index];
+
+	ryml::NodeRef locations = rootNode["Locations"];
+	locations |= ryml::MAP;
+
+	if (!str[++index].empty())
+		locations["Head_Top"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Head_Mid"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Head_Low"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Armor"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Right_Hand"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Left_Hand"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Garment"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Shoes"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Right_Accessory"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Left_Accessory"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Costume_Head_Top"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Costume_Head_Mid"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Costume_Head_Low"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Costume_Garment"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Ammo"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Shadow_Armor"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Shadow_Weapon"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Shadow_Shield"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Shadow_Shoes"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Shadow_Right_Accessory"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		locations["Shadow_Left_Accessory"] << (std::stoi(str[index]) ? "true" : "false");
+
+	if (!str[++index].empty())
+		rootNode["WeaponLevel"] << str[index];
+	if (!str[++index].empty())
+		rootNode["ArmorLevel"] << str[index];
+	if (!str[++index].empty())
+		rootNode["EquipLevelMin"] << str[index];
+	if (!str[++index].empty())
+		rootNode["EquipLevelMax"] << str[index];
+	if (!str[++index].empty())
+		rootNode["Refineable"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		rootNode["View"] << str[index];
+	if (!str[++index].empty())
+		rootNode["AliasName"] << str[index];
+
+	ryml::NodeRef flags = rootNode["Flags"];
+	flags |= ryml::MAP;
+
+	if (!str[++index].empty())
+		flags["BuyingStore"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		flags["DeadBranch"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		flags["Container"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		flags["UniqueId"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		flags["BindOnEquip"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		flags["DropAnnounce"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		flags["NoConsume"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		flags["DropEffect"] << str[index];
+	rootNode["Flags"] = flags;
+
+	ryml::NodeRef delay = rootNode["Delay"];
+	delay |= ryml::MAP;
+
+	if (!str[++index].empty())
+		delay["Duration"] << str[index];
+	if (!str[++index].empty())
+		delay["Status"] << str[index];
+
+	ryml::NodeRef stack = rootNode["Stack"];
+	stack |= ryml::MAP;
+
+	if (!str[++index].empty())
+		stack["Amount"] << str[index];
+	if (!str[++index].empty())
+		stack["Inventory"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		stack["Cart"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		stack["Storage"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		stack["GuildStorage"] << (std::stoi(str[index]) ? "true" : "false");
+
+
+	ryml::NodeRef nouse = rootNode["NoUse"];
+	nouse |= ryml::MAP;
+
+	if (!str[++index].empty())
+		nouse["Override"] << str[index];
+	if (!str[++index].empty())
+		nouse["Sitting"] << (std::stoi(str[index]) ? "true" : "false");
+
+	ryml::NodeRef trade = rootNode["Trade"];
+	trade |= ryml::MAP;
+
+	if (!str[++index].empty())
+		trade["Override"] << str[index];
+	if (!str[++index].empty())
+		trade["NoDrop"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["NoTrade"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["TradePartner"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["NoSell"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["NoCart"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["NoStorage"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["NoGuildStorage"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["NoMail"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		trade["NoAuction"] << (std::stoi(str[index]) ? "true" : "false");
+
+	if (!str[++index].empty())
+		rootNode["Script"] << str[index];
+	if (!str[++index].empty())
+		rootNode["EquipScript"] << str[index];
+	if (!str[++index].empty())
+		rootNode["UnEquipScript"] << str[index];
+
+#ifdef RENEWAL
+	if (!str[++index].empty())
+		rootNode["MagicAttack"] << str[index];
+	if (!str[++index].empty())
+		classes["Third"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		classes["Third_Upper"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		classes["Third_Baby"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		classes["Fourth"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["KagerouOboro"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Rebellion"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Summoner"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		jobs["Spirit_Handler"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		rootNode["Gradable"] << (std::stoi(str[index]) ? "true" : "false");
+#endif
+
+	if( !jobs.has_children() ){
+		rootNode.remove_child( jobs );
+	}
+
+	if( !classes.has_children() ){
+		rootNode.remove_child( classes );
+	}
+
+	if( !locations.has_children() ){
+		rootNode.remove_child( locations );
+	}
+
+	if( !flags.has_children() ){
+		rootNode.remove_child( flags );
+	}
+
+	if( !delay.has_children() ){
+		rootNode.remove_child( delay );
+	}
+
+	if( !stack.has_children() ){
+		rootNode.remove_child( stack );
+	}
+
+	if( !nouse.has_children() ){
+		rootNode.remove_child( nouse );
+	}
+
+	if( !trade.has_children() ){
+		rootNode.remove_child( trade );
+	}
+
+	return item_db.parseBodyNode(rootNode) > 0;
+}
+
+/**
+ * Read SQL item_db table
+ */
+static int32 itemdb_read_sqldb(void) {
+	const char* item_db_name[] = {
+		item_table,
+		item2_table
+	};
+
+	for( uint8 fi = 0; fi < ARRAYLENGTH(item_db_name); ++fi ) {
+		// retrieve all rows from the item database
+		if( SQL_ERROR == Sql_Query(mmysql_handle, "SELECT `id`,`name_aegis`,`name_english`,`type`,`subtype`,`price_buy`,`price_sell`,`weight`,`attack`,`defense`,`range`,`slots`,"
+			"`job_all`,`job_acolyte`,`job_alchemist`,`job_archer`,`job_assassin`,`job_barddancer`,`job_blacksmith`,`job_crusader`,`job_gunslinger`,`job_hunter`,`job_knight`,`job_mage`,`job_merchant`,"
+			"`job_monk`,`job_ninja`,`job_novice`,`job_priest`,`job_rogue`,`job_sage`,`job_soullinker`,`job_stargladiator`,`job_supernovice`,`job_swordman`,`job_taekwon`,`job_thief`,`job_wizard`,"
+			"`class_all`,`class_normal`,`class_upper`,`class_baby`,`gender`,"
+			"`location_head_top`,`location_head_mid`,`location_head_low`,`location_armor`,`location_right_hand`,`location_left_hand`,`location_garment`,`location_shoes`,`location_right_accessory`,`location_left_accessory`,"
+			"`location_costume_head_top`,`location_costume_head_mid`,`location_costume_head_low`,`location_costume_garment`,`location_ammo`,`location_shadow_armor`,`location_shadow_weapon`,`location_shadow_shield`,`location_shadow_shoes`,`location_shadow_right_accessory`,`location_shadow_left_accessory`,"
+			"`weapon_level`,`armor_level`,`equip_level_min`,`equip_level_max`,`refineable`,`view`,`alias_name`,"
+			"`flag_buyingstore`,`flag_deadbranch`,`flag_container`,`flag_uniqueid`,`flag_bindonequip`,`flag_dropannounce`,`flag_noconsume`,`flag_dropeffect`,"
+			"`delay_duration`,`delay_status`,`stack_amount`,`stack_inventory`,`stack_cart`,`stack_storage`,`stack_guildstorage`,`nouse_override`,`nouse_sitting`,"
+			"`trade_override`,`trade_nodrop`,`trade_notrade`,`trade_tradepartner`,`trade_nosell`,`trade_nocart`,`trade_nostorage`,`trade_noguildstorage`,`trade_nomail`,`trade_noauction`,`script`,`equip_script`,`unequip_script`"
+#ifdef RENEWAL
+			",`magic_attack`,`class_third`,`class_third_upper`,`class_third_baby`,`class_fourth`,`job_kagerouoboro`,`job_rebellion`,`job_summoner`,`job_spirit_handler`,`gradable`"
+#endif
+			" FROM `%s`", item_db_name[fi]) ) {
+			Sql_ShowDebug(mmysql_handle);
+			continue;
+		}
+
+		uint32 total_columns = Sql_NumColumns(mmysql_handle);
+		uint64 total_rows = Sql_NumRows(mmysql_handle), rows = 0, count = 0;
+
+		ShowStatus("Loading '" CL_WHITE "%" PRIdPTR CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'\n", total_rows, item_db_name[fi]);
+
+		// process rows one by one
+		while( SQL_SUCCESS == Sql_NextRow(mmysql_handle) ) {
+#ifdef DETAILED_LOADING_OUTPUT
+			ShowStatus( "Loading [%" PRIu64 "/%" PRIu64 "] entries in '" CL_WHITE "%s" CL_RESET "'" CL_CLL "\r", ++rows, total_rows, item_db_name[fi] );
+#endif
+			std::vector<std::string> data = {};
+
+			for( uint32 i = 0; i < total_columns; ++i ) {
+				char *str;
+
+				Sql_GetData(mmysql_handle, i, &str, nullptr);
+				if (str == nullptr)
+					data.push_back("");
+				else
+					data.push_back(str);
+			}
+
+			if (!itemdb_read_sqldb_sub(data))
+				continue;
+			++count;
+		}
+
+		// free the query result
+		Sql_FreeResult(mmysql_handle);
+
+		ShowStatus("Done reading '" CL_WHITE "%" PRIu64 CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'.\n", count, item_db_name[fi]);
+	}
+
+	item_db.loadingFinished();
+
+	return 0;
+}
+
+/** Check if the item is restricted by item_noequip.txt
+* @param id Item that will be checked
+* @param m Map ID
+* @return true: can't be used; false: can be used
+*/
+bool itemdb_isNoEquip( const item_data *id, uint16 m ) {
+	if (!id->flag.no_equip)
+		return false;
+	
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if ((id->flag.no_equip&1 && !mapdata_flag_vs2(mapdata)) || // Normal
+		(id->flag.no_equip&2 && mapdata->getMapFlag(MF_PVP)) || // PVP
+		(id->flag.no_equip&4 && mapdata_flag_gvg2_no_te(mapdata)) || // GVG
+		(id->flag.no_equip&8 && mapdata->getMapFlag(MF_BATTLEGROUND)) || // Battleground
+		(id->flag.no_equip&16 && mapdata_flag_gvg2_te(mapdata)) || // WOE:TE
+		(id->flag.no_equip&(mapdata->zone) && mapdata->getMapFlag(MF_RESTRICTED)) // Zone restriction
+		)
+		return true;
+	return false;
+}
+
+const std::string RandomOptionDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/item_randomopt_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the item_randomopt_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 RandomOptionDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	uint16 id;
+
+	if (!this->asUInt16(node, "Id", id))
+		return 0;
+
+	std::shared_ptr<s_random_opt_data> randopt = this->find(id);
+	bool exists = randopt != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Option", "Script" }))
+			return 0;
+
+		randopt = std::make_shared<s_random_opt_data>();
+		randopt->id = id;
+	}
+
+	if (this->nodeExists(node, "Option")) {
+		std::string name;
+
+		if (!this->asString(node, "Option", name))
+			return 0;
+
+		if (randopt->name.compare(name) != 0 && random_option_db.option_exists(name)) {
+			this->invalidWarning(node["Option"], "Found duplicate random option name for %s, skipping.\n", name.c_str());
+			return 0;
+		}
+
+		randopt->name = name;
+	}
+
+	if (this->nodeExists(node, "Script")) {
+		std::string script;

@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "npc.hpp"
+
+#include <cerrno>
+#include <cstdlib>
+#include <map>
+#include <vector>
+
+#include <common/cbasetypes.hpp>
+#include <common/db.hpp>
+#include <common/ers.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/showmsg.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "battle.hpp"
+#include "chat.hpp"
+#include "clif.hpp"
+#include "date.hpp" // days of week enum
+#include "guild.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "log.hpp"
+#include "log.hpp"
+#include "map.hpp"
+#include "mob.hpp"
+#include "navi.hpp"
+#include "pc.hpp"
+#include "pet.hpp"
+#include "script.hpp" // script_config
+
+using namespace rathena;
+
+npc_data* fake_nd;
+
+
+std::vector<std::string> npc_src_files;
+
+static int32 npc_id=START_NPC_NUM;
+static int32 npc_warp=0;
+static int32 npc_shop=0;
+static int32 npc_script=0;
+static int32 npc_mob=0;
+static int32 npc_delay_mob=0;
+static int32 npc_cache_mob=0;
+
+struct eri *npc_sc_display_ers;
+
+// Market Shop
+#if PACKETVER >= 20131223
+struct s_npc_market {
+	struct npc_item_list *list;
+	char exname[NPC_NAME_LENGTH+1];
+	uint16 count;
+};
+static DBMap *NPCMarketDB; /// Stock persistency! Temporary market stocks from `market` table. struct s_npc_market, key: NPC exname
+static void npc_market_checkall(void);
+static void npc_market_fromsql(void);
+#define npc_market_delfromsql(exname,nameid) (npc_market_delfromsql_((exname), (nameid), false))
+#define npc_market_clearfromsql(exname) (npc_market_delfromsql_((exname), 0, true))
+#endif
+
+TIMER_FUNC(npc_dynamicnpc_removal_timer);
+
+/// Returns a new npc id that isn't being used in id_db.
+/// Fatal error if nothing is available.
+int32 npc_get_new_npc_id(void) {
+	if( npc_id >= START_NPC_NUM && !map_blid_exists(npc_id) )
+		return npc_id++;// available
+	else {// find next id
+		int32 base_id = npc_id;
+		while( base_id != ++npc_id ) {
+			if( npc_id < START_NPC_NUM )
+				npc_id = START_NPC_NUM;
+			if( !map_blid_exists(npc_id) )
+				return npc_id++;// available
+		}
+		// full loop, nothing available
+		ShowFatalError("npc_get_new_npc_id: All ids are taken. Exiting...");
+		exit(1);
+	}
+}
+
+static DBMap* ev_db; // const char* event_name -> struct event_data*
+static DBMap* npcname_db; // const char* npc_name -> npc_data*
+
+struct event_data {
+	npc_data *nd;
+	int32 pos;
+};
+
+static struct eri *timer_event_ers; //For the npc timer data. [Skotlex]
+
+/* hello */
+static char *npc_last_path;
+
+struct npc_path_data {
+	char* path;
+	uint16 references;
+};
+struct npc_path_data *npc_last_npd;
+static DBMap *npc_path_db;
+
+//For holding the view data of npc classes. [Skotlex]
+static struct view_data npc_viewdb[MAX_NPC_CLASS];
+static struct view_data npc_viewdb2[MAX_NPC_CLASS2_END-MAX_NPC_CLASS2_START];
+
+struct script_event_s{
+	struct event_data *event;
+	const char *event_name;
+};
+
+// Holds pointers to the commonly executed scripts for speedup. [Skotlex]
+std::map<enum npce_event, std::vector<struct script_event_s>> script_event;
+
+// Static functions
+static npc_data* npc_create_npc( int16 m, int16 x, int16 y );
+static void npc_parsename( npc_data* nd, const char* name, const char* start, const char* buffer, const char* filepath );
+
+const std::string StylistDatabase::getDefaultLocation(){
+	return std::string(db_path) + "/stylist.yml";
+}
+
+bool StylistDatabase::parseCostNode( std::shared_ptr<s_stylist_entry> entry, bool doram, const ryml::NodeRef& node ){
+	std::shared_ptr<s_stylist_costs> costs = doram ? entry->doram : entry->human;
+	bool costs_exists = costs != nullptr;
+
+	if( !costs_exists ){
+		costs = std::make_shared<s_stylist_costs>();
+	}
+
+	if( this->nodeExists( node, "Price" ) ){
+		uint32 price;
+
+		if( !this->asUInt32( node, "Price", price ) ){
+			return false;
+		}
+
+		if( price > MAX_ZENY ){
+			this->invalidWarning( node["Price"], "stylist_parseCostNode: Price %u is too high, capping to MAX_ZENY...\n", price );
+			price = MAX_ZENY;
+		}
+
+		costs->price = price;
+	}else{
+		if( !costs_exists ){
+			costs->price = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "RequiredItem" ) ){
+		std::string item;
+
+		if( !this->asString( node, "RequiredItem", item ) ){
+			return false;
+		}
+
+		std::shared_ptr<item_data> id = item_db.search_aegisname( item.c_str() );
+
+		if( id == nullptr ){
+			this->invalidWarning( node["RequiredItem"], "stylist_parseCostNode: Unknown item \"%s\"...\n", item.c_str() );
+			return false;
+		}
+
+		costs->requiredItem = id->nameid;
+	}else{
+		if( !costs_exists ){
+			costs->requiredItem = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "RequiredItemBox" ) ){
+		std::string item;
+
+		if( !this->asString( node, "RequiredItemBox", item ) ){
+			return false;
+		}
+
+		std::shared_ptr<item_data> id = item_db.search_aegisname( item.c_str() );
+
+		if( id == nullptr ){
+			this->invalidWarning( node["RequiredItemBox"], "stylist_parseCostNode: Unknown item \"%s\"...\n", item.c_str() );
+			return false;
+		}
+
+		costs->requiredItemBox = id->nameid;
+	}else{
+		if( !costs_exists ){
+			costs->requiredItemBox = 0;
+		}
+	}
+
+	if( !costs_exists ){
+		if( doram ){
+			entry->doram = costs;
+		}else{
+			entry->human = costs;
+		}
+	}
+
+	return true;
+}
+
+uint64 StylistDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	if( !this->nodesExist( node, { "Look", "Options" } ) ){
+		return 0;
+	}
+
+	std::string look_str;
+
+	if( !this->asString( node, "Look", look_str ) ){
+		return 0;
+	}
+
+	int64 constant;
+
+	if( !script_get_constant( ( "LOOK_" + look_str ).c_str(), &constant ) ){
+		this->invalidWarning( node["Look"], "stylist_parseBodyNode: Invalid look %s.\n", look_str.c_str() );
+		return 0;
+	}
+
+	switch( constant ){
+		case LOOK_HEAD_TOP:
+		case LOOK_HEAD_MID:
+		case LOOK_HEAD_BOTTOM:
+		case LOOK_HAIR:
+		case LOOK_HAIR_COLOR:
+		case LOOK_CLOTHES_COLOR:
+		case LOOK_BODY2:
+			break;
+		default:
+			this->invalidWarning( node["Look"], "stylist_parseBodyNode: Unsupported look value \"%s\"...\n", look_str.c_str() );
+			return 0;
+	}
+
+	std::shared_ptr<s_stylist_list> list = this->find( (uint32)constant );
+	bool exists = list != nullptr;
+	uint64 count = 0;
+
+	if( !exists ){
+		list = std::make_shared<s_stylist_list>();
+		list->look = (uint16)constant;
+	}
+
+	for( const ryml::NodeRef& optionNode : node["Options"] ){
+		int16 index;
+
+		if( !this->asInt16( optionNode, "Index", index ) ){
+			return 0;
+		}
+
+		if( index == 0 ){
+			this->invalidWarning( optionNode["Index"], "stylist_parseBodyNode: Unsupported index value \"%hd\"...\n", index );
+			return 0;
+		}
+
+		std::shared_ptr<s_stylist_entry> entry = util::umap_find( list->entries, index );
+		bool entry_exists = entry != nullptr;
+
+		if( !entry_exists ){
+			entry = std::make_shared<s_stylist_entry>();
+			entry->look = list->look;
+			entry->index = index;
+
+			if( !this->nodesExist( optionNode, { "Value" } ) ){
+				return 0;
+			}
+		}
+
+		if( this->nodeExists( optionNode, "Value" ) ){
+			uint32 value;
+
+			switch( list->look ){
+				case LOOK_HEAD_TOP:
+				case LOOK_HEAD_MID:
+				case LOOK_HEAD_BOTTOM: {
+						std::string item;
+
+						if( !this->asString( optionNode, "Value", item ) ){
+							return 0;
+						}
+
+						std::shared_ptr<item_data> id = item_db.search_aegisname( item.c_str() );
+
+						if( id == nullptr ){
+							this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: Unknown item \"%s\"...\n", item.c_str() );
+							return 0;
+						}
+
+						value = id->nameid;
+					} break;
+				case LOOK_HAIR:
+					if( !this->asUInt32( optionNode, "Value", value ) ){
+						return 0;
+					}
+
+					if( value < MIN_HAIR_STYLE ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: hair style \"%u\" is too low...\n", value );
+						return 0;
+					}else if( value > MAX_HAIR_STYLE ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: hair style \"%u\" is too high...\n", value );
+						return 0;
+					}
+					break;
+				case LOOK_HAIR_COLOR:
+					if( !this->asUInt32( optionNode, "Value", value ) ){
+						return 0;
+					}
+
+					if( value < MIN_HAIR_COLOR ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: hair color \"%u\" is too low...\n", value );
+						return 0;
+					}else if( value > MAX_HAIR_COLOR ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: hair color \"%u\" is too high...\n", value );
+						return 0;
+					}
+					break;
+				case LOOK_CLOTHES_COLOR:
+					if( !this->asUInt32( optionNode, "Value", value ) ){
+						return 0;
+					}
+
+					if( value < MIN_CLOTH_COLOR ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: cloth color \"%u\" is too low...\n", value );
+						return 0;
+					}else if( value > MAX_CLOTH_COLOR ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: cloth color \"%u\" is too high...\n", value );
+						return 0;
+					}
+					break;
+				case LOOK_BODY2:
+					if( !this->asUInt32( optionNode, "Value", value ) ){
+						return 0;
+					}
+
+					// TODO: Unsupported for now => This is job specific now
+#if 0
+					if( value < MIN_BODY_STYLE ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: body style \"%u\" is too low...\n", value );
+						return 0;
+					}else if( value > MAX_BODY_STYLE ){
+						this->invalidWarning( optionNode["Value"], "stylist_parseBodyNode: body style \"%u\" is too high...\n", value );
+						return 0;
+					}
+#endif
+					break;
+			}
+
+			entry->value = value;
+		}
+
+		if( this->nodeExists( optionNode, "CostsHuman" ) ) {
+			if( !this->parseCostNode( entry, false, optionNode["CostsHuman"] ) ){
+				return 0;
+			}
+		}else{
+			if( !entry_exists ){
+				entry->human = nullptr;
+			}
+		}
+
+		if( this->nodeExists( optionNode, "CostsDoram" ) ) {
+			if( !this->parseCostNode( entry, true, optionNode["CostsDoram"] ) ){
+				return 0;
+			}
+		}else{
+			if( !entry_exists ){
+				entry->doram = nullptr;
+			}
+		}
+
+		if( !entry_exists ){
+			list->entries[index] = entry;
+		}
+
+		count++;
+	}
+
+	if( !exists ){
+		this->put( (uint32)constant, list );
+	}
+
+	return count;
+}
+
+StylistDatabase stylist_db;
+
+const std::string BarterDatabase::getDefaultLocation(){
+	return "npc/barters.yml";
+}
+
+uint64 BarterDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	std::string npcname;
+
+	if( !this->asString( node, "Name", npcname ) ){
+		return 0;
+	}
+
+	std::shared_ptr<s_npc_barter> barter = this->find( npcname );
+	bool exists = barter != nullptr;
+
+	if( !exists ){
+		barter = std::make_shared<s_npc_barter>();
+		barter->name = npcname;
+		barter->npcid = 0;
+	}
+
+	if( this->nodeExists( node, "Map" ) ){
+		std::string map;
+
+		if( !this->asString( node, "Map", map ) ){
+			return 0;
+		}
+
+		uint16 index = mapindex_name2idx( map.c_str(), nullptr );
+
+		if( index == 0 ){
+			this->invalidWarning( node["Map"], "barter_parseBodyNode: Unknown mapname %s, skipping.\n", map.c_str());
+			return 0;
+		}
+
+		barter->m = map_mapindex2mapid( index );
+
+		// Skip silently if the map is not on this map-server
+		if( barter->m < 0 ){
+			return 1;
+		}
+	}else{
+		if( !exists ){
+			barter->m = -1;
+		}
+	}
+
+	struct map_data* mapdata = nullptr;
+
+	if( barter->m >= 0 ){
+		mapdata = map_getmapdata( barter->m );
+	}
+
+	if( this->nodeExists( node, "X" ) ){
+		uint16 x;
+
+		if( !this->asUInt16( node, "X", x ) ){
+			return 0;
+		}
+
+		if( mapdata == nullptr ){
+			this->invalidWarning( node["X"], "barter_parseBodyNode: Barter NPC is not on a map. Ignoring X coordinate...\n" );
+			x = 0;
+		}else if( x >= mapdata->xs ){
+			this->invalidWarning( node["X"], "barter_parseBodyNode: X coordinate %hu is out of bound %hu...\n", x, mapdata->xs );
+			return 0;
+		}
+
+		barter->x = x;
+	}else{
+		if( !exists ){
+			barter->x = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "Y" ) ){
+		uint16 y;
+
+		if( !this->asUInt16( node, "Y", y ) ){
+			return 0;
+		}
+
+		if( mapdata == nullptr ){
+			this->invalidWarning( node["Y"], "barter_parseBodyNode: Barter NPC is not on a map. Ignoring Y coordinate...\n" );
+			y = 0;
+		}else if( y >= mapdata->ys ){
+			this->invalidWarning( node["Y"], "barter_parseBodyNode: Y coordinate %hu is out of bound %hu...\n", y, mapdata->ys );
+			return 0;
+		}
+
+		barter->y = y;
+	}else{
+		if( !exists ){
+			barter->y = 0;
+		}
+	}
+
+	if( this->nodeExists( node, "Direction" ) ){
+		std::string direction_name;
+
+		if( !this->asString( node, "Direction", direction_name ) ){
+			return 0;
+		}
+
+		int64 constant;
+
+		if( !script_get_constant( ( "DIR_" + direction_name ).c_str(), &constant ) ){
+			this->invalidWarning( node["Direction"], "barter_parseBodyNode: Unknown direction %s, skipping.\n", direction_name.c_str() );

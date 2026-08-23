@@ -1,0 +1,500 @@
+#endif
+	}
+
+	if(flag[SCB_HIT]) {
+		if (status->dex == b_status->dex
+#ifdef RENEWAL
+			&& status->luk == b_status->luk && status->con == b_status->con
+#endif
+			)
+			status->hit = status_calc_hit(&bl, sc, b_status->hit);
+		else
+			status->hit = status_calc_hit(&bl, sc, b_status->hit + (status->dex - b_status->dex)
+#ifdef RENEWAL
+			 + (status->luk/3 - b_status->luk/3) + 2 * (status->con - b_status->con)
+#endif
+			 );
+	}
+
+	if(flag[SCB_FLEE]) {
+		if (status->agi == b_status->agi
+#ifdef RENEWAL
+			&& status->luk == b_status->luk && status->con == b_status->con
+#endif
+			)
+			status->flee = status_calc_flee(&bl, sc, b_status->flee);
+		else
+			status->flee = status_calc_flee(&bl, sc, b_status->flee +(status->agi - b_status->agi)
+#ifdef RENEWAL
+			+ (status->luk/5 - b_status->luk/5) + 2 * (status->con - b_status->con)
+#endif
+			);
+	}
+
+	if(flag[SCB_DEF]) {
+		status->def = status_calc_def(&bl, sc, b_status->def);
+
+		if( bl.type == BL_HOM )
+			status->def += (status->vit/5 - b_status->vit/5);
+	}
+
+	if(flag[SCB_DEF2]) {
+		if (status->vit == b_status->vit
+#ifdef RENEWAL
+			&& status->agi == b_status->agi
+#endif
+			)
+			status->def2 = status_calc_def2(&bl, sc, b_status->def2);
+		else
+			status->def2 = status_calc_def2(&bl, sc, b_status->def2
+#ifdef RENEWAL
+			+ (int32)( ((float)status->vit/2 - (float)b_status->vit/2) + ((float)status->agi/5 - (float)b_status->agi/5) )
+#else
+			+ (status->vit - b_status->vit)
+#endif
+		);
+	}
+
+	if(flag[SCB_MDEF]) {
+		status->mdef = status_calc_mdef(&bl, sc, b_status->mdef);
+
+		if( bl.type == BL_HOM )
+			status->mdef += (status->int_/5 - b_status->int_/5);
+	}
+
+	if(flag[SCB_MDEF2]) {
+		if (status->int_ == b_status->int_ && status->vit == b_status->vit
+#ifdef RENEWAL
+			&& status->dex == b_status->dex
+#endif
+			)
+			status->mdef2 = status_calc_mdef2(&bl, sc, b_status->mdef2);
+		else
+			status->mdef2 = status_calc_mdef2(&bl, sc, b_status->mdef2 +(status->int_ - b_status->int_)
+#ifdef RENEWAL
+			+ (int32)( ((float)status->dex/5 - (float)b_status->dex/5) + ((float)status->vit/5 - (float)b_status->vit/5) )
+#else
+			+ ((status->vit - b_status->vit) / 2)
+#endif
+			);
+	}
+
+	if(flag[SCB_SPEED]) {
+		status->speed = status_calc_speed(&bl, sc, b_status->speed);
+
+		switch (bl.type) {
+		case BL_PC:
+			if (!sd->state.permanent_speed && status->speed < battle_config.max_walk_speed)
+				status->speed = battle_config.max_walk_speed;
+#ifdef RENEWAL
+			// Recalculate homunculus speed if the player receives a speed buff/debuff
+			if (hom_is_active(sd->hd)) {
+				if (battle_config.hom_setting & HOMSET_COPY_SPEED)
+					sd->hd->battle_status.speed = status_get_speed(sd);
+
+				// Homunculus speed buff/debuffs applies over the current speed
+				sd->hd->battle_status.speed = status_calc_speed(sd->hd, &sd->hd->sc, sd->hd->battle_status.speed);
+			}
+#endif
+			break;
+
+		case BL_PET:{
+			pet_data* pd = reinterpret_cast<pet_data*>(&bl);
+
+			if (pd->master != nullptr)
+				status->speed = status_get_speed(pd->master);
+		} break;
+
+		case BL_HOM:{
+			homun_data* hd = reinterpret_cast<homun_data*>(&bl);
+
+			if (hd->master != nullptr) {
+				if (battle_config.hom_setting & HOMSET_COPY_SPEED)
+					status->speed = status_get_speed(hd->master);
+
+				// Homunculus speed buff/debuffs applies over the current speed
+				status->speed = status_calc_speed(&bl, &hd->sc, status->speed);
+			}
+		} break;
+
+		case BL_MER:{
+			s_mercenary_data* mc = reinterpret_cast<s_mercenary_data*>(&bl);
+
+			if (mc->master != nullptr)
+				status->speed = status_get_speed(mc->master);
+		} break;
+
+		case BL_ELEM:{
+			s_elemental_data* ed = reinterpret_cast<s_elemental_data*>(&bl);
+
+			if (ed->master != nullptr)
+				status->speed = status_get_speed(ed->master);
+		} break;
+		}
+	}
+
+	if(flag[SCB_CRI] && b_status->cri) {
+		if (status->luk == b_status->luk)
+			status->cri = status_calc_critical(&bl, sc, b_status->cri);
+		else
+#ifdef RENEWAL
+			status->cri = status_calc_critical(&bl, sc, b_status->cri + 3*(status->luk - b_status->luk));
+#else
+			status->cri = status_calc_critical(&bl, sc, b_status->cri + (status->luk - b_status->luk)*10/3);
+#endif
+
+		/// After status_calc_critical so the bonus is applied despite if you have or not a sc bugreport:5240
+		if (sd) {
+			if (sd->status.weapon == W_KATAR)
+				status->cri *= 2;
+		}
+	}
+
+	if(flag[SCB_FLEE2] && b_status->flee2) {
+		if (status->luk == b_status->luk)
+			status->flee2 = status_calc_flee2(&bl, sc, b_status->flee2);
+		else
+			status->flee2 = status_calc_flee2(&bl, sc, b_status->flee2 +(status->luk - b_status->luk));
+	}
+
+	if(flag[SCB_ATK_ELE]) {
+		status->rhw.ele = status_calc_attack_element(&bl, sc, b_status->rhw.ele);
+		if (sd) sd->state.lr_flag = LR_FLAG_WEAPON;
+		status->lhw.ele = status_calc_attack_element(&bl, sc, b_status->lhw.ele);
+		if (sd) sd->state.lr_flag = LR_FLAG_NONE;
+	}
+
+	if(flag[SCB_DEF_ELE]) {
+		status->def_ele = status_calc_element(&bl, sc, b_status->def_ele);
+		status->ele_lv = status_calc_element_lv(&bl, sc, b_status->ele_lv);
+	}
+
+	if(flag[SCB_MODE]) {
+		status->mode = status_calc_mode(&bl, sc, b_status->mode);
+
+		if (status_has_mode(status, MD_STATUSIMMUNE|MD_SKILLIMMUNE))
+			status->class_ = CLASS_BATTLEFIELD;
+		else if (status_has_mode(status, MD_STATUSIMMUNE|MD_KNOCKBACKIMMUNE|MD_DETECTOR))
+			status->class_ = CLASS_BOSS;
+		else if (status_has_mode(status, MD_STATUSIMMUNE))
+			status->class_ = CLASS_GUARDIAN;
+		else
+			status->class_ = CLASS_NORMAL;
+
+		// Since mode changed, reset their state.
+		if (!status_has_mode(status,MD_CANATTACK))
+			unit_stop_attack(&bl);
+		if (!status_has_mode(status,MD_CANMOVE))
+			unit_stop_walking( &bl, USW_FIXPOS );
+	}
+
+	/**
+	* No status changes alter these yet.
+	* if(flag[SCB_SIZE])
+	* if(flag[SCB_RACE])
+	* if(flag[SCB_RANGE])
+	**/
+
+	if(flag[SCB_MAXHP]) {
+		if( bl.type == BL_PC ) {
+			status->max_hp = status_calc_maxhp_pc( *sd, status->vit );
+
+			if(battle_config.hp_rate != 100)
+				status->max_hp = (uint32)(battle_config.hp_rate * (status->max_hp/100.));
+
+			if (sd->status.base_level < 100)
+				status->max_hp = umin(status->max_hp,(uint32)battle_config.max_hp_lv99);
+			else if (sd->status.base_level < 151)
+				status->max_hp = umin(status->max_hp,(uint32)battle_config.max_hp_lv150);
+			else
+				status->max_hp = umin(status->max_hp,(uint32)battle_config.max_hp);
+		}
+		else
+			status->max_hp = status_calc_maxhp(&bl, b_status->max_hp);
+
+		if( status->hp > status->max_hp ) { // !FIXME: Should perhaps a status_zap should be issued?
+			status->hp = status->max_hp;
+			if( sd ) clif_updatestatus(*sd,SP_HP);
+		}
+	}
+
+	if(flag[SCB_MAXSP]) {
+		if( bl.type == BL_PC ) {
+			status->max_sp = status_calc_maxsp_pc( *sd, status->int_ );
+
+			if(battle_config.sp_rate != 100)
+				status->max_sp = (uint32)(battle_config.sp_rate * (status->max_sp/100.));
+
+			status->max_sp = umin(status->max_sp,(uint32)battle_config.max_sp);
+		}
+		else
+			status->max_sp = status_calc_maxsp(&bl, b_status->max_sp);
+
+		if( status->sp > status->max_sp ) {
+			status->sp = status->max_sp;
+			if( sd ) clif_updatestatus(*sd,SP_SP);
+		}
+	}
+
+	if(flag[SCB_MATK]) {
+#ifndef RENEWAL
+		int32 matk_min = status_base_matk_min(status);
+		int32 matk_max = status_base_matk_max(status);
+	
+		if (sd != nullptr) {
+			matk_min += sd->bonus.ematk;
+			matk_max += sd->bonus.ematk;
+
+			matk_min += sd->bonus.ematk_hidden;
+			matk_max += sd->bonus.ematk_hidden;
+
+			if (sd->matk_rate != 100) {
+				matk_min = matk_min * sd->matk_rate / 100;
+				matk_max = matk_max * sd->matk_rate / 100;
+			}
+		}
+
+		// Apply Recognized Spell buff - custom support (renewal status change)
+		// Also update homunculus MATK, hom Min Matk is always the same as Max Matk
+		if ((bl.type == BL_HOM && battle_config.hom_setting&HOMSET_SAME_MATK) || (sc && sc->getSCE(SC_RECOGNIZEDSPELL))) {
+			matk_min = std::max( matk_min, matk_max );
+		}
+
+		matk_min = status_calc_pseudobuff_matk( sd, sc, matk_min );
+		matk_max = status_calc_pseudobuff_matk( sd, sc, matk_max );
+
+		matk_min = status_calc_consumablematk( sc, matk_min );
+		matk_max = status_calc_consumablematk( sc, matk_max );
+
+		if (sc && sc->getSCE(SC_MAGICPOWER) && sc->getSCE(SC_MAGICPOWER)->val4) {
+			matk_min += matk_min * sc->getSCE(SC_MAGICPOWER)->val3 / 100;
+			matk_max += matk_max * sc->getSCE(SC_MAGICPOWER)->val3 / 100;
+		}
+
+		// Custom since JOB_SOUL_REAPER does not exist in pre-renewal
+		if (sd != nullptr) {
+			matk_min += 3 * sd->soulball;
+			matk_max += 3 * sd->soulball;
+		}
+
+		status->matk_min = static_cast<uint16>( cap_value(matk_min,0,USHRT_MAX) );
+		status->matk_max = static_cast<uint16>( cap_value(matk_max,0,USHRT_MAX) );
+#else
+		// MATK = StatusMATK + WeaponMATK + ExtraMATK
+		int32 lv = status_get_lv(&bl);
+
+		// StatusMATK
+		int32 matk_min = status_base_matk_min(&bl, status, lv);
+		int32 matk_max = status_base_matk_max(&bl, status, lv);
+
+		if (sd != nullptr) {
+			// Soul energy spheres increase MATK (not displayed in status window).
+			matk_min += 3 * sd->soulball;
+			matk_max += 3 * sd->soulball;
+
+			// Weapon magic attack modifiers. WeaponMATK = BaseWeaponDamage + Variance + RefinementBonus
+			// RefinementBonus is currently included with BaseWeaponDamage in status->lhw.matk and status->rhw.matk
+			// BaseWeaponDamage and RefinementBonus are visible on the player status window.
+			if (b_status->lhw.matk > 0)
+				status->lhw.matk = b_status->lhw.matk;
+			if (b_status->rhw.matk > 0)
+				status->rhw.matk = b_status->rhw.matk;
+
+			int32 wMatk = 0;
+			int32 variance = 0;
+
+			if (status->rhw.matk > 0) {
+				wMatk = status->rhw.matk;
+				variance = status->rhw.matk * status->rhw.wlv / 10;
+			}
+			if (status->lhw.matk > 0) {
+				wMatk += status->lhw.matk;
+				variance += status->lhw.matk * status->lhw.wlv / 10;
+			}
+
+			matk_min += wMatk - variance;
+			matk_max += wMatk + variance;
+		}
+
+		// Apply Recognized Spell buff
+		// Also update homunculus MATK, hom Min Matk is always the same as Max Matk
+		if ((bl.type == BL_HOM && battle_config.hom_setting&HOMSET_SAME_MATK) || (sc && sc->getSCE(SC_RECOGNIZEDSPELL))) {
+			matk_min = std::max( matk_min, matk_max );
+		}
+
+		if (sd != nullptr && sd->right_weapon.overrefine > 0) {
+			matk_min++;
+			matk_max += sd->right_weapon.overrefine - 1;
+		}
+
+		// Apply MATK % from skill Mystical Amplification
+		if (sc && sc->getSCE(SC_MAGICPOWER)) {
+			matk_min += matk_min * sc->getSCE(SC_MAGICPOWER)->val3 / 100;
+			matk_max += matk_max * sc->getSCE(SC_MAGICPOWER)->val3 / 100;
+		}
+
+		// ExtraMATK = EquipMATK + ConsumableMATK + PseudoBuffMATK
+		// Bonuses from ExtraMATK are separated in order to order them (order has no impact)
+
+		// EquipMATK (flat MATK from equipments)
+		if (sd != nullptr && sd->bonus.ematk != 0) {
+			matk_min += sd->bonus.ematk;
+			matk_max += sd->bonus.ematk;
+		}
+
+		// Flat MATK not visible in status window
+		if (sd != nullptr && sd->bonus.ematk_hidden != 0) {
+			matk_min += sd->bonus.ematk_hidden;
+			matk_max += sd->bonus.ematk_hidden;
+		}
+
+		// PseudoBuffMATK (flat MATK from skills)
+		matk_min = status_calc_pseudobuff_matk( sd, sc, matk_min );
+		matk_max = status_calc_pseudobuff_matk( sd, sc, matk_max );
+
+		// ConsumableMATK (flat MATK from consumables)
+		matk_min = status_calc_consumablematk( sc, matk_min );
+		matk_max = status_calc_consumablematk( sc, matk_max );
+
+		// Apply MATK % (from equipments, usable items...)
+		if (sd != nullptr && sd->matk_rate != 100) {
+			matk_min = matk_min * sd->matk_rate / 100;
+			matk_max = matk_max * sd->matk_rate / 100;
+		}
+
+		status->matk_min = static_cast<uint16>( cap_value(matk_min,0,USHRT_MAX) );
+		status->matk_max = static_cast<uint16>( cap_value(matk_max,0,USHRT_MAX) );
+#endif
+	}
+
+	if(flag[SCB_ASPD]) {
+		int32 amotion;
+
+		if ( bl.type == BL_HOM ) {
+#ifdef RENEWAL_ASPD
+			amotion = (reinterpret_cast<homun_data*>(&bl))->homunculusDB->baseASPD;
+			amotion = amotion - amotion * status_get_homdex(&bl) / 1000 - status_get_homagi(&bl) * amotion / 250;
+			amotion = (amotion * status_calc_aspd(&bl, sc, true) + status_calc_aspd(&bl, sc, false)) / - 100 + amotion;
+#else
+			amotion = (1000 - 4 * status->agi - status->dex) * (reinterpret_cast<homun_data*>(&bl))->homunculusDB->baseASPD / 1000;
+
+			amotion = status_calc_aspd_rate(&bl, sc, amotion);
+			amotion = amotion * status->aspd_rate / 1000;
+#endif
+
+			amotion = status_calc_fix_aspd(&bl, sc, amotion);
+			status->amotion = cap_value(amotion, MAX_ASPD_NOPC/AMOTION_DIVIDER_NOPC, MIN_ASPD/AMOTION_DIVIDER_NOPC);
+
+			status->adelay = AMOTION_DIVIDER_NOPC * status->amotion;
+		} else if ( bl.type == BL_PC ) {
+			uint16 skill_lv;
+
+			amotion = status_base_amotion_pc(sd,status);
+#ifndef RENEWAL_ASPD
+			status->aspd_rate = status_calc_aspd_rate(&bl, sc, b_status->aspd_rate);
+#endif
+			// Absolute ASPD % modifiers
+			amotion = amotion * status->aspd_rate / 1000;
+			if (sd->ud.skilltimer != INVALID_TIMER && (skill_lv = pc_checkskill(sd, SA_FREECAST)) > 0)
+#ifdef RENEWAL_ASPD
+				amotion = amotion * 5 * (skill_lv + 10) / 100;
+#else
+				amotion += (2000 - amotion) * ( 55 - 5 * ( skill_lv + 1 ) ) / 100; //Increases amotion to reduce ASPD to the corresponding absolute percentage for each level (overriding other adjustments)
+#endif
+
+#ifdef RENEWAL_ASPD
+			// RE ASPD % modifier
+			amotion += (max(195 - amotion, 2) * (status->aspd_rate2 + status_calc_aspd(&bl, sc, false))) / 100;
+
+			// Renewal base value is actually ASPD and not amotion, so we need to convert it
+			amotion = AMOTION_ZERO_ASPD - amotion * AMOTION_INTERVAL;
+
+			amotion += sd->bonus.aspd_add;
+#endif
+			amotion = status_calc_fix_aspd(&bl, sc, amotion);
+			status->amotion = cap_value(amotion, pc_maxaspd(sd)/AMOTION_DIVIDER_PC, MIN_ASPD/AMOTION_DIVIDER_PC);
+
+			status->adelay = AMOTION_DIVIDER_PC * status->amotion;
+		} else { // Mercenary and mobs
+			amotion = b_status->amotion;
+			status->aspd_rate = status_calc_aspd_rate(&bl, sc, b_status->aspd_rate);
+			amotion = amotion*status->aspd_rate/1000;
+
+			amotion = status_calc_fix_aspd(&bl, sc, amotion);
+			status->amotion = cap_value(amotion, MAX_ASPD_NOPC/AMOTION_DIVIDER_NOPC, MIN_ASPD/AMOTION_DIVIDER_NOPC);
+
+			// FIXME: Officially, adelay only considers a few buffs and is not affected by ASPD debuffs at all
+			// The only way to make monsters slower is to increase their amotion above their adelay
+			// For now we solve it by making sure we never increase adelay through aspd_rate and then cap it to amotion
+			temp = b_status->adelay * min(status->aspd_rate, 1000) / 1000;
+			status->adelay = cap_value(temp, AMOTION_DIVIDER_NOPC * status->amotion, MIN_ASPD);
+		}
+	}
+
+	if(flag[SCB_DSPD]) {
+		int32 dmotion;
+		if( bl.type == BL_PC ) {
+			if (b_status->agi != status->agi) {
+				dmotion = 800-status->agi*4;
+				status->dmotion = cap_value(dmotion, 400, 800);
+				if(battle_config.pc_damage_delay_rate != 100)
+					status->dmotion = status->dmotion*battle_config.pc_damage_delay_rate/100;
+			}
+		} else if( bl.type == BL_HOM ) {
+			dmotion = 800-status->agi*4;
+			status->dmotion = cap_value(dmotion, 400, 800);
+		}
+	}
+
+#ifdef RENEWAL
+	if (flag[SCB_PATK]) {
+		if (status->pow == b_status->pow && status->con == b_status->con)
+			status->patk = status_calc_patk(&bl, sc, b_status->patk);
+		else
+			status->patk = status_calc_patk(&bl, sc, b_status->patk + (status->pow - b_status->pow) / 3 + (status->con - b_status->con) / 5);
+	}
+
+	if (flag[SCB_SMATK]) {
+		if (status->spl == b_status->spl && status->con == b_status->con)
+			status->smatk = status_calc_smatk(&bl, sc, b_status->smatk);
+		else
+			status->smatk = status_calc_smatk(&bl, sc, b_status->smatk) + (status->spl - b_status->spl) / 3 + (status->con - b_status->con) / 5;
+	}
+
+	if (flag[SCB_RES]) {
+		if (status->sta == b_status->sta)
+			status->res = status_calc_res(&bl, sc, b_status->res);
+		else
+			status->res = status_calc_res(&bl, sc, b_status->res + (status->sta - b_status->sta) + (status->sta - b_status->sta) / 3 * 5);
+	}
+
+	if (flag[SCB_MRES]) {
+		if (status->wis == b_status->wis)
+			status->mres = status_calc_mres(&bl, sc, b_status->mres);
+		else
+			status->mres = status_calc_mres(&bl, sc, b_status->mres + (status->wis - b_status->wis) + (status->wis - b_status->wis) / 3 * 5);
+	}
+
+	if (flag[SCB_HPLUS]) {
+		if (status->crt == b_status->crt)
+			status->hplus = status_calc_hplus(&bl, sc, b_status->hplus);
+		else
+			status->hplus = status_calc_hplus(&bl, sc, b_status->hplus + (status->crt - b_status->crt));
+	}
+
+	if (flag[SCB_CRATE]) {
+		if (status->crt == b_status->crt)
+			status->crate = status_calc_crate(&bl, sc, b_status->crate);
+		else
+			status->crate = status_calc_crate(&bl, sc, b_status->crate + (status->crt - b_status->crt) / 3);
+	}
+
+	if (flag[SCB_MAXAP]) {
+		if (bl.type == BL_PC) {
+			status->max_ap = status_calc_maxap_pc( *sd );
+
+			if (battle_config.ap_rate != 100)
+				status->max_ap = (uint32)(battle_config.ap_rate * (status->max_ap / 100.));
+
+			status->max_ap = umin(status->max_ap, (uint32)battle_config.max_ap);
+		} else

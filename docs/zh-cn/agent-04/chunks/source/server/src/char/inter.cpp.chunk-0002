@@ -1,0 +1,500 @@
+		if ( SQL_ERROR == Sql_Query(sql_handle, "SELECT `account_id`,`name`,`class`,`base_level`,`job_level`,`online` FROM `%s` WHERE `name` LIKE '%s' LIMIT 10", schema_config.char_db, query_esq)
+				|| Sql_NumRows(sql_handle) == 0 ) {
+			if( Sql_NumRows(sql_handle) == 0 ) {
+				inter_to_fd(fd, u_fd, u_aid, (char *)msg_txt(212) ,query); // No matches were found for your criteria, '%s'
+			} else {
+				Sql_ShowDebug(sql_handle);
+				inter_to_fd(fd, u_fd, u_aid, (char *)msg_txt(213)); // An error occurred, bother your admin about it.
+			}
+			Sql_FreeResult(sql_handle);
+			return;
+		} else {
+			if( Sql_NumRows(sql_handle) == 1 ) {//we found a perfect match
+				Sql_NextRow(sql_handle);
+				Sql_GetData(sql_handle, 0, &data, nullptr); account_id = atoi(data);
+				Sql_FreeResult(sql_handle);
+			} else {// more than one, listing... [Dekamaster/Nightroad]
+				inter_to_fd(fd, u_fd, u_aid, (char *)msg_txt(214),(int32)Sql_NumRows(sql_handle)); // Your query returned the following %d results, please be more specific...
+				while ( SQL_SUCCESS == Sql_NextRow(sql_handle) ) {
+					int32 class_;
+					int16 base_level, job_level, online;
+					char name[NAME_LENGTH];
+
+					Sql_GetData(sql_handle, 0, &data, nullptr); account_id = atoi(data);
+					Sql_GetData(sql_handle, 1, &data, nullptr); safestrncpy(name, data, sizeof(name));
+					Sql_GetData(sql_handle, 2, &data, nullptr); class_ = atoi(data);
+					Sql_GetData(sql_handle, 3, &data, nullptr); base_level = atoi(data);
+					Sql_GetData(sql_handle, 4, &data, nullptr); job_level = atoi(data);
+					Sql_GetData(sql_handle, 5, &data, nullptr); online = atoi(data);
+
+					inter_to_fd(fd, u_fd, u_aid, (char *)msg_txt(215), account_id, name, job_name(class_), base_level, job_level, online?"Online":"Offline"); // [AID: %d] %s | %s | Level: %d/%d | %s
+				}
+				Sql_FreeResult(sql_handle);
+				return;
+			}
+		}
+	}
+
+	/* it will only get here if we have a single match then ask login-server to fetch the `login` record */
+	if (!account_id || chlogif_req_accinfo(fd, u_fd, u_aid, account_id) != 1) {
+		inter_to_fd(fd, u_fd, u_aid, (char *)msg_txt(213)); // An error occurred, bother your admin about it.
+	}
+	return;
+}
+
+/**
+ * Show account info from login-server to user
+ */
+void mapif_accinfo_ack( bool success, int32 map_fd, int32 u_fd, int32 u_aid, int32 account_id, int32 group_id, int32 logincount, int32 state, const char *email, const char *last_ip, const char *lastlogin, const char *birthdate, const char *userid ){
+	
+	if (map_fd <= 0 || !session_isActive(map_fd))
+		return; // check if we have a valid fd
+
+	if (!success) {
+		inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(216), account_id); // No account with ID '%d' was found.
+		return;
+	}
+
+	inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(217), account_id); // -- Account %d --
+	inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(218), userid, group_id, state); // User: %s | GM Group: %d | State: %d
+	inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(221), email, birthdate); // Account e-mail: %s | Birthdate: %s
+	inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(222), last_ip, geoip_getcountry(str2ip(last_ip))); // Last IP: %s (%s)
+	inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(223), logincount, lastlogin); // This user has logged in %d times, the last time was at %s
+	inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(224)); // -- Character Details --
+
+	if ( SQL_ERROR == Sql_Query(sql_handle, "SELECT `char_id`, `name`, `char_num`, `class`, `base_level`, `job_level`, `online` FROM `%s` WHERE `account_id` = '%d' ORDER BY `char_num` LIMIT %d", schema_config.char_db, account_id, MAX_CHARS)
+		|| Sql_NumRows(sql_handle) == 0 )
+	{
+		if( Sql_NumRows(sql_handle) == 0 )
+			inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(226)); // This account doesn't have characters.
+		else {
+			inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(213)); // An error occurred, bother your admin about it.
+			Sql_ShowDebug(sql_handle);
+		}
+	} else {
+		while ( SQL_SUCCESS == Sql_NextRow(sql_handle) ) {
+			uint32 char_id, class_;
+			int16 char_num, base_level, job_level, online;
+			char name[NAME_LENGTH];
+			char *data;
+
+			Sql_GetData(sql_handle, 0, &data, nullptr); char_id = atoi(data);
+			Sql_GetData(sql_handle, 1, &data, nullptr); safestrncpy(name, data, sizeof(name));
+			Sql_GetData(sql_handle, 2, &data, nullptr); char_num = atoi(data);
+			Sql_GetData(sql_handle, 3, &data, nullptr); class_ = atoi(data);
+			Sql_GetData(sql_handle, 4, &data, nullptr); base_level = atoi(data);
+			Sql_GetData(sql_handle, 5, &data, nullptr); job_level = atoi(data);
+			Sql_GetData(sql_handle, 6, &data, nullptr); online = atoi(data);
+
+			inter_to_fd(map_fd, u_fd, u_aid, (char *)msg_txt(225), char_num, char_id, name, job_name(class_), base_level, job_level, online?"Online":"Offline"); // [Slot/CID: %d/%d] %s | %s | Level: %d/%d | %s
+		}
+	}
+	Sql_FreeResult(sql_handle);
+}
+
+/**
+ * Handles save reg data from map server and distributes accordingly.
+ *
+ * @param val either str or int, depending on type
+ * @param type false when int, true otherwise
+ **/
+void inter_savereg(uint32 account_id, uint32 char_id, const char *key, uint32 index, int64 int_value, const char* string_value, bool is_string)
+{
+	char esc_val[254*2+1];
+	char esc_key[32*2+1];
+
+	Sql_EscapeString(sql_handle, esc_key, key);
+	if( is_string && string_value ) {
+		Sql_EscapeString(sql_handle, esc_val, string_value);
+	}
+	if( key[0] == '#' && key[1] == '#' ) { // global account reg
+		if( session_isValid(login_fd) )
+			chlogif_send_global_accreg( key, index, int_value, string_value, is_string );
+		else {
+			ShowError("Login server unavailable, can't perform update on '%s' variable for AID:%" PRIu32 " CID:%" PRIu32 "\n",key,account_id,char_id);
+		}
+	} else if ( key[0] == '#' ) { // local account reg
+		if( is_string ) {
+			if( string_value ) {
+				if( SQL_ERROR == Sql_Query(sql_handle, "REPLACE INTO `%s` (`account_id`,`key`,`index`,`value`) VALUES ('%" PRIu32 "','%s','%" PRIu32 "','%s')", schema_config.acc_reg_str_table, account_id, esc_key, index, esc_val) )
+					Sql_ShowDebug(sql_handle);
+			} else {
+				if( SQL_ERROR == Sql_Query(sql_handle, "DELETE FROM `%s` WHERE `account_id` = '%" PRIu32 "' AND `key` = '%s' AND `index` = '%" PRIu32 "' LIMIT 1", schema_config.acc_reg_str_table, account_id, esc_key, index) )
+					Sql_ShowDebug(sql_handle);
+			}
+		} else {
+			if( int_value ) {
+				if( SQL_ERROR == Sql_Query(sql_handle, "REPLACE INTO `%s` (`account_id`,`key`,`index`,`value`) VALUES ('%" PRIu32 "','%s','%" PRIu32 "','%" PRId64 "')", schema_config.acc_reg_num_table, account_id, esc_key, index, int_value) )
+					Sql_ShowDebug(sql_handle);
+			} else {
+				if( SQL_ERROR == Sql_Query(sql_handle, "DELETE FROM `%s` WHERE `account_id` = '%" PRIu32 "' AND `key` = '%s' AND `index` = '%" PRIu32 "' LIMIT 1", schema_config.acc_reg_num_table, account_id, esc_key, index) )
+					Sql_ShowDebug(sql_handle);
+			}
+		}
+	} else { /* char reg */
+		if( is_string ) {
+			if( string_value ) {
+				if( SQL_ERROR == Sql_Query(sql_handle, "REPLACE INTO `%s` (`char_id`,`key`,`index`,`value`) VALUES ('%" PRIu32 "','%s','%" PRIu32 "','%s')", schema_config.char_reg_str_table, char_id, esc_key, index, esc_val) )
+					Sql_ShowDebug(sql_handle);
+			} else {
+				if( SQL_ERROR == Sql_Query(sql_handle, "DELETE FROM `%s` WHERE `char_id` = '%" PRIu32 "' AND `key` = '%s' AND `index` = '%" PRIu32 "' LIMIT 1", schema_config.char_reg_str_table, char_id, esc_key, index) )
+					Sql_ShowDebug(sql_handle);
+			}
+		} else {
+			if( int_value ) {
+				if( SQL_ERROR == Sql_Query(sql_handle, "REPLACE INTO `%s` (`char_id`,`key`,`index`,`value`) VALUES ('%" PRIu32 "','%s','%" PRIu32 "','%" PRId64 "')", schema_config.char_reg_num_table, char_id, esc_key, index, int_value) )
+					Sql_ShowDebug(sql_handle);
+			} else {
+				if( SQL_ERROR == Sql_Query(sql_handle, "DELETE FROM `%s` WHERE `char_id` = '%" PRIu32 "' AND `key` = '%s' AND `index` = '%" PRIu32 "' LIMIT 1", schema_config.char_reg_num_table, char_id, esc_key, index) )
+					Sql_ShowDebug(sql_handle);
+			}
+		}
+	}
+}
+
+// Load account_reg from sql (type=2)
+int32 inter_accreg_fromsql(uint32 account_id, uint32 char_id, int32 fd, int32 type)
+{
+	char* data;
+	size_t len;
+	uint32 plen = 0;
+
+	switch( type ) {
+		case 3: //char reg
+			if( SQL_ERROR == Sql_Query(sql_handle, "SELECT `key`, `index`, `value` FROM `%s` WHERE `char_id`='%" PRIu32 "'", schema_config.char_reg_str_table, char_id) )
+				Sql_ShowDebug(sql_handle);
+			break;
+		case 2: //account reg
+			if( SQL_ERROR == Sql_Query(sql_handle, "SELECT `key`, `index`, `value` FROM `%s` WHERE `account_id`='%" PRIu32 "'", schema_config.acc_reg_str_table, account_id) )
+				Sql_ShowDebug(sql_handle);
+			break;
+		case 1: //account2 reg
+			ShowError("inter_accreg_fromsql: Char server shouldn't handle type 1 registry values (##). That is the login server's job!\n");
+			return 0;
+		default:
+			ShowError("inter_accreg_fromsql: Invalid type %d\n", type);
+			return 0;
+	}
+
+	WFIFOHEAD(fd, 60000 + 300);
+	WFIFOW(fd, 0) = 0x3804;
+	// 0x2 = length, set prior to being sent
+	WFIFOL(fd, 4) = account_id;
+	WFIFOL(fd, 8) = char_id;
+	WFIFOB(fd, 12) = 0; // var type (only set when all vars have been sent, regardless of type)
+	WFIFOB(fd, 13) = 1; // is string type
+	WFIFOW(fd, 14) = 0; // count
+	plen = 16;
+
+	/**
+	 * Vessel!
+	 *
+	 * str type
+	 * { keyLength(B), key(<keyLength>), index(L), valLength(B), val(<valLength>) }
+	 **/
+	while ( SQL_SUCCESS == Sql_NextRow(sql_handle) ) {
+		Sql_GetData(sql_handle, 0, &data, nullptr);
+		len = strlen(data)+1;
+
+		WFIFOB(fd, plen) = (unsigned char)len; // won't be higher; the column size is 32
+		plen += 1;
+
+		safestrncpy(WFIFOCP(fd,plen), data, len);
+		plen += static_cast<decltype(plen)>( len );
+
+		Sql_GetData(sql_handle, 1, &data, nullptr);
+
+		WFIFOL(fd, plen) = (uint32)atol(data);
+		plen += 4;
+
+		Sql_GetData(sql_handle, 2, &data, nullptr);
+		len = strlen(data)+1;
+
+		WFIFOB(fd, plen) = (unsigned char)len; // won't be higher; the column size is 254
+		plen += 1;
+
+		safestrncpy(WFIFOCP(fd,plen), data, len);
+		plen += static_cast<decltype(plen)>( len );
+
+		WFIFOW(fd, 14) += 1;
+
+		if( plen > 60000 ) {
+			WFIFOW(fd, 2) = plen;
+			WFIFOSET(fd, plen);
+
+			// prepare follow up
+			WFIFOHEAD(fd, 60000 + 300);
+			WFIFOW(fd, 0) = 0x3804;
+			// 0x2 = length, set prior to being sent
+			WFIFOL(fd, 4) = account_id;
+			WFIFOL(fd, 8) = char_id;
+			WFIFOB(fd, 12) = 0; // var type (only set when all vars have been sent, regardless of type)
+			WFIFOB(fd, 13) = 1; // is string type
+			WFIFOW(fd, 14) = 0; // count
+			plen = 16;
+		}
+	}
+
+	WFIFOW(fd, 2) = plen;
+	WFIFOSET(fd, plen);
+
+	Sql_FreeResult(sql_handle);
+
+	switch( type ) {
+		case 3: //char reg
+			if (SQL_ERROR == Sql_Query(sql_handle, "SELECT `key`, `index`, `value` FROM `%s` WHERE `char_id`='%" PRIu32 "'", schema_config.char_reg_num_table, char_id))
+				Sql_ShowDebug(sql_handle);
+			break;
+		case 2: //account reg
+			if (SQL_ERROR == Sql_Query(sql_handle, "SELECT `key`, `index`, `value` FROM `%s` WHERE `account_id`='%" PRIu32 "'", schema_config.acc_reg_num_table, account_id))
+				Sql_ShowDebug(sql_handle);
+			break;
+#if 0 // This is already checked above.
+		case 1: //account2 reg
+			ShowError("inter_accreg_fromsql: Char server shouldn't handle type 1 registry values (##). That is the login server's work!\n");
+			return 0;
+#endif // 0
+	}
+
+	WFIFOHEAD(fd, 60000 + 300);
+	WFIFOW(fd, 0) = 0x3804;
+	// 0x2 = length, set prior to being sent
+	WFIFOL(fd, 4) = account_id;
+	WFIFOL(fd, 8) = char_id;
+	WFIFOB(fd, 12) = 0; // var type (only set when all vars have been sent, regardless of type)
+	WFIFOB(fd, 13) = 0; // is int32 type
+	WFIFOW(fd, 14) = 0; // count
+	plen = 16;
+
+	/**
+	 * Vessel!
+	 *
+	 * int32 type
+	 * { keyLength(B), key(<keyLength>), index(L), value(L) }
+	 **/
+	while ( SQL_SUCCESS == Sql_NextRow(sql_handle) ) {
+		Sql_GetData(sql_handle, 0, &data, nullptr);
+		len = strlen(data)+1;
+
+		WFIFOB(fd, plen) = (unsigned char)len;/* won't be higher; the column size is 32 */
+		plen += 1;
+
+		safestrncpy(WFIFOCP(fd,plen), data, len);
+		plen += static_cast<decltype(plen)>( len );
+
+		Sql_GetData(sql_handle, 1, &data, nullptr);
+
+		WFIFOL(fd, plen) = (uint32)atol(data);
+		plen += 4;
+
+		Sql_GetData(sql_handle, 2, &data, nullptr);
+
+		WFIFOQ(fd, plen) = strtoll(data,nullptr,10);
+		plen += 8;
+
+		WFIFOW(fd, 14) += 1;
+
+		if( plen > 60000 ) {
+			WFIFOW(fd, 2) = plen;
+			WFIFOSET(fd, plen);
+
+			/* prepare follow up */
+			WFIFOHEAD(fd, 60000 + 300);
+			WFIFOW(fd, 0) = 0x3804;
+			/* 0x2 = length, set prior to being sent */
+			WFIFOL(fd, 4) = account_id;
+			WFIFOL(fd, 8) = char_id;
+			WFIFOB(fd, 12) = 0;/* var type (only set when all vars have been sent, regardless of type) */
+			WFIFOB(fd, 13) = 0;/* is int32 type */
+			WFIFOW(fd, 14) = 0;/* count */
+			plen = 16;
+		}
+	}
+
+	WFIFOB(fd, 12) = type;
+	WFIFOW(fd, 2) = plen;
+	WFIFOSET(fd, plen);
+
+	Sql_FreeResult(sql_handle);
+	return 1;
+}
+
+/*==========================================
+ * read config file
+ *------------------------------------------*/
+int32 inter_config_read(const char* cfgName)
+{
+	char line[1024];
+	FILE* fp;
+
+	fp = fopen(cfgName, "r");
+	if(fp == nullptr) {
+		ShowError("File not found: %s\n", cfgName);
+		return 1;
+	}
+
+	while(fgets(line, sizeof(line), fp)) {
+		char w1[24], w2[1024];
+
+		if (line[0] == '/' && line[1] == '/')
+			continue;
+
+		if (sscanf(line, "%23[^:]: %1023[^\r\n]", w1, w2) != 2)
+			continue;
+
+		if(!strcmpi(w1,"char_server_ip"))
+			char_server_ip = w2;
+		else if(!strcmpi(w1,"char_server_port"))
+			char_server_port = atoi(w2);
+		else if(!strcmpi(w1,"char_server_id"))
+			char_server_id = w2;
+		else if(!strcmpi(w1,"char_server_pw"))
+			char_server_pw = w2;
+		else if(!strcmpi(w1,"char_server_db"))
+			char_server_db = w2;
+		else if(!strcmpi(w1,"default_codepage"))
+			default_codepage = w2;
+		else if(!strcmpi(w1,"party_share_level"))
+			party_share_level = (uint32)atof(w2);
+		else if(!strcmpi(w1,"log_inter"))
+			charserv_config.log_inter = atoi(w2);
+		else if(!strcmpi(w1,"inter_server_conf"))
+			cfgFile = w2;
+		else if(!strcmpi(w1,"import"))
+			inter_config_read(w2);
+	}
+	fclose(fp);
+
+	ShowInfo ("Done reading %s.\n", cfgName);
+
+	return 0;
+}
+
+// Save interlog into sql
+int32 inter_log(const char* fmt, ...)
+{
+	char str[255];
+	char esc_str[sizeof(str)*2+1];// escaped str
+	va_list ap;
+
+	va_start(ap,fmt);
+	vsnprintf(str, sizeof(str), fmt, ap);
+	va_end(ap);
+
+	Sql_EscapeStringLen(sql_handle, esc_str, str, strnlen(str, sizeof(str)));
+	if( SQL_ERROR == Sql_Query(sql_handle, "INSERT INTO `%s` (`time`, `log`) VALUES (NOW(),  '%s')", schema_config.interlog_db, esc_str) )
+		Sql_ShowDebug(sql_handle);
+
+	return 0;
+}
+
+const std::string InterServerDatabase::getDefaultLocation(){
+	return std::string(conf_path) + "/" + cfgFile;
+}
+
+/**
+ * Reads and parses an entry from the inter_server.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 InterServerDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	uint32 id;
+
+	if( !this->asUInt32( node, "ID", id ) ){
+		return 0;
+	}
+
+	auto storage_table = this->find( id );
+	bool existing = storage_table != nullptr;
+
+	if( !existing ){
+		if( !this->nodesExist( node, { "Name", "Table" } ) ){
+			return 0;
+		}
+
+		storage_table = std::make_shared<s_storage_table>();
+
+		storage_table->id = (uint8)id;
+	}
+
+	if( this->nodeExists( node, "Name" ) ){
+		std::string name;
+
+		if( !this->asString( node, "Name", name ) ){
+			return 0;
+		}
+
+		safestrncpy( storage_table->name, name.c_str(), NAME_LENGTH );
+	}
+
+	if( this->nodeExists( node, "Table" ) ){
+		std::string table;
+
+		if( !this->asString( node, "Table", table ) ){
+			return 0;
+		}
+
+		safestrncpy( storage_table->table, table.c_str(), DB_NAME_LEN );
+	}
+
+	if( this->nodeExists( node, "Max" ) ){
+		uint16 max;
+
+		if( !this->asUInt16( node, "Max", max ) ){
+			return 0;
+		}
+
+		storage_table->max_num = max;
+	}else{
+		if( !existing ){
+			storage_table->max_num = MAX_STORAGE;
+		}
+	}
+
+	if( !existing ){
+		this->put( storage_table->id, storage_table );
+	}
+
+	return 1;
+}
+
+// initialize
+int32 inter_init_sql(const char *file)
+{
+	inter_config_read(file);
+
+	//DB connection initialized
+	sql_handle = Sql_Malloc();
+	ShowInfo("Connect Character DB server.... (Character Server)\n");
+	if( SQL_ERROR == Sql_Connect(sql_handle, char_server_id.c_str(), char_server_pw.c_str(), char_server_ip.c_str(), (uint16)char_server_port, char_server_db.c_str()))
+	{
+		ShowError("Couldn't connect with username = '%s', host = '%s', port = '%d', database = '%s'\n",
+			char_server_id.c_str(), char_server_ip.c_str(), char_server_port, char_server_db.c_str());
+		Sql_ShowDebug(sql_handle);
+		Sql_Free(sql_handle);
+		exit(EXIT_FAILURE);
+	}
+
+	if( !default_codepage.empty() ) {
+		if( SQL_ERROR == Sql_SetEncoding(sql_handle, default_codepage.c_str()) )
+			Sql_ShowDebug(sql_handle);
+	}
+
+	interServerDb.load();
+	inter_guild_sql_init();
+	inter_storage_sql_init();
+	inter_party_sql_init();
+	inter_pet_sql_init();
+	inter_homunculus_sql_init();
+	inter_mercenary_sql_init();
+	inter_elemental_sql_init();
+	inter_mail_sql_init();
+	inter_auction_sql_init();
+	inter_clan_init();
+
+	geoip_readdb();
+	return 0;
+}
+
+// finalize
+void inter_final(void)

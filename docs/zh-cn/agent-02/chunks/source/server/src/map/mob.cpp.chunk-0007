@@ -1,0 +1,500 @@
+		if (tsd == nullptr)
+			continue; // skip players that are offline
+		if (tsd->m != m)
+			continue; // skip players not on this map
+		count++; //Only logged into same map chars are counted for the total.
+		if (pc_isdead(tsd))
+			continue; // skip dead players
+
+		switch( entry.flag ){
+			case MDLF_NORMAL:
+				dmgbltypes |= BL_PC;
+				break;
+			case MDLF_HOMUN:
+				// Skip homunculus' share if inactive
+				if( !hom_is_active( tsd->hd ) ){
+					continue;
+				}
+				dmgbltypes |= BL_HOM;
+				break;
+			case MDLF_PET:
+				// Skip pet's share if inactive
+				if( tsd->status.pet_id == 0 || tsd->pd == nullptr ){
+					continue;
+				}
+				dmgbltypes |= BL_PET;
+				break;
+		}
+
+		tmpsd[i] = tsd; // record as valid damage-log entry
+
+		// Gather data to determine loot priority
+		// Check if player already has an entry
+		auto it = lootdmg.begin();
+		for (; it != lootdmg.end(); ++it)
+			if (it->sd->id == tsd->id)
+				break;
+
+		if (it == lootdmg.end()) {
+			// No matching player found, create new entry for player
+			s_dmg_entry dmg_entry;
+			dmg_entry.sd = tsd;
+			dmg_entry.damage = entry.dmg;
+			lootdmg.push_back(dmg_entry);
+		} else {
+			// Slave damage is added to the player's damage
+			it->damage += entry.dmg;
+		}
+	}
+
+	if (!lootdmg.empty()) {
+		// Officially, the first player in the damage log gets 30% of total damage as bonus for loot priority
+		lootdmg[0].damage += (total_damage * battle_config.first_attack_loot_bonus) / 100;
+
+		// Sort list by damage now and determine top 3 damage dealers
+		std::sort(lootdmg.begin(), lootdmg.end(), [](s_dmg_entry& a, s_dmg_entry& b) {
+			return a.damage > b.damage;
+		});
+		first_sd = lootdmg[0].sd;
+		if (lootdmg.size() > 1)
+			second_sd = lootdmg[1].sd;
+		if (lootdmg.size() > 2)
+			third_sd = lootdmg[2].sd;
+	}
+
+	// determines, if the monster was killed by homunculus' damage only
+	homkillonly = (bool)( ( dmgbltypes&BL_HOM ) && !( dmgbltypes&~BL_HOM ) );
+	// determines if the monster was killed by mercenary damage only
+	merckillonly = (bool)((dmgbltypes & BL_MER) && !(dmgbltypes & ~BL_MER));
+
+	// Determine MVP (need to do it here so that it's not influenced by first attacker bonus below)
+	map_session_data* mvp_sd = md->get_mvp_player(first_sd);
+
+	if(battle_config.exp_calc_type == 2 && count > 1) {	//Apply first-attacker 200% exp share bonus
+		s_dmglog& entry = md->dmglog[0];
+		total_damage = util::safe_addition_cap(total_damage, entry.dmg, INT64_MAX);
+		entry.dmg = util::safe_addition_cap(entry.dmg, entry.dmg, INT64_MAX);
+	}
+
+	if(!(type&2) && //No exp
+		(!map_getmapflag(m, MF_PVP) || battle_config.pvp_exp) && //Pvp no exp rule [MouseJstr]
+		(!md->master_id || !md->special_state.ai) && //Only player-summoned mobs do not give exp. [Skotlex]
+		(!map_getmapflag(m, MF_NOBASEEXP) || !map_getmapflag(m, MF_NOJOBEXP)) //Gives Exp
+	) { //Experience calculation.
+		int32 bonus = 100; //Bonus on top of your share (common to all attackers).
+		int32 pnum = 0;
+#ifndef RENEWAL
+		if (md->sc.getSCE(SC_RICHMANKIM))
+			bonus += md->sc.getSCE(SC_RICHMANKIM)->val2;
+#else
+		if (sd && sd->sc.getSCE(SC_RICHMANKIM))
+			bonus += sd->sc.getSCE(SC_RICHMANKIM)->val2;
+#endif
+		if(sd) {
+			temp = status_get_class(md);
+			if(sd->sc.getSCE(SC_MIRACLE)) i = 2; //All mobs are Star Targets
+			else
+			ARR_FIND(0, MAX_PC_FEELHATE, i, temp == sd->hate_mob[i] &&
+				(battle_config.allow_skill_without_day || sg_info[i].day_func()));
+			if(i<MAX_PC_FEELHATE && (temp=pc_checkskill(sd,sg_info[i].bless_id)))
+				bonus += (i==2?20:10)*temp;
+		}
+		if(battle_config.mobs_level_up && md->level > md->db->lv) // [Valaris]
+			bonus += (md->level-md->db->lv)*battle_config.mobs_level_up_exp_rate;
+
+		for( i = 0; i < md->dmglog.size(); i++ ){
+			const s_dmglog& entry = md->dmglog[i];
+			int32 flag=1,zeny=0;
+			t_exp base_exp, job_exp;
+			double per; //Your share of the mob's exp
+
+			if (!tmpsd[i]) continue;
+
+			if (battle_config.exp_calc_type == 1 || total_damage == 0) {
+				// eAthena's exp formula based on max hp
+				per = (double)entry.dmg / (double)status->max_hp;
+			}
+			else {
+				// Aegis's exp formula based on total damage
+				per = (double)entry.dmg / (double)total_damage;
+			}
+			// To prevent exploits
+			if (per > 1) per = 1;
+
+			//Exclude rebirth tap from this calculation
+			count -= md->state.rebirth;
+			if (count>1 && battle_config.exp_bonus_attacker) {
+				//Exp bonus per additional attacker.
+				if (count > battle_config.exp_bonus_max_attacker)
+					count = battle_config.exp_bonus_max_attacker;
+				per += per*((count-1)*battle_config.exp_bonus_attacker)/100.;
+			}
+
+			// change experience for different sized monsters [Valaris]
+			if (battle_config.mob_size_influence) {
+				switch( md->special_state.size ) {
+					case SZ_MEDIUM:
+						per /= 2.;
+						break;
+					case SZ_BIG:
+						per *= 2.;
+						break;
+				}
+			}
+
+			if( entry.flag == MDLF_PET )
+				per *= battle_config.pet_attack_exp_rate/100.;
+
+			if(battle_config.zeny_from_mobs && md->level) {
+				 // zeny calculation moblv + random moblv [Valaris]
+				zeny=(int32) ((md->level+rnd()%md->level)*per*bonus/100.);
+				if( md->get_bosstype() == BOSSTYPE_MVP )
+					zeny*=rnd()%250;
+			}
+
+			if (map_getmapflag(m, MF_NOBASEEXP) || !md->db->base_exp)
+				base_exp = 0;
+			else {
+				double exp = apply_rate2(md->db->base_exp, per, 1);
+				exp = apply_rate(exp, bonus);
+				exp = apply_rate(exp, map_getmapflag(m, MF_BEXP));
+				base_exp = (t_exp)cap_value(exp, 1, MAX_EXP);
+			}
+
+			if (map_getmapflag(m, MF_NOJOBEXP) || !md->db->job_exp
+#ifndef RENEWAL
+				|| entry.flag == MDLF_HOMUN // Homun earned job-exp is always lost.
+#endif
+			)
+				job_exp = 0;
+			else {
+				double exp = apply_rate2(md->db->job_exp, per, 1);
+				exp = apply_rate(exp, bonus);
+				exp = apply_rate(exp, map_getmapflag(m, MF_JEXP));
+				job_exp = (t_exp)cap_value(exp, 1, MAX_EXP);
+			}
+
+			if ((base_exp > 0 || job_exp > 0) && entry.flag == MDLF_HOMUN && homkillonly && battle_config.hom_idle_no_share && pc_isidle_hom(tmpsd[i]))
+				base_exp = job_exp = 0;
+
+			if ( ( temp = tmpsd[i]->status.party_id)>0 ) {
+				int32 j;
+				for( j = 0; j < pnum && pt[j].id != temp; j++ ); //Locate party.
+
+				if( j == pnum ) { //Possibly add party.
+					pt[pnum].p = party_search(temp);
+					if(pt[pnum].p && pt[pnum].p->party.exp) {
+						pt[pnum].id = temp;
+						pt[pnum].base_exp = base_exp;
+						pt[pnum].job_exp = job_exp;
+						pt[pnum].zeny = zeny; // zeny share [Valaris]
+						pnum++;
+						flag = 0;
+					}
+				} else {	//Add to total
+					pt[j].base_exp = util::safe_addition_cap( pt[j].base_exp, base_exp, MAX_EXP );
+					pt[j].job_exp = util::safe_addition_cap( pt[j].job_exp, job_exp, MAX_EXP );
+					pt[j].zeny += zeny;  // zeny share [Valaris]
+					flag = 0;
+				}
+			}
+#ifdef RENEWAL
+			if (base_exp && tmpsd[i] && tmpsd[i]->hd)
+				hom_gainexp(tmpsd[i]->hd, base_exp * battle_config.homunculus_exp_gain / 100); // Homunculus only receive 10% of EXP
+#else
+			if (base_exp && md->dmglog[i].flag == MDLF_HOMUN) //tmpsd[i] is null if it has no homunc.
+				hom_gainexp(tmpsd[i]->hd, base_exp);
+#endif
+			if(flag) {
+				if(base_exp || job_exp) {
+					if( entry.flag != MDLF_PET || battle_config.pet_attack_exp_to_master ) {
+#ifdef RENEWAL_EXP
+						int32 rate = pc_level_penalty_mod( tmpsd[i], PENALTY_EXP, nullptr, md );
+						if (rate != 100) {
+							if (base_exp)
+								base_exp = (t_exp)cap_value(apply_rate(base_exp, rate), 1, MAX_EXP);
+							if (job_exp)
+								job_exp = (t_exp)cap_value(apply_rate(job_exp, rate), 1, MAX_EXP);
+						}
+#endif
+						pc_gainexp(tmpsd[i], md, base_exp, job_exp, 0);
+					}
+				}
+				if(zeny) // zeny from mobs [Valaris]
+					pc_getzeny(tmpsd[i], zeny, LOG_TYPE_PICKDROP_MONSTER);
+			}
+		}
+
+		for( i = 0; i < pnum; i++ ) //Party share.
+			party_exp_share(pt[i].p, md, pt[i].base_exp,pt[i].job_exp,pt[i].zeny);
+
+	} //End EXP giving.
+
+	// Looted items have an independent drop position and also don't show special effects when dropped
+	// So we need put them into a separate list
+	std::shared_ptr<s_item_drop_list> lootlist = std::make_shared<s_item_drop_list>();
+	lootlist->m = md->m;
+	lootlist->x = md->x;
+	lootlist->y = md->y;
+	lootlist->first_charid = (first_sd != nullptr ? first_sd->status.char_id : 0);
+	lootlist->second_charid = (second_sd ? second_sd->status.char_id : 0);
+	lootlist->third_charid = (third_sd ? third_sd->status.char_id : 0);
+
+	// Process items looted by the mob
+	if (md->lootitems) {
+		for (i = 0; i < md->lootitem_count; i++) {
+			std::shared_ptr<s_item_drop> ditem = mob_setlootitem(md->lootitems[i], md->mob_id);
+			mob_item_drop(md, lootlist, ditem, 1, 10000, homkillonly || merckillonly);
+		}
+	}
+
+	if( !(type&1) && !map_getmapflag(m, MF_NOMOBLOOT) && !md->state.rebirth && (
+		!md->special_state.ai || //Non special mob
+		battle_config.alchemist_summon_reward == 2 || //All summoned give drops
+		(md->special_state.ai==AI_SPHERE && battle_config.alchemist_summon_reward == 1) //Marine Sphere Drops items.
+		) )
+	{ // Item Drop
+		int32 drop_rate, drop_modifier = 100;
+
+#ifdef RENEWAL_DROP
+		drop_modifier = pc_level_penalty_mod( first_sd != nullptr ? first_sd : second_sd != nullptr ? second_sd : third_sd, PENALTY_DROP, nullptr, md );
+#endif
+
+		std::shared_ptr<s_item_drop_list> dlist = std::make_shared<s_item_drop_list>();
+		dlist->m = md->m;
+		dlist->x = md->x;
+		dlist->y = md->y;
+		dlist->first_charid = (first_sd != nullptr ? first_sd->status.char_id : 0);
+		dlist->second_charid = (second_sd ? second_sd->status.char_id : 0);
+		dlist->third_charid = (third_sd ? third_sd->status.char_id : 0);
+
+		// These trigger for the killer of the monster
+		if(sd) {
+			// process script-granted extra drop bonuses
+			for (const auto &it : sd->add_drop) {
+				if (!&it || (!it.nameid && !it.group))
+					continue;
+				if ((it.race < RC_NONE_ && it.race == -md->mob_id) || //Race < RC_NONE_, use mob_id
+					(it.race == RC_ALL || it.race == status->race) || //Matched race
+					(it.class_ == CLASS_ALL || it.class_ == status->class_)) //Matched class
+				{
+					//Check if the bonus item drop rate should be multiplied with mob level/10 [Lupus]
+					if (it.rate < 0) {
+						//It's negative, then it should be multiplied. with mob_level/10
+						//rate = base_rate * (mob_level/10) + 1
+						drop_rate = (-it.rate) * md->level / 10 + 1;
+						drop_rate = cap_value(drop_rate, max(battle_config.item_drop_adddrop_min,1), min(battle_config.item_drop_adddrop_max,10000));
+					}
+					else
+						//it's positive, then it goes as it is
+						drop_rate = it.rate;
+
+					if (rnd()%10000 >= drop_rate)
+						continue;
+
+					std::shared_ptr<s_mob_drop> mobdrop = std::make_shared<s_mob_drop>();
+
+					if (it.nameid > 0) {
+						mobdrop->nameid = it.nameid;
+						mobdrop->rate = drop_rate;
+					}
+					else {
+						std::shared_ptr<s_item_group_entry> entry = itemdb_group.get_random_entry(it.group, 1, GROUP_ALGORITHM_DROP);
+						if (entry == nullptr) continue;
+						mobdrop->nameid = entry->nameid;
+						mobdrop->rate = entry->adj_rate * drop_rate / 10000;
+					}
+
+					std::shared_ptr<s_item_drop> ditem = mob_setdropitem(mobdrop, 1, md->mob_id);
+
+					mob_item_drop(md, dlist, ditem, 0, mobdrop->rate, homkillonly || merckillonly);
+				}
+			}
+
+			// process script-granted zeny bonus (get_zeny_num) [Skotlex]
+			if( sd->bonus.get_zeny_num && rnd()%100 < sd->bonus.get_zeny_rate ) {
+				i = sd->bonus.get_zeny_num > 0 ? sd->bonus.get_zeny_num : -md->level * sd->bonus.get_zeny_num;
+				if (!i) i = 1;
+				pc_getzeny(sd, 1+rnd()%i, LOG_TYPE_PICKDROP_MONSTER);
+			}
+		}
+
+		// Regular mob drops drop after script-granted drops
+		for( const std::shared_ptr<s_mob_drop>& entry : md->db->dropitem ){
+			if (entry->nameid == 0)
+				continue;
+
+			std::shared_ptr<item_data> it = item_db.find(entry->nameid);
+
+			if (it == nullptr)
+				continue;
+
+			drop_rate = mob_getdroprate(src, md->db, entry->rate, drop_modifier, md);
+
+			// attempt to drop the item
+			if (rnd() % 10000 >= drop_rate)
+				continue;
+
+			if (first_sd != nullptr && it->type == IT_PETEGG) {
+				pet_create_egg(first_sd, entry->nameid);
+				continue;
+			}
+
+			std::shared_ptr<s_item_drop> ditem = mob_setdropitem(entry, 1, md->mob_id);
+
+			//A Rare Drop Global Announce by Lupus
+			if (first_sd != nullptr && entry->rate <= battle_config.rare_drop_announce) {
+				char message[128];
+				sprintf(message, msg_txt(nullptr, 541), first_sd->status.name, md->name, it->ename.c_str(), (float)drop_rate / 100);
+				//MSG: "'%s' won %s's %s (chance: %0.02f%%)"
+				intif_broadcast(message, strlen(message) + 1, BC_DEFAULT);
+			}
+			// Announce first, or else ditem will be freed. [Lance]
+			// By popular demand, use base drop rate for autoloot code. [Skotlex]
+			mob_item_drop(md, dlist, ditem, 0, battle_config.autoloot_adjust ? drop_rate : entry->rate, homkillonly || merckillonly);
+		}
+
+		// Ore Discovery (triggers if owner has loot priority, does not require to be the killer)
+		if (first_sd != nullptr && pc_checkskill(first_sd, BS_FINDINGORE) > 0) {
+			std::shared_ptr<s_item_group_entry> entry = itemdb_group.get_random_entry(IG_ORE, 1, GROUP_ALGORITHM_DROP);
+			if (entry != nullptr) {
+				std::shared_ptr<s_mob_drop> mobdrop = std::make_shared<s_mob_drop>();
+
+				mobdrop->nameid = entry->nameid;
+				mobdrop->rate = entry->adj_rate;
+
+				std::shared_ptr<s_item_drop> ditem = mob_setdropitem(mobdrop, 1, md->mob_id);
+
+				mob_item_drop(md, dlist, ditem, 0, mobdrop->rate, homkillonly || merckillonly);
+			}
+		}
+
+		// Process map specific drops
+		std::shared_ptr<s_map_drops> mapdrops;
+
+		// If it is an instance map, we check for map specific drops of the original map
+		if( map[md->m].instance_id > 0 ){
+			mapdrops = map_drop_db.find( map[md->m].instance_src_map );
+		}else{
+			mapdrops = map_drop_db.find( md->m );
+		}
+
+		if( mapdrops != nullptr ){
+			// Process map wide drops
+			for( const auto& it : mapdrops->globals ){
+				uint32 final_rate;
+
+				if ( battle_config.enable_bonus_map_drops ) {
+					final_rate = mob_getdroprate(first_sd, md->db, it.second->rate, drop_modifier, md, 10);
+				} else {
+					final_rate = it.second->rate;
+				}
+
+				if( rnd_chance( final_rate, 100000u ) ){
+					// 'Cheat' for autoloot command: rate is changed from n/100000 to n/10000
+					int32 map_drops_rate = max(1, (final_rate / 10));
+					std::shared_ptr<s_item_drop> ditem = mob_setdropitem( it.second, 1, md->mob_id );
+					mob_item_drop( md, dlist, ditem, 0, map_drops_rate, homkillonly || merckillonly );
+				}
+			}
+
+			// Process map drops for this specific mob
+			const auto& specific = mapdrops->specific.find( md->mob_id );
+
+			if( specific != mapdrops->specific.end() ){
+				for( const auto& it : specific->second ){
+					uint32 final_rate;
+
+					if ( battle_config.enable_bonus_map_drops ) {
+						final_rate = mob_getdroprate(first_sd, md->db, it.second->rate, drop_modifier, md, 10);
+					} else {
+						final_rate = it.second->rate;
+					}
+
+					if( rnd_chance( final_rate, 100000u ) ){
+						// 'Cheat' for autoloot command: rate is changed from n/100000 to n/10000
+						int32 map_drops_rate = max(1, (final_rate / 10));
+						std::shared_ptr<s_item_drop> ditem = mob_setdropitem( it.second, 1, md->mob_id );
+						mob_item_drop( md, dlist, ditem, 0, map_drops_rate, homkillonly || merckillonly );
+					}
+				}
+			}
+		}
+
+		// There are drop items.
+		if (!dlist->items.empty() || !lootlist->items.empty()) {
+			mob_delayed_drops[md->id] = dlist;
+			mob_looted_drops[md->id] = lootlist;
+			add_timer(tick + (!battle_config.delay_battle_damage ? 500 : 0), mob_delay_item_drop, md->id, 0);
+		}
+	}
+	// Loot MUST drop!
+	else if (!lootlist->items.empty()) {
+		mob_looted_drops[md->id] = lootlist;
+		add_timer(tick + (!battle_config.delay_battle_damage ? 500 : 0), mob_delay_item_drop, md->id, 0);
+	}
+
+	// MVP Reward
+	if( mvp_sd != nullptr ){
+		t_itemid log_mvp_nameid = 0;
+		t_exp log_mvp_exp = 0;
+
+		clif_mvp_effect( *mvp_sd );
+
+		//mapflag: noexp check [Lorky]
+		if( md->db->mexp > 0 && !( map_getmapflag( m, MF_NOBASEEXP ) || type&2 ) ){
+			log_mvp_exp = md->db->mexp;
+
+#if defined(RENEWAL_EXP)
+			int32 penalty = pc_level_penalty_mod( mvp_sd, PENALTY_MVP_EXP, nullptr, md );
+
+			log_mvp_exp = cap_value( apply_rate( log_mvp_exp, penalty ), 0, MAX_EXP );
+#endif
+
+			if( battle_config.exp_bonus_attacker > 0 && count > 1 ){
+				if( count > battle_config.exp_bonus_max_attacker ){
+					count = battle_config.exp_bonus_max_attacker;
+				}
+
+				log_mvp_exp += log_mvp_exp * ( battle_config.exp_bonus_attacker * ( count - 1 ) ) / 100;
+			}
+
+			log_mvp_exp = cap_value( log_mvp_exp, 1, MAX_EXP );
+
+			clif_mvp_exp( *mvp_sd, log_mvp_exp );
+			pc_gainexp( mvp_sd, md, log_mvp_exp, 0, 0 );
+		}
+
+		if( !(map_getmapflag(m, MF_NOMVPLOOT) || type&1) ) {
+			// Create a copy of the MVP drops vector
+			std::vector<std::shared_ptr<s_mob_drop>> mdrop = md->db->mvpitem;
+
+			// Order might be random depending on item_drop_mvp_mode config setting
+			if(battle_config.item_drop_mvp_mode == 1) {
+				//Random order
+				rnd_vector_order( mdrop );
+			}
+
+#if defined(RENEWAL_DROP)
+			int32 penalty = pc_level_penalty_mod( mvp_sd, PENALTY_MVP_DROP, nullptr, md );
+#endif
+
+			for( const std::shared_ptr<s_mob_drop>& entry : mdrop ){
+				if(entry->nameid == 0)
+					continue;
+
+				std::shared_ptr<item_data> i_data = item_db.find(entry->nameid);
+
+				if (i_data == nullptr)
+					continue;
+
+				temp = entry->rate;
+
+#if defined(RENEWAL_DROP)
+				temp = cap_value( apply_rate( temp, penalty ), 0, 10000 );
+#endif
+
+				if (temp != 10000) {
+					if(temp <= 0 && !battle_config.drop_rate0item)
+						temp = 1;
+					if(rnd()%10000 >= temp) //if ==0, then it doesn't drop

@@ -1,0 +1,500 @@
+
+	switch( bl->type ) {
+		case BL_NPC: {
+			npc_data* nd = (npc_data*)bl;
+
+			if( bl->m >= 0 )
+				ShowDebug("Source (NPC): %s at %s (%d,%d)\n", nd->name, map_mapid2mapname(bl->m), bl->x, bl->y);
+			else
+				ShowDebug("Source (NPC): %s (invisible/not on a map)\n", nd->name);
+			ShowDebug( "Source (NPC): %s is located in: %s\n", nd->name, nd->path );
+			} break;
+		default:
+			if( bl->m >= 0 )
+				ShowDebug("Source (Non-NPC type %d): name %s at %s (%d,%d)\n", bl->type, status_get_name(*bl), map_mapid2mapname(bl->m), bl->x, bl->y);
+			else
+				ShowDebug("Source (Non-NPC type %d): name %s (invisible/not on a map)\n", bl->type, status_get_name(*bl));
+			break;
+	}
+}
+
+/// Reports on the console information about the script data.
+static void script_reportdata(struct script_data* data)
+{
+	if( data == nullptr )
+		return;
+	switch( data->type ) {
+		case C_NOP:// no value
+			ShowDebug("Data: nothing (nil)\n");
+			break;
+		case C_INT:// number
+			ShowDebug("Data: number value=%" PRId64 "\n", data->u.num);
+			break;
+		case C_STR:
+		case C_CONSTSTR:// string
+			if( data->u.str ) {
+				ShowDebug("Data: string value=\"%s\"\n", data->u.str);
+			} else {
+				ShowDebug("Data: string value=nullptr\n");
+			}
+			break;
+		case C_NAME:// reference
+			if( reference_tovariable(data) ) {// variable
+				const char* name = reference_getname(data);
+				ShowDebug("Data: variable name='%s' index=%d\n", name, reference_getindex(data));
+			} else if( reference_toconstant(data) ) {// constant
+				ShowDebug("Data: constant name='%s' value=%" PRId64 "\n", reference_getname(data), reference_getconstant(data));
+			} else if( reference_toparam(data) ) {// param
+				ShowDebug("Data: param name='%s' type=%" PRId64 "\n", reference_getname(data), reference_getparamtype(data));
+			} else {// ???
+				ShowDebug("Data: reference name='%s' type=%s\n", reference_getname(data), script_op2name(data->type));
+				ShowDebug("Please report this!!! - script->str_data.type=%s\n", script_op2name(str_data[reference_getid(data)].type));
+			}
+			break;
+		case C_POS:// label
+			ShowDebug("Data: label pos=%" PRId64 "\n", data->u.num);
+			break;
+		default:
+			ShowDebug("Data: %s\n", script_op2name(data->type));
+			break;
+	}
+}
+
+
+/// Reports on the console information about the current built-in function.
+static void script_reportfunc(struct script_state* st)
+{
+	int32 params, id;
+	struct script_data* data;
+
+	if( !script_hasdata(st,0) )
+	{// no stack
+		return;
+	}
+
+	data = script_getdata(st,0);
+
+	if( !data_isreference(data) || str_data[reference_getid(data)].type != C_FUNC )
+	{// script currently not executing a built-in function or corrupt stack
+		return;
+	}
+
+	id     = reference_getid(data);
+	params = script_lastdata(st)-1;
+
+	if( params > 0 )
+	{
+		int32 i;
+		ShowDebug("Function: %s (%d parameter%s):\n", get_str(id), params, ( params == 1 ) ? "" : "s");
+
+		for( i = 2; i <= script_lastdata(st); i++ )
+		{
+			script_reportdata(script_getdata(st,i));
+		}
+	}
+	else
+	{
+		ShowDebug("Function: %s (no parameters)\n", get_str(id));
+	}
+}
+/*==========================================
+ * Output error message
+ *------------------------------------------*/
+static void disp_error_message2(const char *mes,const char *pos,int32 report)
+{
+	error_msg = aStrdup(mes);
+	error_pos = pos;
+	error_report = report;
+	longjmp( error_jump, 1 );
+}
+#define disp_error_message(mes,pos) disp_error_message2(mes,pos,1)
+
+static void disp_warning_message(const char *mes, const char *pos) {
+	script_warning(parser_current_src,parser_current_file,parser_current_line,mes,pos);
+}
+
+/// Checks event parameter validity
+static void check_event(struct script_state *st, const char *evt)
+{
+	if( evt && evt[0] && !stristr(evt, "::On") )
+	{
+		ShowWarning("NPC event parameter deprecated! Please use 'NPCNAME::OnEVENT' instead of '%s'.\n", evt);
+		script_reportsrc(st);
+	}
+}
+
+/*==========================================
+ * Hashes the input string
+ *------------------------------------------*/
+static uint32 calc_hash(const char* p)
+{
+	uint32 h;
+
+#if defined(SCRIPT_HASH_DJB2)
+	h = 5381;
+	while( *p ) // hash*33 + c
+		h = ( h << 5 ) + h + ((unsigned char)TOLOWER(*p++));
+#elif defined(SCRIPT_HASH_SDBM)
+	h = 0;
+	while( *p ) // hash*65599 + c
+		h = ( h << 6 ) + ( h << 16 ) - h + ((unsigned char)TOLOWER(*p++));
+#elif defined(SCRIPT_HASH_ELF) // UNIX ELF hash
+	h = 0;
+	while( *p ){
+		uint32 g;
+		h = ( h << 4 ) + ((unsigned char)TOLOWER(*p++));
+		g = h & 0xF0000000;
+		if( g )
+		{
+			h ^= g >> 24;
+			h &= ~g;
+		}
+	}
+#else // athena hash
+	h = 0;
+	while( *p )
+		h = ( h << 1 ) + ( h >> 3 ) + ( h >> 5 ) + ( h >> 8 ) + (unsigned char)TOLOWER(*p++);
+#endif
+
+	return h % SCRIPT_HASH_SIZE;
+}
+
+bool script_check_RegistryVariableLength(int32 pType, const char *val, size_t* vlen) 
+{
+	size_t len = strlen(val);
+
+	if (vlen)
+		*vlen = len;
+	switch (pType) {
+		case 0:
+			return (len < 33); // key check
+		case 1:
+			return (len < 255); // value check
+		default:
+			return false;
+	}
+}
+
+/*==========================================
+ * str_data manipulation functions
+ *------------------------------------------*/
+
+/// Looks up string using the provided id.
+const char* get_str(int32 id)
+{
+	Assert( id >= LABEL_START && id < str_size );
+	return str_buf+str_data[id].str;
+}
+
+/// Returns the uid of the string, or -1.
+static int32 search_str(const char* p)
+{
+	int32 i;
+
+	for( i = str_hash[calc_hash(p)]; i != 0; i = str_data[i].next )
+		if( strcasecmp(get_str(i),p) == 0 )
+			return i;
+
+	return -1;
+}
+
+/// Stores a copy of the string and returns its id.
+/// If an identical string is already present, returns its id instead.
+int32 add_str(const char* p)
+{
+	int32 h;
+	int32 len;
+
+	h = calc_hash(p);
+
+	if( str_hash[h] == 0 )
+	{// empty bucket, add new node here
+		str_hash[h] = str_num;
+	}
+	else
+	{// scan for end of list, or occurrence of identical string
+		int32 i;
+		for( i = str_hash[h]; ; i = str_data[i].next )
+		{
+			if( strcasecmp(get_str(i),p) == 0 )
+				return i; // string already in list
+			if( str_data[i].next == 0 )
+				break; // reached the end
+		}
+
+		// append node to end of list
+		str_data[i].next = str_num;
+	}
+
+	// grow list if necessary
+	if( str_num >= str_data_size )
+	{
+		str_data_size += 128;
+		RECREATE(str_data,struct str_data_struct,str_data_size);
+		memset(str_data + (str_data_size - 128), '\0', 128);
+	}
+
+	len=(int32)strlen(p);
+
+	// grow string buffer if necessary
+	while( str_pos+len+1 >= str_size )
+	{
+		str_size += 256;
+		RECREATE(str_buf,char,str_size);
+		memset(str_buf + (str_size - 256), '\0', 256);
+	}
+
+	safestrncpy(str_buf+str_pos, p, len+1);
+	str_data[str_num].type = C_NOP;
+	str_data[str_num].str = str_pos;
+	str_data[str_num].next = 0;
+	str_data[str_num].func = nullptr;
+	str_data[str_num].backpatch = -1;
+	str_data[str_num].label = -1;
+	str_pos += len+1;
+
+	return str_num++;
+}
+
+
+/// Appends 1 byte to the script buffer.
+static void add_scriptb(uint8 a)
+{
+	if( script_pos+1 >= script_size )
+	{
+		script_size += SCRIPT_BLOCK_SIZE;
+		RECREATE(script_buf,unsigned char,script_size);
+	}
+	script_buf[script_pos++] = a;
+}
+
+/// Appends a c_op value to the script buffer.
+/// The value is variable-length encoded into 8-bit blocks.
+/// The encoding scheme is ( 01?????? )* 00??????, LSB first.
+/// All blocks but the last hold 7 bits of data, topmost bit is always 1 (carries).
+static void add_scriptc(int32 a)
+{
+	while( a >= 0x40 )
+	{
+		add_scriptb((a&0x3f)|0x40);
+		a = (a - 0x40) >> 6;
+	}
+
+	add_scriptb(a);
+}
+
+/// Appends an integer value to the script buffer.
+/// The value is variable-length encoded into 8-bit blocks.
+/// The encoding scheme is ( 11?????? )* 10??????, LSB first.
+/// All blocks hold 6 bits of data.
+static void add_scripti(int64 a){
+	while( a > 0x3f ){
+		add_scriptb((a & (int64)0x3f)|(int64)0xc0);
+		a >>= 6;
+	}
+
+	add_scriptb(((a & (int64)0x3f)|(int64)0x80));
+}
+
+/// Appends a str_data object (label/function/variable/integer) to the script buffer.
+
+///
+/// @param l The id of the str_data entry
+// Maximum up to 16M
+static void add_scriptl(int32 l)
+{
+	int32 backpatch = str_data[l].backpatch;
+
+	switch(str_data[l].type){
+	case C_POS:
+	case C_USERFUNC_POS:
+		add_scriptc(C_POS);
+		add_scriptb(str_data[l].label);
+		add_scriptb(str_data[l].label>>8);
+		add_scriptb(str_data[l].label>>16);
+		break;
+	case C_NOP:
+	case C_USERFUNC:
+		// Embedded data backpatch there is a possibility of label
+		add_scriptc(C_NAME);
+		str_data[l].backpatch = script_pos;
+		add_scriptb(backpatch);
+		add_scriptb(backpatch>>8);
+		add_scriptb(backpatch>>16);
+		break;
+	case C_INT:
+		add_scripti(std::abs(str_data[l].val));
+		if( str_data[l].val < 0 ) //Notice that this is negative, from jA (Rayce)
+			add_scriptc(C_NEG);
+		break;
+	default: // assume C_NAME
+		add_scriptc(C_NAME);
+		add_scriptb(l);
+		add_scriptb(l>>8);
+		add_scriptb(l>>16);
+		break;
+	}
+}
+
+/*==========================================
+ * Resolve the label
+ *------------------------------------------*/
+void set_label(int32 l,int32 pos, const char* script_pos_cur)
+{
+	int32 i;
+
+	if(str_data[l].type==C_INT || str_data[l].type==C_PARAM || str_data[l].type==C_FUNC)
+	{	//Prevent overwriting constants values, parameters and built-in functions [Skotlex]
+		disp_error_message("set_label: invalid label name",script_pos_cur);
+		return;
+	}
+	if(str_data[l].label!=-1){
+		disp_error_message("set_label: dup label ",script_pos_cur);
+		return;
+	}
+	str_data[l].type=(str_data[l].type == C_USERFUNC ? C_USERFUNC_POS : C_POS);
+	str_data[l].label=pos;
+	for(i=str_data[l].backpatch;i>=0 && i!=0x00ffffff;){
+		int32 next=GETVALUE(script_buf,i);
+		script_buf[i-1]=(str_data[l].type == C_USERFUNC ? C_USERFUNC_POS : C_POS);
+		SETVALUE(script_buf,i,pos);
+		i=next;
+	}
+}
+
+/// Skips spaces and/or comments.
+const char* skip_space(const char* p)
+{
+	if( p == nullptr )
+		return nullptr;
+	for(;;)
+	{
+		while( ISSPACE(*p) )
+			++p;
+		if( *p == '/' && p[1] == '/' )
+		{// line comment
+			while(*p && *p!='\n')
+				++p;
+		}
+		else if( *p == '/' && p[1] == '*' )
+		{// block comment
+			p += 2;
+			for(;;)
+			{
+				if( *p == '\0' ) {
+					disp_warning_message("script:script->skip_space: end of file while parsing block comment. expected " CL_BOLD "*/" CL_NORM, p);
+					return p;
+				}
+				if( *p == '*' && p[1] == '/' )
+				{// end of block comment
+					p += 2;
+					break;
+				}
+				++p;
+			}
+		}
+		else
+			break;
+	}
+	return p;
+}
+
+/// Skips a word.
+/// A word consists of undercores and/or alphanumeric characters,
+/// and valid variable prefixes/postfixes.
+static const char* skip_word(const char* p)
+{
+	// prefix
+	switch( *p ) {
+		case '@':// temporary char variable
+			++p; break;
+		case '#':// account variable
+			p += ( p[1] == '#' ? 2 : 1 ); break;
+		case '\'':// instance variable
+			++p; break;
+		case '.':// npc variable
+			p += ( p[1] == '@' ? 2 : 1 ); break;
+		case '$':// global variable
+			p += ( p[1] == '@' ? 2 : 1 ); break;
+	}
+
+	while( ISALNUM(*p) || *p == '_' )
+		++p;
+
+	// postfix
+	if( *p == '$' )// string
+		p++;
+
+	return p;
+}
+
+/// Adds a word to str_data.
+/// @see skip_word
+/// @see add_str
+static int32 add_word(const char* p)
+{
+	char* word;
+	int32 i;
+
+	// Check for a word
+	size_t len = skip_word( p ) - p;
+
+	if( len == 0 )
+		disp_error_message("script:add_word: invalid word. A word consists of undercores and/or alphanumeric characters, and valid variable prefixes/postfixes.", p);
+
+	// Duplicate the word
+	word = (char*)aMalloc(len+1);
+	memcpy(word, p, len);
+	word[len] = 0;
+
+	// add the word
+	i = add_str(word);
+	aFree(word);
+	return i;
+}
+
+/// Parses a function call.
+/// The argument list can have parenthesis or not.
+/// The number of arguments is checked.
+static
+const char* parse_callfunc(const char* p, int32 require_paren, int32 is_custom)
+{
+	const char* p2;
+	const char* arg=nullptr;
+	int32 func;
+
+	func = add_word(p);
+	if( str_data[func].type == C_FUNC ){
+		// buildin function
+		add_scriptl(func);
+		add_scriptc(C_ARG);
+		arg = buildin_func[str_data[func].val].arg;
+#if defined(SCRIPT_COMMAND_DEPRECATION)
+		if( str_data[func].deprecated ){
+			ShowWarning( "Usage of deprecated script function '%s'.\n", get_str(func) );
+			ShowWarning( "This function was deprecated on '%s' and could become unavailable anytime soon.\n", buildin_func[str_data[func].val].deprecated );
+		}
+#endif
+	} else if( str_data[func].type == C_USERFUNC || str_data[func].type == C_USERFUNC_POS ){
+		// script defined function
+		add_scriptl(buildin_callsub_ref);
+		add_scriptc(C_ARG);
+		add_scriptl(func);
+		arg = buildin_func[str_data[buildin_callsub_ref].val].arg;
+		if( *arg == 0 )
+			disp_error_message("parse_callfunc: callsub has no arguments, please review its definition",p);
+		if( *arg != '*' )
+			++arg; // count func as argument
+	} else {
+		const char* name = get_str(func);
+		if( !is_custom && strdb_get(userfunc_db, name) == nullptr ) {
+			disp_error_message("parse_line: expect command, missing function name or calling undeclared function",p);
+		} else {;
+			add_scriptl(buildin_callfunc_ref);
+			add_scriptc(C_ARG);
+			add_scriptc(C_STR);
+			while( *name ) add_scriptb(*name ++);
+			add_scriptb(0);
+			arg = buildin_func[str_data[buildin_callfunc_ref].val].arg;
+			if( *arg != '*' ) ++ arg;
+		}

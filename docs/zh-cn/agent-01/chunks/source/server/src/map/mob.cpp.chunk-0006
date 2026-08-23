@@ -1,0 +1,500 @@
+	drop->item_data.identify = itemdb_isidentified( mobdrop->nameid );
+	mob_setdropitem_option( drop->item_data, mobdrop );
+	drop->mob_id = mob_id;
+
+	return drop;
+}
+
+/*==========================================
+ * Initializes the delay drop structure for mob-looted items.
+ *------------------------------------------*/
+static std::shared_ptr<s_item_drop> mob_setlootitem( s_mob_lootitem& item, uint16 mob_id ){
+	std::shared_ptr<s_item_drop> drop = std::make_shared<s_item_drop>();
+
+	memcpy( &drop->item_data, &item, sizeof( struct item ) );
+
+	/**
+	 * Conditions for looted item, so it can be announced when player pick it up
+	 * 1. Not-dropped other than monster. (This will be done later on pc_takeitem/party_share_loot)
+	 * 2. The mob_id becomes the last looter, instead of the real monster who drop it.
+	 **/
+	drop->mob_id = item.mob_id;
+
+	return drop;
+}
+
+/**
+ * Makes all items from a drop list drop
+ * @param list: list with all items that should drop
+ * @param loot: whether the items in the list are new drops or previously looted items
+ */
+void mob_process_drop_list(std::shared_ptr<s_item_drop_list>& list, bool loot)
+{
+	// First regular drop always drops at center
+	enum directions dir = DIR_CENTER;
+	// Looted drops start north instead
+	if (loot)
+		dir = DIR_NORTH;
+
+	for (std::shared_ptr<s_item_drop>& ditem : list->items) {
+		map_addflooritem(&ditem->item_data, ditem->item_data.amount,
+			list->m, list->x, list->y,
+			list->first_charid, list->second_charid, list->third_charid, 4, ditem->mob_id, !loot, dir, BL_CHAR|BL_PET);
+		// The drop location loops between three locations: SE -> W -> N -> SE
+		if (dir <= DIR_NORTH)
+			dir = DIR_SOUTHEAST;
+		else if (dir == DIR_SOUTHEAST)
+			dir = DIR_WEST;
+		else
+			dir = DIR_NORTH;
+	}
+}
+
+/*==========================================
+ * item drop with delay (timer function)
+ *------------------------------------------*/
+static TIMER_FUNC(mob_delay_item_drop) {
+	uint32 bl_id = static_cast<uint32>(id);
+
+	// Regular drops
+	std::shared_ptr<s_item_drop_list> list = util::umap_find(mob_delayed_drops, bl_id);
+	if (list != nullptr) {
+		mob_process_drop_list(list, false);
+		mob_delayed_drops.erase(bl_id);
+	}
+
+	// Looted drops
+	list = util::umap_find(mob_looted_drops, bl_id);
+	if (list != nullptr) {
+		mob_process_drop_list(list, true);
+		mob_looted_drops.erase(bl_id);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * Sets the item_drop into the item_drop_list.
+ * Also performs logging and autoloot if enabled.
+ * rate is the drop-rate of the item, required for autoloot.
+ * flag : Killed only by homunculus/mercenary?
+ *------------------------------------------*/
+static void mob_item_drop(mob_data *md, std::shared_ptr<s_item_drop_list>& dlist, std::shared_ptr<s_item_drop>& ditem, int32 loot, int32 drop_rate, bool flag)
+{
+	TBL_PC* sd;
+	bool test_autoloot;
+	//Logs items, dropped by mobs [Lupus]
+	log_pick_mob(md, loot?LOG_TYPE_LOOT:LOG_TYPE_PICKDROP_MONSTER, -ditem->item_data.amount, &ditem->item_data);
+
+	sd = map_charid2sd(dlist->first_charid);
+	if( sd == nullptr ) sd = map_charid2sd(dlist->second_charid);
+	if( sd == nullptr ) sd = map_charid2sd(dlist->third_charid);
+	test_autoloot = sd 
+		&& (drop_rate <= sd->state.autoloot || pc_isautolooting(sd, ditem->item_data.nameid))
+		&& (flag ? ((battle_config.homunculus_autoloot ? (battle_config.hom_idle_no_share == 0 || !pc_isidle_hom(sd)) : 0) || (battle_config.mercenary_autoloot ? (battle_config.mer_idle_no_share == 0 || !pc_isidle_mer(sd)) : 0)) :
+			(battle_config.idle_no_autoloot == 0 || DIFF_TICK(last_tick, sd->idletime) < battle_config.idle_no_autoloot));
+#ifdef AUTOLOOT_DISTANCE
+		test_autoloot = test_autoloot && sd->m == md->m
+		&& check_distance_blxy(sd, dlist->x, dlist->y, AUTOLOOT_DISTANCE);
+#endif
+	if( test_autoloot ) {	//Autoloot.
+		struct party_data *p = party_search(sd->status.party_id);
+
+		if ((itemdb_search(ditem->item_data.nameid))->flag.broadcast &&
+			(!p || !(p->party.item & 2)) // Somehow, if party's pickup distribution is 'Even Share', no announcemet
+			)
+			intif_broadcast_obtain_special_item(sd, ditem->item_data.nameid, md->mob_id, ITEMOBTAIN_TYPE_MONSTER_ITEM);
+
+		if (party_share_loot(party_search(sd->status.party_id),
+			sd, &ditem->item_data, sd->status.char_id) == 0
+		) {
+			return;
+		}
+	}
+
+	dlist->items.push_back( ditem );
+}
+
+TIMER_FUNC(mob_timer_delete){
+	block_list* bl = map_id2bl(id);
+	mob_data* md = BL_CAST(BL_MOB, bl);
+
+	if( md )
+	{
+		if( md->deletetimer != tid )
+		{
+			ShowError("mob_timer_delete: Timer mismatch: %d != %d\n", tid, md->deletetimer);
+			return 0;
+		}
+		//for Alchemist CANNIBALIZE [Lupus]
+		md->deletetimer = INVALID_TIMER;
+		unit_free(bl, CLR_TELEPORT);
+	}
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+int32 mob_deleteslave_sub(block_list *bl,va_list ap)
+{
+	mob_data *md;
+	int32 id;
+
+	nullpo_ret(bl);
+	nullpo_ret(md = (mob_data *)bl);
+
+	id=va_arg(ap,int32);
+	if(md->master_id > 0 && md->master_id == id )
+		status_kill(bl);
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+int32 mob_deleteslave(mob_data *md)
+{
+	nullpo_ret(md);
+
+	map_foreachinmap(mob_deleteslave_sub, md->m, BL_MOB,md->id);
+	return 0;
+}
+// Mob respawning through KAIZEL or NPC_REBIRTH [Skotlex]
+TIMER_FUNC(mob_respawn){
+	block_list *bl = map_id2bl(id);
+
+	if(!bl) return 0;
+	status_revive(bl, (uint8)data, 0);
+	return 1;
+}
+
+void mob_log_damage(mob_data* md, block_list* src, int64 damage, int64 damage_tanked)
+{
+	uint32 char_id = 0;
+	int32 flag = MDLF_NORMAL;
+
+	if( damage < 0 )
+		return; //Do nothing for absorbed damage.
+	if (damage_tanked < 0)
+		return; //Just to make sure we don't subtract it (should not happen)
+	if( !damage && !damage_tanked && !(src->type&DEFAULT_ENEMY_TYPE(md)) )
+		return; //Do not log non-damaging effects from non-enemies.
+
+	switch( src->type )
+	{
+		case BL_PC:
+		{
+			map_session_data *sd = (TBL_PC*)src;
+			char_id = sd->status.char_id;
+			break;
+		}
+		case BL_HOM:
+		{
+			homun_data *hd = (TBL_HOM*)src;
+			flag = MDLF_HOMUN;
+			if( hd->master )
+				char_id = hd->master->status.char_id;
+			break;
+		}
+		case BL_MER:
+		{
+			s_mercenary_data *mer = (TBL_MER*)src;
+			if( mer->master )
+				char_id = mer->master->status.char_id;
+			break;
+		}
+		case BL_PET:
+		{
+			pet_data *pd = (TBL_PET*)src;
+			flag = MDLF_PET;
+			if( pd->master )
+				char_id = pd->master->status.char_id;
+			break;
+		}
+		case BL_MOB:
+		{
+			mob_data* md2 = (TBL_MOB*)src;
+			if( md2->special_state.ai && md2->master_id )
+			{
+				map_session_data* msd = map_id2sd(md2->master_id);
+				if( msd )
+					char_id = msd->status.char_id;
+			}
+			break;
+		}
+		case BL_ELEM:
+		{
+			s_elemental_data *ele = (TBL_ELEM*)src;
+			if( ele->master )
+				char_id = ele->master->status.char_id;
+			break;
+		}
+		default: //For all unhandled types.
+			break;
+	}
+
+	//Self damage increases tap bonus
+	if (!char_id && src->id == md->id && damage > 0) {
+		char_id = src->id;
+		flag = MDLF_SELF;
+	}
+
+	if( char_id == 0 ){
+		return;
+	}
+
+	// Check if the character is already in damage log
+	for( auto& entry : md->dmglog ){
+		if( entry.id == char_id && entry.flag == flag ){
+			// Just add damage to it
+			entry.dmg = util::safe_addition_cap(entry.dmg, damage, INT64_MAX);
+			entry.dmg_tanked = util::safe_addition_cap(entry.dmg_tanked, damage_tanked, INT64_MAX);
+			return;
+		}
+	}
+
+	// Check if the damage log is full
+	if( md->dmglog.size() == DAMAGELOG_SIZE ){
+		// Remove oldest entry
+		md->dmglog.pop_front();
+	}
+
+	// Add new character to damage log at last (newest) position
+	s_dmglog dmg = {};
+
+	dmg.id = char_id;
+	dmg.flag = flag;
+	dmg.dmg = damage;
+	dmg.dmg_tanked = damage_tanked;
+
+	md->dmglog.push_back( dmg );
+}
+//Call when a mob has received damage.
+void mob_damage(mob_data *md, block_list *src, int32 damage)
+{
+	if (src != nullptr) { //Store total damage...
+		//Log damage
+		mob_log_damage(md, src, static_cast<int64>(damage));
+	}
+
+	if (battle_config.show_mob_info&3)
+		clif_name_area(md);
+
+#if PACKETVER >= 20120404
+	if (battle_config.monster_hp_bars_info && !map_getmapflag(md->m, MF_HIDEMOBHPBAR)) {
+		if (md->special_state.ai == AI_ABR || md->special_state.ai == AI_BIONIC) {
+			clif_summon_hp_bar(*md);
+		}
+
+		// Must show hp bar to all char who already hit the mob.
+		for( const auto& entry : md->dmglog ){
+			map_session_data* sd = map_charid2sd( entry.id );
+
+			if( sd == nullptr ){
+				continue;
+			}
+
+			if( !check_distance_bl( md, sd, AREA_SIZE ) ){
+				continue;
+			}
+
+			clif_monster_hp_bar( md, sd->fd );
+		}
+	}
+#endif
+}
+
+/**
+ * Get modified drop rate
+ * @param src: Source object
+ * @param mob: Monster data
+ * @param base_rate: Base drop rate
+ * @param drop_modifier: RENEWAL_DROP level modifier
+ * @param md: the actual monster killed
+ * @param factor: factor which is applied to all multiplicative bonuses and upper bound caps
+ * @return Modified drop rate
+ */
+int32 mob_getdroprate(block_list *src, std::shared_ptr<s_mob_db> mob, int32 base_rate, int32 drop_modifier, mob_data* md, int32 factor)
+{
+	int32 drop_rate = base_rate;
+
+	if (md && battle_config.mob_size_influence) {  // Change drops depending on monsters size [Valaris]
+		uint32 mob_size = md->special_state.size;
+		if (mob_size == SZ_MEDIUM && drop_rate >= 2)
+			drop_rate /= 2; // SZ_MEDIUM actually is small size modification... this is not a bug!
+		else if (mob_size == SZ_BIG)
+			drop_rate *= 2;
+	}
+
+	if (src) {
+		if (battle_config.drops_by_luk) // Drops affected by luk as a fixed increase [Valaris]
+			drop_rate += (status_get_luk(src) * battle_config.drops_by_luk / 100) * factor;
+		if (battle_config.drops_by_luk2) // Drops affected by luk as a % increase [Skotlex]
+			drop_rate += (int32)(0.5 + drop_rate * status_get_luk(src) * battle_config.drops_by_luk2 / 10000.) * factor;
+
+		if (src->type == BL_PC) { // Player specific drop rate adjustments
+			map_session_data *sd = (map_session_data*)src;
+			int32 drop_rate_bonus = 100;
+
+			// In PK mode players get an additional drop chance bonus of 25% if there is a 20 level difference
+			if( battle_config.pk_mode && (int32)(mob->lv - sd->status.base_level) >= 20 ){
+				drop_rate_bonus += 25;
+			}
+
+			// Add class and race specific bonuses
+			drop_rate_bonus += sd->indexed_bonus.dropaddclass[mob->status.class_] + sd->indexed_bonus.dropaddclass[CLASS_ALL];
+			drop_rate_bonus += sd->indexed_bonus.dropaddrace[mob->status.race] + sd->indexed_bonus.dropaddrace[RC_ALL];
+
+			if (sd->sc.getSCE(SC_ITEMBOOST))
+				drop_rate_bonus += sd->sc.getSCE(SC_ITEMBOOST)->val1;
+			if (sd->sc.getSCE(SC_PERIOD_RECEIVEITEM_2ND))
+				drop_rate_bonus += sd->sc.getSCE(SC_PERIOD_RECEIVEITEM_2ND)->val1;
+
+			int32 cap;
+
+			if (pc_isvip(sd)) { // Increase item drop rate for VIP.
+				// Unsure how the VIP and other bonuses should stack, this is additive.
+				drop_rate_bonus += battle_config.vip_drop_increase;
+				cap = battle_config.drop_rate_cap_vip;
+			} else
+				cap = battle_config.drop_rate_cap;
+
+			cap *= factor;
+
+			drop_rate = (int32)( 0.5 + drop_rate * drop_rate_bonus / 100. );
+
+			// Now limit the drop rate to never be exceed the cap (default: 90%), unless it is originally above it already.
+			if( drop_rate > cap && base_rate < cap ){
+				drop_rate = cap;
+			}
+		}
+	}
+
+#ifdef RENEWAL_DROP
+	drop_rate = apply_rate( drop_rate, drop_modifier );
+#endif
+
+	// Cap it to 100%
+	drop_rate = min( drop_rate, 10000 * factor );
+
+	// If the monster's drop rate can become 0
+	if( battle_config.drop_rate0item ){
+		drop_rate = max( drop_rate, 0 );
+	}else{
+		// If not - cap to 0.01% or 0.001% drop rate - as on official servers
+		drop_rate = max( drop_rate, 1 );
+	}
+
+	return drop_rate;
+}
+
+/**
+ * Returns the MVP player based on the monster's damage log
+ * This player has the highest value when damage dealt and damage tanked are added together
+ * @param first_sd: Player with loot priority (for custom legacy behavior)
+ * @return The MVP player
+ */
+map_session_data* mob_data::get_mvp_player(map_session_data* first_sd) {
+	// There cannot be an MVP player if the monster is not an MVP
+	if (this->get_bosstype() != BOSSTYPE_MVP)
+		return nullptr;
+
+	// Skip MVP player determination and return the player with loot priority instead
+	if (battle_config.mvp_to_loot_priority)
+		return first_sd;
+
+	int64 mvp_damage = 0;
+	map_session_data* mvp_sd = nullptr;
+
+	for (const s_dmglog& entry : this->dmglog) {
+		map_session_data* sd = map_charid2sd(entry.id);
+
+		if (sd == nullptr)
+			continue; // skip players that are offline
+		if (sd->m != this->m)
+			continue; // skip players not on this map
+		if (pc_isdead(sd))
+			continue; // skip dead players
+
+		if (mvp_damage >= entry.dmg + entry.dmg_tanked)
+			continue;
+
+		mvp_damage = util::safe_addition_cap(entry.dmg, entry.dmg_tanked, INT64_MAX);
+		mvp_sd = sd;
+	}
+
+	return mvp_sd;
+}
+
+/*==========================================
+ * Signals death of mob.
+ * type&1 -> no drops, type&2 -> no exp
+ *------------------------------------------*/
+int32 mob_dead(mob_data *md, block_list *src, int32 type)
+{
+	struct status_data *status;
+	map_session_data *sd = nullptr, *tmpsd[DAMAGELOG_SIZE];
+	map_session_data *first_sd = nullptr, *second_sd = nullptr, *third_sd = nullptr;
+
+	struct {
+		struct party_data *p;
+		int32 id,zeny;
+		t_exp base_exp;
+		t_exp job_exp;
+	} pt[DAMAGELOG_SIZE];
+	int32 i, temp, count, m = md->m;
+	int32 dmgbltypes = 0;  // bitfield of all bl types, that caused damage to the mob and are elligible for exp distribution
+	t_tick tick = gettick();
+	bool rebirth, homkillonly, merckillonly;
+
+	status = &md->status;
+
+	if( src && src->type == BL_PC ) {
+		sd = (map_session_data *)src;
+		first_sd = sd;
+	}
+
+	if( md->guardian_data && md->guardian_data->number >= 0 && md->guardian_data->number < MAX_GUARDIANS )
+		guild_castledatasave(md->guardian_data->castle->castle_id, CD_ENABLED_GUARDIAN00 + md->guardian_data->number,0);
+
+	if( src ) { // Use Dead skill only if not killed by Script or Command
+		md->status.hp = 1;
+		mob_setstate(*md, MSS_DEAD);
+		mobskill_use(md,tick,-1);
+		md->status.hp = 0;
+	}
+
+	FreeBlockLock freeLock;
+
+	memset(pt,0,sizeof(pt));
+
+	if(src && src->type == BL_MOB)
+		mob_unlocktarget((mob_data *)src,tick);
+
+	// filter out entries not eligible for exp distribution
+	memset(tmpsd,0,sizeof(tmpsd));
+
+	// Struct that only contains entries eligible for loot distribution
+	// Also contains combined damage of the players and their slaves
+	struct s_dmg_entry {
+		map_session_data* sd;
+		int64 damage;
+	};
+	std::vector<s_dmg_entry> lootdmg;
+
+	count = 0;
+	int64 total_damage = 0;
+	for( i = 0; i < md->dmglog.size(); i++ ){
+		const s_dmglog& entry = md->dmglog[i];
+
+		total_damage = util::safe_addition_cap(total_damage, entry.dmg, INT64_MAX);
+
+		if( entry.flag == MDLF_SELF ){
+			//Self damage counts as exp tap
+			count++;
+			continue;
+		}
+
+		map_session_data* tsd = map_charid2sd( entry.id );
+

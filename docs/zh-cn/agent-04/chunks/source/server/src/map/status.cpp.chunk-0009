@@ -1,0 +1,500 @@
+			if (sd->bonus.weapon_matk_rate)
+				wa->matk += wa->matk * sd->bonus.weapon_matk_rate / 100;
+#endif
+			if(sd->inventory.u.items_inventory[index].card[0] == CARD0_FORGE) { // Forged weapon
+				wd->star += (sd->inventory.u.items_inventory[index].card[1]>>8);
+				if(wd->star >= 15) wd->star = 40; // 3 Star Crumbs now give +40 dmg
+				if(pc_famerank(MakeDWord(sd->inventory.u.items_inventory[index].card[2],sd->inventory.u.items_inventory[index].card[3]) ,MAPID_BLACKSMITH))
+					wd->star += 10;
+				if (!wa->ele) // Do not overwrite element from previous bonuses.
+					wa->ele = (sd->inventory.u.items_inventory[index].card[1]&0x0f);
+			}
+		} else if(sd->inventory_data[index]->type == IT_ARMOR) {
+			if( info != nullptr ){
+				refinedef += info->bonus;
+
+#ifdef RENEWAL
+				if( sd->inventory_data[index]->armor_level == 2 ){
+					base_status->res += sd->inventory.u.items_inventory[index].refine * 2;
+					base_status->mres += sd->inventory.u.items_inventory[index].refine * 2;
+				}
+#endif
+			}
+
+			if(sd->inventory_data[index]->script && (pc_has_permission(sd,PC_PERM_USE_ALL_EQUIPMENT) || !itemdb_isNoEquip(sd->inventory_data[index],sd->m))) {
+				if( i == EQI_HAND_L ) // Shield
+					sd->state.lr_flag = LR_FLAG_SHIELD;
+				run_script(sd->inventory_data[index]->script,0,sd->id,0);
+				if( i == EQI_HAND_L ) // Shield
+					sd->state.lr_flag = LR_FLAG_NONE;
+				if (!calculating) // Abort, run_script retriggered this. [Skotlex]
+					return 1;
+			}
+		} else if( sd->inventory_data[index]->type == IT_SHADOWGEAR ) { // Shadow System
+			if (sd->inventory_data[index]->script && (pc_has_permission(sd,PC_PERM_USE_ALL_EQUIPMENT) || !itemdb_isNoEquip(sd->inventory_data[index],sd->m))) {
+				run_script(sd->inventory_data[index]->script,0,sd->id,0);
+				if( !calculating )
+					return 1;
+			}
+		}
+	}
+
+	if(sd->equip_index[EQI_AMMO] >= 0) {
+		index = sd->equip_index[EQI_AMMO];
+		if(sd->inventory_data[index]) { // Arrows
+			sd->bonus.arrow_atk += sd->inventory_data[index]->atk;
+			sd->state.lr_flag = LR_FLAG_ARROW;
+			if( !itemdb_group.item_exists(IG_THROWABLE, sd->inventory_data[index]->nameid) ) // Don't run scripts on throwable items
+				run_script(sd->inventory_data[index]->script,0,sd->id,0);
+			sd->state.lr_flag = LR_FLAG_NONE;
+			if (!calculating) // Abort, run_script retriggered status_calc_pc. [Skotlex]
+				return 1;
+		}
+	}
+
+	// Process and check item combos
+	if (!sd->combos.empty()) {
+		for (const auto &combo : sd->combos) {
+			std::shared_ptr<s_item_combo> item_combo;
+
+			current_equip_item_index = -1;
+			current_equip_combo_pos = combo->pos;
+
+			if (combo->bonus == nullptr || !(item_combo = itemdb_combo.find(combo->id)))
+				continue;
+
+			bool no_run = false;
+			size_t j = 0;
+
+			// Check combo items
+			while (j < item_combo->nameid.size()) {
+				std::shared_ptr<item_data> id = item_db.find(item_combo->nameid[j]);
+
+				// Don't run the script if at least one of combo's pair has restriction
+				if (id && !pc_has_permission(sd, PC_PERM_USE_ALL_EQUIPMENT) && itemdb_isNoEquip(id.get(), sd->m)) {
+					no_run = true;
+					break;
+				}
+
+				j++;
+			}
+
+			if (no_run)
+				continue;
+
+			run_script(combo->bonus, 0, sd->id, 0);
+
+			if (!calculating) // Abort, run_script retriggered this
+				return 1;
+		}
+	}
+
+	// Store equipment script bonuses
+	memcpy(sd->indexed_bonus.param_equip,sd->indexed_bonus.param_bonus,sizeof(sd->indexed_bonus.param_equip));
+	memset(sd->indexed_bonus.param_bonus, 0, sizeof(sd->indexed_bonus.param_bonus));
+
+	base_status->def += (refinedef+50)/100;
+
+	// Parse Cards
+	for (i = 0; i < EQI_MAX; i++) {
+		current_equip_item_index = index = sd->equip_index[i]; // We pass INDEX to current_equip_item_index - for EQUIP_SCRIPT (new cards solution) [Lupus]
+		current_equip_combo_pos = 0;
+		if (index < 0)
+			continue;
+		if (i == EQI_AMMO)
+			continue;
+		if (pc_is_same_equip_index((enum equip_index)i, sd->equip_index, index))
+			continue;
+
+		if (sd->inventory_data[index]) {
+			int32 j;
+
+			// Card script execution.
+			if (itemdb_isspecial(sd->inventory.u.items_inventory[index].card[0]))
+				continue;
+			for (j = 0; j < MAX_SLOTS; j++) { // Uses MAX_SLOTS to support Soul Bound system [Inkfish]
+				int32 c = sd->inventory.u.items_inventory[index].card[j];
+				current_equip_card_id= c;
+				if(!c)
+					continue;
+
+				std::shared_ptr<item_data> data = item_db.find(c);
+
+				if(!data)
+					continue;
+				if (opt&SCO_FIRST && data->equip_script && (pc_has_permission(sd,PC_PERM_USE_ALL_EQUIPMENT) || !itemdb_isNoEquip(data.get(), sd->m))) {// Execute equip-script on login
+					run_script(data->equip_script,0,sd->id,0);
+					if (!calculating)
+						return 1;
+				}
+				if(!data->script)
+					continue;
+				if(!pc_has_permission(sd,PC_PERM_USE_ALL_EQUIPMENT) && itemdb_isNoEquip(data.get(), sd->m)) // Card restriction checks.
+					continue;
+				if(i == EQI_HAND_L && sd->inventory.u.items_inventory[index].equip == EQP_HAND_L) { // Left hand status.
+					sd->state.lr_flag = LR_FLAG_WEAPON;
+					run_script(data->script,0,sd->id,0);
+					sd->state.lr_flag = LR_FLAG_NONE;
+				} else
+					run_script(data->script,0,sd->id,0);
+				if (!calculating) // Abort, run_script his function. [Skotlex]
+					return 1;
+			}
+		}
+	}
+	current_equip_card_id = 0; // Clear stored card ID [Secret]
+
+	// Parse random options
+	for (i = 0; i < EQI_MAX; i++) {
+		current_equip_item_index = index = sd->equip_index[i];
+		current_equip_combo_pos = 0;
+		current_equip_opt_index = -1;
+
+		if (index < 0)
+			continue;
+		if (i == EQI_AMMO)
+			continue;
+		if (pc_is_same_equip_index((enum equip_index)i, sd->equip_index, index))
+			continue;
+		
+		if (sd->inventory_data[index]) {
+			for (uint8 j = 0; j < MAX_ITEM_RDM_OPT; j++) {
+				int16 opt_id = sd->inventory.u.items_inventory[index].option[j].id;
+
+				if (!opt_id)
+					continue;
+				current_equip_opt_index = j;
+
+				std::shared_ptr<s_random_opt_data> data = random_option_db.find(opt_id);
+
+				if (!data || !data->script)
+					continue;
+				if (!pc_has_permission(sd, PC_PERM_USE_ALL_EQUIPMENT) && itemdb_isNoEquip(sd->inventory_data[index], sd->m))
+					continue;
+				if (i == EQI_HAND_L && sd->inventory.u.items_inventory[index].equip == EQP_HAND_L) { // Left hand status.
+					sd->state.lr_flag = LR_FLAG_WEAPON;
+					run_script(data->script, 0, sd->id, 0);
+					sd->state.lr_flag = LR_FLAG_NONE;
+				}
+				else
+					run_script(data->script, 0, sd->id, 0);
+				if (!calculating)
+					return 1;
+			}
+		}
+		current_equip_opt_index = -1;
+	}
+
+	if (!sc->empty()){
+		if( status_change_entry* sce = sc->getSCE(SC_ITEMSCRIPT); sce != nullptr ){
+			std::shared_ptr<item_data> data = item_db.find(sc->getSCE(SC_ITEMSCRIPT)->val1);
+
+			if (data && data->script)
+				run_script(data->script, 0, sd->id, 0);
+		}
+
+		for( const auto& it : *sc ){
+			if( std::shared_ptr<s_status_change_db> scdb = status_db.find( it.first ); scdb != nullptr && scdb->script != nullptr ){
+				run_script( scdb->script, 0, sd->id, 0 );
+			}
+		}
+	}
+
+	pc_bonus_script(sd);
+
+	if( sd->pd ) { // Pet Bonus
+		pet_data *pd = sd->pd;
+		std::shared_ptr<s_pet_db> pet_db_ptr = pd->get_pet_db();
+
+		if (pet_db_ptr != nullptr && pet_db_ptr->pet_bonus_script)
+			run_script(pet_db_ptr->pet_bonus_script,0,sd->id,0);
+		if (pet_db_ptr != nullptr && pd->pet.intimate > 0 && (!battle_config.pet_equip_required || pd->pet.equip > 0) && pd->state.skillbonus == 1 && pd->bonus)
+			pc_bonus(sd,pd->bonus->type, pd->bonus->val);
+	}
+
+	// param_bonus now holds card bonuses.
+	if(base_status->rhw.range < 1) base_status->rhw.range = 1;
+	if(base_status->lhw.range < 1) base_status->lhw.range = 1;
+	if(base_status->rhw.range < base_status->lhw.range)
+		base_status->rhw.range = base_status->lhw.range;
+
+	sd->bonus.double_rate += sd->bonus.double_add_rate;
+	sd->bonus.perfect_hit += sd->bonus.perfect_hit_add;
+	sd->bonus.splash_range += sd->bonus.splash_add_range;
+
+	// Damage modifiers from weapon type
+	if( std::shared_ptr<s_sizefix_db> right_weapon = size_fix_db.find(sd->weapontype1); right_weapon != nullptr ){
+		sd->right_weapon.atkmods[SZ_SMALL] = right_weapon->small;
+		sd->right_weapon.atkmods[SZ_MEDIUM] = right_weapon->medium;
+		sd->right_weapon.atkmods[SZ_BIG] = right_weapon->large;
+	}
+
+	if( std::shared_ptr<s_sizefix_db> left_weapon = size_fix_db.find(sd->weapontype2); left_weapon != nullptr ){
+		sd->left_weapon.atkmods[SZ_SMALL] = left_weapon->small;
+		sd->left_weapon.atkmods[SZ_MEDIUM] = left_weapon->medium;
+		sd->left_weapon.atkmods[SZ_BIG] = left_weapon->large;
+	}
+
+	if((pc_isriding(sd) || pc_isridingdragon(sd)) &&
+		(sd->status.weapon==W_1HSPEAR || sd->status.weapon==W_2HSPEAR))
+	{	// When Riding with spear, damage modifier to mid-class becomes
+		// same as versus large size.
+		sd->right_weapon.atkmods[SZ_MEDIUM] = sd->right_weapon.atkmods[SZ_BIG];
+		sd->left_weapon.atkmods[SZ_MEDIUM] = sd->left_weapon.atkmods[SZ_BIG];
+	}
+
+// ----- STATS CALCULATION -----
+
+	// Job bonuses
+	std::shared_ptr<s_job_info> job_info = job_db.find( pc_mapid2jobid( sd->class_, sd->status.sex ) );
+
+	if( job_info != nullptr ){
+		const auto& bonus = job_info->job_bonus[sd->status.job_level-1];
+
+		base_status->str += bonus[PARAM_STR];
+		base_status->agi += bonus[PARAM_AGI];
+		base_status->vit += bonus[PARAM_VIT];
+		base_status->int_ += bonus[PARAM_INT];
+		base_status->dex += bonus[PARAM_DEX];
+		base_status->luk += bonus[PARAM_LUK];
+		base_status->pow += bonus[PARAM_POW];
+		base_status->sta += bonus[PARAM_STA];
+		base_status->wis += bonus[PARAM_WIS];
+		base_status->spl += bonus[PARAM_SPL];
+		base_status->con += bonus[PARAM_CON];
+		base_status->crt += bonus[PARAM_CRT];
+	}
+
+	// If a Super Novice has never died and is at least joblv 70, he gets all stats +10
+	if(((sd->class_&MAPID_SECONDMASK) == MAPID_SUPER_NOVICE && (sd->status.job_level >= 70  || sd->class_&JOBL_THIRD)) && sd->die_counter == 0) {
+		base_status->str += 10;
+		base_status->agi += 10;
+		base_status->vit += 10;
+		base_status->int_+= 10;
+		base_status->dex += 10;
+		base_status->luk += 10;
+	}
+
+	// Absolute modifiers from passive skills
+	if(pc_checkskill(sd,BS_HILTBINDING)>0)
+		base_status->str++;
+	if((skill=pc_checkskill(sd,SA_DRAGONOLOGY))>0)
+		base_status->int_ += (skill+1)/2; // +1 INT / 2 lv
+	if((skill=pc_checkskill(sd,AC_OWL))>0)
+		base_status->dex += skill;
+	if((skill = pc_checkskill(sd,RA_RESEARCHTRAP))>0)
+		base_status->int_ += skill;
+	if (pc_checkskill(sd, SU_POWEROFLAND) > 0)
+		base_status->int_ += 20;
+
+	// Bonuses from cards and equipment as well as base stat, remember to avoid overflows.
+	i = base_status->str + sd->status.str + sd->indexed_bonus.param_bonus[PARAM_STR] + sd->indexed_bonus.param_equip[PARAM_STR];
+	base_status->str = cap_value(i,0,USHRT_MAX);
+	i = base_status->agi + sd->status.agi + sd->indexed_bonus.param_bonus[PARAM_AGI] + sd->indexed_bonus.param_equip[PARAM_AGI];
+	base_status->agi = cap_value(i,0,USHRT_MAX);
+	i = base_status->vit + sd->status.vit + sd->indexed_bonus.param_bonus[PARAM_VIT] + sd->indexed_bonus.param_equip[PARAM_VIT];
+	base_status->vit = cap_value(i,0,USHRT_MAX);
+	i = base_status->int_+ sd->status.int_+ sd->indexed_bonus.param_bonus[PARAM_INT] + sd->indexed_bonus.param_equip[PARAM_INT];
+	base_status->int_ = cap_value(i,0,USHRT_MAX);
+	i = base_status->dex + sd->status.dex + sd->indexed_bonus.param_bonus[PARAM_DEX] + sd->indexed_bonus.param_equip[PARAM_DEX];
+	base_status->dex = cap_value(i,0,USHRT_MAX);
+	i = base_status->luk + sd->status.luk + sd->indexed_bonus.param_bonus[PARAM_LUK] + sd->indexed_bonus.param_equip[PARAM_LUK];
+	base_status->luk = cap_value(i,0,USHRT_MAX);
+	i = base_status->pow + sd->status.pow + sd->indexed_bonus.param_bonus[PARAM_POW] + sd->indexed_bonus.param_equip[PARAM_POW];
+	base_status->pow = cap_value(i, 0, USHRT_MAX);
+	i = base_status->sta + sd->status.sta + sd->indexed_bonus.param_bonus[PARAM_STA] + sd->indexed_bonus.param_equip[PARAM_STA];
+	base_status->sta = cap_value(i, 0, USHRT_MAX);
+	i = base_status->wis + sd->status.wis + sd->indexed_bonus.param_bonus[PARAM_WIS] + sd->indexed_bonus.param_equip[PARAM_WIS];
+	base_status->wis = cap_value(i, 0, USHRT_MAX);
+	i = base_status->spl + sd->status.spl + sd->indexed_bonus.param_bonus[PARAM_SPL] + sd->indexed_bonus.param_equip[PARAM_SPL];
+	base_status->spl = cap_value(i, 0, USHRT_MAX);
+	i = base_status->con + sd->status.con + sd->indexed_bonus.param_bonus[PARAM_CON] + sd->indexed_bonus.param_equip[PARAM_CON];
+	base_status->con = cap_value(i, 0, USHRT_MAX);
+	i = base_status->crt + sd->status.crt + sd->indexed_bonus.param_bonus[PARAM_CRT] + sd->indexed_bonus.param_equip[PARAM_CRT];
+	base_status->crt = cap_value(i, 0, USHRT_MAX);
+
+	if (sd->special_state.no_walk_delay) {
+		if (sc->getSCE(SC_ENDURE)) {
+			if (sc->getSCE(SC_ENDURE)->val4)
+				sc->getSCE(SC_ENDURE)->val4 = 0;
+			status_change_end(sd, SC_ENDURE);
+		}
+		if (sd->m >= 0 && !status_change_isDisabledOnMap(SC_ENDURE, map_getmapdata(sd->m))) {
+			clif_status_load(sd, EFST_ENDURE, 1);
+			base_status->mdef++;
+		}
+	}
+
+// ----- CONCENTRATION CALCULATION -----
+	if ((skill = pc_checkskill(sd, NW_GRENADE_MASTERY)) > 0)
+		base_status->con += skill;
+
+// ----- SPELL CALCULATION -----
+	if ((skill = pc_checkskill(sd, SOA_SOUL_MASTERY)) > 0)
+		base_status->spl += skill;
+
+// ------ ATTACK CALCULATION ------
+
+	// Base batk value is set in status_calc_misc
+#ifndef RENEWAL
+	// !FIXME: Weapon-type bonus (Why is the weapon_atk bonus applied to base attack?)
+	if (sd->status.weapon < MAX_WEAPON_TYPE && sd->indexed_bonus.weapon_atk[sd->status.weapon])
+		base_status->batk += sd->indexed_bonus.weapon_atk[sd->status.weapon];
+	// Absolute modifiers from passive skills
+	if((skill=pc_checkskill(sd,BS_HILTBINDING))>0)
+		base_status->batk += 4;
+#else
+	base_status->watk = status_weapon_atk(base_status->rhw);
+	base_status->watk2 = status_weapon_atk(base_status->lhw);
+	base_status->eatk = sd->bonus.eatk;
+#endif
+
+// ----- HP MAX CALCULATION -----
+	base_status->max_hp = sd->status.max_hp = status_calc_maxhp_pc( *sd, base_status->vit );
+
+	if(battle_config.hp_rate != 100)
+		base_status->max_hp = (uint32)(battle_config.hp_rate * (base_status->max_hp/100.));
+
+	if (sd->status.base_level < 100)
+		base_status->max_hp = cap_value(base_status->max_hp,1,(uint32)battle_config.max_hp_lv99);
+	else if (sd->status.base_level < 151)
+		base_status->max_hp = cap_value(base_status->max_hp,1,(uint32)battle_config.max_hp_lv150);
+	else
+		base_status->max_hp = cap_value(base_status->max_hp,1,(uint32)battle_config.max_hp);
+
+// ----- SP MAX CALCULATION -----
+	base_status->max_sp = sd->status.max_sp = status_calc_maxsp_pc( *sd, base_status->int_ );
+
+	if(battle_config.sp_rate != 100)
+		base_status->max_sp = (uint32)(battle_config.sp_rate * (base_status->max_sp/100.));
+
+	base_status->max_sp = cap_value(base_status->max_sp,1,(uint32)battle_config.max_sp);
+
+// ----- AP MAX CALCULATION -----
+	base_status->max_ap = sd->status.max_ap = status_calc_maxap_pc( *sd );
+
+	if (battle_config.ap_rate != 100)
+		base_status->max_ap = (uint32)(battle_config.ap_rate * (base_status->max_ap / 100.));
+
+	base_status->max_ap = cap_value(base_status->max_ap, 0, (uint32)battle_config.max_ap);
+
+// ----- RESPAWN HP/SP/AP -----
+
+	// Calc respawn hp and store it on base_status
+	if (sd->special_state.restart_full_recover) {
+		base_status->hp = base_status->max_hp;
+		base_status->sp = base_status->max_sp;
+	} else {
+		if((sd->class_&MAPID_FIRSTMASK) == MAPID_NOVICE && !(sd->class_&JOBL_2)
+			&& battle_config.restart_hp_rate < 50)
+			base_status->hp = base_status->max_hp / 2;
+		else
+			base_status->hp = (int64)base_status->max_hp * battle_config.restart_hp_rate/100;
+		if(!base_status->hp)
+			base_status->hp = 1;
+
+		base_status->sp = (int64)base_status->max_sp * battle_config.restart_sp_rate /100;
+
+		if( !base_status->sp ) // The minimum for the respawn setting is SP:1
+			base_status->sp = 1;
+
+		base_status->ap = (int64)base_status->max_ap * battle_config.restart_ap_rate / 100;
+	}
+
+// ----- MISC CALCULATION -----
+	status_calc_misc(sd, base_status, sd->status.base_level);
+
+	// Equipment modifiers for misc settings
+	if(sd->matk_rate < 0)
+		sd->matk_rate = 0;
+
+	if(sd->matk_rate != 100) {
+		base_status->matk_max = base_status->matk_max * sd->matk_rate/100;
+		base_status->matk_min = base_status->matk_min * sd->matk_rate/100;
+	}
+
+	if(sd->hit_rate < 0)
+		sd->hit_rate = 0;
+	if(sd->hit_rate != 100)
+		base_status->hit = base_status->hit * sd->hit_rate/100;
+
+	if(sd->flee_rate < 0)
+		sd->flee_rate = 0;
+	if(sd->flee_rate != 100)
+		base_status->flee = base_status->flee * sd->flee_rate/100;
+
+	if(sd->def2_rate < 0)
+		sd->def2_rate = 0;
+	if(sd->def2_rate != 100)
+		base_status->def2 = base_status->def2 * sd->def2_rate/100;
+
+	if(sd->mdef2_rate < 0)
+		sd->mdef2_rate = 0;
+	if(sd->mdef2_rate != 100)
+		base_status->mdef2 = base_status->mdef2 * sd->mdef2_rate/100;
+
+	if(sd->critical_rate < 0)
+		sd->critical_rate = 0;
+	if(sd->critical_rate != 100)
+		base_status->cri = cap_value(base_status->cri * sd->critical_rate/100,SHRT_MIN,SHRT_MAX);
+	if (pc_checkskill(sd, SU_POWEROFLIFE) > 0)
+		base_status->cri += 200;
+
+	if(sd->flee2_rate < 0)
+		sd->flee2_rate = 0;
+	if(sd->flee2_rate != 100)
+		base_status->flee2 = base_status->flee2 * sd->flee2_rate/100;
+
+	if (sd->patk_rate < 0)
+		sd->patk_rate = 0;
+	if (sd->patk_rate != 100)
+		base_status->patk = base_status->patk * sd->patk_rate / 100;
+
+	if (sd->smatk_rate < 0)
+		sd->smatk_rate = 0;
+	if (sd->smatk_rate != 100)
+		base_status->smatk = base_status->smatk * sd->smatk_rate / 100;
+
+	if (sd->res_rate < 0)
+		sd->res_rate = 0;
+	if (sd->res_rate != 100)
+		base_status->res = base_status->res * sd->res_rate / 100;
+
+	if (sd->mres_rate < 0)
+		sd->mres_rate = 0;
+	if (sd->mres_rate != 100)
+		base_status->mres = base_status->mres * sd->mres_rate / 100;
+
+	if (sd->hplus_rate < 0)
+		sd->hplus_rate = 0;
+	if (sd->hplus_rate != 100)
+		base_status->hplus = base_status->hplus * sd->hplus_rate / 100;
+
+	if (sd->crate_rate < 0)
+		sd->crate_rate = 0;
+	if (sd->crate_rate != 100)
+		base_status->crate = base_status->crate * sd->crate_rate / 100;
+
+// ----- HIT CALCULATION -----
+
+	// Absolute modifiers from passive skills
+#ifndef RENEWAL
+	if((skill=pc_checkskill(sd,BS_WEAPONRESEARCH))>0)
+		base_status->hit += skill*2;
+#endif
+	if((skill=pc_checkskill(sd,AC_VULTURE))>0) {
+#ifndef RENEWAL
+		base_status->hit += skill;
+#endif
+		if(sd->status.weapon == W_BOW)
+			base_status->rhw.range += skill;
+	}
+	if(sd->status.weapon >= W_REVOLVER && sd->status.weapon <= W_GRENADE) {
+		if((skill=pc_checkskill(sd,GS_SINGLEACTION))>0)
+			base_status->hit += 2*skill;
+		if((skill=pc_checkskill(sd,GS_SNAKEEYE))>0) {
+			base_status->hit += skill;
+			base_status->rhw.range += skill;
+		}
+	}
+	if((sd->status.weapon == W_1HAXE || sd->status.weapon == W_2HAXE) && (skill = pc_checkskill(sd,NC_TRAININGAXE)) > 0)

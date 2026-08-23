@@ -1,0 +1,500 @@
+			if (!(((it.battle_flag)&attack_type)&BF_WEAPONMASK &&
+				  ((it.battle_flag)&attack_type)&BF_RANGEMASK &&
+				  ((it.battle_flag)&attack_type)&BF_SKILLMASK))
+				continue; // one or more trigger conditions were not fulfilled
+
+			int32 skill = it.id;
+
+			sd->state.autocast = 1;
+			if ( skill_isNotOk(skill, *sd) ) {
+				sd->state.autocast = 0;
+				continue;
+			}
+			sd->state.autocast = 0;
+
+			uint16 autospl_skill_lv = it.lv ? it.lv : 1;
+
+			if (it.flag & AUTOSPELL_FORCE_RANDOM_LEVEL)
+				autospl_skill_lv = rnd_value<uint16>( 1, autospl_skill_lv );
+
+			int32 rate = (!sd->state.arrow_atk) ? it.rate : it.rate / 2;
+
+			if (rnd()%1000 >= rate)
+				continue;
+
+			block_list *tbl = (it.flag & AUTOSPELL_FORCE_TARGET) ? bl : src;
+			e_cast_type type = skill_get_casttype(skill);
+
+			if (type == CAST_GROUND) {
+				if (!skill_pos_maxcount_check(src, tbl->x, tbl->y, skill, autospl_skill_lv, BL_PC, false))
+					continue;
+			}
+			if (battle_config.autospell_check_range &&
+				!battle_check_range(bl, tbl, skill_get_range2(src, skill, autospl_skill_lv, true)))
+				continue;
+
+			if (skill == PF_SPIDERWEB) //Special case, due to its nature of coding.
+				type = CAST_GROUND;
+#ifndef RENEWAL
+			else if( skill == AS_SONICBLOW ){
+				// Special case, Sonic Blow autospell should stop the player attacking.
+				unit_stop_attack( sd );
+			}
+#endif
+
+			sd->state.autocast = 1;
+			skill_consume_requirement(sd,skill,autospl_skill_lv,1);
+#ifndef RENEWAL
+			skill_toggle_magicpower(src, skill);
+#endif
+			switch (type) {
+				case CAST_GROUND:
+					skill_castend_pos2(src, tbl->x, tbl->y, skill, autospl_skill_lv, tick, 0);
+					break;
+				case CAST_NODAMAGE:
+					skill_castend_nodamage_id(src, tbl, skill, autospl_skill_lv, tick, 0);
+					break;
+				case CAST_DAMAGE:
+					skill_castend_damage_id(src, tbl, skill, autospl_skill_lv, tick, 0);
+					break;
+			}
+			sd->state.autocast = 0;
+
+			//Set canact delay. [Skotlex]
+			unit_data *ud = unit_bl2ud(src);
+
+			if (ud) {
+				int32 delay = skill_delayfix(src, skill, autospl_skill_lv);
+
+				if (DIFF_TICK(ud->canact_tick, tick + delay) < 0){
+					ud->canact_tick = i64max(tick + delay, ud->canact_tick);
+					if ( battle_config.display_status_timers && sd )
+						clif_status_change(src, EFST_POSTDELAY, 1, delay, 0, 0, 0);
+				}
+			}
+		}
+	}
+
+	//Polymorph
+	if(sd && sd->bonus.classchange && attack_type&BF_WEAPON &&
+		dstmd && !status_has_mode(tstatus,MD_STATUSIMMUNE) &&
+		(rnd()%10000 < sd->bonus.classchange))
+	{
+		int32 class_ = mob_get_random_id(MOBG_BRANCH_OF_DEAD_TREE, RMF_DB_RATE, 0);
+		if (class_ != 0 && mobdb_checkid(class_))
+			mob_class_change(dstmd,class_);
+	}
+
+	return 0;
+}
+
+int32 skill_onskillusage(map_session_data *sd, block_list *bl, uint16 skill_id, t_tick tick) {
+	if( sd == nullptr || !skill_id )
+		return 0;
+
+	for (auto &it : sd->autospell3) {
+		if (it.trigger_skill != skill_id)
+			continue;
+
+		if (it.lock)
+			continue;  // autospell already being executed
+
+		uint16 skill = it.id;
+
+		sd->state.autocast = 1; //set this to bypass sd->canskill_tick check
+
+		if( skill_isNotOk(skill, *sd) ) {
+			sd->state.autocast = 0;
+			continue;
+		}
+
+		sd->state.autocast = 0;
+
+		// DANGER DANGER: here force target actually means use yourself as target!
+		block_list *tbl = (it.flag & AUTOSPELL_FORCE_TARGET) ? sd : bl;
+
+		if( tbl == nullptr ){
+			continue; // No target
+		}
+
+		if( rnd()%1000 >= it.rate )
+			continue;
+
+		uint16 skill_lv = it.lv ? it.lv : 1;
+
+		if (it.flag & AUTOSPELL_FORCE_RANDOM_LEVEL)
+			skill_lv = rnd_value<uint16>( 1, skill_lv ); //random skill_lv
+
+		e_cast_type type = skill_get_casttype(skill);
+
+		if (type == CAST_GROUND && !skill_pos_maxcount_check(sd, tbl->x, tbl->y, skill_id, skill_lv, BL_PC, false))
+			continue;
+
+		if (battle_config.autospell_check_range &&
+			!battle_check_range(bl, tbl, skill_get_range2(sd, skill, skill_lv, true)))
+			continue;
+
+		sd->state.autocast = 1;
+		it.lock = true;
+		skill_consume_requirement(sd,skill,skill_lv,1);
+		switch( type ) {
+			case CAST_GROUND:
+				skill_castend_pos2(sd, tbl->x, tbl->y, skill, skill_lv, tick, 0);
+				break;
+			case CAST_NODAMAGE:
+				skill_castend_nodamage_id(sd, tbl, skill, skill_lv, tick, 0);
+				break;
+			case CAST_DAMAGE:
+				skill_castend_damage_id(sd, tbl, skill, skill_lv, tick, 0);
+				break;
+		}
+		it.lock = false;
+		sd->state.autocast = 0;
+	}
+
+	// Check for player and pet autobonuses when being attacked by skill_id
+	if (sd != nullptr) {
+		// Player
+		if (!sd->autobonus3.empty()) {
+			for (auto &it : sd->autobonus3) {
+				if (it == nullptr)
+					continue;
+				if (rnd_value(0, 1000) >= it->rate)
+					continue;
+				if (it->atk_type != skill_id)
+					continue;
+
+				pc_exeautobonus(*sd, &sd->autobonus3, it);
+			}
+		}
+
+		// Pet
+		if (sd->pd != nullptr && !sd->pd->autobonus3.empty()) {
+			for (auto &it : sd->pd->autobonus3) {
+				if (it == nullptr)
+					continue;
+				if (rnd_value(0, 1000) >= it->rate)
+					continue;
+				if (it->atk_type != skill_id)
+					continue;
+
+				pet_exeautobonus(*sd, &sd->pd->autobonus3, it);
+			}
+		}
+	}
+
+	return 1;
+}
+
+/* Splitted off from skill_additional_effect, which is never called when the
+ * attack skill kills the enemy. Place in this function counter status effects
+ * when using skills that will take effect on the source, not the target. [Skotlex]
+ */
+int32 skill_counter_additional_effect (block_list* src, block_list *bl, uint16 skill_id, uint16 skill_lv, int32 attack_type, t_tick tick)
+{
+	int32 rate;
+	map_session_data *sd=nullptr;
+	map_session_data *dstsd=nullptr;
+
+	nullpo_ret(src);
+	nullpo_ret(bl);
+
+	if(skill_id > 0 && !skill_lv) return 0;	// don't forget auto attacks! - celest
+
+	sd = BL_CAST(BL_PC, src);
+	dstsd = BL_CAST(BL_PC, bl);
+
+	if(dstsd && attack_type & BF_WEAPONMASK) {	//Counter effects.
+		for (const auto &it : dstsd->addeff_atked) {
+			rate = it.rate;
+			if (attack_type&BF_LONG)
+				rate += it.arrow_rate;
+			if (rate == 0)
+				continue;
+
+			if ((it.flag&(ATF_WEAPON|ATF_MAGIC|ATF_MISC)) != (ATF_WEAPON|ATF_MAGIC|ATF_MISC)) {
+				// Trigger has attack type consideration.
+				if ((it.flag&ATF_WEAPON && attack_type&BF_WEAPON) ||
+					(it.flag&ATF_MAGIC && attack_type&BF_MAGIC) ||
+					(it.flag&ATF_MISC && attack_type&BF_MISC))
+					;
+				else
+					continue;
+			}
+
+			if ((it.flag&(ATF_LONG|ATF_SHORT)) != (ATF_LONG|ATF_SHORT)) {	//Trigger has range consideration.
+				if((it.flag&ATF_LONG && !(attack_type&BF_LONG)) ||
+					(it.flag&ATF_SHORT && !(attack_type&BF_SHORT)))
+					continue; //Range Failed.
+			}
+
+			if (it.flag&ATF_TARGET && src != bl)
+				status_change_start(src, src, it.sc, rate, 7, 0, 0, 0, it.duration, SCSTART_NONE, 100);
+			if (it.flag&ATF_SELF && !status_isdead(*bl))
+				status_change_start(src, bl, it.sc, rate, 7, 0, 0, 0, it.duration, SCSTART_NONE, 100);
+		}
+	}
+
+	if (std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id); skill != nullptr && skill->impl != nullptr) {
+		skill->impl->applyCounterAdditionalEffects(src, bl, skill_lv, tick, attack_type);
+	}
+
+	if(sd && (sd->class_&MAPID_SECONDMASK) == MAPID_STAR_GLADIATOR &&
+		map_getmapflag(sd->m, MF_NOSUNMOONSTARMIRACLE) == 0) {	//SG_MIRACLE [Komurka]
+		// 0.005% chance per sg_miracle_skill_ratio
+		// Chance is further reduced if agi is above 46
+		if (rnd_chance(battle_config.sg_miracle_skill_ratio, 20000) && rnd_chance(46, (int32)sd->battle_status.agi))
+			sc_start(src, src, SC_MIRACLE, 100, 1, battle_config.sg_miracle_skill_duration);
+	}
+
+	if(sd && skill_id && attack_type&BF_MAGIC && status_isdead(*bl) &&
+	 	!(skill_get_inf(skill_id)&(INF_GROUND_SKILL|INF_SELF_SKILL)) &&
+		(rate=pc_checkskill(sd,HW_SOULDRAIN))>0
+	){	//Soul Drain should only work on targetted spells [Skotlex]
+		if (pc_issit(sd)) pc_setstand(sd, true); //Character stuck in attacking animation while 'sitting' fix. [Skotlex]
+		clif_skill_nodamage(src,*bl,HW_SOULDRAIN,rate);
+		status_heal(src, 0, status_get_lv(bl)*(95+15*rate)/100, 2);
+	}
+
+	if( sd && status_isdead(*bl) ) {
+		int32 sp = 0, hp = 0;
+		if( (attack_type&(BF_WEAPON|BF_SHORT)) == (BF_WEAPON|BF_SHORT) ) {
+			sp += sd->bonus.sp_gain_value;
+			sp += sd->indexed_bonus.sp_gain_race[status_get_race(bl)] + sd->indexed_bonus.sp_gain_race[RC_ALL];
+			hp += sd->bonus.hp_gain_value;
+		}
+		if( (attack_type&(BF_WEAPON|BF_LONG)) == (BF_WEAPON|BF_LONG) ) {
+			sp += sd->bonus.long_sp_gain_value;
+			hp += sd->bonus.long_hp_gain_value;
+		}
+		if( attack_type&BF_MAGIC ) {
+			sp += sd->bonus.magic_sp_gain_value;
+			hp += sd->bonus.magic_hp_gain_value;
+			if( skill_id == WZ_WATERBALL ) {//(bugreport:5303)
+				status_change *sc = nullptr;
+				if( ( sc = status_get_sc(src) ) ) {
+					if(sc->getSCE(SC_SPIRIT) &&
+								sc->getSCE(SC_SPIRIT)->val2 == SL_WIZARD &&
+								sc->getSCE(SC_SPIRIT)->val3 == WZ_WATERBALL)
+								sc->getSCE(SC_SPIRIT)->val3 = 0; //Clear bounced spell check.
+				}
+			}
+		}
+		if( hp || sp ) { // updated to force healing to allow healing through berserk
+			status_heal(src, hp, sp, battle_config.show_hp_sp_gain ? 3 : 1);
+		}
+	}
+
+	if (dstsd && !status_isdead(*bl) && !(skill_id && skill_get_nk(skill_id, NK_NODAMAGE))) {
+		status_change *sc = status_get_sc(bl);
+
+		if (sc && sc->getSCE(SC_DORAM_SVSP) && attack_type&(BF_MAGIC|BF_LONG))
+			skill_castend_damage_id(bl, src, SU_SV_STEMSPEAR, (pc_checkskill(dstsd, SU_SV_STEMSPEAR) ? pc_checkskill(dstsd, SU_SV_STEMSPEAR) : 1), tick, 0);
+	}
+
+	// Trigger counter-spells to retaliate against damage causing skills.
+	if(dstsd && !status_isdead(*bl) && !dstsd->autospell2.empty() &&
+		!(skill_id && skill_get_nk(skill_id, NK_NODAMAGE)))
+	{
+		for (const auto &it : dstsd->autospell2) {
+			if (!(((it.battle_flag)&attack_type)&BF_WEAPONMASK &&
+				  ((it.battle_flag)&attack_type)&BF_RANGEMASK &&
+				  ((it.battle_flag)&attack_type)&BF_SKILLMASK))
+				continue; // one or more trigger conditions were not fulfilled
+
+			uint16 autospl_skill_id = it.id, autospl_skill_lv = it.lv ? it.lv : 1;
+
+			if (it.flag & AUTOSPELL_FORCE_RANDOM_LEVEL)
+				autospl_skill_lv = rnd_value<uint16>( 1, autospl_skill_lv );
+
+			int32 autospl_rate = it.rate;
+
+			//Physical range attacks only trigger autospells half of the time
+			if ((attack_type&(BF_WEAPON|BF_LONG)) == (BF_WEAPON|BF_LONG))
+				 autospl_rate /= 2;
+
+			dstsd->state.autocast = 1;
+			if ( skill_isNotOk(autospl_skill_id, *dstsd) ) {
+				dstsd->state.autocast = 0;
+				continue;
+			}
+			dstsd->state.autocast = 0;
+
+			if (rnd()%1000 >= autospl_rate)
+				continue;
+
+			block_list *tbl = (it.flag & AUTOSPELL_FORCE_TARGET) ? src : bl;
+			e_cast_type type = skill_get_casttype(autospl_skill_id);
+
+			if (type == CAST_GROUND && !skill_pos_maxcount_check(bl, tbl->x, tbl->y, autospl_skill_id, autospl_skill_lv, BL_PC, false))
+					continue;
+
+			if (!battle_check_range(bl, tbl, skill_get_range2(src, autospl_skill_id, autospl_skill_lv, true)) && battle_config.autospell_check_range)
+				continue;
+
+			dstsd->state.autocast = 1;
+			skill_consume_requirement(dstsd,autospl_skill_id,autospl_skill_lv,1);
+			switch (type) {
+				case CAST_GROUND:
+					skill_castend_pos2(bl, tbl->x, tbl->y, autospl_skill_id, autospl_skill_lv, tick, 0);
+					break;
+				case CAST_NODAMAGE:
+					skill_castend_nodamage_id(bl, tbl, autospl_skill_id, autospl_skill_lv, tick, 0);
+					break;
+				case CAST_DAMAGE:
+					skill_castend_damage_id(bl, tbl, autospl_skill_id, autospl_skill_lv, tick, 0);
+					break;
+			}
+			dstsd->state.autocast = 0;
+
+			//Set canact delay. [Skotlex]
+			unit_data *ud = unit_bl2ud(bl);
+
+			if (ud) {
+				int32 delay = skill_delayfix(bl, autospl_skill_id, autospl_skill_lv);
+
+				if (DIFF_TICK(ud->canact_tick, tick + delay) < 0){
+					ud->canact_tick = i64max(tick + delay, ud->canact_tick);
+					if ( battle_config.display_status_timers && dstsd )
+						clif_status_change(bl, EFST_POSTDELAY, 1, delay, 0, 0, 0);
+				}
+			}
+		}
+	}
+
+	// Check for player and pet autobonuses when attacking
+	if (sd != nullptr) {
+		// Player
+		if (!sd->autobonus.empty()) {
+			for (auto& it : sd->autobonus) {
+				if (it == nullptr)
+					continue;
+				if (rnd_value(0, 1000) >= it->rate)
+					continue;
+				if (!(((it->atk_type) & attack_type) & BF_WEAPONMASK &&
+					((it->atk_type) & attack_type) & BF_RANGEMASK &&
+					((it->atk_type) & attack_type) & BF_SKILLMASK))
+					continue; // one or more trigger conditions were not fulfilled
+
+				pc_exeautobonus(*sd, &sd->autobonus, it);
+			}
+		}
+
+		// Pet
+		if (sd->pd != nullptr && !sd->pd->autobonus.empty()) {
+			for (auto& it : sd->pd->autobonus) {
+				if (it == nullptr)
+					continue;
+				if (rnd_value(0, 1000) >= it->rate)
+					continue;
+				if (!(((it->atk_type) & attack_type) & BF_WEAPONMASK &&
+					((it->atk_type) & attack_type) & BF_RANGEMASK &&
+					((it->atk_type) & attack_type) & BF_SKILLMASK))
+					continue; // one or more trigger conditions were not fulfilled
+
+				pet_exeautobonus(*sd, &sd->pd->autobonus, it);
+			}
+		}
+	}
+
+	// Check for player and pet autobonuses when attacked
+	if (dstsd != nullptr && !status_isdead(*bl) && !(skill_id && skill_get_nk(skill_id, NK_NODAMAGE))) {
+		// Player
+		if (!dstsd->autobonus2.empty()) {
+			for (auto &it : dstsd->autobonus2) {
+				if (it == nullptr)
+					continue;
+				if (rnd_value(0, 1000) >= it->rate)
+					continue;
+				if (!(((it->atk_type) & attack_type) & BF_WEAPONMASK &&
+					  ((it->atk_type) & attack_type) & BF_RANGEMASK &&
+					  ((it->atk_type) & attack_type) & BF_SKILLMASK))
+					continue; // one or more trigger conditions were not fulfilled
+
+				pc_exeautobonus(*dstsd, &dstsd->autobonus2, it);
+			}
+		}
+
+		// Pet
+		if (dstsd->pd != nullptr && !dstsd->pd->autobonus2.empty()) {
+			for (auto &it : dstsd->pd->autobonus2) {
+				if (it == nullptr)
+					continue;
+				if (rnd_value(0, 1000) >= it->rate)
+					continue;
+				if (!(((it->atk_type) & attack_type) & BF_WEAPONMASK &&
+					  ((it->atk_type) & attack_type) & BF_RANGEMASK &&
+					  ((it->atk_type) & attack_type) & BF_SKILLMASK))
+					continue; // one or more trigger conditions were not fulfilled
+
+				pet_exeautobonus(*dstsd, &dstsd->pd->autobonus2, it);
+			}
+		}
+	}
+
+	return 0;
+}
+
+/*=========================================================================
+ Breaks equipment. On-non players causes the corresponding strip effect.
+ - rate goes from 0 to 10000 (100.00%)
+ - flag is a BCT_ flag to indicate which type of adjustment should be used
+   (BCT_ENEMY/BCT_PARTY/BCT_SELF) are the valid values.
+--------------------------------------------------------------------------*/
+int32 skill_break_equip(block_list *src, block_list *bl, uint16 where, int32 rate, int32 flag)
+{
+	status_change *src_sc = status_get_sc(src);
+
+	// Grant player skills/items the ability to "break" non-player equipment.
+	// WS_MELTDOWN is exempt from this check.
+	if (!battle_config.break_mob_equip && bl->type != BL_PC && !(src_sc && src_sc->getSCE(SC_MELTDOWN)))
+		return 0;
+
+	const int32 where_list[6]     = { EQP_WEAPON, EQP_ARMOR, EQP_SHIELD, EQP_HELM, EQP_ACC, EQP_SHADOW_GEAR };
+	const enum sc_type scatk[6] = { SC_STRIPWEAPON, SC_STRIPARMOR, SC_STRIPSHIELD, SC_STRIPHELM, SC__STRIPACCESSORY, SC_SHADOW_STRIP };
+	const enum sc_type scdef[6] = { SC_CP_WEAPON, SC_CP_ARMOR, SC_CP_SHIELD, SC_CP_HELM, SC_NONE, SC_PROTECTSHADOWEQUIP };
+	status_change *sc = status_get_sc(bl);
+	int32 i;
+	TBL_PC *sd;
+	sd = BL_CAST(BL_PC, bl);
+	if (sc != nullptr && sc->empty())
+		sc = nullptr;
+
+	if (sd) {
+		if (sd->bonus.unbreakable_equip)
+			where &= ~sd->bonus.unbreakable_equip;
+		if (sd->bonus.unbreakable)
+			rate -= rate*sd->bonus.unbreakable/100;
+		if (where&EQP_WEAPON) {
+			switch (sd->status.weapon) {
+				case W_FIST:	//Bare fists should not break :P
+				case W_1HAXE:
+				case W_2HAXE:
+				case W_MACE: // Axes and Maces can't be broken [DracoRPG]
+				case W_2HMACE:
+				case W_STAFF:
+				case W_2HSTAFF:
+				case W_BOOK: //Rods and Books can't be broken [Skotlex]
+				case W_HUUMA:
+				case W_DOUBLE_AA:	// Axe usage during dual wield should also prevent breaking [Neutral]
+				case W_DOUBLE_DA:
+				case W_DOUBLE_SA:
+					where &= ~EQP_WEAPON;
+			}
+		}
+	}
+	if (flag&BCT_ENEMY) {
+		if (battle_config.equip_skill_break_rate != 100)
+			rate = rate*battle_config.equip_skill_break_rate/100;
+	} else if (flag&(BCT_PARTY|BCT_SELF)) {
+		if (battle_config.equip_self_break_rate != 100)
+			rate = rate*battle_config.equip_self_break_rate/100;
+	}
+
+	for (i = 0; i < 6; i++) {
+		if (where&where_list[i]) {
+			if (sc != nullptr && sc->getSCE(scdef[i]))
+				where&=~where_list[i];
+			else if (rnd()%10000 >= rate)
+				where&=~where_list[i];
+			else if (!sd) //Cause Strip effect.

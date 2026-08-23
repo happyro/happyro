@@ -1,0 +1,500 @@
+ * Range: Maximum number of cells to be walked
+ *------------------------------------------*/
+int32 mob_can_reach(mob_data *md,block_list *bl,int32 range)
+{
+	nullpo_ret(md);
+	nullpo_ret(bl);
+	return unit_can_reach_bl(md, bl, range, 0, nullptr, nullptr);
+}
+
+/*==========================================
+ * Links nearby mobs (supportive mobs)
+ *------------------------------------------*/
+int32 mob_linksearch(block_list *bl,va_list ap)
+{
+	mob_data *md;
+	int32 mob_id;
+	int32 target_id;
+	t_tick tick;
+
+	nullpo_ret(bl);
+	md = reinterpret_cast<mob_data*>(bl);
+	mob_id = va_arg(ap, int32);
+	target_id = va_arg(ap, int32);
+	tick=va_arg(ap, t_tick);
+
+	// Check if mob qualifies for assistance
+	// Line of sight to the ally is already checked at this point
+	// No valid path to the target is required
+	if (md->mob_id == mob_id && status_has_mode(&md->status,MD_ASSIST)
+		&& DIFF_TICK(tick, md->last_linktime) >= MIN_MOBLINKTIME
+		&& md->target_id == 0)
+	{
+		md->last_linktime = tick;
+		md->target_id = target_id;
+		return 1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * mob spawn with delay (timer function)
+ *------------------------------------------*/
+TIMER_FUNC(mob_delayspawn){
+	block_list* bl = map_id2bl(id);
+	mob_data* md = BL_CAST(BL_MOB, bl);
+
+	if( md )
+	{
+		if( md->spawn_timer != tid )
+		{
+			ShowError("mob_delayspawn: Timer mismatch: %d != %d\n", tid, md->spawn_timer);
+			return 0;
+		}
+		md->spawn_timer = INVALID_TIMER;
+		mob_spawn(md);
+	}
+	return 0;
+}
+
+/*==========================================
+ * spawn timing calculation
+ *------------------------------------------*/
+int32 mob_setdelayspawn(mob_data *md)
+{
+	uint32 spawntime;
+
+	if (!md->spawn) //Doesn't has respawn data!
+		return unit_free(md,CLR_DEAD);
+
+	spawntime = md->spawn->delay1; //Base respawn time
+	if (md->spawn->delay2) //random variance
+		spawntime+= rnd()%md->spawn->delay2;
+
+	//Apply the spawn delay fix [Skotlex]
+	std::shared_ptr<s_mob_db> db = mob_db.find(md->spawn->id);
+
+	if (status_has_mode(&db->status,MD_STATUSIMMUNE)) { // Status Immune
+		if (battle_config.boss_spawn_delay != 100) {
+			// Divide by 100 first to prevent overflows
+			//(precision loss is minimal as duration is in ms already)
+			spawntime = spawntime/100*battle_config.boss_spawn_delay;
+		}
+	} else if (status_has_mode(&db->status,MD_IGNOREMELEE|MD_IGNOREMAGIC|MD_IGNORERANGED|MD_IGNOREMISC)) { // Plant type
+		if (battle_config.plant_spawn_delay != 100) {
+			spawntime = spawntime/100*battle_config.plant_spawn_delay;
+		}
+	} else if (battle_config.mob_spawn_delay != 100) {	//Normal mobs
+		spawntime = spawntime/100*battle_config.mob_spawn_delay;
+	}
+
+	spawntime = u32max(1000, spawntime); //Monsters should never respawn faster than 1 second
+
+	if( md->spawn_timer != INVALID_TIMER )
+		delete_timer(md->spawn_timer, mob_delayspawn);
+	md->spawn_timer = add_timer(gettick()+spawntime, mob_delayspawn, md->id, 0);
+	return 0;
+}
+
+int32 mob_count_sub(block_list *bl, va_list ap) {
+    int32 mobid[10], i;
+    ARR_FIND(0, 10, i, (mobid[i] = va_arg(ap, int32)) == 0); //fetch till 0
+	mob_data* md = BL_CAST(BL_MOB, bl);
+	if (md && mobid[0]) { //if there one let's check it otherwise go backward
+        ARR_FIND(0, 10, i, md->mob_id == mobid[i]);
+        return (i < 10) ? 1 : 0;
+    }
+	// If not counting monsters, count all
+    return 1; //backward compatibility
+}
+
+/**
+ * Mob spawning. Initialization is also variously here. (Spawn a mob in a map)
+ * @param md : mob data to spawn
+ * @return 0:spawned, 1:delayed, 2:error
+ */
+int32 mob_spawn (mob_data *md)
+{
+	int32 i=0;
+	t_tick tick = gettick();
+
+	md->next_thinktime = tick;
+	if (md->prev != nullptr)
+		unit_remove_map(md,CLR_RESPAWN);
+	else
+	if (md->spawn && md->mob_id != md->spawn->id)
+	{
+		md->mob_id = md->spawn->id;
+		status_set_viewdata(md, md->mob_id);
+		md->db = mob_db.find(md->mob_id);
+		memcpy(md->name,md->spawn->name,NAME_LENGTH);
+	}
+
+	if (md->spawn) { //Respawn data
+		md->m = md->spawn->m;
+		md->x = md->centerX;
+		md->y = md->centerY;
+
+		// Search can be skipped for boss monster spawns if spawn location is fixed
+		// We can't skip normal monsters as they should pick a random location if the cell is blocked (e.g. Icewall)
+		// The center cell has a 1/(xs*ys) chance to be picked if free
+		if ((!md->spawn->state.boss || (md->x == 0 && md->y == 0) || md->spawn->xs != 1 || md->spawn->ys != 1)
+			&& (md->spawn->xs + md->spawn->ys < 1 || !rnd_chance(1, md->spawn->xs * md->spawn->ys) || !map_getcell(md->m, md->x, md->y, CELL_CHKREACH)))
+		{
+			// Officially the area is split into 4 squares, 4 lines and 1 dot and for each of those there is one attempt
+			// We simplify this to trying 8 times in the whole area and then at the center cell even though that's not fully accurate
+
+			// Try to spawn monster in defined area (8 tries)
+			if (!map_search_freecell(md, -1, &md->x, &md->y, md->spawn->xs-1, md->spawn->ys-1, battle_config.no_spawn_on_player?4:0, 8))
+			{
+				// If area search failed and center cell not reachable, try to spawn the monster anywhere on the map (50 tries)
+				if (!map_getcell(md->m, md->x, md->y, CELL_CHKREACH) && !map_search_freecell(md, -1, &md->x, &md->y, -1, -1, battle_config.no_spawn_on_player?4:0))
+				{
+					// Retry again later
+					if (md->spawn_timer != INVALID_TIMER)
+						delete_timer(md->spawn_timer, mob_delayspawn);
+					md->spawn_timer = add_timer(tick + battle_config.mob_respawn_time, mob_delayspawn, md->id, 0);
+					return 1;
+				}
+			}
+		}
+		if( battle_config.no_spawn_on_player > 99 && map_foreachinallrange(mob_count_sub, md, AREA_SIZE, BL_PC) )
+		{ // retry again later (players on sight)
+			if( md->spawn_timer != INVALID_TIMER )
+				delete_timer(md->spawn_timer, mob_delayspawn);
+			md->spawn_timer = add_timer(tick + battle_config.mob_respawn_time,mob_delayspawn,md->id,0);
+			return 1;
+		}
+	}
+
+	memset(&md->state, 0, sizeof(md->state));
+	status_calc_mob(md, SCO_FIRST);
+	md->attacked_id = 0;
+	md->norm_attacked_id = 0;
+	md->target_id = 0;
+	md->move_fail_count = 0;
+	md->ud.state.attack_continue = 0;
+	md->ud.target_to = 0;
+	md->ud.dir = 0;
+	if( md->spawn_timer != INVALID_TIMER ) {
+		delete_timer(md->spawn_timer, mob_delayspawn);
+		md->spawn_timer = INVALID_TIMER;
+	}
+
+//	md->master_id = 0;
+	md->master_dist = 0;
+
+	mob_setstate(*md, MSS_IDLE);
+	md->ud.state.blockedmove = false;
+	md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME;
+	md->last_linktime = 0;
+	md->last_pcneartime = 0;
+	md->last_canmove = tick;
+	md->last_skillcheck = tick;
+	md->trickcasting = 0;
+
+	for (i = 0; i < MAX_MOBSKILL; i++)
+		md->skilldelay[i] = 0;
+	for (i = 0; i < DAMAGELOG_SIZE; i++)
+		md->spotted_log[i] = 0;
+
+	md->dmglog.clear();
+
+	if (md->lootitems)
+		memset(md->lootitems, 0, sizeof(*md->lootitems));
+
+	md->lootitem_count = 0;
+
+	if(md->db->option)
+		// Added for carts, falcons and pecos for cloned monsters. [Valaris]
+		md->sc.option = md->db->option;
+
+	// MvP tomb [GreenBox]
+	if ( md->tomb_nid )
+		mvptomb_destroy(md);
+
+	if(map_addblock(md))
+		return 2;
+	if( map_getmapdata(md->m)->users )
+		clif_spawn(md);
+	skill_unit_move(md,tick,1);
+	mobskill_use(md, tick, MSC_SPAWN);
+	return 0;
+}
+
+/*==========================================
+ * Determines if the mob can change target. [Skotlex]
+ *------------------------------------------*/
+static int32 mob_can_changetarget(mob_data* md, block_list* target, int32 mode)
+{
+	// Special feature that makes monsters always attack the person that provoked them
+	if(battle_config.mob_ai&0x800 && md->state.provoke_flag)
+	{
+		if (md->state.provoke_flag == target->id)
+			return 1;
+		else if (!(battle_config.mob_ai&0x4))
+			return 0;
+	}
+
+	switch (md->state.skillstate) {
+		case MSS_BERSERK:
+			if (!(mode&MD_CHANGETARGETMELEE))
+				return 0;
+			// If the special normal attacked event occurred, always change target in berserk state
+			if (md->norm_attacked_id == target->id)
+				return 1;
+			// If the special setting to switch target even on skills is set, we need to verify the range here
+			if (!(battle_config.mob_ai&0x80))
+				return 0;
+			return (battle_config.mob_ai&0x4 || check_distance_bl(md, target, md->status.rhw.range+1));
+		case MSS_RUSH:
+			return (mode&MD_CHANGETARGETCHASE);
+		case MSS_FOLLOW:
+		case MSS_ANGRY:
+		case MSS_IDLE:
+		case MSS_WALK:
+		case MSS_LOOT:
+			return 1;
+		default:
+			return 0;
+	}
+}
+
+/**
+ * Randomizes the target ID of a monster if it has the given mode
+ * @param bl Unit that is going to attack
+ * @param target_id Target ID to modify
+ * @return Whether a target was found (true) or not (false)
+ */
+bool mob_randomtarget(mob_data& md, int32& target_id) {
+	if (!status_has_mode(&md.status, MD_RANDOMTARGET))
+		return true; // Keep current target
+
+	// Pick a random visible target
+	block_list* target = battle_getenemy(&md, DEFAULT_ENEMY_TYPE((&md)), md.status.rhw.range);
+	if (target == nullptr)
+		return false;
+
+	// Check if target is in shoot range
+	if (!battle_check_range(&md, target, md.status.rhw.range))
+		return false;
+
+	target_id = target->id;
+	return true;
+}
+
+/*==========================================
+ * Determination for an attack of a monster
+ *------------------------------------------*/
+int32 mob_target(mob_data *md,block_list *bl,int32 dist)
+{
+	nullpo_ret(md);
+	nullpo_ret(bl);
+
+	// Nothing will be carried out if there is no mind of changing TAGE by TAGE ending.
+	if(md->target_id && !mob_can_changetarget(md, bl, status_get_mode(md)))
+		return 0;
+
+	if(!status_check_skilluse(md, bl, 0, 0))
+		return 0;
+
+	md->target_id = bl->id;	// Since there was no disturbance, it locks on to target.
+	if (md->state.provoke_flag && bl->id != md->state.provoke_flag)
+		md->state.provoke_flag = 0;
+	// When an angry monster is provoked, it will switch to retaliate AI
+	if (md->state.provoke_flag && md->state.aggressive)
+		md->state.aggressive = 0;
+	return 0;
+}
+
+/*==========================================
+ * The ?? routine of an active monster
+ *------------------------------------------*/
+static int32 mob_ai_sub_hard_activesearch(block_list *bl,va_list ap)
+{
+	mob_data *md;
+	block_list **target;
+	enum e_mode mode;
+	int32 dist;
+
+	nullpo_ret(bl);
+	md=va_arg(ap,mob_data *);
+	target= va_arg(ap,block_list**);
+	mode= static_cast<enum e_mode>(va_arg(ap, int32));
+
+	//If can't seek yet, not an enemy, or you can't attack it, skip.
+	if ((*target) == bl || !status_check_skilluse(md, bl, 0, 0))
+		return 0;
+
+	if ((mode&MD_TARGETWEAK) && status_get_lv(bl) >= md->level-5)
+		return 0;
+
+	if(battle_check_target(md,bl,BCT_ENEMY)<=0)
+		return 0;
+
+	if (bl->type == BL_PC && BL_CAST(BL_PC, bl)->state.gangsterparadise &&
+		!status_has_mode(&md->status,MD_STATUSIMMUNE))
+		return 0; //Gangster paradise protection.
+
+	if (battle_config.hom_setting&HOMSET_FIRST_TARGET &&
+		(*target) != nullptr && (*target)->type == BL_HOM && bl->type != BL_HOM)
+		return 0; //For some reason Homun targets are never overridden.
+
+	dist = distance_bl(md, bl);
+	if(
+		((*target) == nullptr || !check_distance_bl(md, *target, dist)) &&
+		battle_check_range(md,bl,md->db->range2)
+	) { //Pick closest target?
+#ifdef ACTIVEPATHSEARCH
+		struct walkpath_data wpd;
+		if (!path_search(&wpd, md->m, md->x, md->y, bl->x, bl->y, 0, CELL_CHKWALL)) // Count walk path cells
+			return 0;
+		//Standing monsters use range2, walking monsters use range3
+		if ((md->ud.walktimer == INVALID_TIMER && wpd.path_len > md->db->range2)
+			|| (md->ud.walktimer != INVALID_TIMER && wpd.path_len > md->db->range3))
+			return 0;
+#endif
+		(*target) = bl;
+		md->target_id=bl->id;
+		return 1;
+
+	}
+	return 0;
+}
+
+/*==========================================
+ * chase target-change routine.
+ *------------------------------------------*/
+static int32 mob_ai_sub_hard_changechase(block_list *bl,va_list ap)
+{
+	mob_data *md;
+	block_list **target;
+
+	nullpo_ret(bl);
+	md=va_arg(ap,mob_data *);
+	target= va_arg(ap,block_list**);
+
+	//If can't seek yet, not an enemy, or you can't attack it, skip.
+	if ((*target) == bl ||
+		battle_check_target(md,bl,BCT_ENEMY)<=0 ||
+	  	!status_check_skilluse(md, bl, 0, 0))
+		return 0;
+
+	if(battle_check_range (md, bl, md->status.rhw.range))
+	{
+		(*target) = bl;
+		md->target_id=bl->id;
+	}
+	return 1;
+}
+
+/*==========================================
+ * finds nearby bg ally for guardians looking for users to follow.
+ *------------------------------------------*/
+static int32 mob_ai_sub_hard_bg_ally(block_list *bl,va_list ap) {
+	mob_data *md;
+	block_list **target;
+
+	nullpo_ret(bl);
+	md=va_arg(ap,mob_data *);
+	target= va_arg(ap,block_list**);
+
+	if( status_check_skilluse(md, bl, 0, 0) && battle_check_target(md,bl,BCT_ENEMY)<=0 ) {
+		(*target) = bl;
+	}
+	return 1;
+}
+
+/*==========================================
+ * loot monster item search
+ *------------------------------------------*/
+static int32 mob_ai_sub_hard_lootsearch(block_list *bl,va_list ap)
+{
+	mob_data* md;
+	block_list **target;
+	int32 dist;
+
+	md = va_arg(ap,mob_data *);
+	target = va_arg(ap,block_list**);
+
+	dist = distance_bl(md, bl);
+	if (mob_can_reach(md, bl, battle_config.loot_range) && (
+		(*target) == nullptr ||
+		(battle_config.monster_loot_search_type && md->target_id > bl->id) ||
+		(!battle_config.monster_loot_search_type && !check_distance_bl(md, *target, dist)) // New target closer than previous one.
+		))
+	{
+		(*target) = bl;
+		md->target_id = bl->id;
+	}
+
+	return 0;
+}
+
+static int32 mob_warpchase_sub(block_list *bl,va_list ap) {
+	int32 cur_distance;
+
+	block_list* target= va_arg(ap, block_list*);
+	block_list** target_warp= va_arg(ap, block_list**);
+	int32* min_distance= va_arg(ap, int32*);
+
+	switch (bl->type) {
+		case BL_NPC:
+		{
+			// NPC Warp
+			npc_data* nd = reinterpret_cast<npc_data*>(bl);
+
+			// Not a warp
+			if (nd->subtype != NPCTYPE_WARP)
+				return 0;
+
+			// Does not lead to the same map as target
+			if (nd->u.warp.mapindex != map_getmapdata(target->m)->index)
+				return 0;
+
+			// Leads to a different map that is set to not be accessible through warp chase
+			if (battle_config.mob_warp&4) {
+				int16 warp_m = map_mapindex2mapid(nd->u.warp.mapindex);
+				if (warp_m != bl->m && map_getmapflag(warp_m, MF_NOBRANCH))
+					return 0;
+			}
+
+			// Get distance from warp exit to target
+			cur_distance = distance_blxy(target, nd->u.warp.x, nd->u.warp.y);
+
+			//Pick warp that leads closest to target
+			if (cur_distance < *min_distance) {
+				*target_warp = nd;
+				*min_distance = cur_distance;
+				return 1;
+			}
+		}
+		break;
+
+		case BL_SKILL:
+		{
+			// Skill Warp
+			skill_unit* su = reinterpret_cast<skill_unit*>(bl);
+
+			if (su->group == nullptr)
+				return 0;
+
+			switch (su->group->unit_id) {
+				case UNT_WARP_WAITING:
+					// Monsters cannot use priest warps
+					if (!(battle_config.mob_warp&2))
+						return 0;
+
+					// Does not lead to the same map as target
+					if (su->group->val3 != map_getmapdata(target->m)->index)
+						return 0;
+
+					// Leads to a different map that is set to not be accessible through warp chase
+					if (battle_config.mob_warp&4) {
+						int16 warp_m = map_mapindex2mapid(su->group->val3);
+						if (warp_m != bl->m && map_getmapflag(warp_m, MF_NOBRANCH))
+							return 0;
+					}
+
+					// Get distance from warp exit to target

@@ -1,0 +1,500 @@
+
+	if( !status_check_skilluse(ed, bl, 0, 0) )
+		return 0;
+
+	if( ed->target_id == 0 )
+		ed->target_id = bl->id;
+
+	return 1;
+}
+
+static int32 elemental_ai_sub_timer_activesearch(block_list *bl, va_list ap) {
+	nullpo_ret(bl);
+
+	s_elemental_data *ed;
+	block_list **target;
+
+	ed = va_arg(ap, s_elemental_data *);
+	target = va_arg(ap, block_list**);
+
+	//If can't seek yet, not an enemy, or you can't attack it, skip.
+	if( (*target) == bl || !status_check_skilluse(ed, bl, 0, 0) )
+		return 0;
+
+	if( battle_check_target(ed,bl,BCT_ENEMY) <= 0 )
+		return 0;
+
+	if (bl->type == BL_PC && !map_flag_vs(ed->m))
+		return 0;
+	int32 dist = distance_bl(ed, bl);
+	if( ((*target) == nullptr || !check_distance_bl(ed, *target, dist)) && battle_check_range(ed,bl,ed->db->range2) ) { //Pick closest target?
+		(*target) = bl;
+		ed->target_id = bl->id;
+		ed->min_chase = dist + ed->db->range3;
+		if( ed->min_chase > AREA_SIZE )
+			ed->min_chase = AREA_SIZE;
+		return 1;
+	}
+	return 0;
+}
+
+static int32 elemental_ai_sub_timer(s_elemental_data *ed, map_session_data *sd, t_tick tick) {
+	nullpo_ret(ed);
+	nullpo_ret(sd);
+
+	if( ed->prev == nullptr || sd == nullptr || sd->prev == nullptr )
+		return 0;
+
+	// Check if caster can sustain the summoned elemental
+	if( DIFF_TICK(tick,ed->last_spdrain_time) >= 10000 ){// Drain SP every 10 seconds
+		int32 sp = 5;
+
+		switch(ed->vd->look[LOOK_BASE]){
+			case ELEMENTALID_AGNI_M:	case ELEMENTALID_AQUA_M:
+			case ELEMENTALID_VENTUS_M:	case ELEMENTALID_TERA_M:
+				sp = 8;
+				break;
+			case ELEMENTALID_AGNI_L:	case ELEMENTALID_AQUA_L:
+			case ELEMENTALID_VENTUS_L:	case ELEMENTALID_TERA_L:
+				sp = 11;
+				break;
+		}
+
+		if( status_get_sp(sd) < sp ){ // Can't sustain delete it.
+			elemental_delete(sd->ed);
+			return 0;
+		}
+
+		status_zap(sd,0,sp);
+		ed->last_spdrain_time = tick;
+	}
+
+	if( DIFF_TICK(tick,ed->last_thinktime) < MIN_ELETHINKTIME )
+		return 0;
+
+	ed->last_thinktime = tick;
+
+	if( ed->ud.skilltimer != INVALID_TIMER )
+		return 0;
+
+	if( ed->ud.walktimer != INVALID_TIMER && ed->ud.walkpath.path_pos <= 2 )
+		return 0; //No thinking when you just started to walk.
+
+	if(ed->ud.walkpath.path_pos < ed->ud.walkpath.path_len && ed->ud.target == sd->id)
+		return 0; //No thinking until be near the master.
+
+	int32 master_dist, view_range;
+
+	if( ed->sc.getSCE(SC_BLIND) )
+		view_range = 3;
+	else
+		view_range = ed->db->range2;
+
+	int32 mode = status_get_mode(ed);
+
+	master_dist = distance_bl(sd, ed);
+	if( master_dist > AREA_SIZE ) {	// Master out of vision range.
+		elemental_unlocktarget(ed);
+		unit_warp(ed,sd->m,sd->x,sd->y,CLR_TELEPORT);
+		clif_elemental_updatestatus(*sd, SP_HP);
+		clif_elemental_updatestatus(*sd, SP_SP);
+		return 0;
+	} else if( master_dist > MAX_ELEDISTANCE ) {	// Master too far, chase.
+		int16 x = sd->x, y = sd->y;
+		if( ed->target_id )
+			elemental_unlocktarget(ed);
+		if( ed->ud.walktimer != INVALID_TIMER && ed->ud.target == sd->id )
+			return 0; //Already walking to him
+		if( DIFF_TICK(tick, ed->ud.canmove_tick) < 0 )
+			return 0; //Can't move yet.
+		if( map_search_freecell(ed, sd->m, &x, &y, MIN_ELEDISTANCE, MIN_ELEDISTANCE, 1)
+		   && unit_walktoxy(ed, x, y, 0) )
+			return 0;
+	}
+
+	block_list *target = nullptr;
+
+	if( mode == EL_MODE_AGGRESSIVE ) {
+		target = map_id2bl(ed->ud.target);
+
+		if( !target )
+			map_foreachinallrange(elemental_ai_sub_timer_activesearch, ed, view_range, BL_CHAR, ed, &target, status_get_mode(ed));
+
+		if( !target ) { //No targets available.
+			elemental_unlocktarget(ed);
+			return 1;
+		}
+
+		if( battle_check_range(ed,target,view_range) && rnd_chance(2, 100) ) { // 2% chance to cast attack skill.
+			if(	elemental_action(ed,target,tick) )
+				return 1;
+		}
+
+		//Attempt to attack.
+		//At this point we know the target is attackable, we just gotta check if the range matches.
+		if( ed->ud.target == target->id && ed->ud.attacktimer != INVALID_TIMER ) //Already locked.
+			return 1;
+
+		if( battle_check_range(ed, target, ed->base_status.rhw.range) ) {//Target within range, engage
+			unit_attack(ed,target->id,1);
+			return 1;
+		}
+
+		//Follow up if possible.
+		if( !unit_walktobl(ed, target, ed->base_status.rhw.range, 2) )
+			elemental_unlocktarget(ed);
+	}
+
+	return 0;
+}
+
+static int32 elemental_ai_sub_foreachclient(map_session_data *sd, va_list ap) {
+	t_tick tick = va_arg(ap,t_tick);
+	if(sd->status.ele_id && sd->ed)
+		elemental_ai_sub_timer(sd->ed,sd,tick);
+
+	return 0;
+}
+
+static TIMER_FUNC(elemental_ai_timer){
+	map_foreachpc(elemental_ai_sub_foreachclient,tick);
+	return 0;
+}
+
+const std::string ElementalDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/elemental_db.yml";
+}
+
+/*
+ * Reads and parses an entry from the elemental_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 ElementalDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	int32 id;
+
+	if (!this->asInt32(node, "Id", id))
+		return 0;
+
+	if( !( ( id >= ELEMENTALID_AGNI_S && id <= ELEMENTALID_TERA_L ) || ( id >= ELEMENTALID_DILUVIO && id <= ELEMENTALID_SERPENS ) ) ) {
+		this->invalidWarning( node["Id"], "Invalid Id %d (valid ranges: %d-%d and %d-%d).\n", id, ELEMENTALID_AGNI_S, ELEMENTALID_TERA_L, ELEMENTALID_DILUVIO, ELEMENTALID_SERPENS );
+		return 0;
+	}
+
+	std::shared_ptr<s_elemental_db> elemental = this->find(id);
+	bool exists = elemental != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "AegisName", "Name", "Size", "Element", "ElementLevel" }))
+			return 0;
+
+		elemental = std::make_shared<s_elemental_db>();
+		elemental->class_ = id;
+		elemental->vd.look[LOOK_BASE] = id;
+	}
+
+	if (this->nodeExists(node, "AegisName")) {
+		std::string name;
+
+		if (!this->asString(node, "AegisName", name))
+			return 0;
+
+		if (name.size() > NAME_LENGTH) {
+			this->invalidWarning(node["AegisName"], "AegisName \"%s\" exceeds maximum of %d characters, capping...\n", name.c_str(), NAME_LENGTH - 1);
+		}
+
+		name.resize(NAME_LENGTH);
+		elemental->sprite = name;
+	}
+
+	if (this->nodeExists(node, "Name")) {
+		std::string name;
+
+		if (!this->asString(node, "Name", name))
+			return 0;
+
+
+		if (name.size() > NAME_LENGTH) {
+			this->invalidWarning(node["Name"], "Name \"%s\" exceeds maximum of %d characters, capping...\n", name.c_str(), NAME_LENGTH - 1);
+		}
+
+		name.resize(NAME_LENGTH);
+		elemental->name = name;
+	}
+
+	if (this->nodeExists(node, "Level")) {
+		uint16 level;
+
+		if (!this->asUInt16(node, "Level", level))
+			return 0;
+
+		if (level > MAX_LEVEL) {
+			this->invalidWarning(node["Level"], "Level %d exceeds MAX_LEVEL, capping to %d.\n", level, MAX_LEVEL);
+			level = MAX_LEVEL;
+		}
+
+		elemental->lv = level;
+	} else {
+		if (!exists)
+			elemental->lv = 1;
+	}
+
+	if (this->nodeExists(node, "Hp")) {
+		uint32 hp;
+
+		if (!this->asUInt32(node, "Hp", hp))
+			return 0;
+
+		elemental->status.max_hp = hp;
+	} else {
+		if (!exists)
+			elemental->status.max_hp = 0;
+	}
+
+	if (this->nodeExists(node, "Sp")) {
+		uint32 sp;
+
+		if (!this->asUInt32(node, "Sp", sp))
+			return 0;
+
+		elemental->status.max_sp = sp;
+	} else {
+		if (!exists)
+			elemental->status.max_sp = 1;
+	}
+
+	if (this->nodeExists(node, "Attack")) {
+		uint16 atk;
+
+		if (!this->asUInt16(node, "Attack", atk))
+			return 0;
+
+		elemental->status.rhw.atk = atk;
+	} else {
+		if (!exists)
+			elemental->status.rhw.atk = 1;
+	}
+
+	if (this->nodeExists(node, "Attack2")) {
+		uint16 atk;
+
+		if (!this->asUInt16(node, "Attack2", atk))
+			return 0;
+
+#ifdef RENEWAL
+		elemental->status.rhw.matk = atk;
+#else
+		elemental->status.rhw.atk2 = atk;
+#endif
+	} else {
+		if (!exists)
+#ifdef RENEWAL
+			elemental->status.rhw.matk = 0;
+#else
+			elemental->status.rhw.atk2 = 0;
+#endif
+	}
+
+	if (this->nodeExists(node, "Defense")) {
+		int32 def;
+
+		if (!this->asInt32(node, "Defense", def))
+			return 0;
+
+		if (def < DEFTYPE_MIN || def > DEFTYPE_MAX) {
+			this->invalidWarning(node["Defense"], "Invalid defense %d, capping...\n", def);
+			def = cap_value(def, DEFTYPE_MIN, DEFTYPE_MAX);
+		}
+
+		elemental->status.def = static_cast<defType>(def);
+	} else {
+		if (!exists)
+			elemental->status.def = 0;
+	}
+
+	if (this->nodeExists(node, "MagicDefense")) {
+		int32 def;
+
+		if (!this->asInt32(node, "MagicDefense", def))
+			return 0;
+
+		if (def < DEFTYPE_MIN || def > DEFTYPE_MAX) {
+			this->invalidWarning(node["MagicDefense"], "Invalid magic defense %d, capping...\n", def);
+			def = cap_value(def, DEFTYPE_MIN, DEFTYPE_MAX);
+		}
+
+		elemental->status.mdef = static_cast<defType>(def);
+	} else {
+		if (!exists)
+			elemental->status.mdef = 0;
+	}
+
+	if (this->nodeExists(node, "Str")) {
+		uint16 stat;
+
+		if (!this->asUInt16(node, "Str", stat))
+			return 0;
+
+		elemental->status.str = stat;
+	} else {
+		if (!exists)
+			elemental->status.str = 0;
+	}
+
+	if (this->nodeExists(node, "Agi")) {
+		uint16 stat;
+
+		if (!this->asUInt16(node, "Agi", stat))
+			return 0;
+
+		elemental->status.agi = stat;
+	} else {
+		if (!exists)
+			elemental->status.agi = 0;
+	}
+
+	if (this->nodeExists(node, "Vit")) {
+		uint16 stat;
+
+		if (!this->asUInt16(node, "Vit", stat))
+			return 0;
+
+		elemental->status.vit = stat;
+	} else {
+		if (!exists)
+			elemental->status.vit = 0;
+	}
+
+	if (this->nodeExists(node, "Int")) {
+		uint16 stat;
+
+		if (!this->asUInt16(node, "Int", stat))
+			return 0;
+
+		elemental->status.int_ = stat;
+	} else {
+		if (!exists)
+			elemental->status.int_ = 0;
+	}
+
+	if (this->nodeExists(node, "Dex")) {
+		uint16 stat;
+
+		if (!this->asUInt16(node, "Dex", stat))
+			return 0;
+
+		elemental->status.dex = stat;
+	} else {
+		if (!exists)
+			elemental->status.dex = 0;
+	}
+
+	if (this->nodeExists(node, "Luk")) {
+		uint16 stat;
+
+		if (!this->asUInt16(node, "Luk", stat))
+			return 0;
+
+		elemental->status.luk = stat;
+	} else {
+		if (!exists)
+			elemental->status.luk = 0;
+	}
+
+	if (this->nodeExists(node, "AttackRange")) {
+		uint16 range;
+
+		if (!this->asUInt16(node, "AttackRange", range))
+			return 0;
+
+		elemental->status.rhw.range = range;
+	} else {
+		if (!exists)
+			elemental->status.rhw.range = 0;
+	}
+
+	if (this->nodeExists(node, "SkillRange")) {
+		uint16 range;
+
+		if (!this->asUInt16(node, "SkillRange", range))
+			return 0;
+
+		elemental->range2 = range;
+	} else {
+		if (!exists)
+			elemental->range2 = 5;
+	}
+
+	if (this->nodeExists(node, "ChaseRange")) {
+		uint16 range;
+
+		if (!this->asUInt16(node, "ChaseRange", range))
+			return 0;
+
+		elemental->range3 = range;
+	} else {
+		if (!exists)
+			elemental->range3 = 12;
+	}
+
+	if (this->nodeExists(node, "Size")) {
+		std::string size;
+
+		if (!this->asString(node, "Size", size))
+			return 0;
+
+		std::string size_constant = "Size_" + size;
+		int64 constant;
+
+		if (!script_get_constant(size_constant.c_str(), &constant) || constant < SZ_SMALL || constant > SZ_BIG) {
+			this->invalidWarning(node["Size"], "Invalid size %s, defaulting to Small.\n", size.c_str());
+			constant = SZ_SMALL;
+		}
+
+		elemental->status.size = static_cast<e_size>(constant);
+	}
+
+	if (this->nodeExists(node, "Race")) {
+		std::string race;
+
+		if (!this->asString(node, "Race", race))
+			return 0;
+
+		std::string race_constant = "RC_" + race;
+		int64 constant;
+
+		if (!script_get_constant(race_constant.c_str(), &constant) || !CHK_RACE(constant)) {
+			this->invalidWarning(node["Race"], "Invalid race %s, defaulting to Formless.\n", race.c_str());
+			constant = RC_FORMLESS;
+		}
+
+		elemental->status.race = static_cast<e_race>(constant);
+	} else {
+		if (!exists)
+			elemental->status.race = RC_FORMLESS;
+	}
+
+	if (this->nodeExists(node, "Element")) {
+		std::string ele;
+
+		if (!this->asString(node, "Element", ele))
+			return 0;
+
+		std::string ele_constant = "ELE_" + ele;
+		int64 constant;
+
+		if (!script_get_constant(ele_constant.c_str(), &constant) || !CHK_ELEMENT(constant)) {
+			this->invalidWarning(node["Element"], "Invalid element %s, defaulting to Neutral.\n", ele.c_str());
+			constant = ELE_NEUTRAL;
+		}
+
+		elemental->status.def_ele = static_cast<e_element>(constant);
+	}
+
+	if (this->nodeExists(node, "ElementLevel")) {
+		uint16 level;
+
+		if (!this->asUInt16(node, "ElementLevel", level))
+			return 0;
+
+		if (!CHK_ELEMENT_LEVEL(level)) {

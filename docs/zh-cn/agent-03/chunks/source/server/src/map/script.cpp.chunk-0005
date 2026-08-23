@@ -1,0 +1,500 @@
+			add_scriptc(C_FUNC);
+			return p + 1;
+		}
+		break;
+	case 'w':
+	case 'W':
+		if(p2 - p == 5 && !strncasecmp(p,"while",5)) {
+			int32 l;
+			char label[256];
+			p=skip_space(p2);
+			if(*p != '(') {
+				disp_error_message("need '('",p);
+			}
+			syntax.curly[syntax.curly_count].type  = TYPE_WHILE;
+			syntax.curly[syntax.curly_count].count = 1;
+			syntax.curly[syntax.curly_count].index = syntax.index++;
+			syntax.curly[syntax.curly_count].flag  = 0;
+			// Form the start of label decision
+			sprintf(label,"__WL%x_NXT",syntax.curly[syntax.curly_count].index);
+			l=add_str(label);
+			set_label(l,script_pos,p);
+
+			// Skip to the end point if the condition is false
+			sprintf(label,"__WL%x_FIN",syntax.curly[syntax.curly_count].index);
+			syntax.curly_count++;
+			add_scriptl(add_str("jump_zero"));
+			add_scriptc(C_ARG);
+			p=parse_expr(p);
+			p=skip_space(p);
+			add_scriptl(add_str(label));
+			add_scriptc(C_FUNC);
+			return p;
+		}
+		break;
+	}
+	return nullptr;
+}
+
+const char* parse_syntax_close(const char *p) {
+	// If (...) for (...) hoge (); as to make sure closed closed once again
+	int32 flag;
+
+	do {
+		p = parse_syntax_close_sub(p,&flag);
+	} while(flag);
+	return p;
+}
+
+// Close judgment if, for, while, of do
+//	 flag == 1 : closed
+//	 flag == 0 : not closed
+const char* parse_syntax_close_sub(const char* p,int32* flag)
+{
+	char label[256];
+	int32 pos = syntax.curly_count - 1;
+	int32 l;
+	*flag = 1;
+
+	if(syntax.curly_count <= 0) {
+		*flag = 0;
+		return p;
+	} else if(syntax.curly[pos].type == TYPE_IF) {
+		const char *bp = p;
+		const char *p2;
+
+		// if-block and else-block end is a new line
+		parse_nextline(false, p);
+
+		// Skip to the last location if
+		sprintf(label,"goto __IF%x_FIN;",syntax.curly[pos].index);
+		syntax.curly[syntax.curly_count++].type = TYPE_NULL;
+		parse_line(label);
+		syntax.curly_count--;
+
+		// Put the label of the location
+		sprintf(label,"__IF%x_%x",syntax.curly[pos].index,syntax.curly[pos].count);
+		l=add_str(label);
+		set_label(l,script_pos,p);
+
+		syntax.curly[pos].count++;
+		p = skip_space(p);
+		p2 = skip_word(p);
+		if(!syntax.curly[pos].flag && p2 - p == 4 && !strncasecmp(p,"else",4)) {
+			// else  or else - if
+			p = skip_space(p2);
+			p2 = skip_word(p);
+			if(p2 - p == 2 && !strncasecmp(p,"if",2)) {
+				// else - if
+				p=skip_space(p2);
+				if(*p != '(') {
+					disp_error_message("need '('",p);
+				}
+				sprintf(label,"__IF%x_%x",syntax.curly[pos].index,syntax.curly[pos].count);
+				add_scriptl(add_str("jump_zero"));
+				add_scriptc(C_ARG);
+				p=parse_expr(p);
+				p=skip_space(p);
+				add_scriptl(add_str(label));
+				add_scriptc(C_FUNC);
+				*flag = 0;
+				return p;
+			} else {
+				// else
+				if(!syntax.curly[pos].flag) {
+					syntax.curly[pos].flag = 1;
+					*flag = 0;
+					return p;
+				}
+			}
+		}
+		// Close if
+		syntax.curly_count--;
+		// Put the label of the final location
+		sprintf(label,"__IF%x_FIN",syntax.curly[pos].index);
+		l=add_str(label);
+		set_label(l,script_pos,p);
+		if(syntax.curly[pos].flag == 1) {
+			// Because the position of the pointer is the same if not else for this
+			return bp;
+		}
+		return p;
+	} else if(syntax.curly[pos].type == TYPE_DO) {
+		int32 l2;
+		char label2[256];
+		const char *p2;
+
+		if(syntax.curly[pos].flag) {
+			// (Come here continue) to form the label here
+			sprintf(label2,"__DO%x_NXT",syntax.curly[pos].index);
+			l2=add_str(label2);
+			set_label(l2,script_pos,p);
+		}
+
+		// Skip to the end point if the condition is false
+		p = skip_space(p);
+		p2 = skip_word(p);
+		if(p2 - p != 5 || strncasecmp(p,"while",5))
+			disp_error_message("parse_syntax: expected 'while'",p);
+
+		p = skip_space(p2);
+		if(*p != '(') {
+			disp_error_message("need '('",p);
+		}
+
+		// do-block end is a new line
+		parse_nextline(false, p);
+
+		sprintf(label2,"__DO%x_FIN",syntax.curly[pos].index);
+		add_scriptl(add_str("jump_zero"));
+		add_scriptc(C_ARG);
+		p=parse_expr(p);
+		p=skip_space(p);
+		add_scriptl(add_str(label2));
+		add_scriptc(C_FUNC);
+
+		// Skip to the starting point
+		sprintf(label2,"goto __DO%x_BGN;",syntax.curly[pos].index);
+		syntax.curly[syntax.curly_count++].type = TYPE_NULL;
+		parse_line(label2);
+		syntax.curly_count--;
+
+		// Form label of the end point conditions
+		sprintf(label2,"__DO%x_FIN",syntax.curly[pos].index);
+		l2=add_str(label2);
+		set_label(l2,script_pos,p);
+		p = skip_space(p);
+		if(*p != ';') {
+			disp_error_message("parse_syntax: expected ';'",p);
+			return p+1;
+		}
+		p++;
+		syntax.curly_count--;
+		return p;
+	} else if(syntax.curly[pos].type == TYPE_FOR) {
+		// for-block end is a new line
+		parse_nextline(false, p);
+
+		// Skip to the next loop
+		sprintf(label,"goto __FR%x_NXT;",syntax.curly[pos].index);
+		syntax.curly[syntax.curly_count++].type = TYPE_NULL;
+		parse_line(label);
+		syntax.curly_count--;
+
+		// End for labeling
+		sprintf(label,"__FR%x_FIN",syntax.curly[pos].index);
+		l=add_str(label);
+		set_label(l,script_pos,p);
+		syntax.curly_count--;
+		return p;
+	} else if(syntax.curly[pos].type == TYPE_WHILE) {
+		// while-block end is a new line
+		parse_nextline(false, p);
+
+		// Skip to the decision while
+		sprintf(label,"goto __WL%x_NXT;",syntax.curly[pos].index);
+		syntax.curly[syntax.curly_count++].type = TYPE_NULL;
+		parse_line(label);
+		syntax.curly_count--;
+
+		// End while labeling
+		sprintf(label,"__WL%x_FIN",syntax.curly[pos].index);
+		l=add_str(label);
+		set_label(l,script_pos,p);
+		syntax.curly_count--;
+		return p;
+	} else if(syntax.curly[syntax.curly_count-1].type == TYPE_USERFUNC) {
+		int32 pos2 = syntax.curly_count-1;
+		char label2[256];
+		int32 l2;
+		// Back
+		sprintf(label2,"return;");
+		syntax.curly[syntax.curly_count++].type = TYPE_NULL;
+		parse_line(label2);
+		syntax.curly_count--;
+
+		// Put the label of the location
+		sprintf(label2,"__FN%x_FIN",syntax.curly[pos2].index);
+		l2=add_str(label2);
+		set_label(l2,script_pos,p);
+		syntax.curly_count--;
+		return p;
+	} else {
+		*flag = 0;
+		return p;
+	}
+}
+
+/*==========================================
+ * Added built-in functions
+ *------------------------------------------*/
+static void add_buildin_func(void)
+{
+	int32 i;
+	for( i = 0; buildin_func[i].func; i++ )
+	{
+		// arg must follow the pattern: (v|s|i|r|l)*\?*\*?
+		// 'v' - value (either string or int32 or reference)
+		// 's' - string
+		// 'i' - int32
+		// 'r' - reference (of a variable)
+		// 'l' - label
+		// '?' - one optional parameter
+		// '*' - unknown number of optional parameters
+		const char* p = buildin_func[i].arg;
+		while( *p == 'v' || *p == 's' || *p == 'i' || *p == 'r' || *p == 'l' ) ++p;
+		while( *p == '?' ) ++p;
+		if( *p == '*' ) ++p;
+		if( *p != 0){
+			ShowWarning("add_buildin_func: ignoring function \"%s\" with invalid arg \"%s\".\n", buildin_func[i].name, buildin_func[i].arg);
+		} else if( *skip_word(buildin_func[i].name) != 0 ){
+			ShowWarning("add_buildin_func: ignoring function with invalid name \"%s\" (must be a word).\n", buildin_func[i].name);
+		} else {
+			int32 n = add_str(buildin_func[i].name);
+			str_data[n].type = C_FUNC;
+			str_data[n].val = i;
+			str_data[n].func = buildin_func[i].func;
+			str_data[n].deprecated = (buildin_func[i].deprecated != nullptr);
+
+			if (!strcmp(buildin_func[i].name, "setr")) buildin_set_ref = n;
+			else if (!strcmp(buildin_func[i].name, "callsub")) buildin_callsub_ref = n;
+			else if (!strcmp(buildin_func[i].name, "callfunc")) buildin_callfunc_ref = n;
+			else if( !strcmp(buildin_func[i].name, "getelementofarray") ) buildin_getelementofarray_ref = n;
+		}
+	}
+}
+
+/**
+ * String comparison with a char array to a script constant
+ * @param prefix: Char array to compare
+ * @param value: Script constant
+ * @return Constant name as char array or nullptr otherwise
+ */
+const char* script_get_constant_str( const char* prefix, int64 value ){
+	const char* name;
+
+	for(int32 i = 0; i < str_data_size; i++ ){
+		// Check if it is a constant
+		if( str_data[i].type != C_INT ){
+			continue;
+		}
+
+		// Check if the value matches
+		if( str_data[i].val != value ){
+			continue;
+		}
+
+		// Look up the actual string
+		name = get_str(i);
+
+		// Compare the prefix
+		if( !strncasecmp( name, prefix, strlen(prefix) ) ){
+			// We found a match
+			return name;
+		}
+	}
+
+	return nullptr;
+}
+
+/// Retrieves the value of a constant parameter.
+bool script_get_parameter(const char* name, int64* value)
+{
+	int32 n = search_str(name);
+
+	if (n == -1 || str_data[n].type != C_PARAM)
+	{// not found or not a parameter
+		return false;
+	}
+	value[0] = str_data[n].val;
+
+	return true;
+}
+
+/// Retrieves the value of a constant.
+bool script_get_constant(const char* name, int64* value)
+{
+	int32 n = search_str(name);
+
+	if( n == -1 || str_data[n].type != C_INT )
+	{// not found or not a constant
+		return false;
+	}
+	value[0] = str_data[n].val;
+
+#if defined(SCRIPT_CONSTANT_DEPRECATION)
+	if( str_data[n].deprecated ){
+		ShowWarning( "Usage of deprecated constant '%s'.\n", name );
+		ShowWarning( "This constant was deprecated and could become unavailable anytime soon.\n" );
+		if (str_data[n].name)
+			ShowWarning( "Please use '%s' instead!\n", str_data[n].name );
+	}
+#endif
+
+	return true;
+}
+
+/// Creates new constant or parameter with given value.
+void script_set_constant_(const char* name, int64 value, const char* constant_name, bool isparameter, bool deprecated)
+{
+	int32 n = add_str(name);
+
+	if( str_data[n].type == C_NOP )
+	{// new
+		str_data[n].type = isparameter ? C_PARAM : C_INT;
+		str_data[n].val  = value;
+		str_data[n].deprecated = deprecated;
+		str_data[n].name = constant_name;
+	}
+	else if( str_data[n].type == C_PARAM || str_data[n].type == C_INT )
+	{// existing parameter or constant
+		ShowError("script_set_constant: Attempted to overwrite existing %s '%s' (old value=%" PRId64 ", new value=%" PRId64 ").\n", ( str_data[n].type == C_PARAM ) ? "parameter" : "constant", name, str_data[n].val, value);
+	}
+	else
+	{// existing name
+		ShowError("script_set_constant: Invalid name for %s '%s' (already defined as %s).\n", isparameter ? "parameter" : "constant", name, script_op2name(str_data[n].type));
+	}
+}
+
+const std::string ConstantDatabase::getDefaultLocation(){
+	return std::string(db_path) + "/const.yml";
+}
+
+uint64 ConstantDatabase::parseBodyNode( const ryml::NodeRef& node ) {
+	std::string constant_name;
+
+	if (!this->asString( node, "Name", constant_name ))
+		return 0;
+
+	char name[1024];
+
+	if (sscanf(constant_name.c_str(), "%1023[A-Za-z0-9/_]", name) != 1) {
+		this->invalidWarning( node["Name"], "Invalid constant definition \"%s\", skipping.\n", constant_name.c_str() );
+		return 0;
+	}
+
+	int64 val;
+
+	if (!this->asInt64( node, "Value", val ))
+		return 0;
+
+	bool type = false;
+
+	if (this->nodeExists(node, "Parameter") && !this->asBool( node, "Parameter", type ))
+		return 0;
+
+	script_set_constant(name, val, type, false);
+
+	return 1;
+}
+
+ConstantDatabase constant_db;
+
+/**
+ * Sets source-end constants for NPC scripts to access.
+ **/
+void script_hardcoded_constants(void) {
+	#include "script_constants.hpp"
+}
+
+/*==========================================
+ * Display emplacement line of script
+ *------------------------------------------*/
+static const char* script_print_line(StringBuf* buf, const char* p, const char* mark, int32 line)
+{
+	int32 i;
+	if( p == nullptr || !p[0] ) return nullptr;
+	if( line < 0 )
+		StringBuf_Printf(buf, "*% 5d : ", -line);
+	else
+		StringBuf_Printf(buf, " % 5d : ", line);
+	for(i=0;p[i] && p[i] != '\n';i++){
+		if(p + i != mark)
+			StringBuf_Printf(buf, "%c", p[i]);
+		else
+			StringBuf_Printf(buf, "\'%c\'", p[i]);
+	}
+	StringBuf_AppendStr(buf, "\n");
+	return p+i+(p[i] == '\n' ? 1 : 0);
+}
+
+void script_errorwarning_sub(StringBuf *buf, const char* src, const char* file, int32 start_line, const char* error_msg_cur, const char* error_pos_cur) {
+	// Find the line where the error occurred
+	int32 j;
+	int32 line = start_line;
+	const char *p;
+	const char *linestart[5] = { nullptr, nullptr, nullptr, nullptr, nullptr };
+
+	for(p=src;p && *p;line++){
+		const char *lineend=strchr(p,'\n');
+		if(lineend==nullptr || error_pos_cur<lineend){
+			break;
+		}
+		for( j = 0; j < 4; j++ ) {
+			linestart[j] = linestart[j+1];
+		}
+		linestart[4] = p;
+		p=lineend+1;
+	}
+
+	StringBuf_Printf(buf, "script error on %s line %d\n", file, line);
+	StringBuf_Printf(buf, "    %s\n", error_msg_cur);
+	for(j = 0; j < 5; j++ ) {
+		script_print_line(buf, linestart[j], nullptr, line + j - 5);
+	}
+	p = script_print_line(buf, p, error_pos_cur, -line);
+	for(j = 0; j < 5; j++) {
+		p = script_print_line(buf, p, nullptr, line + j + 1 );
+	}
+}
+
+void script_error(const char* src, const char* file, int32 start_line, const char* error_msg_cur, const char* error_pos_cur) {
+	StringBuf buf;
+
+	StringBuf_Init(&buf);
+	StringBuf_AppendStr(&buf, "\a\n");
+
+	script_errorwarning_sub(&buf, src, file, start_line, error_msg_cur, error_pos_cur);
+
+	ShowError("%s", StringBuf_Value(&buf));
+}
+
+void script_warning(const char* src, const char* file, int32 start_line, const char* error_msg_cur, const char* error_pos_cur) {
+	StringBuf buf;
+
+	StringBuf_Init(&buf);
+
+	script_errorwarning_sub(&buf, src, file, start_line, error_msg_cur, error_pos_cur);
+
+	ShowWarning("%s", StringBuf_Value(&buf));
+}
+
+/*==========================================
+ * Analysis of the script
+ *------------------------------------------*/
+struct script_code* parse_script_( const char *src, const char *file, int32 line, int32 options, const char* src_file, int32 src_line, const char* src_func ){
+	const char *p,*tmpp;
+	int32 i;
+	struct script_code* code = nullptr;
+	char end;
+	bool unresolved_names = false;
+
+	parser_current_src = src;
+	parser_current_file = file;
+	parser_current_line = line;
+
+	if( src == nullptr )
+		return nullptr;// empty script
+
+	memset(&syntax,0,sizeof(syntax));
+
+	script_buf=(unsigned char *)aMalloc(SCRIPT_BLOCK_SIZE*sizeof(unsigned char));
+	script_pos=0;
+	script_size=SCRIPT_BLOCK_SIZE;
+	parse_nextline(true, nullptr);
+
+	// who called parse_script is responsible for clearing the database after using it, but just in case... lets clear it here
+	if( options&SCRIPT_USE_LABEL_DB )
+		db_clear(scriptlabel_db);
+	parse_options = options;
+

@@ -1,0 +1,66 @@
+			if( or_required ){
+				condition += " OR ";
+			}else{
+				or_required = true;
+			}
+
+			condition += "`healer` = '1'";
+		}
+
+		if( entry.tanker ){
+			if( or_required ){
+				condition += " OR ";
+			}else{
+				or_required = true;
+			}
+
+			condition += "`tanker` = '1'";
+		}
+
+		condition += " )";
+	}
+
+	if( !entry.comment.empty() ){
+		if( entry.comment.length() > COMMENT_LENGTH ){
+			res.status = HTTP_BAD_REQUEST;
+			res.set_content( "Error", "text/plain" );
+
+			return;
+		}
+
+		char escaped_comment[COMMENT_LENGTH * 2 + 1];
+
+		Sql_EscapeString( nullptr, escaped_comment, entry.comment.c_str() );
+
+		condition += " AND `comment` like '%" + std::string( escaped_comment ) + "%'";
+	}
+
+	std::vector<s_party_booking_entry> bookings;
+
+	if( !party_booking_read( world_name, bookings, condition, " ORDER BY `created` DESC" ) ){
+		res.status = HTTP_BAD_REQUEST;
+		res.set_content( "Error", "text/plain" );
+
+		return;
+	}
+
+	std::string response;
+
+	response = "{ \"Type\": 1, \"totalPage\": ";
+	response += std::to_string( bookings.size() );
+	response += ", \"data\": [";
+
+	for( size_t i = 0, max = bookings.size(); i < max; i++ ){
+		s_party_booking_entry& booking = bookings.at( i );
+
+		response += booking.to_json( world_name );
+
+		if( i < ( max - 1 ) ){
+			response += ", ";
+		}
+	}
+
+	response += "] }";
+
+	res.set_content( response, "application/json" );
+}

@@ -1,0 +1,500 @@
+			block_list* target = map_id2bl(group->val2);
+			status_change *sc;
+			bool removed = true;
+			//Clear group id from status change
+			if (target && (sc = status_get_sc(target)) != nullptr && sc->getSCE(SC_SPIDERWEB)) {
+				if (sc->getSCE(SC_SPIDERWEB)->val2 == group->group_id)
+					sc->getSCE(SC_SPIDERWEB)->val2 = 0;
+				else if (sc->getSCE(SC_SPIDERWEB)->val3 == group->group_id)
+					sc->getSCE(SC_SPIDERWEB)->val3 = 0;
+				else if (sc->getSCE(SC_SPIDERWEB)->val4 == group->group_id)
+					sc->getSCE(SC_SPIDERWEB)->val4 = 0;
+				else //Group was already removed in status_change_end, don't call it again!
+					removed = false;
+
+				//The last group was cleared, end status change
+				if(removed && sc->getSCE(SC_SPIDERWEB)->val2 == 0 && sc->getSCE(SC_SPIDERWEB)->val3 == 0 && sc->getSCE(SC_SPIDERWEB)->val4 == 0)
+					status_change_end(target, SC_SPIDERWEB);
+			}
+		}
+			break;
+		case SG_SUN_WARM:
+		case SG_MOON_WARM:
+		case SG_STAR_WARM: {
+				status_change *sc = status_get_sc(src);
+
+				if (sc && sc->getSCE(SC_WARM)) {
+					sc->getSCE(SC_WARM)->val4 = 0;
+					status_change_end(src, SC_WARM);
+				}
+			}
+			break;
+		case LG_BANDING: {
+				status_change *sc = status_get_sc(src);
+
+				if (sc && sc->getSCE(SC_BANDING)) {
+					sc->getSCE(SC_BANDING)->val4 = 0;
+					status_change_end(src, SC_BANDING);
+				}
+			}
+			break;
+		case NC_NEUTRALBARRIER:
+			{
+				status_change *sc = nullptr;
+				if( (sc = status_get_sc(src)) != nullptr ) {
+					if ( sc->getSCE(SC_NEUTRALBARRIER_MASTER) )
+					{
+						sc->getSCE(SC_NEUTRALBARRIER_MASTER)->val2 = 0;
+						status_change_end(src,SC_NEUTRALBARRIER_MASTER);
+					}
+					status_change_end(src,SC_NEUTRALBARRIER);
+				}
+			}
+			break;
+		case NC_STEALTHFIELD:
+			{
+				status_change *sc = nullptr;
+				if( (sc = status_get_sc(src)) != nullptr && sc->getSCE(SC_STEALTHFIELD_MASTER) ) {
+					sc->getSCE(SC_STEALTHFIELD_MASTER)->val2 = 0;
+					status_change_end(src,SC_STEALTHFIELD_MASTER);
+				}
+			}
+			break;
+	}
+
+	if (src->type==BL_PC && group->state.ammo_consume)
+		battle_consume_ammo((TBL_PC*)src, group->skill_id, group->skill_lv);
+
+	group->alive_count=0;
+
+	// remove all unit cells
+	if(group->unit != nullptr)
+		for( int32 j = 0; j < group->unit_count; j++ )
+			skill_delunit(&group->unit[j]);
+
+	// clear Talkie-box string
+	if( group->valstr != nullptr ) {
+		aFree(group->valstr);
+		group->valstr = nullptr;
+	}
+
+	link_group_id = group->link_group_id;
+
+	if (skillunit_group_db.erase(group->group_id) != 1)
+		ShowError("skill_delunitgroup: Group not found! (src_id: %d skill_id: %d)\n", group->src_id, group->skill_id);
+
+	util::vector_erase_if_exists(ud->skillunits, group);
+
+	if(link_group_id) {
+		std::shared_ptr<s_skill_unit_group> group_cur = skill_id2group(link_group_id);
+
+		if(group_cur)
+			skill_delunitgroup(group_cur);
+	}
+
+	return 1;
+}
+
+/**
+ * Clear all Skill Unit Group from an Object, example usage when player logged off or dead
+ * @param src
+ */
+void skill_clear_unitgroup(block_list *src)
+{
+	nullpo_retv(src);
+
+	unit_data *ud = unit_bl2ud(src);
+
+	nullpo_retv(ud);
+
+	// The after loop statement might look stupid, but this prevents iteration problems, if an entry was deleted
+	for (auto it = ud->skillunits.begin(); it != ud->skillunits.end(); it = ud->skillunits.begin()) {
+		skill_delunitgroup(*it);
+	}
+}
+
+/**
+ * Search tickset for skill unit in skill unit group
+ * @param bl Block List for skill_unit
+ * @param group Skill unit group
+ * @param tick
+ * @return skill_unit_group_tickset if found
+ */
+struct skill_unit_group_tickset *skill_unitgrouptickset_search(block_list *bl, std::shared_ptr<s_skill_unit_group> group, t_tick tick)
+{
+	int32 i, j = -1, s, id;
+	struct unit_data *ud;
+	struct skill_unit_group_tickset *set;
+
+	nullpo_ret(bl);
+	if (group->interval == -1)
+		return nullptr;
+
+	ud = unit_bl2ud(bl);
+	if (!ud)
+		return nullptr;
+
+	set = ud->skillunittick;
+
+	if (skill_get_unit_flag(group->skill_id, UF_NOOVERLAP))
+		id = s = group->skill_id;
+	else
+		id = s = group->group_id;
+
+	for (i=0; i<MAX_SKILLUNITGROUPTICKSET; i++) {
+		int32 k = (i+s) % MAX_SKILLUNITGROUPTICKSET;
+		if (set[k].id == id)
+			return &set[k];
+		else if (j==-1 && (DIFF_TICK(tick,set[k].tick)>0 || set[k].id==0))
+			j=k;
+	}
+
+	if (j == -1) {
+		ShowWarning ("skill_unitgrouptickset_search: tickset is full\n");
+		j = id % MAX_SKILLUNITGROUPTICKSET;
+	}
+
+	set[j].id = id;
+	set[j].tick = tick;
+	return &set[j];
+}
+
+/*==========================================
+ * Check for validity skill unit that triggered by skill_unit_timer_sub
+ * And trigger skill_unit_onplace_timer for object that maybe stands there (catched object is *bl)
+ *------------------------------------------*/
+int32 skill_unit_timer_sub_onplace(block_list* bl, va_list ap)
+{
+	skill_unit* unit = va_arg(ap,skill_unit *);
+	t_tick tick = va_arg(ap,t_tick);
+
+	nullpo_ret(unit);
+
+	if( !unit->alive || bl->prev == nullptr )
+		return 0;
+
+	std::shared_ptr<s_skill_unit_group> group = unit->group;
+
+	if (group == nullptr)
+		return 0;
+
+	std::shared_ptr<s_skill_db> skill = skill_db.find(group->skill_id);
+
+	if( !(skill->inf2[INF2_ISSONG] || skill->inf2[INF2_ISTRAP]) && !skill->inf2[INF2_IGNORELANDPROTECTOR] && group->skill_id != NC_NEUTRALBARRIER && (battle_config.land_protector_behavior ? map_getcell(bl->m, bl->x, bl->y, CELL_CHKLANDPROTECTOR) : map_getcell(unit->m, unit->x, unit->y, CELL_CHKLANDPROTECTOR)) )
+		return 0; //AoE skills are ineffective. [Skotlex]
+
+#ifdef RENEWAL
+	// Ankle Snare and Skid Trap can no longer trap bosses in renewal
+	if ((group->unit_id == UNT_ANKLESNARE || group->unit_id == UNT_SKIDTRAP) && status_bl_has_mode(bl, MD_STATUSIMMUNE))
+		return 0;
+#endif
+
+	if( battle_check_target(unit,bl,group->target_flag) <= 0 )
+		return 0;
+
+	skill_unit_onplace_timer(unit,bl,tick);
+	return 1;
+}
+
+/**
+ * @see DBApply
+ * Sub function of skill_unit_timer for executing each skill unit from skillunit_db
+ */
+static int32 skill_unit_timer_sub(DBKey key, DBData *data, va_list ap)
+{
+	skill_unit* unit = (skill_unit*)db_data2ptr(data);
+	t_tick tick = va_arg(ap,t_tick);
+	bool dissonance;
+	block_list* bl = unit;
+
+	nullpo_ret(unit);
+
+	if( !unit->alive )
+		return 0;
+
+	std::shared_ptr<s_skill_unit_group> group = unit->group;
+
+	if (group == nullptr)
+		return 0;
+
+	// Check for expiration
+	if( !group->state.guildaura && (DIFF_TICK(tick,group->tick) >= group->limit || DIFF_TICK(tick,group->tick) >= unit->limit) )
+	{// skill unit expired (inlined from skill_unit_onlimit())
+		switch( group->unit_id ) {
+			case UNT_ICEWALL:
+				unit->val1 -= 50; // icewall loses 50 hp every second
+				group->limit = DIFF_TICK(tick + group->interval,group->tick);
+				unit->limit = DIFF_TICK(tick + group->interval,group->tick);
+				if( unit->val1 <= 0 )
+					skill_delunit(unit);
+				break;
+			case UNT_BLASTMINE:
+#ifdef RENEWAL
+			case UNT_CLAYMORETRAP:
+#endif
+			case UNT_GROUNDDRIFT_WIND:
+			case UNT_GROUNDDRIFT_DARK:
+			case UNT_GROUNDDRIFT_POISON:
+			case UNT_GROUNDDRIFT_WATER:
+			case UNT_GROUNDDRIFT_FIRE:
+				group->unit_id = UNT_USED_TRAPS;
+				//clif_changetraplook(bl, UNT_FIREPILLAR_ACTIVE);
+				group->limit=DIFF_TICK(tick+1500,group->tick);
+				unit->limit=DIFF_TICK(tick+1500,group->tick);
+				break;
+
+			case UNT_ANKLESNARE:
+			case UNT_ELECTRICSHOCKER:
+				if (group->val2 > 0) { //Used Trap doesn't return back to item
+					skill_delunit(unit);
+					break;
+				}
+				[[fallthrough]];
+			case UNT_SKIDTRAP:
+			case UNT_LANDMINE:
+			case UNT_SHOCKWAVE:
+			case UNT_SANDMAN:
+			case UNT_FLASHER:
+			case UNT_FREEZINGTRAP:
+#ifndef RENEWAL
+			case UNT_CLAYMORETRAP:
+#endif
+			case UNT_TALKIEBOX:
+			case UNT_CLUSTERBOMB:
+			case UNT_MAGENTATRAP:
+			case UNT_COBALTTRAP:
+			case UNT_MAIZETRAP:
+			case UNT_VERDURETRAP:
+			case UNT_FIRINGTRAP:
+			case UNT_ICEBOUNDTRAP:
+			{
+				block_list* src;
+				if( unit->val1 > 0 && (src = map_id2bl(group->src_id)) != nullptr && src->type == BL_PC )
+				{ // revert unit back into a trap
+					struct item item_tmp;
+					memset(&item_tmp,0,sizeof(item_tmp));
+					item_tmp.nameid = group->item_id?group->item_id:ITEMID_TRAP;
+					item_tmp.identify = 1;
+					map_addflooritem(&item_tmp,1,bl->m,bl->x,bl->y,0,0,0,4,0);
+				}
+				skill_delunit(unit);
+			}
+				break;
+
+			case UNT_WARP_ACTIVE:
+				// warp portal opens (morph to a UNT_WARP_WAITING cell)
+				group->unit_id = skill_get_unit_id2(group->skill_id); // UNT_WARP_WAITING
+				clif_changelook(unit, LOOK_BASE, group->unit_id);
+				// restart timers
+				group->limit = skill_get_time(group->skill_id,group->skill_lv);
+				unit->limit = skill_get_time(group->skill_id,group->skill_lv);
+				// apply effect to all units standing on it
+				map_foreachincell(skill_unit_effect,unit->m,unit->x,unit->y,group->bl_flag,unit,gettick(),1);
+				break;
+
+			case UNT_CALLFAMILY:
+			{
+				map_session_data *sd = nullptr;
+				if(group->val1) {
+					sd = map_charid2sd(group->val1);
+					group->val1 = 0;
+					if (sd && !map_getmapflag(sd->m, MF_NOWARP) && pc_job_can_entermap((enum e_job)sd->status.class_, unit->m, pc_get_group_level(sd)))
+						pc_setpos(sd,map_id2index(unit->m),unit->x,unit->y,CLR_TELEPORT);
+				}
+				if(group->val2) {
+					sd = map_charid2sd(group->val2);
+					group->val2 = 0;
+					if (sd && !map_getmapflag(sd->m, MF_NOWARP) && pc_job_can_entermap((enum e_job)sd->status.class_, unit->m, pc_get_group_level(sd)))
+						pc_setpos(sd,map_id2index(unit->m),unit->x,unit->y,CLR_TELEPORT);
+				}
+				skill_delunit(unit);
+			}
+				break;
+
+			case UNT_REVERBERATION:
+			case UNT_NETHERWORLD:
+				if( unit->val1 <= 0 ) { // If it was deactivated.
+					skill_delunit(unit);
+					break;
+				}
+				clif_changetraplook(bl,UNT_USED_TRAPS);
+				if (group->unit_id == UNT_REVERBERATION)
+					map_foreachinrange(skill_trap_splash, bl, skill_get_splash(group->skill_id, group->skill_lv), group->bl_flag, bl, tick);
+				group->limit = DIFF_TICK(tick,group->tick) + 1000;
+				unit->limit = DIFF_TICK(tick,group->tick) + 1000;
+				group->unit_id = UNT_USED_TRAPS;
+				break;
+
+			case UNT_FEINTBOMB: {
+				block_list *src = map_id2bl(group->src_id);
+
+				if (src)
+					map_foreachinrange(skill_area_sub, unit, unit->range, BL_CHAR|BL_SKILL, src, group->skill_id, group->skill_lv, tick, BCT_ENEMY|SD_ANIMATION|5, skill_castend_damage_id);
+				skill_delunit(unit);
+			}
+				break;
+
+			case UNT_BANDING:
+			{
+				block_list *src = map_id2bl(group->src_id);
+				status_change *sc;
+				if( !src || (sc = status_get_sc(src)) == nullptr || !sc->getSCE(SC_BANDING) ) {
+					skill_delunit(unit);
+					break;
+				}
+				// This unit isn't removed while SC_BANDING is active.
+				group->limit = DIFF_TICK(tick+group->interval,group->tick);
+				unit->limit = DIFF_TICK(tick+group->interval,group->tick);
+			}
+				break;
+
+			case UNT_B_TRAP:
+				{
+					block_list* src;
+					if (group->item_id && unit->val2 <= 0 && (src = map_id2bl(group->src_id)) && src->type == BL_PC) {
+						struct item item_tmp;
+						memset(&item_tmp, 0, sizeof(item_tmp));
+						item_tmp.nameid = group->item_id;
+						item_tmp.identify = 1;
+						map_addflooritem(&item_tmp, 1, bl->m, bl->x, bl->y, 0, 0, 0, 4, 0);
+					}
+					skill_delunit(unit);
+				}
+				break;
+
+			default:
+				if (group->val2 == 1 && (group->skill_id == WZ_METEOR || group->skill_id == SU_CN_METEOR || group->skill_id == SU_CN_METEOR2 || 
+					group->skill_id == AG_VIOLENT_QUAKE_ATK || group->skill_id == AG_ALL_BLOOM_ATK || group->skill_id == AG_ALL_BLOOM_ATK2 || group->skill_id == NPC_RAINOFMETEOR ||
+					group->skill_id == HN_METEOR_STORM_BUSTER)) {
+					// Deal damage before expiration
+					break;
+				}
+				skill_delunit(unit);
+				break;
+		}
+	} else {// skill unit is still active
+		switch( group->unit_id ) {
+			case UNT_BLASTMINE:
+			case UNT_SKIDTRAP:
+			case UNT_LANDMINE:
+			case UNT_SHOCKWAVE:
+			case UNT_SANDMAN:
+			case UNT_FLASHER:
+			case UNT_CLAYMORETRAP:
+			case UNT_FREEZINGTRAP:
+			case UNT_TALKIEBOX:
+			case UNT_ANKLESNARE:
+			case UNT_B_TRAP:
+				if( unit->val1 <= 0 ) {
+					if( group->unit_id == UNT_ANKLESNARE && group->val2 > 0 )
+						skill_delunit(unit);
+					else {
+						clif_changetraplook(bl, group->unit_id == UNT_LANDMINE ? UNT_FIREPILLAR_ACTIVE : UNT_USED_TRAPS);
+						group->limit = DIFF_TICK(tick, group->tick) + 1500;
+						group->unit_id = UNT_USED_TRAPS;
+					}
+				}
+				break;
+			case UNT_REVERBERATION:
+			case UNT_NETHERWORLD:
+				if (unit->val1 <= 0) {
+					clif_changetraplook(bl,UNT_USED_TRAPS);
+					if (group->unit_id == UNT_REVERBERATION)
+						map_foreachinrange(skill_trap_splash, bl, skill_get_splash(group->skill_id, group->skill_lv), group->bl_flag, bl, tick);
+					group->limit = DIFF_TICK(tick,group->tick) + 1000;
+					unit->limit = DIFF_TICK(tick,group->tick) + 1000;
+					group->unit_id = UNT_USED_TRAPS;
+				}
+				break;
+			case UNT_WALLOFTHORN:
+				if (group->val3 < 0) { // Remove if attacked by fire element, turned to Fire Wall
+					skill_delunitgroup(group);
+					break;
+				}
+				if (unit->val1 <= 0 || unit->val2 <= 0) // Remove the unit only if no HP or hit limit is reached
+					skill_delunit(unit);
+				break;
+			case UNT_SANCTUARY:
+				if (group->val1 <= 0) {
+					skill_delunitgroup(group);
+				}
+				break;
+			default:
+				if (group->skill_id == WZ_METEOR || group->skill_id == SU_CN_METEOR || group->skill_id == SU_CN_METEOR2 || 
+					group->skill_id == AG_VIOLENT_QUAKE_ATK || group->skill_id == AG_ALL_BLOOM_ATK || group->skill_id == AG_ALL_BLOOM_ATK2 || group->skill_id == NPC_RAINOFMETEOR ||
+					group->skill_id == HN_METEOR_STORM_BUSTER) {
+					if (group->val2 == 0 && (DIFF_TICK(tick, group->tick) >= group->limit - group->interval || DIFF_TICK(tick, group->tick) >= unit->limit - group->interval)) {
+						// Unit will expire the next interval, start dropping Meteor
+						block_list *src = map_id2bl(group->src_id);
+
+						if (src != nullptr) {
+							if (group->skill_id == AG_VIOLENT_QUAKE_ATK || group->skill_id == AG_ALL_BLOOM_ATK || group->skill_id == AG_ALL_BLOOM_ATK2)
+								clif_skill_poseffect( *src, group->skill_id, -1, bl->x, bl->y, tick ); // Don't yell a blank skill name.
+							else
+								clif_skill_poseffect( *src, group->skill_id, group->skill_lv, bl->x, bl->y, tick );
+							group->val2 = 1;
+
+							// All meteors hit 700ms after the effect starts, regardless of their interval
+							if (group->skill_id == WZ_METEOR || group->skill_id == SU_CN_METEOR || group->skill_id == SU_CN_METEOR2)
+								group->limit = group->limit - group->interval + 700;
+						}
+					}
+					// No damage until expiration
+					return 0;
+				}
+				break;
+		}
+	}
+
+	//Don't continue if unit or even group is expired and has been deleted.
+	if( !group || !unit->alive )
+		return 0;
+
+	dissonance = skill_dance_switch(unit, false);
+
+	if( unit->range >= 0 && group->interval != -1 )
+	{
+		if (skill_get_unit_flag(group->skill_id, UF_PATHCHECK))
+			map_foreachinrange(skill_unit_timer_sub_onplace, bl, unit->range, group->bl_flag, bl, tick);
+		else
+			map_foreachinallrange(skill_unit_timer_sub_onplace, bl, unit->range, group->bl_flag, bl, tick);
+
+		if(unit->range == -1) //Unit disabled, but it should not be deleted yet.
+			group->unit_id = UNT_USED_TRAPS;
+		else if( group->unit_id == UNT_TATAMIGAESHI ) {
+			unit->range = -1; //Disable processed cell.
+			if (--group->val1 <= 0) { // number of live cells
+				//All tiles were processed, disable skill.
+				group->target_flag=BCT_NOONE;
+				group->bl_flag= BL_NUL;
+			}
+		}
+		else if (group->skill_id == WZ_METEOR || group->skill_id == SU_CN_METEOR || group->skill_id == SU_CN_METEOR2 || 
+			group->skill_id == AG_VIOLENT_QUAKE_ATK || group->skill_id == AG_ALL_BLOOM_ATK || group->skill_id == AG_ALL_BLOOM_ATK2 || group->skill_id == NPC_RAINOFMETEOR ||
+			group->skill_id == HN_METEOR_STORM_BUSTER ||
+			((group->skill_id == CR_GRANDCROSS || group->skill_id == NPC_GRANDDARKNESS) && unit->val1 <= 0)) {
+			skill_delunit(unit);
+			return 0;
+		}
+	}
+
+	if( dissonance )
+		skill_dance_switch(unit, true);
+
+	return 0;
+}
+
+/*==========================================
+ * Executes on all skill units every SKILLUNITTIMER_INTERVAL miliseconds.
+ *------------------------------------------*/
+TIMER_FUNC(skill_unit_timer){
+	FreeBlockLock freeLock;
+
+	skillunit_db->foreach(skillunit_db, skill_unit_timer_sub, tick);
+	return 0;
+}
+
+static std::vector<int16> skill_unit_cell; // Temporary storage for tracking skill unit skill IDs as players move in/out of them
+
+/*==========================================
+ * flag :

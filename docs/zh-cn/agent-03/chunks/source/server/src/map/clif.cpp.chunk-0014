@@ -1,0 +1,500 @@
+#if PACKETVER >= 20120618
+	if (flag && battle_config.display_status_timers) {
+		if (tick <= 0)
+			tick = 9999; // this is indeed what official servers do
+
+		WBUFL(buf,9) = client_tick(tick);/* at this stage remain and total are the same value I believe */
+		WBUFL(buf,13) = client_tick(tick);
+		WBUFL(buf,17) = val1;
+		WBUFL(buf,21) = val2;
+		WBUFL(buf,25) = val3;
+	}
+#elif PACKETVER >= 20090121
+	if (flag && battle_config.display_status_timers) {
+		if (tick <= 0)
+			tick = 9999; // this is indeed what official servers do
+
+		WBUFL(buf,9) = client_tick(tick);
+		WBUFL(buf,13) = val1;
+		WBUFL(buf,17) = val2;
+		WBUFL(buf,21) = val3;
+	}
+#endif
+	clif_send(buf, packet_len(WBUFW(buf,0)), bl, target_type);
+}
+
+/* Sends status effect to clients around the bl
+ * @param bl Object that has the effect
+ * @param type Status icon see enum efst_type
+ * @param flag 1:Active, 0:Deactive
+ * @param tick Duration in ms
+ * @param val1
+ * @param val2
+ * @param val3
+ */
+void clif_status_change( const block_list* bl, int32 type, int32 flag, t_tick tick, int32 val1, int32 val2, int32 val3 ) {
+
+
+	if (type == EFST_BLANK)  //It shows nothing on the client...
+		return;
+
+	if (type == EFST_POSTDELAY && tick == 0)
+		return;
+
+	if (type == EFST_ILLUSION && !battle_config.display_hallucination) // Disable Hallucination.
+		return;
+
+#if !( PACKETVER_MAIN_NUM >= 20191120 || PACKETVER_RE_NUM >= 20191106 )
+	// Older clients display normal riding icon.
+	if (type == EFST_MADOGEAR_TYPE)
+		type = EFST_RIDING;
+#endif
+
+	nullpo_retv(bl);
+
+	const map_session_data* sd = BL_CAST(BL_PC,bl);
+
+	// Check if current bl type is in the returned bitmask and only send status changes that actually matter to the client
+	if (!(status_efst_get_bl_type(static_cast<efst_type>(type)) & bl->type))
+		return;
+
+	clif_status_change_sub(bl, bl->id, type, flag, tick, val1, val2, val3, ((sd ? (pc_isinvisible(sd) ? SELF : AREA) : AREA_WOS)));
+}
+
+/// Notifies the client when a player enters the screen with an active EFST.
+/// 08ff <id>.L <index>.W <remain msec>.L { <val>.L }*3  (ZC_EFST_SET_ENTER) (PACKETVER >= 20111108)
+/// 0984 <id>.L <index>.W <total msec>.L <remain msec>.L { <val>.L }*3 (ZC_EFST_SET_ENTER2) (PACKETVER >= 20120618)
+void clif_efst_status_change( const block_list& bl, const block_list& tbl, enum send_target target, efst_type type, t_tick tick, int32 val1, int32 val2, int32 val3 ){
+#if PACKETVER >= 20111108
+	if (type == EFST_BLANK)
+		return;
+
+	if (tick <= 0)
+		tick = 9999;
+
+	PACKET_ZC_EFST_SET_ENTER p{};
+
+	p.packetType = HEADER_ZC_EFST_SET_ENTER;
+	p.targetID = tbl.id;
+	p.type = type;
+	p.duration = client_tick( tick );
+#if PACKETVER >= 20120618
+	p.duration2 = p.duration;
+#endif
+	p.val1 = val1;
+	p.val2 = val2;
+	p.val3 = val3;
+
+	clif_send( &p, sizeof( p ), &bl, target );
+#endif
+}
+
+/**
+ * Send any active EFST to those around.
+ * @param tbl: Unit to send the packet to
+ * @param bl: Objects walking into view
+ * @param target: Client send type
+ */
+void clif_efst_status_change_sub( const block_list* tbl, const block_list* bl, enum send_target target ) {
+	unsigned char i;
+	struct sc_display_entry **sc_display;
+	unsigned char sc_display_count;
+	bool spheres_sent;
+
+	nullpo_retv(bl);
+
+	switch( bl->type ){
+		case BL_PC: {
+			const map_session_data* sd = static_cast<const map_session_data*>(bl);
+
+			sc_display = sd->sc_display;
+			sc_display_count = sd->sc_display_count;
+			spheres_sent = !sd->state.connect_new;
+			}
+			break;
+		case BL_NPC: {
+			const npc_data* nd = static_cast<const npc_data*>(bl);
+
+			sc_display = nd->sc_display;
+			sc_display_count = nd->sc_display_count;
+			spheres_sent = true;
+			}
+			break;
+		default:
+			return;
+	}
+
+	for (i = 0; i < sc_display_count; i++) {
+		enum sc_type type = sc_display[i]->type;
+		const status_change *sc = status_get_sc(bl);
+		const struct TimerData *td = (sc && sc->getSCE(type) ? get_timer(sc->getSCE(type)->timer) : nullptr);
+		t_tick tick = 0;
+
+		if (td)
+			tick = DIFF_TICK(td->tick, gettick());
+
+		// Status changes that need special handling
+		switch( type ){
+			case SC_SPHERE_1:
+			case SC_SPHERE_2:
+			case SC_SPHERE_3:
+			case SC_SPHERE_4:
+			case SC_SPHERE_5:
+				if( spheres_sent ){
+					target = AREA_WOS;
+				}
+				break;
+			case SC_HELLS_PLANT:
+				if( sc && sc->getSCE(type) ){
+					tick = sc->getSCE(type)->val4;
+				}
+				break;
+		}
+
+#if PACKETVER > 20120418
+		clif_efst_status_change( *tbl, *bl, target, status_db.getIcon( type ), tick, sc_display[i]->val1, sc_display[i]->val2, sc_display[i]->val3 );
+#else
+		clif_status_change_sub(tbl, bl->id, status_db.getIcon(type), 1, tick, sc_display[i]->val1, sc_display[i]->val2, sc_display[i]->val3, target);
+#endif
+	}
+}
+
+/// Send message (modified by [Yor]) (ZC_NOTIFY_PLAYERCHAT).
+/// 008e <packet len>.W <message>.?B
+void clif_displaymessage(const int32 fd, const char* mes)
+{
+	nullpo_retv(mes);
+
+	if( session_isActive( fd ) ){
+		char *message, *line;
+
+		message = aStrdup(mes);
+		line = strtok(message, "\n");
+
+		while(line != nullptr) {
+#if PACKETVER == 20141022
+		/** for some reason game client crashes depending on message pattern (only for this packet) **/
+		/** so we redirect to ZC_NPC_CHAT **/
+		//clif_messagecolor(sd, color_table[COLOR_DEFAULT], mes, false, SELF);
+			unsigned long color = (color_table[COLOR_DEFAULT] & 0x0000FF) << 16 | (color_table[COLOR_DEFAULT] & 0x00FF00) | (color_table[COLOR_DEFAULT] & 0xFF0000) >> 16; // RGB to BGR
+			uint16 len = strnlen(line, CHAT_SIZE_MAX);
+
+			if (len > 0) { 
+				WFIFOHEAD(fd, 13 + len);
+				WFIFOW(fd, 0) = 0x2C1;
+				WFIFOW(fd, 2) = 13 + len;
+				WFIFOL(fd, 4) = 0;
+				WFIFOL(fd, 8) = color;
+				safestrncpy(WFIFOCP(fd, 12), line, len + 1);
+				WFIFOSET(fd, WFIFOW(fd, 2));
+			}
+#else
+			// Limit message to 255+1 characters (otherwise it causes a buffer overflow in the client)
+			int16 len;
+
+			len = static_cast<decltype(len)>( strnlen(line, CHAT_SIZE_MAX) );
+
+			if (len > 0) { // don't send a void message (it's not displaying on the client chat). @help can send void line.
+				WFIFOHEAD(fd, 5 + len);
+				WFIFOW(fd,0) = 0x8e;
+				WFIFOW(fd,2) = 5 + len; // 4 + len + nullptr teminate
+				safestrncpy(WFIFOCP(fd,4), line, len + 1);
+				WFIFOSET(fd, 5 + len);
+			}
+#endif
+			line = strtok(nullptr, "\n");
+		}
+		aFree(message);
+	}
+}
+
+/// Send broadcast message in yellow or blue without font formatting.
+/// 009a <packet len>.W <message>.?B (ZC_BROADCAST)
+void clif_broadcast( const block_list* bl, const char* mes, size_t len, int32 type, enum send_target target )
+{
+	nullpo_retv(mes);
+	if (len < 2)
+		return;
+
+	PACKET_ZC_BROADCAST* p = reinterpret_cast<PACKET_ZC_BROADCAST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_BROADCAST;
+	p->PacketLength = sizeof( *p );
+
+	if( ( type&BC_BLUE ) != 0 ){
+		// If there's "blue" at the beginning of the message, game client will display it in blue instead of yellow.
+		const char* color = "blue";
+		size_t length = strlen( color );
+
+		strcpy( p->message, color );
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( length );
+
+		strncpy( &p->message[length], mes, len );
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( len );
+	}else if( ( type&BC_WOE ) != 0 ){
+		// If there's "ssss", game client will recognize message as 'WoE broadcast'.
+		const char* color = "ssss";
+		size_t length = strlen( color );
+
+		strcpy( p->message, color );
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( length );
+
+		strncpy( &p->message[length], mes, len );
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( len );
+	}else{
+		strncpy( p->message, mes, len );
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( len );
+	}
+
+	clif_send( p, p->PacketLength, bl, target );
+}
+
+/*==========================================
+ * Displays a message on a 'bl' to all it's nearby clients
+ * 008d <PacketLength>.W <GID>.L <message>.?B (ZC_NOTIFY_CHAT)
+ *------------------------------------------*/
+void clif_GlobalMessage( const block_list& bl, const char* message, enum send_target target ){
+	nullpo_retv(message);
+
+	int16 len = (int16)( strlen( message ) + 1 );
+
+	if( len > CHAT_SIZE_MAX ) {
+		ShowWarning("clif_GlobalMessage: Truncating too long message '%s' (len=%" PRId16 ").\n", message, len);
+		len = CHAT_SIZE_MAX;
+	}
+
+	PACKET_ZC_NOTIFY_CHAT* p = reinterpret_cast<PACKET_ZC_NOTIFY_CHAT*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_NOTIFY_CHAT;
+	p->PacketLength =  sizeof( *p );
+	p->GID = bl.id;
+	safestrncpy( p->Message, message, len );
+	p->PacketLength += static_cast<decltype(p->PacketLength)>( len );
+
+	clif_send( p, p->PacketLength, &bl, target );
+}
+
+
+/// Send broadcast message with font formatting.
+/// 01c3 <packet len>.W <fontColor>.L <fontType>.W <fontSize>.W <fontAlign>.W <fontY>.W <message>.?B (ZC_BROADCAST2)
+void clif_broadcast2(const block_list* bl, const char* mes, size_t len, unsigned long fontColor, int16 fontType, int16 fontSize, int16 fontAlign, int16 fontY, enum send_target target)
+{
+	nullpo_retv(mes);
+	if (len < 2)
+		return;
+
+	PACKET_ZC_BROADCAST2* p = reinterpret_cast<PACKET_ZC_BROADCAST2*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_BROADCAST2;
+	p->PacketLength = sizeof( *p );
+	p->fontColor = fontColor;
+	p->fontType = fontType;
+	p->fontSize = fontSize;
+	p->fontAlign = fontAlign;
+	p->fontY = fontY;
+	strncpy( p->message, mes, len );
+	p->PacketLength += static_cast<decltype(p->PacketLength)>( len );
+
+	clif_send( p, p->PacketLength, bl, target );
+}
+
+/*
+ * Display *msg to all *users in channel
+ */
+void clif_channel_msg(struct Channel *channel, const char *msg, unsigned long color) {
+	DBIterator *iter;
+	map_session_data *user;
+	uint16 msg_len = 0, len = 0;
+	unsigned char buf[CHAT_SIZE_MAX];
+
+	if (!channel || !msg)
+		return;
+
+	msg_len = (uint16)(strlen(msg) + 1);
+
+	if( msg_len > sizeof(buf)-12 ) {
+		ShowWarning("clif_channel_msg: Truncating too long message '%s' (len=%u).\n", msg, msg_len);
+		msg_len = sizeof(buf)-12;
+	}
+
+	WBUFW(buf,0) = 0x2C1;
+	WBUFW(buf,2) = (len = msg_len + 12);
+	WBUFL(buf,4) = 0;
+	WBUFL(buf,8) = color;
+	safestrncpy(WBUFCP(buf,12), msg, msg_len);
+
+	iter = db_iterator(channel->users);
+	for( user = (map_session_data *)dbi_first(iter); dbi_exists(iter); user = (map_session_data *)dbi_next(iter) ) {
+		clif_send(buf, len, user, SELF);
+	}
+	dbi_destroy(iter);
+}
+
+/// Displays heal effect.
+/// 013d <var id>.W <amount>.W (ZC_RECOVERY)
+/// 0a27 <var id>.W <amount>.L (ZC_RECOVERY2)
+/// var id:
+///     5 = HP (SP_HP)
+///     7 = SP (SP_SP)
+///     ? = ignored
+void clif_heal( const map_session_data& sd, int32 type, uint32 val ) {
+	PACKET_ZC_RECOVERY packet{};
+
+	packet.packetType = HEADER_ZC_RECOVERY;
+	packet.type = static_cast<decltype(packet.type)>(type);
+	packet.amount = std::min( static_cast<decltype(packet.amount)>( val ), std::numeric_limits<decltype(packet.amount)>::max() );
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Displays resurrection effect.
+/// 0148 <id>.L <type>.W (ZC_RESURRECTION)
+/// type:
+///     ignored
+void clif_resurrection( const block_list& bl ){
+	PACKET_ZC_RESURRECTION packet{};
+
+	packet.packetType = HEADER_ZC_RESURRECTION;
+	packet.gid = bl.id;
+	packet.type = 0;
+
+	clif_send( &packet, sizeof( packet ), &bl, AREA );
+
+	if (disguised(&bl)) {
+		clif_spawn(&bl);
+	}
+}
+
+
+/// Sets the map property
+/// 0199 <type>.W (ZC_NOTIFY_MAPPROPERTY)
+/// 099b <type>.W <flags>.L (ZC_MAPPROPERTY_R2)
+void clif_map_property( const block_list* bl, enum map_property property, enum send_target t )
+{
+#if PACKETVER >= 20121010
+	int16 cmd = 0x99b;
+	unsigned char buf[8];
+#else
+	int16 cmd = 0x199;
+	unsigned char buf[4];
+#endif
+	
+	WBUFW(buf,0)=cmd;
+	WBUFW(buf,2)=property;
+
+#if PACKETVER >= 20121010
+	const map_data *mapdata = map_getmapdata(bl->m);
+	const map_session_data* sd = BL_CAST(BL_PC,bl);
+
+	WBUFL(buf,4) = ((mapdata->getMapFlag(MF_PVP) || (sd && sd->duel_group > 0))<<0)| // PARTY - Show attack cursor on non-party members (PvP)
+		((mapdata->getMapFlag(MF_BATTLEGROUND) || mapdata_flag_gvg2(mapdata))<<1)|// GUILD - Show attack cursor on non-guild members (GvG)
+		((mapdata->getMapFlag(MF_BATTLEGROUND) || mapdata_flag_gvg2(mapdata))<<2)|// SIEGE - Show emblem over characters heads when in GvG (WoE castle)
+		((mapdata->getMapFlag(MF_FORCEMINEFFECT) || mapdata_flag_gvg2(mapdata))<<3)| // USE_SIMPLE_EFFECT - Forces simpler skill effects, like /mineffect command
+		((mapdata->getMapFlag(MF_NOLOCKON) || mapdata_flag_vs(mapdata) || (sd && sd->duel_group > 0))<<4)| // DISABLE_LOCKON - Only allow attacks on other players with shift key or /ns active
+		((mapdata->getMapFlag(MF_PVP))<<5)| // COUNT_PK - Show the PvP counter
+		((mapdata->getMapFlag(MF_PARTYLOCK))<<6)| // NO_PARTY_FORMATION - Prevents party creation/modification (Might be used for instance dungeons)
+		((mapdata->getMapFlag(MF_BATTLEGROUND))<<7)| // BATTLEFIELD - Unknown (Does something for battlegrounds areas)
+		((mapdata->getMapFlag(MF_NOCOSTUME))<<8)| // DISABLE_COSTUMEITEM - Disable costume sprites
+		((!mapdata->getMapFlag(MF_NOUSECART))<<9)| // USECART - Allow opening cart inventory (Well force it to always allow it)
+		((!mapdata->getMapFlag(MF_NOSUNMOONSTARMIRACLE))<<10); // SUNMOONSTAR_MIRACLE - Allows Star Gladiator's Miracle to activate
+		//(1<<11); // Unused bits. 1 - 10 is 0x1 length and 11 is 0x15 length. May be used for future settings.
+#endif
+	
+	clif_send(buf,packet_len(cmd),bl,t);
+}
+
+/// Set the map type.
+/// 01d6 <type>.W (ZC_NOTIFY_MAPPROPERTY2)
+void clif_map_type( map_session_data& sd, e_map_type type ){
+	PACKET_ZC_NOTIFY_MAPPROPERTY2 packet{};
+
+	packet.packetType = HEADER_ZC_NOTIFY_MAPPROPERTY2;
+	packet.type = static_cast<decltype(packet.type)>(type);
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+
+/// Updates PvP ranking (ZC_NOTIFY_RANKING).
+/// 019a <id>.L <ranking>.L <total>.L
+void clif_pvpset( const map_session_data* sd, int32 pvprank, int32 pvpnum, int32 type ){
+	if(type == 2) {
+		int32 fd = sd->fd;
+		WFIFOHEAD(fd,packet_len(0x19a));
+		WFIFOW(fd,0) = 0x19a;
+		WFIFOL(fd,2) = sd->id;
+		WFIFOL(fd,6) = pvprank;
+		WFIFOL(fd,10) = pvpnum;
+		WFIFOSET(fd,packet_len(0x19a));
+	} else {
+		unsigned char buf[32];
+		WBUFW(buf,0) = 0x19a;
+		WBUFL(buf,2) = sd->id;
+		if(sd->sc.option&(OPTION_HIDE|OPTION_CLOAK))
+			WBUFL(buf,6) = UINT32_MAX; //On client displays as --
+		else
+			WBUFL(buf,6) = pvprank;
+		WBUFL(buf,10) = pvpnum;
+		if(pc_isinvisible(sd) || sd->disguise) //Causes crashes when a 'mob' with pvp info dies.
+			clif_send(buf,packet_len(0x19a),sd,SELF);
+		else if(!type)
+			clif_send(buf,packet_len(0x19a),sd,AREA);
+		else
+			clif_send(buf,packet_len(0x19a),sd,ALL_SAMEMAP);
+	}
+}
+
+
+/*==========================================
+ *
+ *------------------------------------------*/
+void clif_map_property_mapall(int32 map_idx, enum map_property property)
+{
+	block_list bl;
+
+	bl.id = 0;
+	bl.type = BL_NUL;
+	bl.m = map_idx;
+	
+	clif_map_property( &bl, property, ALL_SAMEMAP );
+}
+
+/// Notifies the client about the result of a refine attempt.
+/// 0188 <result>.W <index>.W <refine>.W (ZC_ACK_ITEMREFINING)
+/// result:
+///     0 = success
+///     1 = failure
+///     2 = downgrade
+///     3 = failure (?)
+void clif_refine( const map_session_data& sd, uint16 index, e_ack_itemrefining result ){
+	PACKET_ZC_ACK_ITEMREFINING packet{};
+
+	packet.packetType = HEADER_ZC_ACK_ITEMREFINING;
+	packet.result = static_cast<decltype(packet.result)>(result);
+	packet.index = client_index( index );
+	packet.value = static_cast<decltype(packet.value)>( sd.inventory.u.items_inventory[index].refine );
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+}
+
+/// Notifies the client about the result of a weapon refine attempt (ZC_ACK_WEAPONREFINE).
+/// 0223 <result>.L <nameid>.W
+/// result:
+///     0 = "weapon upgraded: %s" MsgStringTable[911] in rgb(0,255,255)
+///     1 = "weapon upgraded: %s" MsgStringTable[912] in rgb(0,205,205)
+///     2 = "cannot upgrade %s until you level up the upgrade weapon skill" MsgStringTable[913] in rgb(255,200,200)
+///     3 = "you lack the item %s to upgrade the weapon" MsgStringTable[914] in rgb(255,200,200)
+void clif_upgrademessage( const map_session_data* sd, int32 result, t_itemid item_id ){
+	PACKET_ZC_ACK_WEAPONREFINE p = {};
+
+	p.packetType = HEADER_ZC_ACK_WEAPONREFINE;
+	p.result = result;
+	p.itemId = client_nameid( item_id );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+}
+
+
+/// Whisper is transmitted to the destination player (ZC_WHISPER).
+/// 0097 <packet len>.W <nick>.24B <message>.?B

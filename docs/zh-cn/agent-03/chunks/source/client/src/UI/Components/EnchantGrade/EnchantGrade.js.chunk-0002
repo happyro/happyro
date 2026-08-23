@@ -1,0 +1,500 @@
+			}
+		);
+
+		const addBtn = root.querySelector('.add_material_btn');
+		if (addBtn) {
+			const newAddBtn = addBtn.cloneNode(true);
+			addBtn.parentNode.replaceChild(newAddBtn, addBtn);
+
+			newAddBtn.addEventListener('click', () => {
+				if (EnchantGrade_currentBlessing >= bless.max_blessing) {
+					return;
+				}
+				if (invCount < (EnchantGrade_currentBlessing + 1) * bless.amount) {
+					return;
+				}
+
+				EnchantGrade_blessing_used = true;
+				EnchantGrade_currentBlessing++;
+
+				updateBlessing();
+			});
+
+			newAddBtn.addEventListener('mouseenter', e => {
+				showTooltip(DB.getMessage(3976).replace('%d', bless.amount), e, newAddBtn);
+			});
+
+			newAddBtn.addEventListener('mousemove', e => {
+				showTooltip(DB.getMessage(3976).replace('%d', bless.amount), e, newAddBtn);
+			});
+
+			newAddBtn.addEventListener('mouseleave', hideTooltip);
+		}
+
+		const removeBtn = root.querySelector('.remove_material_btn');
+		if (removeBtn) {
+			const newRemoveBtn = removeBtn.cloneNode(true);
+			removeBtn.parentNode.replaceChild(newRemoveBtn, removeBtn);
+
+			newRemoveBtn.addEventListener('click', () => {
+				if (EnchantGrade_currentBlessing <= 0) {
+					EnchantGrade_blessing_used = false;
+					return;
+				}
+
+				EnchantGrade_currentBlessing--;
+
+				updateBlessing();
+			});
+		}
+
+		function updateBlessing() {
+			const addedChance = EnchantGrade_currentBlessing * bless.bonus;
+			const totalBlessing = EnchantGrade_currentBlessing * bless.amount;
+			const prob = root.querySelector('.probability');
+			if (prob) {
+				prob.textContent = `${EnchantGrade_current_success + addedChance}%`;
+			}
+
+			const matAmount = root.querySelector('.BED_container .additonal_mat_amount');
+			if (matAmount) {
+				matAmount.textContent = `${totalBlessing} ea`;
+			}
+		}
+
+		function showTooltip(text, e, targetEl) {
+			const tooltip = root.querySelector('.enchant_tooltip');
+			const rootEl = root.querySelector('#EnchantGrade');
+
+			if (!tooltip || !targetEl || !rootEl) {
+				return;
+			}
+
+			tooltip.innerHTML = text;
+			tooltip.style.display = 'block';
+
+			const btnRect = targetEl.getBoundingClientRect();
+			const rootRect = rootEl.getBoundingClientRect();
+
+			const x = e.clientX - rootRect.left;
+			const y = btnRect.top - rootRect.top;
+
+			tooltip.style.left = `${x - tooltip.offsetWidth / 2}px`;
+			tooltip.style.top = `${y - tooltip.offsetHeight - 6}px`;
+		}
+
+		function hideTooltip() {
+			const tooltip = root.querySelector('.enchant_tooltip');
+			if (tooltip) {
+				tooltip.style.display = 'none';
+			}
+		}
+	} else {
+		return false;
+	}
+}
+
+/**
+ * Handles populating materials needed for grading
+ * Controls for selecting and de-selecting materials
+ */
+function onPopulateMaterials() {
+	const root = _root();
+
+	root.querySelectorAll('.material_slot').forEach(slot => {
+		slot.innerHTML = '';
+	});
+
+	for (let i = 0; i < gradingMaterials.length; i++) {
+		(index => {
+			const material = gradingMaterials[index];
+			const it = DB.getItemInfo(material.itemId);
+			const materialDiv = root.querySelector(`.material_slot${i + 1}`);
+
+			if (!materialDiv) {
+				return;
+			}
+
+			materialDiv.innerHTML = '';
+
+			materialDiv.dataset.index = index;
+			materialDiv.dataset.itemid = material.itemId;
+			materialDiv.dataset.amount = material.amount;
+			materialDiv.dataset.price = material.price;
+			materialDiv.dataset.downgrade = material.downgrade;
+			materialDiv.dataset.breakable = material.breakable;
+
+			materialDiv.innerHTML =
+				`<div class="item" data-index="${material.itemId}" draggable="false">` +
+				'<div class="icon"></div></div>' +
+				`<div class="material_name">${it.identifiedDisplayName}</div>` +
+				`<div class="material_amount">${material.amount} ea</div>`;
+
+			Client.loadFile(
+				DB.INTERFACE_PATH +
+					'item/' +
+					(it.IsIdentified ? it.identifiedResourceName : it.unidentifiedResourceName) +
+					'.bmp',
+				function (data) {
+					const icon = materialDiv.querySelector(`.item[data-index="${material.itemId}"] .icon`);
+					if (icon) {
+						icon.style.backgroundImage = `url(${data})`;
+					}
+				}
+			);
+		})(i);
+	}
+
+	let selectedMaterialBtn = null;
+
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/btn_material.bmp', d => (materialNormal = d));
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/btn_material_over.bmp', d => (materialOver = d));
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/btn_material_pick.bmp', d => (materialPick = d));
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/btn_start.bmp', d => (startNormal = d));
+	Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/btn_start_disable.bmp', d => (startDisable = d));
+
+	if (_materialSlotAbort) {
+		_materialSlotAbort.abort();
+	}
+	_materialSlotAbort = new AbortController();
+	const _slotSignal = _materialSlotAbort.signal;
+
+	root.querySelectorAll('.material_slot').forEach(slot => {
+		slot.addEventListener(
+			'mouseenter',
+			function () {
+				if (this === selectedMaterialBtn) {
+					return;
+				}
+				this.style.backgroundImage = `url(${materialOver})`;
+			},
+			{ signal: _slotSignal }
+		);
+		slot.addEventListener(
+			'mouseleave',
+			function () {
+				if (this === selectedMaterialBtn) {
+					return;
+				}
+				this.style.backgroundImage = `url(${materialNormal})`;
+			},
+			{ signal: _slotSignal }
+		);
+		slot.addEventListener(
+			'click',
+			function () {
+				if (!this.dataset.index) {
+					return;
+				}
+
+				if (EnchantGrade_blessing_used) {
+					UIManager.showMessageBox(DB.getMessage(3831), 'ok');
+					onResetBlessing();
+				}
+
+				if (selectedMaterialBtn && selectedMaterialBtn !== this) {
+					selectedMaterialBtn.style.backgroundImage = `url(${materialNormal})`;
+				}
+
+				selectedMaterialBtn = this;
+				this.style.backgroundImage = `url(${materialPick})`;
+
+				EnchantGrade_item_mat = Number(this.dataset.index);
+				const material_ITID = Number(this.dataset.itemid);
+				const material_amount = Number(this.dataset.amount);
+				const price = Number(this.dataset.price);
+				const breakable = Number(this.dataset.breakable);
+
+				let insufficent = false;
+
+				const zenyCost = root.querySelector('.zeny_cost_container');
+				if (zenyCost) {
+					zenyCost.textContent = price;
+				}
+
+				const item = Inventory.getUI().getItemById(material_ITID);
+				const material_count = item ? item.count : 0;
+
+				if (!item || material_count < material_amount) {
+					insufficent = true;
+				}
+
+				if (Session.zeny < price) {
+					insufficent = true;
+				}
+
+				const scenarios = [];
+				scenarios.push(breakable === 1 ? 'destroyable' : 'non_destroyable');
+				if (insufficent) {
+					scenarios.push('insufficient');
+				}
+
+				if (EnchantGrade_can_cont) {
+					setMessages(...scenarios);
+				}
+
+				if (insufficent === false) {
+					const startButton = root.querySelector('.start_grade');
+					if (startButton) {
+						const newStartBtn = startButton.cloneNode(true);
+						startButton.parentNode.replaceChild(newStartBtn, startButton);
+
+						if (EnchantGrade_can_cont === true) {
+							newStartBtn.style.backgroundImage = `url(${startNormal})`;
+							newStartBtn.addEventListener('click', () => {
+								onRequestEnchantGrade();
+							});
+						} else {
+							newStartBtn.style.backgroundImage = `url(${startDisable})`;
+						}
+					}
+				}
+			},
+			{ signal: _slotSignal }
+		);
+	});
+}
+
+/**
+ * Reset the blessing usage flag and the current blessing count.
+ * Update the UI accordingly.
+ */
+function onResetBlessing() {
+	const root = _root();
+	EnchantGrade_blessing_used = false;
+	EnchantGrade_currentBlessing = 0;
+
+	const prob = root.querySelector('.probability');
+	if (prob) {
+		prob.textContent = `${EnchantGrade_current_success}%`;
+	}
+
+	const matAmount = root.querySelector('.BED_container .additonal_mat_amount');
+	if (matAmount) {
+		matAmount.textContent = `${EnchantGrade_currentBlessing} ea`;
+	}
+}
+
+/**
+ * Handles clearance of variables and UI components when changing Item
+ */
+function onRemoveItem() {
+	const root = _root();
+
+	gradingMaterials = [];
+
+	if (EnchantGrade.imageLoopTimeout) {
+		Object.keys(EnchantGrade.imageLoopTimeout).forEach(stopPhase);
+	}
+
+	const tankContainer = root.querySelector('.grade_tank_container');
+	if (tankContainer) {
+		tankContainer.style.visibility = 'hidden';
+	}
+
+	const enchantContainer = root.querySelector('.enchant_container');
+	if (enchantContainer) {
+		enchantContainer.innerHTML = '';
+	}
+
+	const probability = root.querySelector('.probability');
+	if (probability) {
+		probability.textContent = '';
+	}
+
+	const addBtn = root.querySelector('.add_material_btn');
+	if (addBtn) {
+		const newAddBtn = addBtn.cloneNode(true);
+		addBtn.parentNode.replaceChild(newAddBtn, addBtn);
+	}
+
+	const bedContainer = root.querySelector('.BED_container');
+	if (bedContainer) {
+		bedContainer.innerHTML = '';
+	}
+
+	const tooltip = root.querySelector('.enchant_tooltip');
+	if (tooltip) {
+		tooltip.innerHTML = '';
+		tooltip.style.display = 'none';
+	}
+
+	const zenyCost = root.querySelector('.zeny_cost_container');
+	if (zenyCost) {
+		zenyCost.textContent = '';
+	}
+
+	const notificationContainer = root.querySelector('.notification_container');
+	if (notificationContainer) {
+		notificationContainer.innerHTML = '';
+	}
+	setMessages('initial');
+
+	if (_materialSlotAbort) {
+		_materialSlotAbort.abort();
+		_materialSlotAbort = null;
+	}
+
+	const slots = root.querySelectorAll('.material_slot');
+	slots.forEach(slot => {
+		delete slot.dataset.index;
+		delete slot.dataset.itemid;
+		delete slot.dataset.amount;
+		delete slot.dataset.price;
+		delete slot.dataset.downgrade;
+		delete slot.dataset.breakable;
+		slot.innerHTML = '';
+		slot.classList.remove('selected');
+		if (materialNormal) {
+			slot.style.backgroundImage = `url(${materialNormal})`;
+		}
+	});
+
+	const startBtn = root.querySelector('.start_grade');
+	if (startBtn) {
+		const newStartBtn = startBtn.cloneNode(true);
+		startBtn.parentNode.replaceChild(newStartBtn, startBtn);
+		newStartBtn.style.backgroundImage = `url(${startDisable})`;
+	}
+
+	enableDropProxy();
+}
+
+/**
+ * Send the server request to EnchantGrade the item
+ */
+function onRequestEnchantGrade() {
+	UIManager.showPromptBox(DB.getMessage(3823), 'ok', 'cancel', () => {
+		const pkt = new PACKET.CZ.GRADE_ENCHANT_REQ();
+		pkt.index = EnchantGrade_item_index;
+		pkt.material_index = EnchantGrade_item_mat;
+		pkt.blessing_flag = EnchantGrade_blessing_used ? 1 : 0;
+		pkt.blessing_amount = EnchantGrade_currentBlessing;
+		pkt.protect_flag = 0;
+		Network.sendPacket(pkt);
+	});
+}
+
+/**
+ * Handles the received EnchantGrade result packet
+ * @param {pkt} - PACKET_ZC_GRADE_ENCHANT_ACK
+ * pkt.result:
+ * 0 = The grade has been successfully upgraded.
+ * 1= Refinement failed.
+ * 2= The refine level has decreased.
+ * 3= Equipment destroyed.
+ * 4= The equipment is protected.
+ */
+function onEnchantGradeResult(pkt) {
+	if (pkt) {
+		EnchantGrade_result = pkt.result;
+
+		controlPhase('process', true, 200, '.grade-wheel');
+
+		playEffect(EffectConst.EF_NEW_INTRO, 2000, () => {
+			stopPhase('process');
+
+			switch (EnchantGrade_result) {
+				case 0:
+					playEffect(EffectConst.EF_NEW_SUCCESS, 2000, () => {
+						onRemoveItem();
+					});
+					break;
+				case 1:
+					playEffect(EffectConst.EF_NEW_FAILURE, 2000, () => {
+						onRemoveItem();
+					});
+					break;
+				default:
+					break;
+			}
+		});
+
+		const item = Inventory.getUI().removeItem(pkt.index, 1);
+		if (item) {
+			item.enchantgrade = pkt.grade;
+			item.RefiningLevel = pkt.result === 0 ? 0 : item.RefiningLevel;
+			Inventory.getUI().addItem(item);
+		}
+	}
+}
+
+/**
+ * Set the messages to be displayed in the notification area.
+ * @param {...scenarioKeys} The keys of the messages to be displayed.
+ */
+function setMessages(...scenarioKeys) {
+	const root = _root();
+	const messages = [].concat(...scenarioKeys.map(key => scenarioMsgMapping[key] || []));
+	const notificationArea = root.querySelector('.notification_container');
+
+	if (!notificationArea) {
+		return;
+	}
+
+	notificationArea.innerHTML = '';
+
+	messages.slice(0, 3).forEach(msg => {
+		const line = document.createElement('div');
+		Client.loadFile(DB.INTERFACE_PATH + 'grade_enchant/caution.bmp', function (data) {
+			line.innerHTML = `<img src="${data}" style="margin-right: 2px;"><span style="color: ${msg.color};">${DB.getMessage(msg.id)}</span>`;
+		});
+		notificationArea.appendChild(line);
+	});
+}
+
+/**
+ * Get item info (open description window)
+ */
+function onItemInfo(event) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+
+	const ITID = parseInt(this.getAttribute('data-index'), 10);
+	const item = Inventory.getUI().getItemById(ITID)
+		? Inventory.getUI().getItemById(ITID)
+		: Inventory.getUI().getItemByIndex(ITID);
+
+	if (!item) {
+		return false;
+	}
+
+	if (ItemCompare.ui) {
+		ItemCompare.remove();
+	}
+
+	if (ItemInfo.uid === item.ITID) {
+		ItemInfo.remove();
+		if (ItemCompare.ui) {
+			ItemCompare.remove();
+		}
+		return false;
+	}
+
+	ItemInfo.append();
+	ItemInfo.uid = item.ITID;
+	ItemInfo.setItem(item);
+
+	const compareItem = Equipment.getUI().isInEquipList(item.location);
+
+	if (compareItem && Inventory.getUI().itemcomp) {
+		ItemCompare.prepare();
+		ItemCompare.append();
+		ItemCompare.uid = compareItem.ITID;
+		ItemCompare.setItem(compareItem);
+	}
+
+	return false;
+}
+
+/**
+ * Check if EnchantGrade UI is open
+ */
+EnchantGrade.isEnchantGradeOpen = function isEnchantGradeOpen() {
+	return !!(EnchantGrade._host && EnchantGrade._host.isConnected);
+};
+
+/**
+ * Start dragging an item
+ */
+function onItemDragStart(event) {

@@ -1,0 +1,500 @@
+						else
+							mapreg_setreg(reference_uid(add_str("$@guildmembercid"), j), g->guild.member[i].char_id);
+						break;
+					default:
+						if (data)
+							setd_sub_str( st, nullptr, varname, j, g->guild.member[i].name, data->ref );
+						else
+							mapreg_setregstr(reference_uid(add_str("$@guildmembername$"), j), g->guild.member[i].name);
+						break;
+				}
+				j++;
+			}
+		}
+	}
+	mapreg_setreg(add_str("$@guildmembercount"), j);
+	script_pushint(st, j);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Adds spirit ball to player for 'duration' in milisecond
+* addspiritball <count>,<duration>{,<char_id>};
+* @param count How many spirit ball will be added
+* @param duration How long spiritball is active until it disappears
+* @param char_id Target player (Optional)
+* @author [Cydh]
+*/
+BUILDIN_FUNC(addspiritball) {
+	uint8 i, count;
+	uint16 duration;
+	map_session_data *sd = nullptr;
+
+	if (script_hasdata(st,4)) {
+		if (!script_isstring(st,4))
+			sd = map_charid2sd(script_getnum(st,4));
+		else
+			sd = map_nick2sd(script_getstr(st,4),false);
+	}
+	else
+		script_rid2sd(sd);
+	if (!sd)
+		return SCRIPT_CMD_FAILURE;
+
+	count = script_getnum(st,2);
+
+	if (count == 0)
+		return SCRIPT_CMD_SUCCESS;
+
+	duration = script_getnum(st,3);
+
+	for (i = 0; i < count; i++)
+		pc_addspiritball(sd,duration,10);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Deletes the spirit ball(s) from player
+* delspiritball <count>{,<char_id>};
+* @param count How many spirit ball will be deleted
+* @param char_id Target player (Optional)
+* @author [Cydh]
+*/
+BUILDIN_FUNC(delspiritball) {
+	uint8 count;
+	map_session_data *sd = nullptr;
+	
+	if (script_hasdata(st,3)) {
+		if (!script_isstring(st,3))
+			sd = map_charid2sd(script_getnum(st,3));
+		else
+			sd = map_nick2sd(script_getstr(st,3),false);
+	}
+	else
+		script_rid2sd(sd);
+	if (!sd)
+		return SCRIPT_CMD_FAILURE;
+
+	count = script_getnum(st,2);
+
+	if (count == 0)
+		count = 1;
+
+	pc_delspiritball(sd,count,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Counts the spirit ball that player has
+* countspiritball {<char_id>};
+* @param char_id Target player (Optional)
+* @author [Cydh]
+*/
+BUILDIN_FUNC(countspiritball) {
+	map_session_data *sd;
+
+	if (script_hasdata(st,2)) {
+		if (!script_isstring(st,2))
+			sd = map_charid2sd(script_getnum(st,2));
+		else
+			sd = map_nick2sd(script_getstr(st,2),false);
+	}
+	else
+		script_rid2sd(sd);
+	if (!sd)
+		return SCRIPT_CMD_FAILURE;
+	script_pushint(st,sd->spiritball);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Merges separated stackable items because of guid
+* mergeitem {<char_id>};
+* @param char_id Char ID (Optional)
+* @author [Cydh]
+*/
+BUILDIN_FUNC(mergeitem) {
+	map_session_data *sd;
+
+	if (!script_charid2sd(2, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	clif_merge_item_open( *sd );
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/** Merges separated stackable items because of guid (Unofficial)
+* mergeitem2 {<item_id>,{<char_id>}};
+* mergeitem2 {"<item name>",{<char_id>}};
+* @param item Item ID/Name for merging specific item (Optional)
+* @author [Cydh]
+*/
+BUILDIN_FUNC(mergeitem2) {
+	map_session_data *sd;
+	struct item *items = nullptr;
+	uint16 i, count = 0;
+	t_itemid nameid = 0;
+
+	if (!script_charid2sd(3, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if (script_hasdata(st, 2)) {
+		if (script_isstring(st, 2)) {// "<item name>"
+			const char *name = script_getstr(st, 2);
+			std::shared_ptr<item_data> id = item_db.searchname( name );
+
+			if( id == nullptr ){
+				ShowError("buildin_mergeitem2: Nonexistant item %s requested.\n", name);
+				script_pushint(st, count);
+				return SCRIPT_CMD_FAILURE;
+			}
+			nameid = id->nameid;
+		} else {// <item id>
+			nameid = script_getnum(st, 2);
+			if (!item_db.exists(nameid)) {
+				ShowError("buildin_mergeitem: Nonexistant item %u requested.\n", nameid);
+				script_pushint(st, count);
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+	}
+
+	for (i = 0; i < MAX_INVENTORY; i++) {
+		struct item *it = &sd->inventory.u.items_inventory[i];
+
+		if (!it || !it->unique_id || it->expire_time || !itemdb_isstackable(it->nameid))
+			continue;
+		if ((!nameid || (nameid == it->nameid))) {
+			uint16 k;
+			if (!count) {
+				CREATE(items, struct item, 1);
+				memcpy(&items[count++], it, sizeof(struct item));
+				pc_delitem(sd, i, it->amount, 0, 0, LOG_TYPE_NPC);
+				continue;
+			}
+			for (k = 0; k < count; k++) {
+				// Find Match
+				if (&items[k] && items[k].nameid == it->nameid && items[k].bound == it->bound && memcmp(items[k].card, it->card, sizeof(it->card)) == 0) {
+					items[k].amount += it->amount;
+					pc_delitem(sd, i, it->amount, 0, 0, LOG_TYPE_NPC);
+					break;
+				}
+			}
+			if (k >= count) {
+				// New entry
+				RECREATE(items, struct item, count+1);
+				memcpy(&items[count++], it, sizeof(struct item));
+				pc_delitem(sd, i, it->amount, 0, 0, LOG_TYPE_NPC);
+			}
+		}
+	}
+
+	if (!items) // Nothing todo here
+		return SCRIPT_CMD_SUCCESS;
+
+	// Retrieve the items
+	for (i = 0; i < count; i++) {
+		uint8 flag = 0;
+		if (!&items[i])
+			continue;
+		items[i].id = 0;
+		items[i].unique_id = 0;
+		if ((flag = pc_additem(sd, &items[i], items[i].amount, LOG_TYPE_NPC)))
+			clif_additem(sd, i, items[i].amount, flag);
+	}
+	aFree(items);
+	script_pushint(st, count);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Update an entry from NPC shop.
+ * npcshopupdate "<name>",<item_id>,<price>{,<stock>}
+ **/
+BUILDIN_FUNC(npcshopupdate) {
+	const char* npcname = script_getstr(st, 2);
+	npc_data* nd = npc_name2id(npcname);
+	t_itemid nameid = script_getnum(st, 3);
+	int32 price = script_getnum(st, 4);
+#if PACKETVER >= 20131223
+	int32 stock = script_hasdata(st,5) ? script_getnum(st,5) : -1;
+
+	if( stock < -1 ){
+		ShowError( "buildin_npcshopupdate: Invalid stock amount in marketshop '%s'.\n", nd->exname );
+		script_pushint( st, 0 );
+		return SCRIPT_CMD_FAILURE;
+	}
+#endif
+	int32 i;
+
+	if( !nd || ( nd->subtype != NPCTYPE_SHOP && nd->subtype != NPCTYPE_CASHSHOP && nd->subtype != NPCTYPE_ITEMSHOP && nd->subtype != NPCTYPE_POINTSHOP && nd->subtype != NPCTYPE_MARKETSHOP ) ) { // Not found.
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+	
+	if (!nd->u.shop.count) {
+		ShowError("buildin_npcshopupdate: Attempt to update empty shop from '%s'.\n", nd->exname);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	for (i = 0; i < nd->u.shop.count; i++) {
+		if (nd->u.shop.shop_item[i].nameid == nameid) {
+			if (price != 0) {
+				if (price < 0) {
+					if (nd->subtype == NPCTYPE_CASHSHOP || nd->subtype == NPCTYPE_POINTSHOP || nd->subtype == NPCTYPE_ITEMSHOP) {
+						ShowError("builtin_npcshopupdate: Invalid price in shop '%s'.\n", nd->exname);
+						script_pushint(st, 0);
+						return SCRIPT_CMD_FAILURE;
+					}
+					std::shared_ptr<item_data> id = item_db.find(nameid);
+					if (!id) {
+						ShowError("buildin_npcshopupdate: Item ID %u does not exist.\n", nameid);
+						script_pushint(st, 0);
+						return SCRIPT_CMD_FAILURE;
+					}
+					price = id->value_buy;
+				}
+				nd->u.shop.shop_item[i].value = price;
+			}
+#if PACKETVER >= 20131223
+			if (nd->subtype == NPCTYPE_MARKETSHOP) {
+				nd->u.shop.shop_item[i].qty = stock;
+				npc_market_tosql(nd->exname, &nd->u.shop.shop_item[i]);
+			}
+#endif
+		}
+	}
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// Clan System
+BUILDIN_FUNC(clan_join){
+	map_session_data *sd;
+	int32 clan_id = script_getnum(st,2);
+
+	if( !script_charid2sd( 3, sd ) ){
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( clan_member_join( *sd, clan_id, sd->status.account_id, sd->status.char_id ) )
+		script_pushint(st, true);
+	else
+		script_pushint(st, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(clan_leave){
+	map_session_data* sd;
+
+	if( !script_charid2sd( 2, sd ) ){
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( clan_member_leave( *sd, sd->status.clan_id, sd->status.account_id, sd->status.char_id ) )
+		script_pushint(st, true);
+	else
+		script_pushint(st, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Get rid from running script.
+ * getattachedrid();
+ **/
+BUILDIN_FUNC(getattachedrid) {
+	script_pushint(st, st->rid);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Get variable from a Player
+ * getvar <variable>,<char_id>;
+ */
+BUILDIN_FUNC(getvar) {
+	int32 char_id = script_getnum(st, 3);
+	map_session_data *sd = map_charid2sd(char_id);
+	struct script_data *data = nullptr;
+	const char *name = nullptr;
+
+	if (!sd) {
+		ShowError("buildin_getvar: No player found with char id '%d'.\n", char_id);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	data = script_getdata(st, 2);
+	if (!data_isreference(data)) {
+		ShowError("buildin_getvar: Not a variable\n");
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	name = reference_getname(data);
+
+	if (reference_toparam(data)) {
+		ShowError("buildin_getvar: '%s' is a parameter - please use readparam instead\n", name);
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (name[0] == '.' || name[0] == '$' || name[0] == '\'') { // Not a PC variable
+		ShowError("buildin_getvar: Invalid scope (not PC variable)\n");
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	get_val_(st, data, sd);
+	if (data_isint(data))
+		script_pushint(st, conv_num_(st, data, sd));
+	else
+		script_pushstrcopy(st, conv_str_(st, data, sd));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Display script message
+ * showscript "<message>"{,<GID>,<flag>};
+ * @param flag: Specify target
+ *   AREA - Message is sent to players in the vicinity of the source (default).
+ *   SELF - Message is sent only to player attached.
+ **/
+BUILDIN_FUNC(showscript) {
+	block_list *bl = nullptr;
+	const char *msg = script_getstr(st,2);
+	int32 id = 0;
+	send_target target = AREA;
+
+	if (script_hasdata(st,3)) {
+		id = script_getnum(st,3);
+		bl = map_id2bl(id);
+	}
+	else {
+		bl = st->rid ? map_id2bl(st->rid) : map_id2bl(st->oid);
+	}
+
+	if (!bl) {
+		ShowError("buildin_showscript: Script not attached. (id=%d, rid=%d, oid=%d)\n", id, st->rid, st->oid);
+		script_pushint(st,0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st, 4)) {
+		target = static_cast<send_target>(script_getnum(st, 4));
+		if (target == SELF && map_id2sd(bl->id) == nullptr) {
+			ShowWarning("script: showscript: self can't be used for non-players objects.\n");
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	clif_showscript(bl, msg, target);
+
+	script_pushint(st,1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Ignore the SECURE_NPCTIMEOUT function.
+ * ignoretimeout <flag>{,<char_id>};
+ */
+BUILDIN_FUNC(ignoretimeout)
+{
+#ifdef SECURE_NPCTIMEOUT
+	map_session_data *sd = nullptr;
+
+	if (script_hasdata(st,3)) {
+		if (!script_isstring(st,3))
+			sd = map_charid2sd(script_getnum(st,3));
+		else
+			sd = map_nick2sd(script_getstr(st,3),false);
+	} else
+		script_rid2sd(sd);
+
+	if (!sd)
+		return SCRIPT_CMD_FAILURE;
+
+	sd->state.ignoretimeout = script_getnum(st,2) > 0;
+#endif
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * geteleminfo <type>{,<char_id>};
+ **/
+BUILDIN_FUNC(geteleminfo) {
+	map_session_data *sd = nullptr;
+
+	if (!script_charid2sd(3, sd)) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	s_elemental_data *ed = nullptr;
+
+	if (!(ed = sd->ed)) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	int32 type = script_getnum(st,2);
+
+	switch (type) {
+		case ELEMINFO_ID:
+			script_pushint(st, ed->elemental.elemental_id);
+			break;
+		case ELEMINFO_GAMEID:
+			script_pushint(st, ed->id);
+			break;
+		case ELEMINFO_CLASS:
+			script_pushint(st, ed->elemental.class_);
+			break;
+		default:
+			ShowError("buildin_geteleminfo: Invalid type '%d'.\n", type);
+			script_pushint(st, 0);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * opendressroom({<char_id>});
+ */
+BUILDIN_FUNC(opendressroom)
+{
+#if PACKETVER >= 20140212
+	map_session_data* sd;
+
+	if (!script_charid2sd(2, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	clif_dressing_room( *sd );
+
+	return SCRIPT_CMD_SUCCESS;
+#else
+	ShowError( "buildin_opendressroom: This command requires PACKETVER 2014-02-12 or newer.\n" );
+	return SCRIPT_CMD_FAILURE;
+#endif
+}
+
+/**
+ * navigateto("<map>"{,<x>,<y>,<flag>,<hide_window>,<monster_id>,<char_id>});
+ */
+BUILDIN_FUNC(navigateto){
+#if PACKETVER >= 20111010
+	TBL_PC* sd;
+	const char *mapname;
+	uint16 x = 0, y = 0, monster_id = 0;
+	uint8 flag = NAV_KAFRA_AND_AIRSHIP;
+	bool hideWindow = true;
+
+	mapname = script_getstr(st,2);
+

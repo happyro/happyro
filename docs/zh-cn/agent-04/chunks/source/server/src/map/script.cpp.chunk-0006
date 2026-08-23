@@ -1,0 +1,500 @@
+	if( setjmp( error_jump ) != 0 ) {
+		//Restore program state when script has problems. [from jA]
+		int32 j;
+		const int32 size = ARRAYLENGTH(syntax.curly);
+		if( error_report )
+			script_error(src,file,line,error_msg,error_pos);
+		aFree( error_msg );
+		aFree( script_buf );
+		script_pos  = 0;
+		script_size = 0;
+		script_buf  = nullptr;
+		for(j=LABEL_START;j<str_num;j++)
+			if(str_data[j].type == C_NOP) str_data[j].type = C_NAME;
+		for(j=0; j<size; j++)
+			linkdb_final(&syntax.curly[j].case_label);
+		return nullptr;
+	}
+
+	parse_syntax_for_flag=0;
+	p=src;
+	p=skip_space(p);
+	if( options&SCRIPT_IGNORE_EXTERNAL_BRACKETS )
+	{// does not require brackets around the script
+		if( *p == '\0' && !(options&SCRIPT_RETURN_EMPTY_SCRIPT) )
+		{// empty script and can return nullptr
+			aFree( script_buf );
+			script_pos  = 0;
+			script_size = 0;
+			script_buf  = nullptr;
+			return nullptr;
+		}
+		end = '\0';
+	}
+	else
+	{// requires brackets around the script
+		if( *p != '{' )
+			disp_error_message("not found '{'",p);
+		p = skip_space(p+1);
+		if( *p == '}' && !(options&SCRIPT_RETURN_EMPTY_SCRIPT) )
+		{// empty script and can return nullptr
+			aFree( script_buf );
+			script_pos  = 0;
+			script_size = 0;
+			script_buf  = nullptr;
+			return nullptr;
+		}
+		end = '}';
+	}
+
+	// clear references of labels, variables and internal functions
+	for(i=LABEL_START;i<str_num;i++){
+		if(
+			str_data[i].type==C_POS || str_data[i].type==C_NAME ||
+			str_data[i].type==C_USERFUNC || str_data[i].type == C_USERFUNC_POS
+		){
+			str_data[i].type=C_NOP;
+			str_data[i].backpatch=-1;
+			str_data[i].label=-1;
+		}
+	}
+
+	while( syntax.curly_count != 0 || *p != end )
+	{
+		if( *p == '\0' )
+			disp_error_message("unexpected end of script",p);
+		// Special handling only label
+		tmpp=skip_space(skip_word(p));
+		if(*tmpp==':' && !(!strncasecmp(p,"default:",8) && p + 7 == tmpp)){
+			i=add_word(p);
+			set_label(i,script_pos,p);
+			if( parse_options&SCRIPT_USE_LABEL_DB )
+				strdb_iput(scriptlabel_db, get_str(i), script_pos);
+			p=tmpp+1;
+			p=skip_space(p);
+			continue;
+		}
+
+		// All other lumped
+		p=parse_line(p);
+		p=skip_space(p);
+
+		parse_nextline(false, p);
+	}
+
+	add_scriptc(C_NOP);
+
+	// trim code to size
+	script_size = script_pos;
+	RECREATE(script_buf,unsigned char,script_pos);
+
+	// default unknown references to variables
+	for(i=LABEL_START;i<str_num;i++){
+		if(str_data[i].type==C_NOP){
+			int32 j;
+			str_data[i].type=C_NAME;
+			str_data[i].label=i;
+			for(j=str_data[i].backpatch;j>=0 && j!=0x00ffffff;){
+				int32 next=GETVALUE(script_buf,j);
+				SETVALUE(script_buf,j,i);
+				j=next;
+			}
+		}
+		else if( str_data[i].type == C_USERFUNC )
+		{// 'function name;' without follow-up code
+			ShowError("parse_script: function '%s' declared but not defined.\n", str_buf+str_data[i].str);
+			unresolved_names = true;
+		}
+	}
+
+	if( unresolved_names )
+	{
+		disp_error_message("parse_script: unresolved function references", p);
+	}
+
+#ifdef DEBUG_DISP
+	for(i=0;i<script_pos;i++){
+		if((i&15)==0) ShowMessage("%04x : ",i);
+		ShowMessage("%02x ",script_buf[i]);
+		if((i&15)==15) ShowMessage("\n");
+	}
+	ShowMessage("\n");
+#endif
+#ifdef DEBUG_DISASM
+	{
+		int32 i = 0,j;
+		while(i < script_pos) {
+			c_op op = get_com(script_buf,&i);
+
+			ShowMessage("%06x %s", i, script_op2name(op));
+			j = i;
+			switch(op) {
+			case C_INT:
+				ShowMessage(" %d", get_num(script_buf,&i));
+				break;
+			case C_POS:
+				ShowMessage(" 0x%06x", *(int32*)(script_buf+i)&0xffffff);
+				i += 3;
+				break;
+			case C_NAME:
+				j = (*(int32*)(script_buf+i)&0xffffff);
+				ShowMessage(" %s", ( j == 0xffffff ) ? "?? unknown ??" : get_str(j));
+				i += 3;
+				break;
+			case C_STR:
+				j = strlen(script_buf + i);
+				ShowMessage(" %s", script_buf + i);
+				i += j+1;
+				break;
+			}
+			ShowMessage(CL_CLL"\n");
+		}
+	}
+#endif
+
+	CREATE2( code, struct script_code, 1, src_file, src_line, src_func );
+	code->script_buf  = script_buf;
+	code->script_size = script_size;
+	code->local.vars = nullptr;
+	code->local.arrays = nullptr;
+	return code;
+}
+
+/// Returns the player attached to this script, identified by the rid.
+/// If there is no player attached, the script is terminated.
+static bool script_rid2sd_( struct script_state *st, map_session_data** sd, const char *func ){
+	*sd = map_id2sd( st->rid );
+
+	if( *sd ){
+		return true;
+	}else{
+		ShowError("%s: fatal error ! player not attached!\n",func);
+		script_reportfunc(st);
+		script_reportsrc(st);
+		st->state = END;
+		return false;
+	}
+}
+
+/**
+ * Dereferences a variable/constant, replacing it with a copy of the value.
+ * @param st Script state
+ * @param data Variable/constant
+ * @param sd If nullptr, will try to use sd from st->rid (for player's variables)
+ */
+struct script_data *get_val_(struct script_state* st, struct script_data* data, map_session_data *sd)
+{
+	const char* name;
+	char prefix;
+	char postfix;
+
+	if( !data_isreference(data) )
+		return data;// not a variable/constant
+
+	name = reference_getname(data);
+	prefix = name[0];
+	postfix = name[strlen(name) - 1];
+
+	//##TODO use reference_tovariable(data) when it's confirmed that it works [FlavioJS]
+	if( !reference_toconstant(data) && not_server_variable(prefix) ) {
+		if( sd == nullptr && !script_rid2sd(sd) ) {// needs player attached
+			if( postfix == '$' ) {// string variable
+				ShowWarning("script:get_val: cannot access player variable '%s', defaulting to \"\"\n", name);
+				data->type = C_CONSTSTR;
+				data->u.str = const_cast<char *>("");
+			} else {// integer variable
+				ShowWarning("script:get_val: cannot access player variable '%s', defaulting to 0\n", name);
+				data->type = C_INT;
+				data->u.num = 0;
+			}
+			return data;
+		}
+	}
+
+	if( postfix == '$' ) {// string variable
+
+		switch( prefix ) {
+			case '@':
+				data->u.str = pc_readregstr(sd, data->u.num);
+				break;
+			case '$':
+				data->u.str = mapreg_readregstr(data->u.num);
+				break;
+			case '#':
+				if( name[1] == '#' )
+					data->u.str = pc_readaccountreg2str(sd, data->u.num);// global
+				else
+					data->u.str = pc_readaccountregstr(sd, data->u.num);// local
+				break;
+			case '.':
+				{
+					struct DBMap* n = data->ref ?
+							data->ref->vars : name[1] == '@' ?
+							st->stack->scope.vars : // instance/scope variable
+							st->script->local.vars; // npc variable
+					if( n )
+						data->u.str = (char*)i64db_get(n,reference_getuid(data));
+					else
+						data->u.str = nullptr;
+				}
+				break;
+			case '\'':
+				{
+					struct DBMap* n = nullptr;
+					if (data->ref)
+						n = data->ref->vars;
+					else {
+						std::shared_ptr<s_instance_data> idata = util::umap_find(instances, script_instancegetid(st));
+
+						if (idata)
+							n = idata->regs.vars;
+					}
+					if (n)
+						data->u.str = (char*)i64db_get(n,reference_getuid(data));
+					else {
+						ShowWarning("script:get_val: cannot access instance variable '%s', defaulting to \"\"\n", name);
+						data->u.str = nullptr;
+					}
+					break;
+				}
+			default:
+				data->u.str = pc_readglobalreg_str(sd, data->u.num);
+				break;
+		}
+
+		if( data->u.str == nullptr || data->u.str[0] == '\0' ) {// empty string
+			data->type = C_CONSTSTR;
+			data->u.str = const_cast<char *>("");
+		} else {// duplicate string
+			data->type = C_STR;
+			data->u.str = aStrdup(data->u.str);
+		}
+
+	} else {// integer variable
+
+		data->type = C_INT;
+
+		if( reference_toconstant(data) ) {
+			data->u.num = reference_getconstant(data);
+		} else if( reference_toparam(data) ) {
+			data->u.num = pc_readparam(sd, reference_getparamtype(data));
+		} else
+			switch( prefix ) {
+				case '@':
+					data->u.num = pc_readreg(sd, data->u.num);
+					break;
+				case '$':
+					data->u.num = mapreg_readreg(data->u.num);
+					break;
+				case '#':
+					if( name[1] == '#' )
+						data->u.num = pc_readaccountreg2(sd, data->u.num);// global
+					else
+						data->u.num = pc_readaccountreg(sd, data->u.num);// local
+					break;
+				case '.':
+					{
+						struct DBMap* n = data->ref ?
+								data->ref->vars : name[1] == '@' ?
+								st->stack->scope.vars : // instance/scope variable
+								st->script->local.vars; // npc variable
+						if( n )
+							data->u.num = i64db_i64get(n,reference_getuid(data));
+						else
+							data->u.num = 0;
+					}
+					break;
+				case '\'':
+					{
+						struct DBMap* n = nullptr;
+						if (data->ref)
+							n = data->ref->vars;
+						else {
+							std::shared_ptr<s_instance_data> idata = util::umap_find(instances, script_instancegetid(st));
+
+							if (idata)
+								n = idata->regs.vars;
+						}
+						if (n)
+							data->u.num = i64db_i64get(n,reference_getuid(data));
+						else {
+							ShowWarning("script:get_val: cannot access instance variable '%s', defaulting to 0\n", name);
+							data->u.num = 0;
+						}
+						break;
+					}
+				default:
+					data->u.num = pc_readglobalreg(sd, data->u.num);
+					break;
+			}
+
+	}
+	data->ref = nullptr;
+
+	return data;
+}
+
+struct script_data *get_val(struct script_state* st, struct script_data* data)
+{
+	return get_val_(st,data,nullptr);
+}
+
+struct script_data* push_val2(struct script_stack* stack, enum c_op type, int64 val, struct reg_db* ref);
+
+const char* get_val2_str( struct script_state* st, int64 uid, struct reg_db* ref ){
+	push_val2( st->stack, C_NAME, uid, ref );
+
+	struct script_data* data = script_getdatatop( st, -1 );
+
+	get_val( st, data );
+
+	const char* value = "";
+
+	if( data->type == C_INT ){
+		ShowError( "get_val2_num: Invalid call. Variable %s is a numeric type.\n", reference_getname( data ) );
+	}else{
+		value = data->u.str;
+	}
+
+	// Do NOT remove the value from stack here, the pointer is returned here and will be used by the caller [Lemongrass]
+	// script_removetop( st, -1, 0 );
+
+	return value;
+}
+
+int64 get_val2_num( struct script_state* st, int64 uid, struct reg_db* ref ){
+	push_val2( st->stack, C_NAME, uid, ref );
+
+	struct script_data* data = script_getdatatop( st, -1 );
+
+	get_val( st, data );
+
+	int64 value = 0;
+
+	if( data->type == C_INT ){
+		value = data->u.num;
+	}else{
+		ShowError( "get_val2_num: Invalid call. Variable %s is not a numeric type.\n", reference_getname( data ) );
+	}
+
+	script_removetop( st, -1, 0 );
+
+	return value;
+}
+
+/**
+ * Because, currently, array members with key 0 are indifferenciable from normal variables, we should ensure its actually in
+ * Will be gone as soon as undefined var feature is implemented
+ **/
+void script_array_ensure_zero(struct script_state *st, map_session_data *sd, int64 uid, struct reg_db *ref)
+{
+	const char *name = get_str(script_getvarid(uid));
+	// is here st can be null pointer and st->rid is wrong?
+	struct reg_db *src = script_array_src(st, sd ? sd : st->rid ? map_id2sd(st->rid) : nullptr, name, ref);
+	bool insert = false;
+
+	if (sd && !st) {
+		// when sd comes, st isn't available
+		insert = true;
+	} else {
+		if( is_string_variable(name) ) {
+			const char* str = get_val2_str( st, uid, ref );
+			if( str && *str )
+				insert = true;
+			// Remove stack entry from get_val2_str
+			script_removetop( st, -1, 0 );
+		} else {
+			int64 num = get_val2_num( st, uid, ref );
+			if( num )
+				insert = true;
+		}
+	}
+
+	if (src && src->arrays) {
+		struct script_array *sa = static_cast<script_array *>(idb_get(src->arrays, script_getvarid(uid)));
+		if (sa) {
+			uint32 i;
+
+			ARR_FIND(0, sa->size, i, sa->members[i] == 0);
+			if( i != sa->size ) {
+				if( !insert )
+					script_array_remove_member(src,sa,i);
+				return;
+			}
+
+			script_array_add_member(sa,0);
+		} else if (insert) {
+			script_array_update(src,reference_uid(script_getvarid(uid), 0),false);
+		}
+	}
+}
+
+/**
+ * Returns array size by ID
+ **/
+uint32 script_array_size(struct script_state *st, map_session_data *sd, const char *name, struct reg_db *ref)
+{
+	struct script_array *sa = nullptr;
+	struct reg_db *src = script_array_src(st, sd, name, ref);
+
+	if (src && src->arrays)
+		sa = static_cast<script_array *>(idb_get(src->arrays, search_str(name)));
+
+	return sa ? sa->size : 0;
+}
+
+/**
+ * Returns array's highest key (for that awful getarraysize implementation that doesn't really gets the array size)
+ **/
+uint32 script_array_highest_key(struct script_state *st, map_session_data *sd, const char *name, struct reg_db *ref)
+{
+	struct script_array *sa = nullptr;
+	struct reg_db *src = script_array_src(st, sd, name, ref);
+
+	if (src && src->arrays) {
+		int32 key = add_word(name);
+
+		script_array_ensure_zero(st,sd,reference_uid(key, 0), ref);
+
+		if( ( sa = static_cast<script_array *>(idb_get(src->arrays, key)) ) ) {
+			uint32 i, highest_key = 0;
+
+			for(i = 0; i < sa->size; i++) {
+				if( sa->members[i] > highest_key )
+					highest_key = sa->members[i];
+			}
+
+			return sa->size ? highest_key + 1 : 0;
+		}
+	}
+	
+	return SCRIPT_CMD_SUCCESS;
+}
+
+int32 script_free_array_db(DBKey key, DBData *data, va_list ap)
+{
+	struct script_array *sa = static_cast<script_array *>(db_data2ptr(data));
+	aFree(sa->members);
+	ers_free(array_ers, sa);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Clears script_array and removes it from script->array_db
+ **/
+void script_array_delete(struct reg_db *src, struct script_array *sa)
+{
+	aFree(sa->members);
+	idb_remove(src->arrays, sa->id);
+	ers_free(array_ers, sa);
+}
+
+/**
+ * Removes a member from a script_array list
+ *
+ * @param idx the index of the member in script_array struct list, not of the actual array member
+ **/
+void script_array_remove_member(struct reg_db *src, struct script_array *sa, uint32 idx)
+{
+	uint32 i, cursor;
+

@@ -1,0 +1,500 @@
+	clif_displaymessage(fd, atcmd_output);
+	clif_displaymessage(fd, msg_txt(sd,1428));// -- Binds your global chat to the specified channel, sending all global messages to that channel.
+
+	//option unbind
+	sprintf(atcmd_output, msg_txt(sd,1429),command);// * %s unbind
+	clif_displaymessage(fd, atcmd_output);
+	clif_displaymessage(fd, msg_txt(sd,1430));// -- Unbinds your global chat from the attached channel, if any.
+
+	//option ban/unban/banlist
+	if( can_create ) {
+		sprintf(atcmd_output, msg_txt(sd,1456),command);// * %s ban <#channel_name> <player>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1457));// -- Bans the specified player from the channel.
+		sprintf(atcmd_output, msg_txt(sd,1458),command);// * %s banlist <#channel_name>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1459));// -- Lists all players banned from the specified channel.
+		sprintf(atcmd_output, msg_txt(sd,1460),command);// * %s unban <#channel_name> <player>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1461));// -- Unbans the specified player from the channel.
+		sprintf(atcmd_output, msg_txt(sd,1467),command);// * %s unbanall <#channel_name>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1468));// -- Clears all bans from the specified channel.
+	}
+
+	//option setopt
+	if(can_create){
+		sprintf(atcmd_output, msg_txt(sd,1462),command);// * %s setopt <#channel_name> <option> <value>
+		clif_displaymessage(fd, atcmd_output);
+		clif_displaymessage(fd, msg_txt(sd,1463));// -- Sets an option and value for the specified channel.
+	}
+
+	sprintf(atcmd_output, msg_txt(sd,1404),command); // %s failed.
+	clif_displaymessage(fd, atcmd_output);
+}
+
+ACMD_FUNC(channel) {
+	char key[NAME_LENGTH], sub1[CHAN_NAME_LENGTH], sub2[64];
+	sub1[0] = sub2[0] = '\0';
+
+	if( !message || !*message || sscanf(message, "%23s %19s %63[^\n]", key, sub1, sub2) < 1 ) {
+		atcmd_channel_help(sd,command);
+		return 0;
+	}
+
+	if( strcmpi(key,"delete") == 0 && pc_has_permission(sd, PC_PERM_CHANNEL_ADMIN) ) {
+		return channel_pcdelete(sd,sub1);
+	} else if ( strcmpi(key,"list") == 0 ) {
+		return channel_display_list(sd,sub1);
+	} else if ( strcmpi(key,"setcolor") == 0 ) {
+		return channel_pccolor(sd, sub1, sub2);
+	} else if ( strcmpi(key,"join") == 0 ) {
+		return channel_pcjoin(sd, sub1, sub2);
+	}else if ( strcmpi(key,"leave") == 0 ) {
+		return channel_pcleave(sd, sub1);
+	} else if ( strcmpi(key,"bindto") == 0 ) {
+		return channel_pcbind(sd, sub1);
+	} else if ( strcmpi(key,"unbind") == 0 ) {
+		return channel_pcunbind(sd);
+	} else if ( strcmpi(key,"ban") == 0 ) {
+		return channel_pcban(sd,sub1,sub2,0);
+	} else if ( strcmpi(key,"kick") == 0 ) {
+		return channel_pckick(sd,sub1,sub2);
+	} else if ( strcmpi(key,"banlist") == 0 ) {
+		return channel_pcban(sd,sub1,nullptr,3);
+	} else if ( strcmpi(key,"unban") == 0 ) {
+		return channel_pcban(sd,sub1,sub2,1);
+	} else if ( strcmpi(key,"unbanall") == 0 ) {
+		return channel_pcban(sd,sub1,nullptr,2);
+	} else {
+		char sub3[CHAN_NAME_LENGTH], sub4[CHAN_NAME_LENGTH];
+		sub3[0] = sub4[0] = '\0';
+		sscanf(sub2, "%19s %19s", sub3, sub4);
+		if( strcmpi(key,"create") == 0 && ( channel_config.private_channel.allow || pc_has_permission(sd, PC_PERM_CHANNEL_ADMIN) ) ) {
+			if (sub4[0] != '\0') {
+				clif_displaymessage(fd, msg_txt(sd, 1408)); // Channel password may not contain spaces.
+				return -1;
+			}
+			return channel_pccreate(sd,sub1,sub3);
+		} else if ( strcmpi(key,"setopt") == 0 ) {
+			return channel_pcsetopt(sd,sub1,sub3,sub4);
+		}
+		atcmd_channel_help(sd,command);
+	}
+
+	return 0;
+}
+
+ACMD_FUNC(fontcolor)
+{
+	if( !message || !*message ) {
+		channel_display_list(sd,"colors");
+		return -1;
+	}
+
+	if( strcmpi(message,"Normal") == 0 ) {
+		sd->fontcolor = 0;
+	} else {
+		unsigned char k;
+		ARR_FIND(0,channel_config.colors_count,k,( strcmpi(message,channel_config.colors_name[k]) == 0 ));
+		if( k == channel_config.colors_count ) {
+			sprintf(atcmd_output, msg_txt(sd,1411), message);// Unknown color '%s'.
+			clif_displaymessage(fd, atcmd_output);
+			return -1;
+		}
+		sd->fontcolor = k;
+	}
+	sprintf(atcmd_output, msg_txt(sd,1454), message);// Color set to '%s'.
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+ACMD_FUNC(langtype)
+{
+	char langstr[8];
+	int32 i=0, fail=0;
+
+	memset(langstr, '\0', sizeof(langstr));
+
+	if(sscanf(message, "%3s", langstr) >= 1){
+		int32 lang=0;
+		lang = msg_langstr2langtype(langstr); //Switch langstr to associated langtype
+		if( msg_checklangtype(lang,false) == 1 ){ //Verify it's enabled and set it
+			char output[100];
+			pc_setaccountreg(sd, add_str(LANGTYPE_VAR), lang); //For login/char
+			sd->langtype = lang;
+			sprintf(output,msg_txt(sd,461),msg_langtype2langstr(lang)); // Language is now set to %s.
+			clif_displaymessage(fd,output);
+			return 0;
+		} else if (lang != -1) { //defined langage but failed check
+			clif_displaymessage(fd,msg_txt(sd,462)); // This langage is currently disabled.
+			return -1;
+		}
+	}
+
+	//wrong or no entry
+	clif_displaymessage(fd,msg_txt(sd,460)); // Please enter a valid language (usage: @langtype <language>).
+	clif_displaymessage(fd,msg_txt(sd,464)); // ---- Available languages:
+	while(fail != -1){ //out of range
+		fail = msg_checklangtype(i,false);
+		if(fail == 1)
+			clif_displaymessage(fd,msg_langtype2langstr(i));
+		i++;
+	}
+	return -1;
+}
+
+ACMD_FUNC(vip) {
+#ifdef VIP_ENABLE
+	map_session_data* pl_sd = nullptr;
+	char * modif_p;
+	int32 vipdifftime = 0;
+	time_t now=time(nullptr);
+	
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	
+	if (!message || !*message || sscanf(message, "%255s %23[^\n]",atcmd_output,atcmd_player_name) < 2) {
+		clif_displaymessage(fd, msg_txt(sd,700));	//Usage: @vip <timef> <character name>
+		return -1;
+	}
+
+	atcmd_output[sizeof(atcmd_output)-1] = '\0';
+
+	modif_p = atcmd_output;
+	vipdifftime = (int32)solve_time(modif_p);
+	if (vipdifftime == 0) {
+		clif_displaymessage(fd, msg_txt(sd,701)); // Invalid time for vip command.
+		clif_displaymessage(fd, msg_txt(sd,702)); // Time parameter format is +/-<value> to alter. y/a = Year, m = Month, d/j = Day, h = Hour, n/mn = Minute, s = Second.
+		return -1;
+	}
+
+	if ((pl_sd = map_nick2sd(atcmd_player_name,false)) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	if (pc_get_group_level(pl_sd) > pc_get_group_level(sd)) {
+		clif_displaymessage(fd, msg_txt(sd,81)); // Your GM level doesn't authorize you to perform this action on the specified player.
+		return -1;
+	}
+
+	if( pc_get_group_level( pl_sd ) > 0 ){
+		clif_displaymessage( sd->fd, msg_txt( sd, 437 ) ); // GM's cannot become a VIP.
+		return -1;
+	}
+
+	if(pl_sd->vip.time==0) pl_sd->vip.time=now;
+	pl_sd->vip.time += vipdifftime; //increase or reduce VIP duration
+	
+	if (pl_sd->vip.time <= now) {
+		clif_displaymessage(pl_sd->fd, msg_txt(pl_sd,703)); // GM has removed your VIP time.
+
+		if( pl_sd != sd ){
+			sprintf( atcmd_output, msg_txt( sd, 704 ), pl_sd->status.name ); // Player '%s' is no longer VIP.
+			clif_displaymessage( fd, atcmd_output );
+		}
+	} else {
+		int32 year,month,day,hour,minute,second;
+		char timestr[21];
+		
+		split_time((int32)(pl_sd->vip.time-now),&year,&month,&day,&hour,&minute,&second);
+		sprintf(atcmd_output,msg_txt(pl_sd,705),year,month,day,hour,minute,second); // Your VIP status is valid for %d years, %d months, %d days, %d hours, %d minutes and %d seconds.
+		clif_displaymessage(pl_sd->fd,atcmd_output);
+		timestamp2string(timestr,20,pl_sd->vip.time,"%Y-%m-%d %H:%M:%S");
+		sprintf(atcmd_output,msg_txt(pl_sd,707),timestr); // You are VIP until: %s
+		clif_displaymessage(pl_sd->fd,atcmd_output);
+
+		if (pl_sd != sd) {
+			sprintf(atcmd_output,msg_txt(sd,706),pl_sd->status.name,year,month,day,hour,minute,second); // Player '%s' is now VIP for %d years, %d months, %d days, %d hours, %d minutes and %d seconds.
+			clif_displaymessage(fd,atcmd_output);
+			sprintf(atcmd_output,msg_txt(sd,708),timestr); // The player is now VIP until: %s
+			clif_displaymessage(fd,atcmd_output);
+		}
+	}
+	chrif_req_login_operation(pl_sd->status.account_id, pl_sd->status.name, CHRIF_OP_LOGIN_VIP, vipdifftime, 7, 0); 
+	return 0;
+#else
+	clif_displaymessage( fd, msg_txt( sd, 774 ) ); // This command is disabled via configuration.
+	return -1;
+#endif
+}
+
+/** Enable/disable rate info */
+ACMD_FUNC(showrate) {
+#ifdef VIP_ENABLE
+	nullpo_retr(-1,sd);
+	if (!sd->vip.disableshowrate) {
+		safestrncpy(atcmd_output,msg_txt(sd,718),CHAT_SIZE_MAX); //Personal rate information is not displayed now.
+		sd->vip.disableshowrate = 1;
+	} else {
+		safestrncpy(atcmd_output,msg_txt(sd,719),CHAT_SIZE_MAX); //Personal rate information will be shown.
+		sd->vip.disableshowrate = 0;
+	}
+	clif_displaymessage(fd,atcmd_output);
+	return 0;
+#else
+	clif_displaymessage( fd, msg_txt( sd, 774 ) ); // This command is disabled via configuration.
+	return -1;
+#endif
+}
+
+ACMD_FUNC(fullstrip) {
+	int32 i;
+	TBL_PC *tsd;
+	
+	nullpo_retr(-1,sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,349)); // Please enter a player name (usage: @fullstrip/@warpto/@goto <char name/ID>).
+		return -1;
+	}
+
+	if((tsd=map_nick2sd(atcmd_player_name,false)) == nullptr && (tsd=map_id2sd(atoi(atcmd_player_name))) == nullptr){
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+	
+	for( i = 0; i < EQI_MAX; i++ ) {
+		if( tsd->equip_index[ i ] >= 0 )
+			pc_unequipitem( tsd , tsd->equip_index[ i ] , 2 );
+	}
+	return 0;
+}
+
+ACMD_FUNC(changedress){
+	sc_type name2id[] = {
+		SC_WEDDING,
+		SC_XMAS,
+		SC_SUMMER,
+		SC_DRESSUP,
+		SC_HANBOK,
+		SC_OKTOBERFEST
+	};
+
+	for( sc_type type : name2id ) {
+		if( sd->sc.getSCE(type) ) {
+			status_change_end( sd, type );
+			// You should only be able to have one - so we cancel here
+			break;
+		}
+	}
+
+	return 0;
+}
+
+ACMD_FUNC(costume) {
+	const char* names[] = {
+		"Wedding",
+		"Xmas",
+		"Summer",
+		"Summer2",
+		"Hanbok",
+		"Oktoberfest"
+	};
+	const int32 name2id[] = {
+		SC_WEDDING,
+		SC_XMAS,
+		SC_SUMMER,
+		SC_DRESSUP,
+		SC_HANBOK,
+		SC_OKTOBERFEST
+	};
+	uint16 k = 0, len = ARRAYLENGTH(names);
+
+	if( !message || !*message ) {
+		for( k = 0; k < len; k++ ) {
+			if( sd->sc.getSCE(name2id[k]) ) {
+				sprintf(atcmd_output, msg_txt(sd, 727), names[k]); // '%s' Costume removed.
+				clif_displaymessage(sd->fd, atcmd_output);
+				status_change_end(sd, (sc_type)name2id[k]);
+				return 0;
+			}
+		}
+
+		clif_displaymessage(sd->fd, msg_txt(sd, 726)); // Available Costumes
+		for( k = 0; k < len; k++ ) {
+			sprintf(atcmd_output, msg_txt(sd, 725), names[k]); // -- %s
+			clif_displaymessage(sd->fd, atcmd_output);
+		}
+		return -1;
+	}
+
+	for( k = 0; k < len; k++ ) {
+		if( sd->sc.getSCE(name2id[k]) ) {
+			sprintf(atcmd_output, msg_txt(sd, 724), names[k]); // You're already wearing a(n) '%s' costume, type '@costume' to remove it.
+			clif_displaymessage(sd->fd, atcmd_output);
+			return -1;
+		}
+	}
+
+	for( k = 0; k < len; k++ )
+		if( strcmpi(message, names[k]) == 0 )
+			break;
+
+	if( k == len ) {
+		sprintf(atcmd_output, msg_txt(sd, 723), message); // '%s' is an unknown costume
+		clif_displaymessage(sd->fd, atcmd_output);
+		return -1;
+	}
+
+	sc_start(sd, sd, (sc_type)name2id[k], 100, name2id[k] == SC_DRESSUP ? 1 : 0, INFINITE_TICK);
+
+	return 0;
+}
+
+/**
+* Clone other player's equipments
+* Usage: @cloneequip <char name/ID>
+* http://rathena.org/board/topic/95076-new-atcommands-suggestion/
+* @author [Cydh], [Antares]
+*/
+ACMD_FUNC(cloneequip) {
+	map_session_data *pl_sd;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		sprintf(atcmd_output, msg_txt(sd, 735), command); // Usage: %s <char name/ID>
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (!(pl_sd = map_nick2sd(atcmd_player_name, true)) && !(pl_sd = map_charid2sd(atoi(atcmd_player_name)))) {
+		clif_displaymessage(fd, msg_txt(sd, 3));
+		return -1;
+	}
+
+	if (sd == pl_sd) {
+		memset(atcmd_output, '\0', sizeof(atcmd_output));
+		sprintf(atcmd_output, msg_txt(sd, 734), "equip"); // Cannot clone your own %.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (pc_get_group_level(sd) < pc_get_group_level(pl_sd)) {
+		memset(atcmd_output, '\0', sizeof(atcmd_output));
+		sprintf(atcmd_output, msg_txt(sd, 736), "equip"); // Cannot clone %s from this player.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	else {
+		int8 i;
+		for (i = 0; i < EQI_MAX; i++) {
+			int16 idx;
+			char flag = 0;
+			struct item tmp_item;
+			if ((idx = pl_sd->equip_index[i]) < 0)
+				continue;
+			if (i == EQI_AMMO)
+				continue;
+			if (pc_is_same_equip_index((enum equip_index) i, pl_sd->equip_index, idx))
+				continue;
+
+			tmp_item = pl_sd->inventory.u.items_inventory[idx];
+			if (itemdb_isspecial(tmp_item.card[0]))
+				memset(tmp_item.card, 0, sizeof(tmp_item.card));
+			tmp_item.bound = 0;
+			tmp_item.expire_time = 0;
+			tmp_item.unique_id = 0;
+			tmp_item.favorite = 0;
+			tmp_item.amount = 1;
+
+			if ((flag = pc_additem(sd, &tmp_item, 1, LOG_TYPE_COMMAND)))
+				clif_additem(sd, 0, 0, flag);
+			else
+				pc_equipitem(sd, sd->last_addeditem_index, itemdb_equip(tmp_item.nameid));
+		}
+	}
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	sprintf(atcmd_output, msg_txt(sd, 738), "equip"); // Clone '%s' is done.
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/**
+* Clone other player's statuses/parameters using method same like ACMD_FUNC(param), doesn't use stat point
+* Usage: @clonestat <char name/ID>
+* http://rathena.org/board/topic/95076-new-atcommands-suggestion/
+* @author [Cydh], [Antares]
+*/
+ACMD_FUNC(clonestat) {
+	map_session_data *pl_sd;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		sprintf(atcmd_output, msg_txt(sd, 735), command); // Usage: %s <char name/ID>
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (!(pl_sd = map_nick2sd(atcmd_player_name, true)) && !(pl_sd = map_charid2sd(atoi(atcmd_player_name)))) {
+		clif_displaymessage(fd, msg_txt(sd, 3)); // Character not found.
+		return -1;
+	}
+
+	if (sd == pl_sd) {
+		memset(atcmd_output, '\0', sizeof(atcmd_output));
+		sprintf(atcmd_output, msg_txt(sd, 734), "status"); // Cannot clone your own %.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if (pc_get_group_level(sd) < pc_get_group_level(pl_sd)) {
+		memset(atcmd_output, '\0', sizeof(atcmd_output));
+		sprintf(atcmd_output, msg_txt(sd, 736), "status"); // Cannot clone %s from this player.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+	else {
+		uint8 i;
+		int16 max_status[PARAM_MAX] = {};
+
+		pc_resetstate(sd);
+		if (pc_has_permission(sd, PC_PERM_BYPASS_STAT_ONCLONE)) {
+			for (i = PARAM_STR; i < PARAM_MAX; i++) {
+				if (i >= PARAM_POW && !pc_is_trait_job(sd->class_))
+					continue;
+				max_status[i] = SHRT_MAX;
+			}
+		} else {
+			for (i = PARAM_STR; i < PARAM_MAX; i++) {
+				if (i >= PARAM_POW && pc_is_trait_job(sd->class_))
+					continue;
+				max_status[i] = pc_maxparameter(sd, static_cast<e_params>(i));
+			}
+		}
+
+#define clonestat_check(cmd,stat)\
+		{\
+			memset(atcmd_output, '\0', sizeof(atcmd_output));\
+			if (pl_sd->status.cmd > max_status[(stat)]) {\
+				sprintf(atcmd_output, msg_txt(sd, 737), #cmd, pl_sd->status.cmd, max_status[(stat)]);\
+				clif_displaymessage(fd, atcmd_output);\
+				sd->status.cmd = max_status[(stat)];\
+			}\
+			else\
+				sd->status.cmd = pl_sd->status.cmd;\
+		}
+
+		clonestat_check(str, PARAM_STR);
+		clonestat_check(agi, PARAM_AGI);
+		clonestat_check(vit, PARAM_VIT);
+		clonestat_check(int_, PARAM_INT);
+		clonestat_check(dex, PARAM_DEX);
+		clonestat_check(luk, PARAM_LUK);
+
+		for (i = PARAM_STR; i < PARAM_POW; i++) {
+			clif_updatestatus(*sd, static_cast<_sp>( SP_STR + i ) );

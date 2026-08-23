@@ -1,0 +1,302 @@
+};
+
+/**
+ * Save chat from current tab into a file.
+ */
+ChatBox.saveCurrentTabChat = function saveCurrentTabChat() {
+	const root = _root();
+	let data;
+
+	const tzoffset = new Date().getTimezoneOffset() * 60000;
+	let localISOTime = new Date(Date.now() - tzoffset).toISOString().slice(0, -1);
+	localISOTime = localISOTime.replace('T', ' ');
+	const timezone = new Date().getTimezoneOffset() / 60;
+	const date = `${localISOTime} (GMT ${timezone > 0 ? '-' : '+'}${Math.abs(timezone).toString()})`;
+
+	const contentEl = root.querySelector(`.content[data-content="${ChatBox.activeTab}"]`);
+
+	data =
+		'<html><head><title>Chat History</title><style> body { background-color: DarkSlateGray; } </style></head><body>';
+	data += contentEl ? contentEl.outerHTML : '';
+	data += '</body></html>';
+
+	const url = window.URL.createObjectURL(new Blob([data], { type: 'text/plain' }));
+
+	ChatBox.addText(
+		`Chat History [${ChatBox.tabs[ChatBox.activeTab].name}] ${date} can be saved by <a style="color:#F88" download="ChatHistory [${ChatBox.tabs[ChatBox.activeTab].name}] (${date.replace('/', '-')}).html" href="${url}" target="_blank">clicking here</a>.`,
+		ChatBox.TYPE.PUBLIC,
+		ChatBox.FILTER.PUBLIC_LOG,
+		null,
+		true
+	);
+};
+
+/**
+ * Update scroll by block (14px)
+ */
+function onScroll(event) {
+	let delta;
+
+	if (event.wheelDelta) {
+		delta = event.wheelDelta / 120;
+		if (window.opera) {
+			delta = -delta;
+		}
+	} else if (event.detail) {
+		delta = -event.detail;
+	} else if (event.deltaY) {
+		delta = -event.deltaY / Math.abs(event.deltaY);
+	}
+
+	const lineHeight = getScrollLineHeightPx(this);
+	this.scrollTop = Math.floor(this.scrollTop / lineHeight) * lineHeight - (delta || 0) * lineHeight;
+	event.preventDefault();
+}
+
+/**
+ * Validate the type of information being dropped into the text field
+ */
+function onDropText(event) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+	let data;
+	try {
+		data = JSON.parse(event.dataTransfer.getData('Text'));
+	} catch (_e) {
+		return;
+	}
+
+	if (data.type == 'item') {
+		return;
+	}
+
+	event.currentTarget.value = data;
+}
+
+/**
+ * Stop event propagation
+ */
+function stopPropagation(event) {
+	event.stopImmediatePropagation();
+	event.preventDefault();
+}
+
+/**
+ * Change private message nick name
+ */
+function onPrivateMessageUserSelection(name) {
+	return function onPrivateMessageUserSelectionClosure() {
+		const root = _root();
+		const nickBox = root.querySelector('.input .username');
+		if (nickBox) nickBox.value = name;
+	};
+}
+
+/**
+ * Change target of global chat (party, guild)
+ */
+function onChangeTargetMessage(type) {
+	return function onChangeTargetMessageClosure() {
+		const root = _root();
+		const $input = root.querySelector('.input-chatbox');
+
+		if ($input) {
+			$input.classList.remove('guild', 'party', 'clan');
+
+			if (type & ChatBox.TYPE.PARTY) {
+				$input.classList.add('party');
+			} else if (type & ChatBox.TYPE.GUILD) {
+				$input.classList.add('guild');
+			} else if (type & ChatBox.TYPE.CLAN) {
+				$input.classList.add('clan');
+			}
+		}
+
+		ChatBox.sendTo = type;
+	};
+}
+
+function setChatFontScale(scale) {
+	return function setChatFontScaleClosure() {
+		_preferences.fontScale = clampChatFontScale(scale);
+		_preferences.save();
+		ChatBox.applyFontScale();
+	};
+}
+
+function clampChatFontScale(scale) {
+	const allowed = [1.0, 1.2, 1.4];
+	let best = allowed[0];
+	let bestDist = Infinity;
+
+	scale = parseFloat(scale);
+	if (!isFinite(scale) || scale <= 0) {
+		return 1.0;
+	}
+
+	for (let i = 0; i < allowed.length; ++i) {
+		const dist = Math.abs(allowed[i] - scale);
+		if (dist < bestDist) {
+			bestDist = dist;
+			best = allowed[i];
+		}
+	}
+
+	return best;
+}
+
+function getScrollLineHeightPx(element) {
+	let style, lh;
+
+	try {
+		style = window.getComputedStyle(element);
+		lh = parseFloat(style.lineHeight);
+		if (isFinite(lh) && lh > 0) {
+			return Math.round(lh);
+		}
+	} catch (_e) {
+		// Ignore
+	}
+
+	return 14;
+}
+
+ChatBox.applyFontScale = function applyFontScale() {
+	const root = _root();
+	const scale = clampChatFontScale(_preferences.fontScale || 1.0);
+	const baseFont = 12;
+	const baseLineHeight = 14;
+	const baseInputLineHeight = 18;
+
+	const fontSize = Math.max(10, Math.round(baseFont * scale));
+	const lineHeight = Math.max(12, Math.round(baseLineHeight * scale));
+	const inputLineHeight = Math.max(14, Math.round(baseInputLineHeight * scale));
+
+	_preferences.fontScale = scale;
+
+	// Chat log
+	root.querySelectorAll('.content').forEach(el => {
+		el.style.fontSize = `${fontSize}px`;
+		el.style.lineHeight = `${lineHeight}px`;
+	});
+
+	// Chat input
+	root.querySelectorAll('.input input, .input .message').forEach(el => {
+		el.style.fontFamily = 'Arial';
+		el.style.fontSize = `${fontSize}px`;
+	});
+
+	const message = root.querySelector('.input .message');
+	if (message) {
+		message.style.lineHeight = `${inputLineHeight}px`;
+	}
+};
+
+function makeResizableDiv() {
+	const root = _root();
+	const resizer = root.querySelector('.event_add_cursor');
+	if (!resizer) {
+		return;
+	}
+
+	let originalHeight = 0;
+	let originalAnchorY = 0;
+	let originalMouseY = 0;
+
+	const fixHeight = height => Math.floor(height / MAGIC_NUMBER) * MAGIC_NUMBER;
+
+	const resize = e => {
+		let height = fixHeight(originalHeight - (e.pageY - originalMouseY));
+		height = Math.max(MAGIC_NUMBER, Math.min(MAGIC_NUMBER * 5, height));
+
+		ChatBox._host.style.top = `${originalAnchorY - height}px`;
+		const contentWrapper = root.querySelector('.contentwrapper');
+		if (contentWrapper) contentWrapper.style.height = `${height}px`;
+		_heightIndex = Math.max(2, Math.min(6, height / MAGIC_NUMBER + 1));
+
+		const active = root.querySelector(`.content[data-content="${ChatBox.activeTab}"]`);
+		if (active) {
+			active.scrollTop = active.scrollHeight;
+		}
+	};
+
+	const stopResize = () => {
+		window.removeEventListener('mousemove', resize);
+		window.removeEventListener('mouseup', stopResize);
+	};
+
+	resizer.addEventListener('mousedown', e => {
+		e.preventDefault();
+		const contentWrapper = root.querySelector('.contentwrapper');
+		originalHeight = contentWrapper ? contentWrapper.offsetHeight : 0;
+		originalAnchorY = (parseInt(ChatBox._host.style.top, 10) || 0) + originalHeight;
+		originalMouseY = e.pageY;
+
+		window.addEventListener('mousemove', resize);
+		window.addEventListener('mouseup', stopResize);
+	});
+}
+
+// CLICKABLE ITEM → OPEN ITEMINFO (handle inside shadow)
+ChatBox._setupItemLinkHandler = function _setupItemLinkHandler() {
+	const root = _root();
+	if (!root) return;
+
+	root.addEventListener('click', event => {
+		const link = event.target.closest('.item-link');
+		if (!link) return;
+
+		// If the link is inside the chat input, keep focus there
+		if (link.closest('.input-chatbox')) {
+			event.stopImmediatePropagation();
+			return;
+		}
+
+		const item = DB.parseItemLink(link.dataset.item || link.getAttribute('data-item'));
+		if (!item) return;
+
+		const ItemInfo = UIManager.getComponent('ItemInfo');
+		ItemInfo.append();
+		ItemInfo.setItem(item);
+	});
+};
+
+// Also keep global handler for item links outside shadow (backwards compatibility)
+document.addEventListener('click', event => {
+	const link = event.target.closest('.item-link');
+	if (!link) {
+		return;
+	}
+
+	if (link.closest('#chatbox .input-chatbox')) {
+		event.stopImmediatePropagation();
+		event.preventDefault();
+		return;
+	}
+
+	const item = DB.parseItemLink(link.dataset.item);
+	if (!item) {
+		return;
+	}
+
+	const ItemInfo = UIManager.getComponent('ItemInfo');
+	ItemInfo.append();
+	ItemInfo.setItem(item);
+});
+
+ChatBox.insertText = function (text) {
+	const root = _root();
+	const input = root.querySelector('.input-chatbox');
+	if (!input) return;
+
+	input.appendChild(document.createTextNode(text));
+	input.focus();
+};
+
+// Override mouseMode to CROSS since chatbox body is click-through
+ChatBox.mouseMode = GUIComponent.MouseMode.CROSS;
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(ChatBox);

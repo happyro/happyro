@@ -1,0 +1,112 @@
+	return len;
+}
+
+/// Appends the result of vprintf to the StringBuf
+size_t _StringBuf_Vprintf( const char* file, int32 line, const char* func, StringBuf* self, const char* fmt, va_list ap ){
+	for(;;)
+	{
+		va_list apcopy;
+		/* Try to print in the allocated space. */
+		size_t size = self->max_ - (self->ptr_ - self->buf_);
+		va_copy(apcopy, ap);
+		int32 n = vsnprintf( self->ptr_, size, fmt, apcopy );
+		va_end(apcopy);
+		/* If that worked, return the length. */
+		if( n > -1 && static_cast<size_t>(n) < size )
+		{
+			self->ptr_ += n;
+			return self->ptr_ - self->buf_;
+		}
+		/* Else try again with more space. */
+		self->max_ *= 2; // twice the old size
+		size_t off = self->ptr_ - self->buf_;
+		self->buf_ = (char*)aRealloc2(self->buf_, self->max_ + 1, file, line, func);
+		self->ptr_ = self->buf_ + off;
+	}
+}
+
+/// Appends the contents of another StringBuf to the StringBuf
+size_t _StringBuf_Append(const char *file, int32 line, const char *func,StringBuf* self, const StringBuf* sbuf)
+{
+	size_t available = self->max_ - (self->ptr_ - self->buf_);
+	size_t needed = sbuf->ptr_ - sbuf->buf_;
+
+	if( needed >= available )
+	{
+		size_t off = self->ptr_ - self->buf_;
+		self->max_ += needed;
+		self->buf_ = (char*)aRealloc2(self->buf_, self->max_ + 1, file, line, func);
+		self->ptr_ = self->buf_ + off;
+	}
+
+	memcpy(self->ptr_, sbuf->buf_, needed);
+	self->ptr_ += needed;
+	return self->ptr_ - self->buf_;
+}
+
+// Appends str to the StringBuf
+size_t _StringBuf_AppendStr(const char *file, int32 line, const char *func,StringBuf* self, const char* str)
+{
+	size_t available = self->max_ - ( self->ptr_ - self->buf_ );
+	size_t needed = strlen( str );
+
+	if( needed >= available )
+	{// not enough space, expand the buffer (minimum expansion = 1024)
+		size_t off = self->ptr_ - self->buf_;
+		self->max_ += std::max( needed, static_cast<size_t>( 1024 ) );
+		self->buf_ = (char*)aRealloc2(self->buf_, self->max_ + 1, file, line, func);
+		self->ptr_ = self->buf_ + off;
+	}
+
+	memcpy(self->ptr_, str, needed);
+	self->ptr_ += needed;
+	return self->ptr_ - self->buf_;
+}
+
+// Returns the length of the data in the Stringbuf
+int32 StringBuf_Length(StringBuf* self)
+{
+	return (int32)(self->ptr_ - self->buf_);
+}
+
+/// Returns the data in the StringBuf
+char* StringBuf_Value(StringBuf* self)
+{
+	*self->ptr_ = '\0';
+	return self->buf_;
+}
+
+/// Clears the contents of the StringBuf
+void StringBuf_Clear(StringBuf* self)
+{
+	self->ptr_ = self->buf_;
+}
+
+///  Constructs the StringBuf
+StringBuf::StringBuf(){
+	this->buf_ = nullptr;
+	this->ptr_ = nullptr;
+	this->max_ = 0;
+}
+
+/// Destroys the StringBuf
+StringBuf::~StringBuf(){
+	if( this->buf_ != nullptr ){
+		aFree( this->buf_ );
+		this->buf_ = nullptr;
+	}
+	
+	this->ptr_ = nullptr;
+	this->max_ = 0;
+}
+
+// Frees a StringBuf returned by StringBuf_Malloc
+void StringBuf_Free(StringBuf* self)
+{
+	if( self == nullptr ){
+		return;
+	}
+
+	self->~StringBuf();
+	aFree(self);
+}

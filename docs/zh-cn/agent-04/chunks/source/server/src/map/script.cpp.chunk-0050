@@ -1,0 +1,500 @@
+	if( script_hasdata(st,3) )
+		x = script_getnum(st,3);
+	if( script_hasdata(st,4) )
+		y = script_getnum(st,4);
+	if( script_hasdata(st,5) )
+		flag = (uint8)script_getnum(st,5);
+	if( script_hasdata(st,6) )
+		hideWindow = script_getnum(st,6) ? true : false;
+	if( script_hasdata(st,7) )
+		monster_id = script_getnum(st,7);
+
+	if (!script_charid2sd(8, sd))
+        return SCRIPT_CMD_FAILURE;
+
+	clif_navigateTo(sd,mapname,x,y,flag,hideWindow,monster_id);
+
+	return SCRIPT_CMD_SUCCESS;
+#else
+	return SCRIPT_CMD_FAILURE;
+#endif
+}
+
+/**
+ * adopt("<parent_name>","<baby_name>");
+ * adopt(<parent_id>,<baby_id>);
+ * https://rathena.org/board/topic/104014-suggestion-add-adopt-or-etc/
+ */
+BUILDIN_FUNC(adopt)
+{
+	TBL_PC *sd, *b_sd;
+	enum adopt_responses response;
+
+	if (script_isstring(st, 2)) {
+		const char *name = script_getstr(st, 2);
+
+		sd = map_nick2sd(name,false);
+		if (sd == nullptr) {
+			ShowError("buildin_adopt: Non-existant parent character %s requested.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		uint32 char_id = script_getnum(st, 2);
+
+		sd = map_charid2sd(char_id);
+		if (sd == nullptr) {
+			ShowError("buildin_adopt: Non-existant parent character %d requested.\n", char_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (script_isstring(st, 3)) {
+		const char *name = script_getstr(st, 3);
+
+		b_sd = map_nick2sd(name,false);
+		if (b_sd == nullptr) {
+			ShowError("buildin_adopt: Non-existant baby character %s requested.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		uint32 char_id = script_getnum(st, 3);
+
+		b_sd = map_charid2sd(char_id);
+		if (b_sd == nullptr) {
+			ShowError("buildin_adopt: Non-existant baby character %d requested.\n", char_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	response = pc_try_adopt(sd, map_charid2sd(sd->status.partner_id), b_sd);
+
+	if (response == ADOPT_ALLOWED) {
+		TBL_PC *p_sd = map_charid2sd(sd->status.partner_id);
+
+		b_sd->adopt_invite = sd->status.account_id;
+		clif_Adopt_request(b_sd, sd, p_sd->status.account_id);
+		script_pushint(st, ADOPT_ALLOWED);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	script_pushint(st, response);
+	return SCRIPT_CMD_FAILURE;
+}
+
+/**
+ * Returns the minimum or maximum of all the given parameters for integer variables.
+ *
+ * min( <value or array>{,value or array 2,...} );
+ * minimum( <value or array>{,value or array 2,...} );
+ * max( <value or array>{,value or array 2,...} );
+ * maximum( <value or array>{,value or array 2,...} );
+*/
+BUILDIN_FUNC(minmax){
+	char *functionname;
+	uint32 i;
+	int64 value;
+	// Function pointer for our comparison function (either min or max at the moment)
+	int64 (*func)(int64, int64);
+	
+	// Get the real function name
+	functionname = script_getfuncname(st);
+	
+	// Our data should start at offset 2
+	i = 2;
+
+	if( !script_hasdata( st, i ) ){
+		ShowError( "buildin_%s: no arguments given!\n", functionname );
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( strnicmp( functionname, "min", strlen( "min" ) ) == 0 ){
+		value = SCRIPT_INT_MAX;
+		func = i64min;
+	}else if( strnicmp( functionname, "max", strlen( "max" ) ) == 0 ){
+		value = SCRIPT_INT_MIN;
+		func = i64max;
+	}else{
+		ShowError( "buildin_%s: Unknown call case for min/max!\n", functionname );
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	// As long as we have data on our script stack
+	while( script_hasdata(st,i) ){
+		struct script_data *data;
+		
+		// Get the next piece of data from the script stack
+		data = script_getdata( st, i );
+
+		// Is the current parameter a single integer?
+		if( data_isint( data ) ){
+			value = func( value, script_getnum( st, i ) );
+		// Is the current parameter an array variable?
+		}else if( data_isreference( data ) ){
+			const char *name;
+			map_session_data* sd;
+			uint32 start, end;
+
+			// Get the name of the variable
+			name = reference_getname(data);
+
+			// Check if it's a string variable
+			if( is_string_variable( name ) ){
+				ShowError( "buildin_%s: illegal type, need integer!\n", functionname );
+				script_reportdata( data );
+				st->state = END;
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			// Get the session data, if a player is attached
+			sd = st->rid ? map_id2sd(st->rid) : nullptr;
+
+			if (not_server_variable(*name) && !script_rid2sd(sd)) {
+				ShowError("buildin_%s: Cannot use a player variable '%s' if no player is attached.\n", functionname, name);
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			// Try to find the array's source pointer
+			if( !script_array_src( st, sd, name, reference_getref( data ) ) ){
+				ShowError( "buildin_%s: not a array!\n", functionname );
+				script_reportdata( data );
+				st->state = END;
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			// Get the start and end indices of the array
+			start = reference_getindex( data );
+			end = script_array_highest_key( st, sd, name, reference_getref( data ) );
+
+			// Skip empty arrays
+			if( start < end ){
+				int32 id;
+				
+				// For getting the values we need the id of the array
+				id = reference_getid( data );
+
+				// Loop through each value stored in the array
+				for( ; start < end; start++ ){
+					value = func( value, get_val2_num( st, reference_uid( id, start ), reference_getref( data ) ) );
+				}
+			}
+			else {
+				value = func( value, 0 );
+			}
+		}else{
+			ShowError( "buildin_%s: not a supported data type!\n", functionname );
+			script_reportdata( data );
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		// Continue with the next stack entry
+		i++;
+	}
+
+	script_pushint( st, value );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(cap_value)
+{
+	script_pushint64(st, cap_value(script_getnum64(st, 2), script_getnum64(st, 3), script_getnum64(st, 4)));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Safety Base/Job EXP addition than using `set BaseExp,n;` or `set JobExp,n;`
+ * Unlike `getexp` that affected by some adjustments.
+ * getexp2 <base_exp>,<job_exp>{,<char_id>};
+ * @author [Cydh]
+ **/
+BUILDIN_FUNC(getexp2) {
+	TBL_PC *sd = nullptr;
+	int64 base_exp = script_getnum64(st, 2);
+	int64 job_exp = script_getnum64(st, 3);
+
+	if (!script_charid2sd(4, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( base_exp == 0 && job_exp == 0 ){
+		ShowError( "buildin_getexp2: Called with base and job exp 0.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (base_exp > 0)
+		pc_gainexp(sd, nullptr, base_exp, 0, 2);
+	else if (base_exp < 0)
+		pc_lostexp(sd, base_exp * -1, 0);
+
+	if (job_exp > 0)
+		pc_gainexp(sd, nullptr, 0, job_exp, 2);
+	else if (job_exp < 0)
+		pc_lostexp(sd, 0, job_exp * -1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+* Force stat recalculation of sd
+* recalculatestat;
+* @author [secretdataz]
+**/
+BUILDIN_FUNC(recalculatestat) {
+	TBL_PC* sd;
+
+	if (!script_rid2sd(sd))
+		return SCRIPT_CMD_FAILURE;
+
+	status_calc_pc(sd, SCO_FORCE);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(hateffect){
+#if PACKETVER_MAIN_NUM >= 20150507 || PACKETVER_RE_NUM >= 20150429 || defined(PACKETVER_ZERO)
+	block_list* bl;
+
+	if( !script_rid2bl( 4, bl ) )
+		return SCRIPT_CMD_FAILURE;
+
+	int16 effectID = script_getnum(st,2);
+	bool enable = script_getnum(st,3) ? true : false;
+
+	if( effectID <= HAT_EF_MIN || effectID >= HAT_EF_MAX ){
+		ShowError( "buildin_hateffect: unsupported hat effect id %d\n", effectID );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	unit_data* ud = unit_bl2ud( bl );
+
+	if( ud == nullptr ){
+		ShowError( "buildin_hateffect: unsupported unit type %d\n", bl->type );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( enable ){
+		if( util::vector_exists( ud->hatEffects, effectID ) ){
+			return SCRIPT_CMD_SUCCESS;
+		}
+
+		ud->hatEffects.push_back( effectID );
+	}else{
+		if( !util::vector_erase_if_exists( ud->hatEffects, effectID ) ){
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+
+	if( map_session_data* sd = BL_CAST( BL_PC, bl ); sd == nullptr || !sd->state.connect_new ){
+		clif_hat_effect_single( *bl, effectID, enable );
+	}
+
+#endif
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Check if hat effect is enabled on a unit
+ * *has_hateffect(<effect_id>{,<GID>});
+ */
+BUILDIN_FUNC(has_hateffect) {
+	block_list* bl;
+
+	if( !script_rid2bl( 3, bl ) ){
+		script_pushint( st, false );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	unit_data* ud = unit_bl2ud( bl );
+
+	if( ud == nullptr ){
+		ShowError( "buildin_has_hateffect: unsupported unit type %d\n", bl->type );
+		script_pushint( st, false );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int16 effectID = script_getnum(st, 2);
+
+	if (effectID <= HAT_EF_MIN || effectID >= HAT_EF_MAX) {
+		ShowError( "buildin_has_hateffect: unsupported hat effect id %hd\n", effectID );
+		script_pushint( st, false );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint( st, util::vector_exists( ud->hatEffects, effectID ) );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+* Retrieves param of current random option. Intended for random option script only.
+* getrandomoptinfo(<type>);
+* @author [secretdataz]
+**/
+BUILDIN_FUNC(getrandomoptinfo) {
+	map_session_data *sd;
+	int32 val;
+	if (script_rid2sd(sd) && current_equip_item_index != -1 && current_equip_opt_index != -1 && sd->inventory.u.items_inventory[current_equip_item_index].option[current_equip_opt_index].id) {
+		int32 param = script_getnum(st, 2);
+
+		switch (param) {
+			case ROA_ID:
+				val = sd->inventory.u.items_inventory[current_equip_item_index].option[current_equip_opt_index].id;
+				break;
+			case ROA_VALUE:
+				val = sd->inventory.u.items_inventory[current_equip_item_index].option[current_equip_opt_index].value;
+				break;
+			case ROA_PARAM:
+				val = sd->inventory.u.items_inventory[current_equip_item_index].option[current_equip_opt_index].param;
+				break;
+			default:
+				ShowWarning("buildin_getrandomoptinfo: Invalid attribute type %d (Max %d).\n", param, MAX_ITEM_RDM_OPT);
+				val = 0;
+				break;
+		}
+		script_pushint(st, val);
+	}
+	else {
+		script_pushint(st, 0);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+* Retrieves a random option on an equipped item.
+* getequiprandomoption(<equipment slot>,<index>,<type>{,<char id>});
+* @author [secretdataz]
+*/
+BUILDIN_FUNC(getequiprandomoption) {
+	map_session_data *sd;
+	int32 val;
+	int16 i = -1;
+	int32 pos = script_getnum(st, 2);
+	int32 index = script_getnum(st, 3);
+	int32 type = script_getnum(st, 4);
+	if (!script_charid2sd(5, sd)) {
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (index < 0 || index >= MAX_ITEM_RDM_OPT) {
+		ShowError("buildin_getequiprandomoption: Invalid random option index %d.\n", index);
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (equip_index_check(pos))
+		i = pc_checkequip(sd, equip_bitmask[pos]);
+	if (i < 0) {
+		ShowError("buildin_getequiprandomoption: No item equipped at pos %d (CID=%d/AID=%d).\n", pos, sd->status.char_id, sd->status.account_id);
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	switch (type) {
+		case ROA_ID:
+			val = sd->inventory.u.items_inventory[i].option[index].id;
+			break;
+		case ROA_VALUE:
+			val = sd->inventory.u.items_inventory[i].option[index].value;
+			break;
+		case ROA_PARAM:
+			val = sd->inventory.u.items_inventory[i].option[index].param;
+			break;
+		default:
+			ShowWarning("buildin_getequiprandomoption: Invalid attribute type %d (Max %d).\n", type, MAX_ITEM_RDM_OPT);
+			val = 0;
+			break;
+	}
+	script_pushint(st, val);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+* Adds a random option on a random option slot on an equipped item and overwrites
+* existing random option in the process.
+* setrandomoption(<equipment slot>,<index>,<id>,<value>,<param>{,<char id>});
+* @author [secretdataz]
+*/
+BUILDIN_FUNC(setrandomoption) {
+	map_session_data *sd;
+	int32 pos, index, id, value, param, ep;
+	int32 i = -1;
+	if (!script_charid2sd(7, sd))
+		return SCRIPT_CMD_FAILURE;
+	pos = script_getnum(st, 2);
+	index = script_getnum(st, 3);
+	id = script_getnum(st, 4);
+	value = script_getnum(st, 5);
+	param = script_getnum(st, 6);
+
+	std::shared_ptr<s_random_opt_data> opt = random_option_db.find(static_cast<uint16>(id));
+
+	if (opt == nullptr) {
+		ShowError("buildin_setrandomoption: Random option ID %d does not exists.\n", id);
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (index < 0 || index >= MAX_ITEM_RDM_OPT) {
+		ShowError("buildin_setrandomoption: Invalid random option index %d.\n", index);
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (equip_index_check(pos))
+		i = pc_checkequip(sd, equip_bitmask[pos]);
+	if (i >= 0) {
+		ep = sd->inventory.u.items_inventory[i].equip;
+		log_pick_pc(sd, LOG_TYPE_SCRIPT, -1, &sd->inventory.u.items_inventory[i]);
+		pc_unequipitem(sd, i, 2);
+		sd->inventory.u.items_inventory[i].option[index].id = id;
+		sd->inventory.u.items_inventory[i].option[index].value = value;
+		sd->inventory.u.items_inventory[i].option[index].param = param;
+		clif_delitem( *sd, i, 1, 3 );
+		log_pick_pc(sd, LOG_TYPE_SCRIPT, -1, &sd->inventory.u.items_inventory[i]);
+		clif_additem(sd, i, 1, 0);
+		pc_equipitem(sd, i, ep);
+		script_pushint(st, 1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	ShowError("buildin_setrandomoption: No item equipped at pos %d (CID=%d/AID=%d).\n", pos, sd->status.char_id, sd->status.account_id);
+	script_pushint(st, 0);
+	return SCRIPT_CMD_FAILURE;
+}
+
+/// Returns the number of stat points needed to change the specified stat by val.
+/// If val is negative, returns the number of stat points that would be needed to
+/// raise the specified stat from (current value - val) to current value.
+/// *needed_status_point(<type>,<val>{,<char id>});
+/// @author [secretdataz]
+BUILDIN_FUNC(needed_status_point) {
+	map_session_data *sd;
+	int32 type, val;
+	if (!script_charid2sd(4, sd))
+		return SCRIPT_CMD_FAILURE;
+	type = script_getnum(st, 2);
+	val = script_getnum(st, 3);
+
+	script_pushint(st, pc_need_status_point(sd, type, val));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the number of trait stat points needed to change the specified trait stat by val.
+/// If val is negative, returns the number of trait stat points that would be needed to
+/// raise the specified trait stat from (current value - val) to current value.
+/// *needed_trait_point(<type>,<val>{,<char id>});
+BUILDIN_FUNC(needed_trait_point) {
+	map_session_data *sd;
+
+	if (!script_charid2sd(4, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	int32 type = script_getnum( st, 2 );
+
+	if( type < SP_POW || type > SP_CRT ){
+		ShowError( "buildin_needed_trait_point: Unknown trait type %d\n", type );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint( st, pc_need_trait_point( sd, type, script_getnum( st, 3 ) ) );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+

@@ -1,0 +1,500 @@
+ * @param {object} pkt - PACKET.ZC.NOTIFY_ACT
+ */
+function onEntityAction(pkt) {
+	const srcEntity = EntityManager.get(pkt.GID);
+	// Entity out of the screen ?
+	if (!srcEntity) {
+		return;
+	}
+	const dstEntity = EntityManager.get(pkt.targetGID);
+	let target;
+	const srcWeapon = srcEntity.weapon ? srcEntity.weapon : 0;
+	const srcWeaponLeft = srcEntity.shield ? srcEntity.shield : 0;
+
+	srcEntity.targetGID = pkt.targetGID;
+
+	switch (pkt.action) {
+		// Damage
+		case 0: // regular [DMG_NORMAL]
+		//case 1: // [DMG_PICKUP_ITEM]
+		//case 2: // [DMG_SIT_DOWN]
+		//case 3: // [DMG_STAND_UP]
+		case 4: // absorbed [DMG_ENDURE]
+		//case 5: [DMG_SPLASH]
+		//case 5: [DMG_SKILL]
+		//case 7: [DMG_REPEAT]
+		//case 11: [DMG_TOUCH] probably something new.
+		case 8: // double attack [DMG_MULTI_HIT]
+		case 9: // endure [DMG_MULTI_HIT_ENDURE]
+		case 10: // critital [DMG_CRITICAL]
+		case 11: // lucky
+		case 13: {
+			// multi-hit critical
+			if (pkt.attackMT > MAX_ATTACKMT) {
+				pkt.attackMT = MAX_ATTACKMT;
+			}
+			srcEntity.attack_speed = pkt.attackMT;
+
+			let animSpeed = 0;
+			let delayTime = pkt.attackMT;
+
+			const _WSnd = DB.getWeaponSound(srcWeapon);
+			/*var weaponSound = WSnd ? WSnd[0] : false;
+				let weaponSoundRelease = WSnd ? WSnd[1] : false;*/ // UNUSED
+
+			const _WSndL = DB.getWeaponSound(srcWeaponLeft);
+			/*var weaponSoundLeft = WSndL ? WSndL[0] : false;
+				let weaponSoundReleaseLeft = WSndL ? WSndL[1] : false;*/ // UNUSED
+
+			if (srcEntity.objecttype === Entity.TYPE_PC) {
+				const factorOfmotionSpeed = pkt.attackMT / AVG_ATTACK_SPEED;
+				const isDualWeapon = DB.isDualWeapon(srcEntity._job, srcEntity._sex, srcEntity.weapon);
+				const m_attackMotion = DB.getPCAttackMotion(
+					srcEntity._job,
+					srcEntity._sex,
+					srcEntity.weapon,
+					isDualWeapon
+				);
+				let m_motionSpeed = 1; // need to find out where is it come from? maybe from act delay with some calculate //actRes->GetDelay(action); [MrUnzO]
+				m_motionSpeed *= factorOfmotionSpeed;
+
+				const _soundTime = (delayTime = m_attackMotion * m_motionSpeed * 24.0);
+				animSpeed = pkt.attackMT / m_attackMotion;
+
+				// Display throw arrow effect when using bows, not an elegant conditional but it works.. [Waken]
+				if (DB.isBow(DB.getWeaponType(srcEntity.weapon, true))) {
+					delayTime = (m_attackMotion + 8 / m_motionSpeed) * m_motionSpeed * 24.0;
+					pkt.attackMT += delayTime;
+					const EF_Init_Par = {
+						effectId: 'ef_arrow_projectile',
+						ownerAID: dstEntity.GID,
+						otherAID: srcEntity.GID,
+						startTick: Renderer.tick + pkt.attackMT,
+						otherPosition: srcEntity.position
+					};
+					EffectManager.spam(EF_Init_Par);
+				}
+			} else if (srcEntity.job in AttackEffect.PROJECTILE) {
+				// Non player projectiles
+				const EF_Init_Par = {
+					effectId: AttackEffect.PROJECTILE[srcEntity.job],
+					ownerAID: dstEntity.GID,
+					otherAID: srcEntity.GID,
+					startTick: Renderer.tick + pkt.attackMT,
+					otherPosition: srcEntity.position
+				};
+				EffectManager.spam(EF_Init_Par);
+			} else if (srcEntity.job in AttackEffect.SPAWN) {
+				// Non player special ranged attack
+				const EF_Init_Par = {
+					effectId: AttackEffect.SPAWN[srcEntity.job],
+					ownerAID: dstEntity.GID,
+					otherAID: srcEntity.GID,
+					startTick: Renderer.tick + pkt.attackMT,
+					otherPosition: srcEntity.position
+				};
+				EffectManager.spam(EF_Init_Par);
+			}
+
+			if (dstEntity) {
+				// only if damage and do not have endure
+				// and damage isn't absorbed (healing)
+
+				// Update entity position
+				srcEntity.lookTo(dstEntity.position[0], dstEntity.position[1]);
+
+				// Will be hit actions
+				onEntityWillBeHitSub(pkt, dstEntity);
+
+				// damage blocking status effect display
+				if (pkt.action == 0 && pkt.damage == 0 && pkt.leftDamage == 0 && dstEntity.isGuard) {
+					// Show guard effect (Kyrie Eleison, Auto Guard, Parrying, etc.)
+					const EF_Init_Par = {
+						effectId: EffectConst.EF_GUARD,
+						ownerAID: pkt.targetGID,
+						startTick: Renderer.tick + pkt.attackMT
+					};
+					EffectManager.spam(EF_Init_Par);
+				}
+
+				target = pkt.damage ? dstEntity : srcEntity;
+
+				// damage or miss display
+				if (
+					dstEntity.objecttype === Entity.TYPE_MOB ||
+					dstEntity.objecttype === Entity.TYPE_NPC_ABR ||
+					dstEntity.objecttype === Entity.TYPE_NPC_BIONIC
+				) {
+					if (pkt.damage > 0) {
+						const EF_Init_Par = {
+							effectId: EffectConst.EF_HIT1,
+							ownerAID: pkt.targetGID,
+							startTick: Renderer.tick + pkt.attackMT
+						};
+						EffectManager.spam(EF_Init_Par);
+					}
+				}
+
+				let type = null;
+				switch (pkt.action) {
+					// Single damage
+					case 10: // critical
+						type = Damage.TYPE.CRIT;
+					case 0: // regular damage
+					case 4: // regular damage (endure)
+						Damage.add(pkt.damage, target, Renderer.tick + pkt.attackMT, srcWeapon, type);
+						if (pkt.leftDamage) {
+							Damage.add(
+								pkt.leftDamage,
+								target,
+								Renderer.tick + pkt.attackMT + C_MULTIHIT_DELAY * 1.75,
+								srcWeapon,
+								type
+							);
+						}
+						break;
+
+					// Combo
+					case 13: //multi-hit critical
+						type = Damage.TYPE.CRIT;
+					case 8: // multi-hit damage
+					case 9: {
+						// multi-hit damage (endure)
+						// Display combo only if entity is mob and the attack don't miss
+						if (
+							(dstEntity.objecttype === Entity.TYPE_MOB ||
+								dstEntity.objecttype === Entity.TYPE_NPC_ABR ||
+								dstEntity.objecttype === Entity.TYPE_NPC_BIONIC) &&
+							pkt.damage > 0
+						) {
+							if (pkt.damage > 1) {
+								// Can't divide 1 damage
+								Damage.add(
+									pkt.damage / 2,
+									dstEntity,
+									Renderer.tick + pkt.attackMT,
+									srcWeapon,
+									Damage.TYPE.COMBO
+								);
+							}
+							if (pkt.leftDamage) {
+								Damage.add(
+									pkt.damage,
+									dstEntity,
+									Renderer.tick + pkt.attackMT + C_MULTIHIT_DELAY / 2,
+									srcWeapon,
+									Damage.TYPE.COMBO
+								);
+								Damage.add(
+									pkt.damage + pkt.leftDamage,
+									dstEntity,
+									Renderer.tick + pkt.attackMT + C_MULTIHIT_DELAY * 1.75,
+									srcWeapon,
+									Damage.TYPE.COMBO | Damage.TYPE.COMBO_FINAL
+								);
+							} else {
+								Damage.add(
+									pkt.damage,
+									dstEntity,
+									Renderer.tick + pkt.attackMT + C_MULTIHIT_DELAY,
+									srcWeapon,
+									Damage.TYPE.COMBO | Damage.TYPE.COMBO_FINAL
+								);
+							}
+						}
+
+						let div = 1;
+						if (pkt.damage > 1) {
+							// Can't divide 1 damage
+							div = 2;
+							Damage.add(pkt.damage / div, target, Renderer.tick + pkt.attackMT, srcWeapon, type);
+						}
+						if (pkt.leftDamage) {
+							Damage.add(
+								pkt.damage / div,
+								target,
+								Renderer.tick + pkt.attackMT + C_MULTIHIT_DELAY / 2,
+								srcWeapon,
+								type
+							);
+							Damage.add(
+								pkt.leftDamage,
+								target,
+								Renderer.tick + pkt.attackMT + C_MULTIHIT_DELAY * 1.75,
+								srcWeapon,
+								type
+							);
+						} else {
+							Damage.add(
+								pkt.damage / div,
+								target,
+								Renderer.tick + pkt.attackMT + C_MULTIHIT_DELAY,
+								srcWeapon,
+								type
+							);
+						}
+						break;
+					}
+					// TODO: lucky miss
+					case 11:
+						dstEntity.attachments.add({
+							frame: 3,
+							file: 'msg',
+							uid: 'lucky',
+							play: true,
+							head: true,
+							repeat: false
+						});
+						break;
+				}
+			}
+
+			srcEntity.attack_speed = pkt.attackMT;
+
+			if (pkt.leftDamage) {
+				// KAGEROU, OBORO does not use ATTCK3 for left
+				const useATTACK =
+					srcEntity.job == JobId.KAGEROU ||
+					srcEntity.job == JobId.KAGEROU_B ||
+					srcEntity.job == JobId.OBORO ||
+					srcEntity.job == JobId.OBORO_B;
+				srcEntity.setAction({
+					action: useATTACK ? srcEntity.ACTION.ATTACK : srcEntity.ACTION.ATTACK3,
+					frame: 0,
+					repeat: false,
+					play: true,
+					next: {
+						delay: Renderer.tick + pkt.attackMT + delayTime,
+						action: srcEntity.ACTION.READYFIGHT,
+						frame: 0,
+						repeat: true,
+						play: true,
+						next: false
+					}
+				});
+			} else {
+				srcEntity.setAction({
+					action: srcEntity.ACTION.ATTACK,
+					speed: animSpeed,
+					frame: 0,
+					repeat: false,
+					play: true,
+					next: {
+						delay: Renderer.tick + pkt.attackMT,
+						action: srcEntity.ACTION.READYFIGHT,
+						frame: 0,
+						repeat: true,
+						play: true,
+						next: false
+					}
+				});
+			}
+
+			// Talk sometime
+			if (
+				srcEntity.GID === Session.Entity.GID &&
+				Session.pet.friendly > 900 &&
+				(Session.pet.lastTalk || 0) + 10000 < Date.now()
+			) {
+				const talkRate = parseInt(Math.random() * 10);
+				if (talkRate < 3) {
+					const hunger = DB.getPetHungryState(Session.pet.oldHungry);
+					const talk = DB.getPetTalkNumber(Session.pet.job, PetMessageConst.PM_HUNTING, hunger);
+
+					const talkPkt = new PACKET.CZ.PET_ACT();
+					talkPkt.data = talk;
+					Network.sendPacket(talkPkt);
+					Session.pet.lastTalk = Date.now();
+				}
+			}
+
+			break;
+		}
+		// Pickup item
+		case 1:
+			srcEntity.setAction({
+				action: srcEntity.ACTION.PICKUP,
+				frame: 0,
+				repeat: false,
+				play: true,
+				next: {
+					action: srcEntity.ACTION.IDLE,
+					frame: 0,
+					repeat: true,
+					play: true,
+					next: false
+				}
+			});
+			if (dstEntity) {
+				srcEntity.lookTo(dstEntity.position[0], dstEntity.position[1]);
+			}
+			break;
+
+		// Sit Down
+		case 2:
+			srcEntity.setAction({
+				action: srcEntity.ACTION.SIT,
+				frame: 0,
+				repeat: true,
+				play: true
+			});
+			break;
+
+		// Stand up
+		case 3:
+			srcEntity.setAction({
+				action: srcEntity.ACTION.IDLE,
+				frame: 0,
+				repeat: true,
+				play: true
+			});
+			break;
+	}
+
+	if (pkt?.damage > 0) {
+		if (srcEntity.GID === Session.Entity.GID) {
+			// I deal damage
+			ChatBox.addText(
+				DB.getMessage(1607).replace('%s', dstEntity.display.name).replace('%d', pkt.damage),
+				ChatBox.TYPE.INFO,
+				ChatBox.FILTER.BATTLE
+			);
+		} else if (dstEntity.GID === Session.Entity.GID) {
+			// I receive damage
+			ChatBox.addText(
+				DB.getMessage(1605).replace('%s', srcEntity.display.name).replace('%d', pkt.damage),
+				ChatBox.TYPE.INFO,
+				ChatBox.FILTER.BATTLE
+			);
+		} else if (
+			srcEntity.GID === Session.homunId ||
+			srcEntity.GID === Session.merId ||
+			srcEntity.GID === Session.petId ||
+			srcEntity.GID === Session.elemId
+		) {
+			// My buddy deals damage
+			ChatBox.addText(
+				DB.getMessage(1608)
+					.replace('%s', srcEntity.display.name)
+					.replace('%s', dstEntity.display.name)
+					.replace('%d', pkt.damage),
+				ChatBox.TYPE.INFO,
+				ChatBox.FILTER.BATTLE
+			);
+		} else if (
+			dstEntity.GID === Session.homunId ||
+			dstEntity.GID === Session.merId ||
+			dstEntity.GID === Session.petId ||
+			dstEntity.GID === Session.elemId
+		) {
+			// My buddy receives damage
+			ChatBox.addText(
+				DB.getMessage(1606)
+					.replace('%s', dstEntity.display.name)
+					.replace('%s', srcEntity.display.name)
+					.replace('%d', pkt.damage),
+				ChatBox.TYPE.INFO,
+				ChatBox.FILTER.BATTLE
+			);
+		} else if (PartyFriends.isGroupMember(srcEntity.display.name)) {
+			// Party member deals damage
+			ChatBox.addText(
+				DB.getMessage(1608)
+					.replace('%s', srcEntity.display.name)
+					.replace('%s', dstEntity.display.name)
+					.replace('%d', pkt.damage),
+				ChatBox.TYPE.INFO,
+				ChatBox.FILTER.PARTY_BATTLE
+			);
+		} else if (PartyFriends.isGroupMember(dstEntity.display.name)) {
+			// Party member receives damage
+			ChatBox.addText(
+				DB.getMessage(1606)
+					.replace('%s', dstEntity.display.name)
+					.replace('%s', srcEntity.display.name)
+					.replace('%d', pkt.damage),
+				ChatBox.TYPE.INFO,
+				ChatBox.FILTER.PARTY_BATTLE
+			);
+		}
+	}
+}
+
+/**
+ * Entity say something
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_CHAT
+ */
+function onEntityTalk(pkt) {
+	let type;
+
+	// Remove "pseudo : |00Dialogue
+	pkt.msg = pkt.msg.replace(/\: \|\d{2}/, ': ');
+
+	if (ChatRoom.isOpen) {
+		ChatRoom.message(pkt.msg);
+		return;
+	}
+
+	type = ChatBox.TYPE.PUBLIC;
+	const entity = EntityManager.get(pkt.GID);
+
+	ChatBox.addText(pkt.msg, type, ChatBox.FILTER.PUBLIC_CHAT, null, false);
+
+	if (entity) {
+		pkt.msg = pkt.msg.replace(
+			/<ITEMLINK>.*?<\/ITEMLINK>|<ITEML>.*?<\/ITEML>|<ITEM>.*?<\/ITEM>/gi,
+			function (match) {
+				return '<' + DB.getItemNameFromLink(match) + '>';
+			}
+		);
+
+		entity.dialog.set(pkt.msg);
+
+		// Should not happen
+		if (entity === Session.Entity) {
+			type |= ChatBox.TYPE.SELF;
+		} else if (entity.isAdmin) {
+			type |= ChatBox.TYPE.ADMIN;
+		}
+	}
+}
+
+/**
+ * Entity say something in color (channel system)
+ *
+ * @param {object} pkt - PACKET.ZC.NPC_CHAT
+ */
+function onEntityTalkColor(pkt) {
+	const color =
+		'rgb(' +
+		[pkt.color & 0x000000ff, (pkt.color & 0x0000ff00) >> 8, (pkt.color & 0x00ff0000) >> 16].join(',') +
+		')'; // bgr to rgb.
+
+	// Remove "pseudo : |00Dialogue"
+	pkt.msg = pkt.msg.replace(/\: \|\d{2}/, ': ');
+
+	const entity = EntityManager.get(pkt.accountID);
+	if (entity) {
+		entity.dialog.set(pkt.msg);
+	}
+	ChatBox.addText(pkt.msg, ChatBox.TYPE.PUBLIC, ChatBox.FILTER.PUBLIC_CHAT, color);
+}
+
+/**
+ * Display entity's name
+ *
+ * @param {object} pkt - PACKET.ZC.ACK_REQNAME
+ */
+function onEntityIdentity(pkt) {
+	const entity = EntityManager.get(pkt.AID);
+	if (entity) {
+		if (entity.display.name) {
+			entity.display.fakename = pkt.CName;
+		} else {
+			entity.display.name = pkt.CName;
+		}
+
+		if (PACKETVER.value >= 20170208 && pkt.TitleID > 0) {
+			const titleText = DB.getTitleString(pkt.TitleID);
+			entity.display.title_name = titleText;

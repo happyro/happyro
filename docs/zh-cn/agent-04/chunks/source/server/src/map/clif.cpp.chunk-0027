@@ -1,0 +1,500 @@
+ * Client tells server he'd like to use AoE skill id 'skill_id' of level 'skill_lv' on 'x','y' location
+ *------------------------------------------*/
+static void clif_parse_UseSkillToPosSub( int32 fd, map_session_data& sd, uint16 skill_lv, uint16 skill_id, int16 x, int16 y, int32 skillmoreinfo ){
+	t_tick tick = gettick();
+
+	if( !(skill_get_inf(skill_id)&INF_GROUND_SKILL) )
+		return; //Using a target skill on the ground? WRONG.
+
+	if (sd.state.block_action & PCBLOCK_SKILL) {
+		clif_msg( sd, MSI_BUSY );
+		return;
+	}
+
+	if( SKILL_CHK_HOMUN(skill_id) ) {
+		clif_parse_UseSkillToPos_homun(sd.hd, &sd, tick, skill_id, skill_lv, x, y, skillmoreinfo);
+		return;
+	}
+
+	if( SKILL_CHK_MERC(skill_id) ) {
+		clif_parse_UseSkillToPos_mercenary(sd.md, &sd, tick, skill_id, skill_lv, x, y, skillmoreinfo);
+		return;
+	}
+
+	if( pc_hasprogress( &sd, WIP_DISABLE_SKILLITEM ) ){
+#ifdef RENEWAL
+		clif_msg( sd, MSI_BUSY );
+#endif
+		return;
+	}
+
+	//Whether skill fails or not is irrelevant, the char ain't idle. [Skotlex]
+	if (battle_config.idletime_option&IDLE_USESKILLTOPOS)
+		sd.idletime = last_tick;
+	if (battle_config.hom_idle_no_share && sd.hd && battle_config.idletime_hom_option&IDLE_USESKILLTOPOS)
+		sd.idletime_hom = last_tick;
+	if (battle_config.mer_idle_no_share && sd.md && battle_config.idletime_mer_option&IDLE_USESKILLTOPOS)
+		sd.idletime_mer = last_tick;
+
+	if( skill_isNotOk(skill_id, sd) )
+		return;
+	if( skillmoreinfo != -1 ) {
+		if( pc_issit(&sd) ) {
+			clif_skill_fail( sd, skill_id );
+			return;
+		}
+		//You can't use Graffiti/TalkieBox AND have a vending open, so this is safe.
+		safestrncpy(sd.message, RFIFOCP(fd,skillmoreinfo), MESSAGE_SIZE);
+	}
+
+	if( sd.ud.skilltimer != INVALID_TIMER )
+		return;
+
+	if( DIFF_TICK(tick, sd.ud.canact_tick) < 0 ) {
+		if( sd.skillitem != skill_id ) {
+			clif_skill_fail( sd, skill_id, USESKILL_FAIL_SKILLINTERVAL );
+			return;
+		}
+	}
+
+	if( sd.sc.option&OPTION_COSTUME )
+		return;
+
+#ifndef RENEWAL
+	if( sd.sc.getSCE(SC_BASILICA) && (skill_id != HP_BASILICA || sd.sc.getSCE(SC_BASILICA)->val4 != sd.id) )
+		return; // On basilica only caster can use Basilica again to stop it.
+#endif
+
+	if( sd.menuskill_id ) {
+		if( sd.menuskill_id == SA_TAMINGMONSTER ) {
+			clif_menuskill_clear(&sd); //Cancel pet capture.
+		}else if( sd.menuskill_id == SG_FEEL ){
+			clif_menuskill_clear( &sd ); // Cancel selection
+		} else if( sd.menuskill_id != SA_AUTOSPELL )
+			return; //Can't use skills while a menu is open.
+	}
+
+	pc_delinvincibletimer(&sd);
+
+	if( sd.skillitem == skill_id ) {
+		if( skill_lv != sd.skillitemlv )
+			skill_lv = sd.skillitemlv;
+		unit_skilluse_pos(&sd, x, y, skill_id, skill_lv);
+	} else {
+		int32 lv;
+		sd.skillitem = sd.skillitemlv = 0;
+		if( (lv = pc_checkskill(&sd, skill_id)) > 0 ) {
+			if( skill_lv > lv )
+				skill_lv = lv;
+			unit_skilluse_pos(&sd, x, y, skill_id,skill_lv);
+		}
+	}
+}
+
+
+/// Request to use a ground skill.
+/// 0116 <skill lv>.W <skill id>.W <x>.W <y>.W (CZ_USE_SKILL_TOGROUND)
+/// 0366 <skill lv>.W <skill id>.W <x>.W <y>.W (CZ_USE_SKILL_TOGROUND2)
+/// 0AF4 <skill lv>.W <skill id>.W <x>.W <y>.W <unknown>.B (CZ_USE_SKILL_TOGROUND3)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_UseSkillToPos(int32 fd, map_session_data *sd)
+{
+	if( sd == nullptr ){
+		return;
+	}
+
+	// TODO: shuffle packet
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	if (pc_cant_act(sd))
+		return;
+	if (pc_issit(sd))
+		return;
+
+	clif_parse_UseSkillToPosSub(fd, *sd,
+		RFIFOW(fd,info->pos[0]), //skill lv
+		RFIFOW(fd,info->pos[1]), //skill num
+		RFIFOW(fd,info->pos[2]), //pos x
+		RFIFOW(fd,info->pos[3]), //pos y
+		// TODO: find out what this is intended to do
+		//RFIFOB(fd, info->pos[4])
+		-1	//Skill more info.
+	);
+}
+
+
+/// Request to use a ground skill with text.
+/// 0190 <skill lv>.W <skill id>.W <x>.W <y>.W <contents>.80B (CZ_USE_SKILL_TOGROUND_WITHTALKBOX)
+/// 0367 <skill lv>.W <skill id>.W <x>.W <y>.W <contents>.80B (CZ_USE_SKILL_TOGROUND_WITHTALKBOX2)
+/// There are various variants of this packet, some of them have padding between fields.
+void clif_parse_UseSkillToPosMoreInfo(int32 fd, map_session_data *sd)
+{
+	if( sd == nullptr ){
+		return;
+	}
+
+	// TODO: shuffle packet
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	if (pc_cant_act(sd))
+		return;
+	if (pc_issit(sd))
+		return;
+
+	clif_parse_UseSkillToPosSub(fd, *sd,
+		RFIFOW(fd,info->pos[0]), //Skill lv
+		RFIFOW(fd,info->pos[1]), //Skill num
+		RFIFOW(fd,info->pos[2]), //pos x
+		RFIFOW(fd,info->pos[3]), //pos y
+		info->pos[4] //skill more info
+	);
+}
+
+
+/// Answer to map selection dialog.
+/// 011b <skill id>.W <map name>.16B (CZ_SELECT_WARPPOINT)
+void clif_parse_UseSkillMap(int32 fd, map_session_data* sd)
+{
+	if( sd == nullptr ){
+		return;
+	}
+
+	sd->state.workinprogress = WIP_DISABLE_NONE;
+
+	const PACKET_CZ_SELECT_WARPPOINT* p = reinterpret_cast<PACKET_CZ_SELECT_WARPPOINT*>( RFIFOP( fd, 0 ) );
+
+	if( p->skill_id != sd->menuskill_id ){
+		return;
+	}
+
+	//It is possible to use teleport with the storage window open bugreport:8027
+	if( pc_cant_act( sd ) && !sd->state.storage_flag && p->skill_id != AL_TELEPORT ){
+		clif_menuskill_clear(sd);
+		return;
+	}
+
+	pc_delinvincibletimer(sd);
+
+	char map_name[MAP_NAME_LENGTH];
+
+	mapindex_getmapname( p->mapname, map_name );
+
+	skill_castend_map( sd, p->skill_id, map_name );
+}
+
+
+/// Request to set a memo on current map (CZ_REMEMBER_WARPPOINT).
+/// 011d
+void clif_parse_RequestMemo(int32 fd,map_session_data *sd)
+{
+	if (!pc_isdead(sd))
+		pc_memo(sd,-1);
+}
+
+
+/// Answer to pharmacy item selection dialog.
+/// 018e <name id>.W { <material id>.W }*3 (CZ_REQMAKINGITEM)
+void clif_parse_ProduceMix(int32 fd,map_session_data *sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQMAKINGITEM* p = reinterpret_cast<PACKET_CZ_REQMAKINGITEM*>( RFIFOP( fd, 0 ) );
+
+	switch( sd->menuskill_id ) {
+		case -1:
+		case AM_PHARMACY:
+		case RK_RUNEMASTERY:
+		case GC_RESEARCHNEWPOISON:
+			break;
+		default:
+			return;
+	}
+	if (pc_istrading(sd)) {
+		//Make it fail to avoid shop exploits where you sell something different than you see.
+		clif_skill_fail( *sd, sd->ud.skill_id );
+		clif_menuskill_clear(sd);
+		return;
+	}
+
+	int32 produce_idx;
+
+	if( (produce_idx = skill_can_produce_mix(sd,p->itemId,sd->menuskill_val, 1)) )
+		skill_produce_mix(sd,0,p->itemId,p->material[0],p->material[1],p->material[2],1,produce_idx-1);
+	clif_menuskill_clear(sd);
+}
+
+
+/// Answer to mixing item selection dialog.
+/// 025b <mk type>.W <name id>.W (CZ_REQ_MAKINGITEM)
+/// mk type:
+///     1 = cooking
+///     2 = arrow
+///     3 = elemental
+///     4 = GN_MIX_COOKING
+///     5 = GN_MAKEBOMB
+///     6 = GN_S_PHARMACY
+///     7 = MT_M_MACHINE - Unconfirmed
+///     8 = BO_BIONIC_PHARMACY - Unconfirmed
+void clif_parse_Cooking(int32 fd,map_session_data *sd) {
+#if PACKETVER >= 20051010
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_MAKINGITEM* p = reinterpret_cast<PACKET_CZ_REQ_MAKINGITEM*>( RFIFOP( fd, 0 ) );
+
+	int32 amount = sd->menuskill_val2 ? sd->menuskill_val2 : 1;
+	int16 food_idx = -1;
+
+	if( p->type == 6 && sd->menuskill_id != GN_MIX_COOKING && sd->menuskill_id != GN_S_PHARMACY )
+		return;
+
+	if (pc_istrading(sd)) {
+		//Make it fail to avoid shop exploits where you sell something different than you see.
+		clif_skill_fail( *sd, sd->ud.skill_id );
+		clif_menuskill_clear(sd);
+		return;
+	}
+	if( (food_idx = skill_can_produce_mix(sd,p->itemId,sd->menuskill_val, amount)) )
+		skill_produce_mix(sd,(p->type>1?sd->menuskill_id:0),p->itemId,0,0,0,amount,food_idx-1);
+	clif_menuskill_clear(sd);
+#endif
+}
+
+
+/// Answer to repair weapon item selection dialog
+/// 01fd <index> W (CZ_REQ_ITEMREPAIR)
+/// 01fd <index>.W <name id>.W <refine>.B <card1>.W <card2>.W <card3>.W <card4>.W ???
+void clif_parse_RepairItem( int32 fd, map_session_data *sd ){
+	if( sd == nullptr ){
+		return;
+	}
+
+// Hercules has wrong date -> use correct one here
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+	const PACKET_CZ_REQ_ITEMREPAIR2* p = reinterpret_cast<PACKET_CZ_REQ_ITEMREPAIR2*>( RFIFOP( fd, 0 ) );
+#else
+	const PACKET_CZ_REQ_ITEMREPAIR1* p = reinterpret_cast<PACKET_CZ_REQ_ITEMREPAIR1*>( RFIFOP( fd, 0 ) );
+#endif
+
+	if (sd->menuskill_id != BS_REPAIRWEAPON)
+		return;
+	if (pc_istrading(sd)) {
+		//Make it fail to avoid shop exploits where you sell something different than you see.
+		clif_skill_fail( *sd, sd->ud.skill_id );
+		clif_menuskill_clear(sd);
+		return;
+	}
+	skill_repairweapon( *sd, p->item.index );
+	clif_menuskill_clear(sd);
+}
+
+
+/// Answer to refine weapon item selection dialog (CZ_REQ_WEAPONREFINE).
+/// 0222 <index>.L
+void clif_parse_WeaponRefine( int32 fd, map_session_data *sd ){
+	if( sd == nullptr ){
+		return;
+	}
+
+	if (sd->menuskill_id != WS_WEAPONREFINE) //Packet exploit?
+		return;
+	if (pc_istrading(sd)) {
+		//Make it fail to avoid shop exploits where you sell something different than you see.
+		clif_skill_fail( *sd, sd->ud.skill_id );
+		clif_menuskill_clear(sd);
+		return;
+	}
+	skill_weaponrefine( *sd, server_index( RFIFOL( fd, 2 ) ) );
+	clif_menuskill_clear(sd);
+}
+
+
+/// Answer to script menu dialog (CZ_CHOOSE_MENU).
+/// 00b8 <npc id>.L <choice>.B
+/// choice:
+///     1~254 = menu item
+///     255   = cancel
+/// NOTE: If there were more than 254 items in the list, choice
+///     overflows to choice%256.
+void clif_parse_NpcSelectMenu(int32 fd,map_session_data *sd){
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	int32 npc_id = RFIFOL(fd,info->pos[0]);
+	uint8 select = RFIFOB(fd,info->pos[1]);
+
+#ifdef SECURE_NPCTIMEOUT
+	if( sd->npc_idle_timer == INVALID_TIMER && !sd->state.ignoretimeout )
+		return;
+#endif
+
+	if( (select > sd->npc_menu && select != 0xff) || select == 0 ) {
+			TBL_NPC* nd = map_id2nd(npc_id);
+			ShowWarning("Invalid menu selection on npc %d:'%s' - got %d, valid range is [%d..%d] (player AID:%d, CID:%d, name:'%s')!\n", npc_id, (nd)?nd->name:"invalid npc id", select, 1, sd->npc_menu, sd->id, sd->status.char_id, sd->status.name);
+			clif_GM_kick(nullptr,sd);
+		return;
+	}
+
+	sd->npc_menu = select;
+
+	if( battle_config.idletime_option&IDLE_NPC_MENU ){
+		sd->idletime = last_tick;
+	}
+
+	npc_scriptcont(sd,npc_id, false);
+}
+
+
+/// NPC dialog 'next' click (CZ_REQ_NEXT_SCRIPT).
+/// 00b9 <npc id>.L
+void clif_parse_NpcNextClicked(int32 fd,map_session_data *sd)
+{
+	if( battle_config.idletime_option&IDLE_NPC_NEXT ){
+		sd->idletime = last_tick;
+	}
+
+	npc_scriptcont(sd,RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]), false);
+}
+
+
+/// NPC numeric input dialog value.
+/// 0143 <npc id>.L <value>.L (CZ_INPUT_EDITDLG)
+void clif_parse_NpcAmountInput(int32 fd,map_session_data *sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_INPUT_EDITDLG* p = reinterpret_cast<PACKET_CZ_INPUT_EDITDLG*>( RFIFOP( fd, 0 ) );
+
+	sd->npc_amount = p->value;
+
+	if( battle_config.idletime_option&IDLE_NPC_INPUT ){
+		sd->idletime = last_tick;
+	}
+
+	npc_scriptcont( sd, p->GID, false );
+}
+
+
+/// NPC text input dialog value.
+/// 01d5 <packet len>.W <npc id>.L <string>.?B (CZ_INPUT_EDITDLGSTR)
+void clif_parse_NpcStringInput(int32 fd, map_session_data* sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_INPUT_EDITDLGSTR* p = reinterpret_cast<PACKET_CZ_INPUT_EDITDLGSTR*>( RFIFOP( fd, 0 ) );
+	size_t message_len = p->packetSize - sizeof( *p );
+
+	if( message_len <= 0 )
+		return; // invalid input
+
+#if PACKETVER >= 20151001
+	message_len++;
+#endif
+
+	safestrncpy( sd->npc_str, p->value, std::min<size_t>( message_len, CHATBOX_SIZE ) );
+
+	if( battle_config.idletime_option&IDLE_NPC_INPUT ){
+		sd->idletime = last_tick;
+	}
+
+	npc_scriptcont( sd, p->GID, false );
+}
+
+
+/// NPC dialog 'close' click.
+/// 0146 <npc id>.L (CZ_CLOSE_DIALOG)
+void clif_parse_NpcCloseClicked(int32 fd,map_session_data *sd)
+{
+	if( sd == nullptr ){
+		return;
+	}
+
+	if (!sd->npc_id) //Avoid parsing anything when the script was done with. [Skotlex]
+		return;
+
+	if( battle_config.idletime_option&IDLE_NPC_CLOSE ){
+		sd->idletime = last_tick;
+	}
+
+	const PACKET_CZ_CLOSE_DIALOG* p = reinterpret_cast<PACKET_CZ_CLOSE_DIALOG*>( RFIFOP( fd, 0 ) );
+
+	npc_scriptcont( sd, p->GID, true );
+}
+
+
+/// Answer to identify item selection dialog.
+/// 0178 <index>.W (CZ_REQ_ITEMIDENTIFY)
+/// index:
+///     -1 = cancel
+void clif_parse_ItemIdentify(int32 fd,map_session_data *sd) {
+	if (sd->menuskill_id != MC_IDENTIFY)
+		return;
+
+	const PACKET_CZ_REQ_ITEMIDENTIFY* p = reinterpret_cast<PACKET_CZ_REQ_ITEMIDENTIFY*>( RFIFOP( fd, 0 ) );
+	uint16 idx = server_index( p->index );
+
+	// Ignore the request
+	// - Invalid item index
+	// - Invalid item ID or item doesn't exist
+	// - Item is already identified
+	if ( idx >= MAX_INVENTORY ||
+		sd->inventory.u.items_inventory[idx].nameid == 0 || sd->inventory_data[idx] == nullptr ||
+		sd->inventory.u.items_inventory[idx].identify) {// cancel pressed
+			sd->state.workinprogress = WIP_DISABLE_NONE;
+			clif_menuskill_clear(sd);
+			return;
+	}
+
+	skill_identify(sd, idx);
+	clif_menuskill_clear(sd);
+}
+
+
+/// Answer to arrow crafting item selection dialog.
+/// 01ae <name id>.W (CZ_REQ_MAKINGARROW)
+void clif_parse_SelectArrow(int32 fd,map_session_data *sd) {
+	if( sd == nullptr ){
+		return;
+	}
+
+	if (pc_istrading(sd)) {
+		//Make it fail to avoid shop exploits where you sell something different than you see.
+		clif_skill_fail( *sd, sd->ud.skill_id );
+		clif_menuskill_clear(sd);
+		return;
+	}
+
+	const PACKET_CZ_REQ_MAKINGARROW* p = reinterpret_cast<PACKET_CZ_REQ_MAKINGARROW*>( RFIFOP( fd, 0 ) );
+
+	switch (sd->menuskill_id) {
+		case AC_MAKINGARROW:
+			skill_arrow_create(sd,p->itemId);
+			break;
+		case SA_CREATECON:
+			skill_produce_mix(sd,SA_CREATECON,p->itemId,0,0,0,1,-1);
+			break;
+		case GC_POISONINGWEAPON:
+			skill_poisoningweapon(*sd,p->itemId);
+			break;
+		case NC_MAGICDECOY:
+			skill_magicdecoy(*sd,p->itemId);
+			break;
+	}
+
+	clif_menuskill_clear(sd);
+}
+
+
+/// Answer to SA_AUTOSPELL skill selection dialog.
+/// 01ce <skill id>.L (CZ_SELECTAUTOSPELL)
+void clif_parse_AutoSpell(int32 fd,map_session_data *sd)
+{
+	if (sd->menuskill_id != SA_AUTOSPELL)
+		return;
+	sd->state.workinprogress = WIP_DISABLE_NONE;
+
+	const PACKET_CZ_SELECTAUTOSPELL* p = reinterpret_cast<PACKET_CZ_SELECTAUTOSPELL*>( RFIFOP( fd, 0 ) );
+
+	skill_autospell( sd, static_cast<uint16>( p->skill_id ) );
+
+	clif_menuskill_clear(sd);

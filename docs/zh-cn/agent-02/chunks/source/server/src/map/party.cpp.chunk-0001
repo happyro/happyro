@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "party.hpp"
+
+#include <cstdlib>
+
+#include <common/cbasetypes.hpp>
+#include <common/malloc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp> // last_tick, session_isActive
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "atcommand.hpp"	//msg_txt()
+#include "battle.hpp"
+#include "chrif.hpp" // charserver_name
+#include "clif.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "log.hpp"
+#include "mapreg.hpp"
+#include "mob.hpp"
+#include "pc.hpp"
+#include "pc_groups.hpp"
+#include "trade.hpp"
+
+static DBMap* party_db; // int32 party_id -> struct party_data* (releases data)
+static DBMap* party_booking_db; // uint32 char_id -> struct party_booking_ad_info* (releases data) // Party Booking [Spiria]
+static unsigned long party_booking_nextid = 1;
+
+TIMER_FUNC(party_send_xy_timer);
+int32 party_create_byscript;
+
+/*==========================================
+ * Fills the given party_member structure according to the sd provided.
+ * Used when creating/adding people to a party. [Skotlex]
+ *------------------------------------------*/
+static void party_fill_member( struct party_member& member, map_session_data& sd, uint32 leader ){
+	member.account_id = sd.status.account_id;
+	member.char_id = sd.status.char_id;
+	safestrncpy(member.name, sd.status.name, NAME_LENGTH);
+	member.class_ = sd.status.class_;
+	safestrncpy( member.map, mapindex_id2name( sd.mapindex ), sizeof( member.map ) );
+	member.lv = sd.status.base_level;
+	member.online = 1;
+	member.leader = leader;
+}
+
+/// Get the member_id of a party member.
+/// Return -1 if not in party.
+int32 party_getmemberid(const party_data* p, const map_session_data* sd)
+{
+	int32 member_id;
+	nullpo_retr(-1, p);
+	if( sd == nullptr )
+		return -1;// no player
+	ARR_FIND(0, MAX_PARTY, member_id,
+		p->party.member[member_id].account_id == sd->status.account_id &&
+		p->party.member[member_id].char_id == sd->status.char_id);
+	if( member_id == MAX_PARTY )
+		return -1;// not found
+	return member_id;
+}
+
+/*==========================================
+ * Request an available sd of this party
+ *------------------------------------------*/
+map_session_data* party_getavailablesd(const party_data *p)
+{
+	int32 i;
+	nullpo_retr(nullptr, p);
+	ARR_FIND(0, MAX_PARTY, i, p->data[i].sd != nullptr);
+	return( i < MAX_PARTY ) ? p->data[i].sd : nullptr;
+}
+
+/*==========================================
+ * Retrieves and validates the sd pointer for this party member [Skotlex]
+ *------------------------------------------*/
+
+static TBL_PC* party_sd_check(int32 party_id, uint32 account_id, uint32 char_id)
+{
+	TBL_PC* sd = map_id2sd(account_id);
+
+	if (!(sd && sd->status.char_id == char_id))
+		return nullptr;
+
+	if( sd->status.party_id == 0 )
+		sd->status.party_id = party_id;// auto-join if not in a party
+	if (sd->status.party_id != party_id)
+	{	//If player belongs to a different party, kick him out.
+		intif_party_leave(party_id,account_id,char_id,sd->status.name,PARTY_MEMBER_WITHDRAW_LEAVE);
+		return nullptr;
+	}
+
+	return sd;
+}
+
+/*==========================================
+ * Destructor
+ * Called in map shutdown, cleanup var
+ *------------------------------------------*/
+void do_final_party(void)
+{
+	party_db->destroy(party_db,nullptr);
+	party_booking_db->destroy(party_booking_db,nullptr); // Party Booking [Spiria]
+}
+// Constructor, init vars
+void do_init_party(void)
+{
+	party_db = idb_alloc(DB_OPT_RELEASE_DATA);
+	party_booking_db = idb_alloc(DB_OPT_RELEASE_DATA); // Party Booking [Spiria]
+	add_timer_func_list(party_send_xy_timer, "party_send_xy_timer");
+	add_timer_interval(gettick()+battle_config.party_update_interval, party_send_xy_timer, 0, 0, battle_config.party_update_interval);
+}
+
+/// Party data lookup using party id.
+struct party_data* party_search(int32 party_id)
+{
+	if(!party_id)
+		return nullptr;
+	return (struct party_data*)idb_get(party_db,party_id);
+}
+
+/// Party data lookup using party name.
+struct party_data* party_searchname(const char* str)
+{
+	struct party_data* p;
+
+	DBIterator *iter = db_iterator(party_db);
+	for( p = (struct party_data*)dbi_first(iter); dbi_exists(iter); p = (struct party_data*)dbi_next(iter) ) {
+		if( strncmpi(p->party.name,str,NAME_LENGTH) == 0 )
+			break;
+	}
+	dbi_destroy(iter);
+
+	return p;
+}
+
+int32 party_create( map_session_data& sd, char *name, int32 item, int32 item2 ){
+	struct party_member leader = {};
+	char tname[NAME_LENGTH];
+
+	safestrncpy(tname, name, NAME_LENGTH);
+	trim(tname);
+
+	if( !tname[0] ) // empty name
+		return 0;
+
+	// already associated with a party
+	if( sd.status.party_id > 0 || sd.party_joining || sd.party_creating ){
+		clif_party_created( sd, 2 );
+		return -2;
+	}
+
+	sd.party_creating = true;
+	party_fill_member( leader, sd, 1 );
+	intif_create_party(&leader,name,item,item2);
+
+	return 1;
+}
+
+void party_created(uint32 account_id,uint32 char_id,int32 fail,int32 party_id,char *name)
+{
+	map_session_data *sd;
+
+	sd = map_id2sd(account_id);
+
+	if (!sd || sd->status.char_id != char_id || !sd->party_creating ) { // Character logged off before creation ack?
+		if (!fail) // break up party since player could not be added to it.
+			intif_party_leave(party_id,account_id,char_id,"",PARTY_MEMBER_WITHDRAW_LEAVE);
+		return;
+	}
+
+	sd->party_creating = false;
+
+	if( !fail ) {
+		sd->status.party_id = party_id;
+		clif_party_created( *sd, 0 ); // Success message
+
+		achievement_update_objective(sd, AG_PARTY, 1, 1);
+
+		// We don't do any further work here because the char-server sends a party info packet right after creating the party
+		if(party_create_byscript) {	// returns party id in $@party_create_id if party is created by script
+			mapreg_setreg(add_str("$@party_create_id"),party_id);
+			party_create_byscript = 0;
+		}
+	} else
+		clif_party_created( *sd, 1 ); // "party name already exists"
+}
+
+int32 party_request_info(int32 party_id, uint32 char_id)
+{
+	return intif_request_partyinfo(party_id, char_id);
+}
+
+/**
+ * Close trade window if party member is kicked when trade a party bound item
+ * @param sd
+ **/
+static void party_trade_bound_cancel( map_session_data& sd ){
+#ifdef BOUND_ITEMS
+	if (sd.state.isBoundTrading&(1<<BOUND_PARTY))
+		trade_tradecancel( &sd );
+#endif
+}
+
+/// Invoked (from char-server) when the party info is not found.
+int32 party_recv_noinfo(int32 party_id, uint32 char_id)
+{
+	party_broken(party_id);
+	if( char_id != 0 ) { // requester
+		map_session_data* sd;
+
+		sd = map_charid2sd(char_id);
+
+		if( sd && sd->status.party_id == party_id )
+			sd->status.party_id = 0;
+	}
+
+	return 0;
+}
+
+static void party_check_state(struct party_data *p)
+{
+	int32 i;
+	memset(&p->state, 0, sizeof(p->state));
+	for (i = 0; i < MAX_PARTY; i ++) {
+		if (!p->party.member[i].online)
+			continue; //Those not online shouldn't aport to skill usage and all that.
+
+		switch (p->party.member[i].class_) {
+			case JOB_MONK:
+			case JOB_BABY_MONK:
+			case JOB_CHAMPION:
+			case JOB_SURA:
+			case JOB_SURA_T:
+			case JOB_BABY_SURA:
+			case JOB_INQUISITOR:
+				p->state.monk = 1;
+			break;
+			case JOB_STAR_GLADIATOR:
+			case JOB_BABY_STAR_GLADIATOR:
+			case JOB_STAR_EMPEROR:
+			case JOB_BABY_STAR_EMPEROR:
+			case JOB_SKY_EMPEROR:
+				p->state.sg = 1;
+			break;
+			case JOB_SUPER_NOVICE:
+			case JOB_SUPER_BABY:
+			case JOB_SUPER_NOVICE_E:
+			case JOB_SUPER_BABY_E:
+			case JOB_HYPER_NOVICE:
+				p->state.snovice = 1;
+			break;
+			case JOB_TAEKWON:
+			case JOB_BABY_TAEKWON:
+				p->state.tk = 1;
+			break;
+		}
+	}
+}
+
+int32 party_recv_info(struct party* sp, uint32 char_id)
+{
+	struct party_data* p;
+	struct party_member* member;
+	map_session_data* sd;
+	int32 removed[MAX_PARTY];// member_id in old data
+	int32 removed_count = 0;
+	int32 added[MAX_PARTY];// member_id in new data
+	int32 added_count = 0;
+	int32 member_id;
+	bool rename = false;
+
+	nullpo_ret(sp);
+
+	p = (struct party_data*)idb_get(party_db, sp->party_id);
+
+	if( p != nullptr ) { // diff members
+		int32 i;
+
+		for( member_id = 0; member_id < MAX_PARTY; ++member_id ) {
+			member = &p->party.member[member_id];
+
+			if( member->char_id == 0 )
+				continue; // empty
+
+			ARR_FIND(0, MAX_PARTY, i,
+				sp->member[i].account_id == member->account_id &&
+				sp->member[i].char_id == member->char_id);
+
+			if( i == MAX_PARTY )
+				removed[removed_count++] = member_id;
+			// If the member already existed, compare the old to the (possible) new name
+			else if( !rename && strcmp(member->name,sp->member[i].name) )
+				rename = true;
+		}
+
+		for( member_id = 0; member_id < MAX_PARTY; ++member_id ) {
+			member = &sp->member[member_id];
+
+			if( member->char_id == 0 )
+				continue; // empty
+
+			ARR_FIND(0, MAX_PARTY, i,
+				p->party.member[i].account_id == member->account_id &&
+				p->party.member[i].char_id == member->char_id);
+
+			if( i == MAX_PARTY )
+				added[added_count++] = member_id;
+		}
+	} else {
+		for( member_id = 0; member_id < MAX_PARTY; ++member_id )
+			if( sp->member[member_id].char_id != 0 )
+				added[added_count++] = member_id;
+
+		CREATE(p, struct party_data, 1);
+		idb_put(party_db, sp->party_id, p);
+	}
+	while( removed_count > 0 ) { // no longer in party
+		member_id = removed[--removed_count];
+		sd = p->data[member_id].sd;
+
+		if( sd == nullptr )
+			continue; // not online
+
+		party_member_withdraw(sp->party_id, sd->status.account_id, sd->status.char_id, sd->status.name, PARTY_MEMBER_WITHDRAW_LEAVE);
+	}
+
+	memcpy(&p->party, sp, sizeof(struct party));
+	memset(&p->state, 0, sizeof(p->state));
+	memset(&p->data, 0, sizeof(p->data));
+
+	for( member_id = 0; member_id < MAX_PARTY; member_id++ ) {
+		member = &p->party.member[member_id];
+		if ( member->char_id == 0 )
+			continue;// empty
+		p->data[member_id].sd = party_sd_check(sp->party_id, member->account_id, member->char_id);
+	}
+
+	party_check_state(p);
+
+	while( added_count > 0 ) { // new in party
+		member_id = added[--added_count];
+		sd = p->data[member_id].sd;
+
+		if( sd == nullptr )
+			continue;// not online
+
+		clif_name_area(sd); //Update other people's display. [Skotlex]
+		clif_party_member_info( *p, *sd );
+		// Only send this on party creation, otherwise it will be sent by party_send_movemap [Lemongrass]
+		if( sd->party_creating ){
+			clif_party_option(p,sd,0x100);
+		}
+
+		clif_party_info( *p );
+
+		if (p->instance_id > 0)
+			instance_reqinfo(sd, p->instance_id);
+	}
+	
+	// If a player was renamed, make sure to resend the party information
+	if( rename ){
+		clif_party_info( *p );
+	}
+
+	if( char_id != 0 ) { // requester
+		sd = map_charid2sd(char_id);
+		if( sd && sd->status.party_id == sp->party_id && party_getmemberid(p,sd) == -1 )
+			sd->status.party_id = 0;// was not in the party
+	}
+
+	return 0;
+}
+
+///! TODO: Party invitation cross map-server through inter-server, so does with the reply.
+bool party_invite( map_session_data& sd, map_session_data *tsd ){
+	struct party_data* p = party_search( sd.status.party_id );
+
+	if( p == nullptr ){
+		return false;
+	}
+
+	int32 i;
+
+	// confirm if this player is a party leader
+	ARR_FIND( 0, MAX_PARTY, i, p->data[i].sd == &sd );
+
+	if( i == MAX_PARTY || !p->party.member[i].leader ) {
+		clif_displaymessage( sd.fd, msg_txt( &sd, 282 ) );
+		return false;
+	}
+
+	// Party locked.
+	if( map_getmapflag( sd.m, MF_PARTYLOCK ) ){
+		clif_displaymessage( sd.fd, msg_txt( &sd, 227 ) );
+		return false;
+	}
+
+	if( p->instance_id > 0 && battle_config.instance_block_invite ){
+		clif_party_invite_reply( sd, "", PARTY_REPLY_MEMORIALDUNGEON );
+		return false;
+	}
+
+	if( tsd == nullptr ){
+		clif_party_invite_reply( sd, "", PARTY_REPLY_OFFLINE );
+		return false;
+	}
+
+	if( tsd->status.disable_partyinvite ){
+		clif_party_invite_reply( sd, tsd->status.name, PARTY_REPLY_JOINMSG_REFUSE );
+		return false;
+	}
+
+	// @noask [LuzZza]
+	if( tsd->state.noask ){
+		clif_noask_sub( sd, *tsd, 394 ); // Autorejected party invite from %s.
+		return false;
+	}
+
+	if( battle_config.block_account_in_same_party ){
+		ARR_FIND(0, MAX_PARTY, i, p->party.member[i].account_id == tsd->status.account_id);
+		if (i < MAX_PARTY) {
+			clif_party_invite_reply( sd, tsd->status.name, PARTY_REPLY_DUAL );
+			return false;
+		}
+	}
+
+	// confirm if there is an open slot in the party
+	ARR_FIND(0, MAX_PARTY, i, p->party.member[i].account_id == 0);
+
+	if( i == MAX_PARTY ) {
+		clif_party_invite_reply( sd, tsd->status.name, PARTY_REPLY_FULL );
+		return false;
+	}
+
+	// confirm whether the account has the ability to invite before checking the player
+	if( !pc_has_permission( &sd, PC_PERM_PARTY ) || !pc_has_permission( tsd, PC_PERM_PARTY ) ) {
+		clif_displaymessage( sd.fd, msg_txt( &sd, 81 ) ); // Your GM level doesn't authorize you to perform this action on the specified player.
+		return false;
+	}
+
+	if( !battle_config.invite_request_check && ( tsd->guild_invite > 0 || tsd->state.trading || tsd->adopt_invite ) ){
+		clif_party_invite_reply( sd, tsd->status.name, PARTY_REPLY_JOIN_OTHER_PARTY );
+		return false;
+	}
+
+	// You can't invite someone who has already disconnected.
+	if( !session_isActive( tsd->fd ) ){
+		clif_party_invite_reply( sd, tsd->status.name, PARTY_REPLY_REJECTED );
+		return false;
+	}
+
+	// Already associated with a party
+	if( tsd->status.party_id > 0 || tsd->party_invite > 0 ){
+		clif_party_invite_reply( sd, tsd->status.name, PARTY_REPLY_JOIN_OTHER_PARTY );
+		return false;
+	}
+
+	tsd->party_invite = sd.status.party_id;
+	tsd->party_invite_account = sd.status.account_id;
+
+	clif_party_invite( sd, *tsd );
+
+	return true;
+}
+
+bool party_isleader( const map_session_data* sd ){
+	if( sd == nullptr ){
+		return false;
+	}
+
+	if( sd->status.party_id == 0 ){
+		return false;
+	}
+
+	const party_data* party = party_search( sd->status.party_id );
+
+	if( party == nullptr ){
+		return false;
+	}
+
+	for( int32 i = 0; i < MAX_PARTY; i++ ){
+		if( party->party.member[i].char_id == sd->status.char_id ){
+			return party->party.member[i].leader != 0;
+		}
+	}
+
+	return false;
+}
+
+void party_join( map_session_data& sd, int32 party_id ){
+	// Player is in a party already now
+	if( sd.status.party_id != 0 ){

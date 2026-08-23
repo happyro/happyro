@@ -1,0 +1,187 @@
+
+
+/// See BHEAP_PUSH. Version used by A* implementation, matching client bheap.
+///
+/// @param __heap Binary heap
+/// @param __val Value
+/// @param __topcmp Comparator
+#define BHEAP_PUSH2(__heap,__val,__topcmp) \
+	do{ \
+		size_t _i_ = VECTOR_LENGTH(__heap); \
+		VECTOR_PUSH(__heap,__val); /* insert at end */ \
+		BHEAP_SIFTDOWN(__heap,0,_i_,__topcmp); \
+	}while(0)
+
+
+
+/// Removes the top value of the heap. (using the '=' operator)
+/// Assumes the heap is not empty.
+///
+/// The comparator takes two values as arguments, returns:
+/// - negative if the first value is on the top
+/// - positive if the second value is on the top
+/// - 0 if they are equal
+///
+/// @param __heap Binary heap
+/// @param __topcmp Comparator
+#define BHEAP_POP(__heap,__topcmp) BHEAP_POPINDEX(__heap,0,__topcmp)
+
+
+
+/// See BHEAP_POP. Version used by A* implementation, matching client bheap.
+///
+/// @param __heap Binary heap
+/// @param __topcmp Comparator
+#define BHEAP_POP2(__heap,__topcmp) \
+	do{ \
+		VECTOR_INDEX(__heap,0) = VECTOR_POP(__heap); /* put last at index */ \
+		if( !VECTOR_LENGTH(__heap) ) /* removed last, nothing to do */ \
+			break; \
+		BHEAP_SIFTUP(__heap,0,__topcmp); \
+	}while(0)
+
+
+
+/// Removes the target value of the heap. (using the '=' operator)
+/// Assumes the index exists.
+///
+/// The comparator takes two values as arguments, returns:
+/// - negative if the first value is on the top
+/// - positive if the second value is on the top
+/// - 0 if they are equal
+///
+/// @param __heap Binary heap
+/// @param __idx Index
+/// @param __topcmp Comparator
+#define BHEAP_POPINDEX(__heap,__idx,__topcmp) \
+	do{ \
+		size_t _i_ = __idx; \
+		VECTOR_INDEX(__heap,__idx) = VECTOR_POP(__heap); /* put last at index */ \
+		if( _i_ >= VECTOR_LENGTH(__heap)) /* removed last, nothing to do */ \
+			break; \
+		while( _i_ ) \
+		{ /* restore heap property in parents */ \
+			size_t _parent_ = (_i_-1)/2; \
+			if( __topcmp(VECTOR_INDEX(__heap,_parent_),VECTOR_INDEX(__heap,_i_)) < 0 ) \
+				break; /* done */ \
+			std::swap(VECTOR_INDEX(__heap,_parent_),VECTOR_INDEX(__heap,_i_)); \
+			_i_ = _parent_; \
+		} \
+		while( _i_ < VECTOR_LENGTH(__heap) ) \
+		{ /* restore heap property in childs */ \
+			size_t _lchild_ = _i_*2 + 1; \
+			size_t _rchild_ = _i_*2 + 2; \
+			if( (_lchild_ >= VECTOR_LENGTH(__heap) || __topcmp(VECTOR_INDEX(__heap,_i_),VECTOR_INDEX(__heap,_lchild_)) <= 0) && \
+				(_rchild_ >= VECTOR_LENGTH(__heap) || __topcmp(VECTOR_INDEX(__heap,_i_),VECTOR_INDEX(__heap,_rchild_)) <= 0) ) \
+				break; /* done */ \
+			else if( _rchild_ >= VECTOR_LENGTH(__heap) || __topcmp(VECTOR_INDEX(__heap,_lchild_),VECTOR_INDEX(__heap,_rchild_)) <= 0 ) \
+			{ /* left child */ \
+				std::swap(VECTOR_INDEX(__heap,_i_),VECTOR_INDEX(__heap,_lchild_)); \
+				_i_ = _lchild_; \
+			} \
+			else \
+			{ /* right child */ \
+				std::swap(VECTOR_INDEX(__heap,_i_),VECTOR_INDEX(__heap,_rchild_)); \
+				_i_ = _rchild_; \
+			} \
+		} \
+	}while(0)
+
+
+
+/// Follow path up towards (but not all the way to) the root, swapping nodes until finding
+/// a place where the new item that was placed at __idx fits.
+/// Only goes as high as __startidx (usually 0).
+///
+/// @param __heap Binary heap
+/// @param __startidx Index of an ancestor of __idx
+/// @param __idx Index of an inserted element
+/// @param __topcmp Comparator
+#define BHEAP_SIFTDOWN(__heap,__startidx,__idx,__topcmp) \
+	do{ \
+		size_t _i2_ = __idx; \
+		while( _i2_ > __startidx ) \
+		{ /* restore heap property in parents */ \
+			size_t _parent_ = (_i2_-1)/2; \
+			if( __topcmp(VECTOR_INDEX(__heap,_parent_),VECTOR_INDEX(__heap,_i2_)) <= 0 ) \
+				break; /* done */ \
+			std::swap(VECTOR_INDEX(__heap,_parent_),VECTOR_INDEX(__heap,_i2_)); \
+			_i2_ = _parent_; \
+		} \
+	}while(0)
+
+
+
+/// Repeatedly swap the smaller child with parent, after placing a new item at __idx.
+///
+/// @param __heap Binary heap
+/// @param __idx Index of an inserted element
+/// @param __topcmp Comparator
+#define BHEAP_SIFTUP(__heap,__idx,__topcmp) \
+	do{ \
+		size_t _i_ = __idx; \
+		size_t _lchild_ = _i_*2 + 1; \
+		while( _lchild_ < VECTOR_LENGTH(__heap) ) \
+		{ /* restore heap property in childs */ \
+			size_t _rchild_ = _i_*2 + 2; \
+			if( _rchild_ >= VECTOR_LENGTH(__heap) || __topcmp(VECTOR_INDEX(__heap,_lchild_),VECTOR_INDEX(__heap,_rchild_)) < 0 ) \
+			{ /* left child */ \
+				std::swap(VECTOR_INDEX(__heap,_i_),VECTOR_INDEX(__heap,_lchild_)); \
+				_i_ = _lchild_; \
+			} \
+			else \
+			{ /* right child */ \
+				std::swap(VECTOR_INDEX(__heap,_i_),VECTOR_INDEX(__heap,_rchild_)); \
+				_i_ = _rchild_; \
+			} \
+			_lchild_ = _i_*2 + 1; \
+		} \
+		BHEAP_SIFTDOWN(__heap,__idx,_i_,__topcmp); \
+	}while(0)
+
+
+
+/// Call this after modifying the item at __idx__ to restore the heap
+///
+/// @param __heap Binary heap
+/// @param __idx Index
+/// @param __topcmp Comparator
+#define BHEAP_UPDATE(__heap,__idx,__topcmp) \
+	do{ \
+		BHEAP_SIFTDOWN(__heap,0,__idx,__topcmp); \
+		BHEAP_SIFTUP(__heap,__idx,__topcmp); \
+	}while(0)
+
+
+
+/// Clears the binary heap, freeing allocated data.
+///
+/// @param __heap Binary heap
+#define BHEAP_CLEAR(__heap) VECTOR_CLEAR(__heap)
+
+
+/// Resets the binary heap and clears content so it can be treated as empty
+///
+/// @parm __heap Binary heap
+#define BHEAP_RESET(__heap) VECTOR_RESET(__heap)
+
+
+/// Generic comparator for a min-heap. (minimum value at top)
+/// Returns -1 if v1 is smaller, 1 if v2 is smaller, 0 if equal.
+///
+/// @param v1 First value
+/// @param v2 Second value
+/// @return negative if v1 is top, positive if v2 is top, 0 if equal
+#define BHEAP_MINTOPCMP(v1,v2) ( v1 == v2 ? 0 : v1 < v2 ? -1 : 1 )
+
+
+
+/// Generic comparator for a max-heap. (maximum value at top)
+/// Returns -1 if v1 is bigger, 1 if v2 is bigger, 0 if equal.
+///
+/// @param v1 First value
+/// @param v2 Second value
+/// @return negative if v1 is top, positive if v2 is top, 0 if equal
+#define BHEAP_MAXTOPCMP(v1,v2) ( v1 == v2 ? 0 : v1 > v2 ? -1 : 1 )
+
+#endif /* DB_HPP */

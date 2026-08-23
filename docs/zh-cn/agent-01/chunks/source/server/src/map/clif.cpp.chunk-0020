@@ -1,0 +1,500 @@
+
+/// Marriage proposal (ZC_REQ_COUPLE).
+/// 01e2 <account id>.L <char id>.L <char name>.24B
+/// This packet while still implemented by the client is no longer being officially used.
+/*
+void clif_marriage_proposal(int32 fd, map_session_data *sd, map_session_data* ssd)
+{
+	nullpo_retv(sd);
+
+	WFIFOHEAD(fd,packet_len(0x1e2));
+	WFIFOW(fd,0) = 0x1e2;
+	WFIFOL(fd,2) = ssd->status.account_id;
+	WFIFOL(fd,6) = ssd->status.char_id;
+	safestrncpy(WFIFOCP(fd,10), ssd->status.name, NAME_LENGTH);
+	WFIFOSET(fd, packet_len(0x1e2));
+}
+*/
+
+
+/*==========================================
+ * Displays a message using the guild-chat colors to the specified targets. [Skotlex]
+ *------------------------------------------*/
+void clif_disp_message(const block_list* src, const char* mes, size_t len, enum send_target target)
+{
+	unsigned char buf[256];
+
+	if( len == 0 ) {
+		return;
+	} else if( len > sizeof(buf)-5 ) {
+		ShowWarning("clif_disp_message: Truncated message '%s' (len=%" PRIuPTR ", max=%" PRIuPTR ", aid=%d).\n", mes, len, sizeof(buf)-5, src->id);
+		len = sizeof(buf)-5;
+	}
+
+	WBUFW(buf, 0) = 0x17f;
+	WBUFW(buf, 2) = static_cast<int16>( len + 5 );
+	safestrncpy(WBUFCP(buf,4), mes, len+1);
+	clif_send(buf, WBUFW(buf,2), src, target);
+}
+
+
+/// Notifies the client about the result of a request to disconnect another player (ZC_ACK_DISCONNECT_CHARACTER).
+/// 00cd <result>.L (unknown packet version or invalid information at packet_len_table)
+/// 00cd <result>.B
+/// result:
+///     0 = failure
+///     1 = success
+void clif_GM_kickack( const map_session_data* sd, int32 id )
+{
+	int32 fd;
+
+	nullpo_retv(sd);
+
+	fd = sd->fd;
+	WFIFOHEAD(fd,packet_len(0xcd));
+	WFIFOW(fd,0) = 0xcd;
+	WFIFOB(fd,2) = id;  // FIXME: this is not account id
+	WFIFOSET(fd, packet_len(0xcd));
+}
+
+
+void clif_GM_kick( map_session_data *sd, map_session_data *tsd)
+{
+	nullpo_retv(tsd);
+
+	if (sd == nullptr)
+		tsd->state.keepshop = true;
+
+	if (session_isActive(tsd->fd))
+		clif_authfail_fd(tsd->fd, 15);
+	else
+		map_quit(tsd);
+
+	if (sd)
+		clif_GM_kickack(sd, tsd->status.account_id);
+}
+
+
+/// Displays various manner-related status messages (ZC_ACK_GIVE_MANNER_POINT).
+/// 014a <result>.L
+/// result:
+///     0 = "A manner point has been successfully aligned."
+///     1 = MP_FAILURE_EXHAUST
+///     2 = MP_FAILURE_ALREADY_GIVING
+///     3 = "Chat Block has been applied by GM due to your ill-mannerous action."
+///     4 = "Automated Chat Block has been applied due to Anti-Spam System."
+///     5 = "You got a good point from %s."
+void clif_manner_message( const map_session_data* sd, uint32 type )
+{
+	int32 fd;
+	nullpo_retv(sd);
+
+	fd = sd->fd;
+	WFIFOHEAD(fd,packet_len(0x14a));
+	WFIFOW(fd,0) = 0x14a;
+	WFIFOL(fd,2) = type;
+	WFIFOSET(fd, packet_len(0x14a));
+}
+
+/// Followup to 0x14a type 3/5, informs who did the manner adjustment action.
+/// 014b <type>.B <GM name>.24B (ZC_NOTIFY_MANNER_POINT_GIVEN)
+/// type:
+///     0 = positive (unmute)
+///     1 = negative (mute)
+void clif_GM_silence( map_session_data& sd, map_session_data& tsd, bool muted ){
+	PACKET_ZC_NOTIFY_MANNER_POINT_GIVEN p{};
+
+	p.packetType = HEADER_ZC_NOTIFY_MANNER_POINT_GIVEN;
+	p.type = muted;
+	safestrncpy( p.name, sd.status.name, sizeof( p.name ) );
+
+	clif_send( &p, sizeof( p ), &tsd, SELF );
+}
+
+/// Notifies the client about the result of a request to allow/deny whispers from a player.
+/// 00d1 <type>.B <result>.B (ZC_SETTING_WHISPER_PC)
+/// type:
+///     0 = /ex (deny)
+///     1 = /in (allow)
+/// result:
+///     0 = success
+///     1 = failure
+///     2 = too many blocks
+void clif_wisexin( map_session_data& sd, uint8 type, uint8 flag ){
+	PACKET_ZC_SETTING_WHISPER_PC p{};
+
+	p.packetType = HEADER_ZC_SETTING_WHISPER_PC;
+	p.type = type;
+	p.result = flag;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+/// Notifies the client about the result of a request to allow/deny whispers from anyone.
+/// 00d2 <type>.B <result>.B (ZC_SETTING_WHISPER_STATE)
+/// type:
+///     0 = /exall (deny)
+///     1 = /inall (allow)
+/// result:
+///     0 = success
+///     1 = failure
+void clif_wisall( map_session_data& sd, uint8 type, bool failure ){
+	PACKET_ZC_SETTING_WHISPER_STATE p{};
+
+	p.packetType = HEADER_ZC_SETTING_WHISPER_STATE;
+	p.type = type;
+	p.result = failure;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+/// Play a BGM! [Rikter/Yommy] (ZC_PLAY_NPC_BGM).
+/// 07fe <bgm>.24B
+void clif_playBGM( const map_session_data& sd, const char* name ){
+#if PACKETVER_MAIN_NUM >= 20220504
+	PACKET_ZC_PLAY_NPC_BGM* p = reinterpret_cast<PACKET_ZC_PLAY_NPC_BGM*>( packet_buffer );
+	size_t length = strlen( name ) + 1;
+
+	p->PacketType = HEADER_ZC_PLAY_NPC_BGM;
+	p->PacketLength = sizeof( *p );
+	p->playType = 0; // TODO: implement, send loop for the time being
+	safestrncpy( p->bgm, name, length );
+	p->PacketLength += static_cast<decltype(p->PacketLength)>( length );
+
+	clif_send( p, p->PacketLength, &sd, SELF );
+#elif PACKETVER >= 20091201
+	PACKET_ZC_PLAY_NPC_BGM p = {};
+
+	p.PacketType = HEADER_ZC_PLAY_NPC_BGM;
+	safestrncpy( p.bgm, name, sizeof( p.bgm ) );
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+/// Plays/stops a wave sound (ZC_SOUND).
+/// 01d3 <file name>.24B <act>.B <term>.L <npc id>.L
+/// file name:
+///     relative to data\wav
+/// act:
+///     0 = play (once)
+///     1 = play (repeat, does not work)
+///     2 = stops all sound instances of file name (does not work)
+/// term:
+///     unknown purpose, only relevant to act = 1
+/// npc id:
+///     The accustic direction of the sound is determined by the
+///     relative position of the NPC to the player (3D sound).
+void clif_soundeffect( const block_list& bl, const char* name, int32 type, enum send_target target ){
+	PACKET_ZC_SOUND p = {};
+
+	p.PacketType = HEADER_ZC_SOUND;
+	safestrncpy( p.name, name, sizeof( p.name ) );
+	p.act = type;
+	p.term = 0; // TODO: implement
+	p.AID = bl.id;
+
+	clif_send( &p, sizeof( p ), &bl, target );
+}
+
+/// Displays special effects (npcs, weather, etc) [Valaris] (ZC_NOTIFY_EFFECT2).
+/// 01f3 <id>.L <effect id>.L
+/// effect id:
+///     @see doc/effect_list.txt
+void clif_specialeffect(const block_list* bl, int32 type, enum send_target target)
+{
+	unsigned char buf[24];
+
+	nullpo_retv(bl);
+
+	memset(buf, 0, packet_len(0x1f3));
+
+	WBUFW(buf,0) = 0x1f3;
+	WBUFL(buf,2) = bl->id;
+	WBUFL(buf,6) = type;
+
+	clif_send(buf, packet_len(0x1f3), bl, target);
+
+	if (disguised(bl)) {
+		WBUFL(buf,2) = disguised_bl_id(bl->id);
+		clif_send(buf, packet_len(0x1f3), bl, SELF);
+	}
+}
+
+void clif_specialeffect_single( const block_list* bl, int32 type, int32 fd )
+{
+	WFIFOHEAD(fd,10);
+	WFIFOW(fd,0) = 0x1f3;
+	WFIFOL(fd,2) = bl->id;
+	WFIFOL(fd,6) = type;
+	WFIFOSET(fd,10);
+}
+
+
+/// Notifies clients of an special/visual effect that accepts an value (ZC_NOTIFY_EFFECT3).
+/// 0284 <id>.L <effect id>.L <num data>.L
+/// effect id:
+///     @see doc/effect_list.txt
+/// num data:
+///     effect-dependent value
+void clif_specialeffect_value( const block_list* bl, int32 effect_id, int32 num, send_target target )
+{
+	uint8 buf[14];
+
+	WBUFW(buf,0) = 0x284;
+	WBUFL(buf,2) = bl->id;
+	WBUFL(buf,6) = effect_id;
+	WBUFL(buf,10) = num;
+
+	clif_send(buf, packet_len(0x284), bl, target);
+
+	if( disguised(bl) )
+	{
+		WBUFL(buf,2) = disguised_bl_id(bl->id);
+		clif_send(buf, packet_len(0x284), bl, SELF);
+	}
+}
+
+void clif_specialeffect_remove( const block_list* bl_src, int32 effect, enum send_target e_target, block_list* bl_target )
+{
+#if PACKETVER >= 20181002
+	nullpo_retv( bl_src );
+	nullpo_retv( bl_target );
+
+	PACKET_ZC_REMOVE_EFFECT p = {};
+
+	p.packetType = HEADER_ZC_REMOVE_EFFECT;
+	p.aid = bl_src->id;
+	p.effectId = effect;
+
+	clif_send( &p, sizeof( PACKET_ZC_REMOVE_EFFECT ), bl_target, e_target );
+
+	if( disguised(bl_src) )
+	{
+		p.aid = disguised_bl_id( bl_src->id );
+		clif_send( &p, sizeof( PACKET_ZC_REMOVE_EFFECT ), bl_src, SELF );
+	}
+#endif
+}
+
+/// Monster/NPC color chat [SnakeDrak] (ZC_NPC_CHAT).
+/// 02c1 <packet len>.W <id>.L <color>.L <message>.?B
+void clif_messagecolor_target(const block_list* bl, unsigned long color, const char *msg, bool rgb2bgr, enum send_target type, const map_session_data* sd) {
+	uint16 msg_len = (uint16)(strlen(msg) + 1);
+	uint8 buf[CHAT_SIZE_MAX];
+
+	nullpo_retv(bl);
+
+	if (msg_len > sizeof(buf) - 12) {
+		ShowWarning("clif_messagecolor: Truncating too long message '%s' (len=%u).\n", msg, msg_len);
+		msg_len = sizeof(buf) - 12;
+	}
+
+	if (rgb2bgr)
+		color = (color & 0x0000FF) << 16 | (color & 0x00FF00) | (color & 0xFF0000) >> 16; // RGB to BGR
+
+	WBUFW(buf,0) = 0x2C1;
+	WBUFW(buf,2) = msg_len + 12;
+	WBUFL(buf,4) = bl->id;
+	WBUFL(buf,8) = color;
+	memcpy(WBUFCP(buf,12), msg, msg_len);
+
+	clif_send(buf, WBUFW(buf,2), (sd == nullptr ? bl : &(*sd)), type);
+}
+
+/**
+ * Notifies the client that the storage window is still open
+ *
+ * Should only be used in cases where the client closed the 
+ * storage window without server's consent
+ */
+void clif_refresh_storagewindow(map_session_data *sd) {
+	// Notify the client that the storage is open
+	if( sd->state.storage_flag == 1 ) {
+		storage_sortitem(sd->storage.u.items_storage, ARRAYLENGTH(sd->storage.u.items_storage));
+		clif_storagelist(sd, sd->storage.u.items_storage, ARRAYLENGTH(sd->storage.u.items_storage), storage_getName(0));
+		clif_updatestorageamount(*sd, sd->storage.amount, sd->storage.max_amount);
+	}
+	// Notify the client that the gstorage is open otherwise it will
+	// remain locked forever and nobody will be able to access it
+	if( sd->state.storage_flag == 2 ) {
+		struct s_storage *gstor = guild2storage2(sd->status.guild_id);
+
+		if( !gstor ) // Shouldn't happen. The information should already be at the map-server
+			intif_request_guild_storage(sd->status.account_id, sd->status.guild_id);
+		else {
+			storage_sortitem(gstor->u.items_guild, ARRAYLENGTH(gstor->u.items_guild));
+			clif_storagelist(sd, gstor->u.items_guild, ARRAYLENGTH(gstor->u.items_guild), "Guild Storage");
+			clif_updatestorageamount(*sd, gstor->amount, gstor->max_amount);
+		}
+	}
+	// Notify the client that the premium storage is open
+	if (sd->state.storage_flag == 3) {
+		storage_sortitem(sd->premiumStorage.u.items_storage, ARRAYLENGTH(sd->premiumStorage.u.items_storage));
+		clif_storagelist(sd, sd->premiumStorage.u.items_storage, ARRAYLENGTH(sd->premiumStorage.u.items_storage), storage_getName(sd->premiumStorage.stor_id));
+		clif_updatestorageamount(*sd, sd->premiumStorage.amount, sd->premiumStorage.max_amount);
+	}
+}
+
+// refresh the client's screen, getting rid of any effects
+void clif_refresh(map_session_data *sd)
+{
+	nullpo_retv(sd);
+
+	clif_changemap( *sd, sd->m, sd->x, sd->y );
+	clif_inventorylist(sd);
+	clif_equipswitch_list(sd);
+	if(pc_iscarton(sd)) {
+		clif_cartlist(sd);
+		clif_updatestatus(*sd,SP_CARTINFO);
+	}
+	clif_updatestatus(*sd,SP_WEIGHT);
+	clif_updatestatus(*sd,SP_MAXWEIGHT);
+	clif_updatestatus(*sd,SP_STR);
+	clif_updatestatus(*sd,SP_AGI);
+	clif_updatestatus(*sd,SP_VIT);
+	clif_updatestatus(*sd,SP_INT);
+	clif_updatestatus(*sd,SP_DEX);
+	clif_updatestatus(*sd,SP_LUK);
+#ifdef RENEWAL
+	clif_updatestatus(*sd,SP_POW);
+	clif_updatestatus(*sd,SP_STA);
+	clif_updatestatus(*sd,SP_WIS);
+	clif_updatestatus(*sd,SP_SPL);
+	clif_updatestatus(*sd,SP_CON);
+	clif_updatestatus(*sd,SP_CRT);
+#endif
+	if (sd->spiritball)
+		clif_spiritball( sd, sd, SELF );
+	clif_millenniumshield_single( *sd, *sd );
+	clif_spiritcharm_single( *sd, *sd );
+	if (sd->soulball)
+		clif_soulball( sd, sd, SELF );
+	if (sd->servantball)
+		clif_servantball( *sd, sd, SELF );
+	if (sd->abyssball)
+		clif_abyssball( *sd, sd, SELF );
+	clif_refresh_clothcolor( *sd, SELF );
+	if(hom_is_active(sd->hd))
+		clif_send_homdata( *sd->hd, SP_ACK );
+	if( sd->md ) {
+		clif_mercenary_info(sd);
+		clif_mercenary_skillblock(sd);
+	}
+	if( sd->ed )
+		clif_elemental_info(sd);
+	map_foreachinallrange(clif_getareachar,sd,AREA_SIZE,BL_ALL,sd);
+	clif_weather_check(sd);
+	if( sd->chatID )
+		chat_leavechat(sd,0);
+	if( sd->state.vending )
+		clif_openvending( *sd );
+	if( pc_issit(sd) )
+		clif_sitting(*sd); // FIXME: just send to self, not area
+	if( pc_isdead(sd) ) // When you refresh, resend the death packet.
+		clif_clearunit_single( sd->id, CLR_DEAD, *sd );
+	else
+		clif_changed_dir(*sd, SELF);
+	clif_efst_status_change_sub(sd,sd,SELF);
+
+	//Issue #2143
+	//Cancel Trading State 
+	if (sd->state.trading)
+		trade_tradecancel(sd);
+	//Cancel Buying/Selling State
+	if (sd->state.buyingstore)
+		buyingstore_close(sd);
+
+
+	mail_clear(sd);
+
+	clif_loadConfirm( sd );
+
+	if( disguised(sd) ) {/* refresh-da */
+		int16 disguise = sd->disguise;
+		pc_disguise(sd, 0);
+		pc_disguise(sd, disguise);
+	}
+	clif_refresh_storagewindow(sd);
+}
+
+
+/// Updates the object's (bl) name on client.
+/// Used to update when a char leaves a party/guild. [Skotlex]
+/// Needed because when you send a 0x95 packet, the client will not remove the cached party/guild info that is not sent.
+/// 0095 <id>.L <char name>.24B (ZC_ACK_REQNAME)
+/// 0195 <id>.L <char name>.24B <party name>.24B <guild name>.24B <position name>.24B (ZC_ACK_REQNAMEALL)
+/// 0a30 <id>.L <char name>.24B <party name>.24B <guild name>.24B <position name>.24B <title ID>.L (ZC_ACK_REQNAMEALL2)
+void clif_name( const block_list* src, const block_list* bl, send_target target ){
+	nullpo_retv( src );
+	nullpo_retv( bl );
+
+	switch( bl->type ){
+		case BL_PC: {
+			PACKET_ZC_ACK_REQNAMEALL packet = { 0 };
+
+			packet.packet_id = HEADER_ZC_ACK_REQNAMEALL;
+			packet.gid = bl->id;
+
+			map_session_data *sd = (map_session_data *)bl;
+
+			//Requesting your own "shadow" name. [Skotlex]
+			if( src == bl && target == SELF && sd->disguise ){
+				packet.gid = -bl->id;
+			}
+
+			if( sd->fakename[0] ) {
+				safestrncpy( packet.name, sd->fakename, NAME_LENGTH );
+				clif_send( &packet, sizeof(packet), src, target );
+				return;
+			}
+
+			safestrncpy( packet.name, sd->status.name, NAME_LENGTH );
+
+			party_data *p = nullptr;
+
+			if( sd->status.party_id ){
+				p = party_search( sd->status.party_id );
+			}
+
+			// do not display party unless the player is also in a guild
+			if( p && ( sd->guild || battle_config.display_party_name ) ){
+				safestrncpy( packet.party_name, p->party.name, NAME_LENGTH );
+			}
+
+			if( sd->guild ){
+				int32 position;
+
+				// Will get the position of the guild the player is in
+				position = guild_getposition(*sd);
+
+				safestrncpy( packet.guild_name, sd->guild->guild.name, NAME_LENGTH );
+				safestrncpy( packet.position_name, sd->guild->guild.position[position].name, NAME_LENGTH );
+			}else if( sd->clan ){
+				safestrncpy( packet.position_name, sd->clan->name, NAME_LENGTH );
+			}
+
+#if PACKETVER_MAIN_NUM >= 20150225 || PACKETVER_RE_NUM >= 20141126 || defined( PACKETVER_ZERO )
+			packet.title_id = sd->status.title_id; // Title ID
+#endif
+
+			clif_send(&packet, sizeof(packet), src, target);
+		}
+			break;
+		//[blackhole89]
+		case BL_HOM:
+		case BL_MER:
+		case BL_PET:
+		case BL_NPC:
+		case BL_ELEM: {
+			PACKET_ZC_ACK_REQNAMEALL_NPC packet = { 0 };
+
+			packet.packet_id = HEADER_ZC_ACK_REQNAMEALL_NPC;
+			packet.gid = bl->id;
+
+			switch (bl->type) {
+				case BL_HOM:
+					memcpy(packet.name, static_cast<const homun_data*>(bl)->homunculus.name, NAME_LENGTH);
+					break;
+				case BL_MER:
+					memcpy(packet.name, static_cast<const s_mercenary_data*>(bl)->db->name.c_str(), NAME_LENGTH);

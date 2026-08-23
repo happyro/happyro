@@ -1,0 +1,500 @@
+
+#ifndef MINICORE
+	if( ip_rules && !connect_check(ntohl(client_address.sin_addr.s_addr)) ) {
+		do_close(fd);
+		return -1;
+	}
+#endif
+
+#ifndef SOCKET_EPOLL
+	// Select Based Event Dispatcher
+	sFD_SET(fd,&readfds);
+#else
+	// Epoll based Event Dispatcher
+	epevent.data.fd = fd;
+	epevent.events = EPOLLIN;
+
+	if( epoll_ctl( epfd, EPOLL_CTL_ADD, fd, &epevent ) == SOCKET_ERROR ){
+		ShowError( "connect_client: Failed to add to epoll event dispatcher for new socket #%d: %s\n", fd, error_msg() );
+		sClose( fd );
+		return -1;
+	}
+#endif
+
+	if( fd_max <= fd ) fd_max = fd + 1;
+
+	create_session(fd, recv_to_fifo, send_from_fifo, default_func_parse);
+	session[fd]->client_addr = ntohl(client_address.sin_addr.s_addr);
+
+	return fd;
+}
+
+int32 make_listen_bind(uint32 ip, uint16 port)
+{
+	struct sockaddr_in server_address;
+	int32 fd;
+	int32 result;
+
+	fd = sSocket(AF_INET, SOCK_STREAM, 0);
+
+	if( fd == -1 )
+	{
+		ShowError("make_listen_bind: socket creation failed (%s)!\n", error_msg());
+		exit(EXIT_FAILURE);
+	}
+	if( fd == 0 )
+	{// reserved
+		ShowError("make_listen_bind: Socket #0 is reserved - Please report this!!!\n");
+		sClose(fd);
+		return -1;
+	}
+	if( fd >= MAXCONN )
+	{// socket number too big
+		ShowError("make_listen_bind: New socket #%d is greater than can we handle! Increase the value of MAXCONN (currently %d) for your OS to fix this!\n", fd, MAXCONN);
+		sClose(fd);
+		return -1;
+	}
+
+	setsocketopts(fd,0);
+	set_nonblocking(fd, 1);
+
+	server_address.sin_family      = AF_INET;
+	server_address.sin_addr.s_addr = htonl(ip);
+	server_address.sin_port        = htons(port);
+
+	result = sBind(fd, (struct sockaddr*)&server_address, sizeof(server_address));
+	if( result == SOCKET_ERROR ) {
+		ShowError("make_listen_bind: bind failed (socket #%d, %s)!\n", fd, error_msg());
+		exit(EXIT_FAILURE);
+	}
+	result = sListen(fd,5);
+	if( result == SOCKET_ERROR ) {
+		ShowError("make_listen_bind: listen failed (socket #%d, %s)!\n", fd, error_msg());
+		exit(EXIT_FAILURE);
+	}
+
+#ifndef SOCKET_EPOLL
+	// Select Based Event Dispatcher
+	sFD_SET(fd, &readfds);
+#else
+	// Epoll based Event Dispatcher
+	epevent.data.fd = fd;
+	epevent.events = EPOLLIN;
+
+	if( epoll_ctl( epfd, EPOLL_CTL_ADD, fd, &epevent ) == SOCKET_ERROR ){
+		ShowError( "make_listen_bind: failed to add listener socket #%d to epoll event dispatcher: %s\n", fd, error_msg() );
+		sClose(fd);
+		exit(EXIT_FAILURE);
+	}
+#endif
+
+	if(fd_max <= fd) fd_max = fd + 1;
+
+	create_session(fd, connect_client, null_send, null_parse);
+	session[fd]->client_addr = 0; // just listens
+	session[fd]->rdata_tick = 0; // disable timeouts on this socket
+	session[fd]->wdata_tick = 0;
+
+	return fd;
+}
+
+int32 make_connection(uint32 ip, uint16 port, bool silent,int32 timeout) {
+	struct sockaddr_in remote_address;
+	int32 fd;
+	int32 result;
+
+	fd = sSocket(AF_INET, SOCK_STREAM, 0);
+
+	if (fd == -1) {
+		ShowError("make_connection: socket creation failed (%s)!\n", error_msg());
+		return -1;
+	}
+	if( fd == 0 )
+	{// reserved
+		ShowError("make_connection: Socket #0 is reserved - Please report this!!!\n");
+		sClose(fd);
+		return -1;
+	}
+	if( fd >= MAXCONN )
+	{// socket number too big
+		ShowError("make_connection: New socket #%d is greater than can we handle! Increase the value of MAXCONN (currently %d) for your OS to fix this!\n", fd, MAXCONN);
+		sClose(fd);
+		return -1;
+	}
+
+	setsocketopts(fd,timeout);
+
+	remote_address.sin_family      = AF_INET;
+	remote_address.sin_addr.s_addr = htonl(ip);
+	remote_address.sin_port        = htons(port);
+
+	if( !silent )
+		ShowStatus("Connecting to %d.%d.%d.%d:%i\n", CONVIP(ip), port);
+#ifdef WIN32
+	// On Windows we have to set the socket non-blocking before the connection to make timeout work. [Lemongrass]
+	set_nonblocking(fd, 1);
+
+	result = sConnect(fd, (struct sockaddr *)(&remote_address), sizeof(struct sockaddr_in));
+
+	// Only enter if a socket error occurred
+	// Create a pseudo scope to be able to break out in case of successful connection
+	while( result == SOCKET_ERROR ) {
+		// Specially handle the error number for connection attempts that would block, because we want to use a timeout
+		if( sErrno == S_EWOULDBLOCK ){
+			fd_set writeSet;
+			struct timeval tv;
+
+			sFD_ZERO(&writeSet);
+			sFD_SET(fd,&writeSet);
+
+			tv.tv_sec = timeout;
+			tv.tv_usec = 0;
+
+			result = sSelect(0, nullptr, &writeSet, nullptr, &tv);
+
+			// Connection attempt timed out
+			if( result == 0 ){
+				if( !silent ){
+					// Needs special handling, because it does not set an error code and therefore does not provide an error message from the API
+					ShowError("make_connection: connection failed (socket #%d, timeout after %ds)!\n", fd, timeout);
+				}
+
+				do_close(fd);
+				return -1;
+			// If the select operation did not return an error
+			}else if( result != SOCKET_ERROR ){
+				// Check if it is really writeable
+				if( sFD_ISSET(fd, &writeSet) != 0 ){
+					// Our socket is writeable now => we have connected successfully
+					break; // leave the pseudo scope
+				}
+
+				if( !silent ){
+					// Needs special handling, because it does not set an error code and therefore does not provide an error message from the API
+					ShowError("make_connection: connection failed (socket #%d, not writeable)!\n", fd);
+				}
+
+				do_close(fd);
+				return -1;
+			}
+			// The select operation failed
+		}
+
+		if( !silent )
+			ShowError("make_connection: connect failed (socket #%d, %s)!\n", fd, error_msg());
+
+		do_close(fd);
+		return -1;
+	}
+	// Keep the socket in non-blocking mode, since we would set it to non-blocking here on unix. [Lemongrass]
+#else
+	result = sConnect(fd, (struct sockaddr *)(&remote_address), sizeof(struct sockaddr_in));
+	if( result == SOCKET_ERROR ) {
+		if( !silent )
+			ShowError("make_connection: connect failed (socket #%d, %s)!\n", fd, error_msg());
+		do_close(fd);
+		return -1;
+	}
+
+	//Now the socket can be made non-blocking. [Skotlex]
+	set_nonblocking(fd, 1);
+#endif
+
+#ifndef SOCKET_EPOLL
+	// Select Based Event Dispatcher
+	sFD_SET(fd,&readfds);
+#else
+	// Epoll based Event Dispatcher
+	epevent.data.fd = fd;
+	epevent.events = EPOLLIN;
+
+	if( epoll_ctl( epfd, EPOLL_CTL_ADD, fd, &epevent ) == SOCKET_ERROR ){
+		ShowError( "make_connection: failed to add socket #%d to epoll event dispatcher: %s\n", fd, error_msg() );
+		sClose(fd);
+		return -1;
+	}
+#endif
+
+	if (fd_max <= fd) fd_max = fd + 1;
+
+	create_session(fd, recv_to_fifo, send_from_fifo, default_func_parse);
+	session[fd]->client_addr = ntohl(remote_address.sin_addr.s_addr);
+
+	return fd;
+}
+
+static int32 create_session(int32 fd, RecvFunc func_recv, SendFunc func_send, ParseFunc func_parse)
+{
+	CREATE(session[fd], struct socket_data, 1);
+	CREATE(session[fd]->rdata, unsigned char, RFIFO_SIZE);
+	CREATE(session[fd]->wdata, unsigned char, WFIFO_SIZE);
+	session[fd]->max_rdata  = RFIFO_SIZE;
+	session[fd]->max_wdata  = WFIFO_SIZE;
+	session[fd]->func_recv  = func_recv;
+	session[fd]->func_send  = func_send;
+	session[fd]->func_parse = func_parse;
+	session[fd]->rdata_tick = last_tick;
+	session[fd]->wdata_tick = last_tick;
+	return 0;
+}
+
+static void delete_session(int32 fd)
+{
+	if( session_isValid(fd) )
+	{
+#ifdef SHOW_SERVER_STATS
+		socket_data_qi -= session[fd]->rdata_size - session[fd]->rdata_pos;
+		socket_data_qo -= session[fd]->wdata_size;
+#endif
+		aFree(session[fd]->rdata);
+		aFree(session[fd]->wdata);
+		aFree(session[fd]->session_data);
+		aFree(session[fd]);
+		session[fd] = nullptr;
+	}
+}
+
+int32 _realloc_fifo( int32 fd, uint32 rfifo_size, uint32 wfifo_size, const char* file, int32 line, const char* func ){
+	if( !session_isValid(fd) )
+		return 0;
+
+	if( session[fd]->max_rdata != rfifo_size && session[fd]->rdata_size < rfifo_size) {
+		RECREATE2( session[fd]->rdata, unsigned char, rfifo_size, file, line, func );
+		session[fd]->max_rdata  = rfifo_size;
+	}
+
+	if( session[fd]->max_wdata != wfifo_size && session[fd]->wdata_size < wfifo_size) {
+		RECREATE2( session[fd]->wdata, unsigned char, wfifo_size, file, line, func );
+		session[fd]->max_wdata  = wfifo_size;
+	}
+	return 0;
+}
+
+int32 _realloc_writefifo( int32 fd, size_t addition, const char* file, int32 line, const char* func ){
+	size_t newsize;
+
+	if( !session_isValid(fd) ) // might not happen
+		return 0;
+
+	if( session[fd]->wdata_size + addition  > session[fd]->max_wdata )
+	{	// grow rule; grow in multiples of WFIFO_SIZE
+		newsize = WFIFO_SIZE;
+		while( session[fd]->wdata_size + addition > newsize ) newsize += WFIFO_SIZE;
+	}
+	else
+	if( session[fd]->max_wdata >= (size_t)2*(session[fd]->flag.server?FIFOSIZE_SERVERLINK:WFIFO_SIZE)
+		&& (session[fd]->wdata_size+addition)*4 < session[fd]->max_wdata )
+	{	// shrink rule, shrink by 2 when only a quarter of the fifo is used, don't shrink below nominal size.
+		newsize = session[fd]->max_wdata / 2;
+	}
+	else // no change
+		return 0;
+
+	RECREATE2( session[fd]->wdata, unsigned char, newsize, file, line, func );
+	session[fd]->max_wdata  = newsize;
+
+	return 0;
+}
+
+/// advance the RFIFO cursor (marking 'len' bytes as processed)
+int32 RFIFOSKIP(int32 fd, size_t len)
+{
+    struct socket_data *s;
+
+	if ( !session_isActive(fd) )
+		return 0;
+
+	s = session[fd];
+
+	if ( s->rdata_size < s->rdata_pos + len ) {
+		ShowError("RFIFOSKIP: skipped past end of read buffer! Adjusting from %" PRIuPTR " to %d (session #%d)\n", len, RFIFOREST(fd), fd);
+		len = RFIFOREST(fd);
+	}
+
+	s->rdata_pos = s->rdata_pos + len;
+#ifdef SHOW_SERVER_STATS
+	socket_data_qi -= len;
+#endif
+	return 0;
+}
+
+/// advance the WFIFO cursor (marking 'len' bytes for sending)
+int32 WFIFOSET(int32 fd, size_t len)
+{
+	size_t newreserve;
+	struct socket_data* s = session[fd];
+
+	if( !session_isValid(fd) || s->wdata == nullptr )
+		return 0;
+
+	// we have written len bytes to the buffer already before calling WFIFOSET
+	if(s->wdata_size+len > s->max_wdata)
+	{	// actually there was a buffer overflow already
+		uint32 ip = s->client_addr;
+		ShowFatalError("WFIFOSET: Write Buffer Overflow. Connection %d (%d.%d.%d.%d) has written %u bytes on a %u/%u bytes buffer.\n", fd, CONVIP(ip), (uint32)len, (uint32)s->wdata_size, (uint32)s->max_wdata);
+		ShowDebug("Likely command that caused it: 0x%x\n", (*(uint16*)(s->wdata + s->wdata_size)));
+		// no other chance, make a better fifo model
+		exit(EXIT_FAILURE);
+	}
+
+	if( len > 0xFFFF )
+	{
+		// dynamic packets allow up to UINT16_MAX bytes (<packet_id>.W <packet_len>.W ...)
+		// all known fixed-size packets are within this limit, so use the same limit
+		ShowFatalError("WFIFOSET: Packet 0x%x is too big. (len=%u, max=%u)\n", (*(uint16*)(s->wdata + s->wdata_size)), (uint32)len, 0xFFFF);
+		exit(EXIT_FAILURE);
+	}
+	else if( len == 0 )
+	{
+		// abuses the fact, that the code that did WFIFOHEAD(fd,0), already wrote
+		// the packet type into memory, even if it could have overwritten vital data
+		// this can happen when a new packet was added on map-server, but packet len table was not updated
+		ShowWarning("WFIFOSET: Attempted to send zero-length packet, most likely 0x%04x (please report this).\n", WFIFOW(fd,0));
+		return 0;
+	}
+
+	if( !s->flag.server ) {
+
+		if( len > socket_max_client_packet ) {// see declaration of socket_max_client_packet for details
+			ShowError("WFIFOSET: Dropped too large client packet 0x%04x (length=%" PRIuPTR ", max=%" PRIuPTR ").\n", WFIFOW(fd,0), len, socket_max_client_packet);
+			return 0;
+		}
+
+		if( s->wdata_size+len > WFIFO_MAX ) {// reached maximum write fifo size
+			ShowError("WFIFOSET: Maximum write buffer size for client connection %d exceeded, most likely caused by packet 0x%04x (len=%" PRIuPTR ", ip=%lu.%lu.%lu.%lu).\n", fd, WFIFOW(fd,0), len, CONVIP(s->client_addr));
+			set_eof(fd);
+			return 0;
+		}
+
+	}
+	s->wdata_size += len;
+#ifdef SHOW_SERVER_STATS
+	socket_data_qo += len;
+#endif
+	//If the interserver has 200% of its normal size full, flush the data.
+	if( s->flag.server && s->wdata_size >= 2*FIFOSIZE_SERVERLINK )
+		flush_fifo(fd);
+
+	// always keep a WFIFO_SIZE reserve in the buffer
+	// For inter-server connections, let the reserve be 1/4th of the link size.
+	newreserve = s->flag.server ? FIFOSIZE_SERVERLINK / 4 : WFIFO_SIZE;
+
+	// readjust the buffer to include the chosen reserve
+	realloc_writefifo(fd, newreserve);
+
+#ifdef SEND_SHORTLIST
+	send_shortlist_add_fd(fd);
+#endif
+
+	return 0;
+}
+
+int32 do_sockets(t_tick next)
+{
+#ifndef SOCKET_EPOLL
+	fd_set rfd;
+	struct timeval timeout;
+#endif
+	int32 ret,i;
+
+	// PRESEND Timers are executed before do_sendrecv and can send packets and/or set sessions to eof.
+	// Send remaining data and process client-side disconnects here.
+#ifdef SEND_SHORTLIST
+	send_shortlist_do_sends();
+#else
+	for (i = 1; i < fd_max; i++)
+	{
+		if(!session[i])
+			continue;
+
+		if(session[i]->wdata_size)
+			session[i]->func_send(i);
+	}
+#endif
+
+#ifndef SOCKET_EPOLL
+	// Select based Event Dispatcher
+
+	// can timeout until the next tick
+	timeout.tv_sec  = (long)(next/1000);
+	timeout.tv_usec = (long)(next%1000*1000);
+
+	memcpy(&rfd, &readfds, sizeof(rfd));
+	ret = sSelect(fd_max, &rfd, nullptr, nullptr, &timeout);
+
+	if( ret == SOCKET_ERROR )
+	{
+		if( sErrno != S_EINTR )
+		{
+			ShowFatalError("do_sockets: select() failed, %s!\n", error_msg());
+			exit(EXIT_FAILURE);
+		}
+		return 0; // interrupted by a signal, just loop and try again
+	}
+#else
+	// Epoll based Event Dispatcher
+
+	ret = epoll_wait( epfd, epevents, epoll_maxevents, next );
+
+	if( ret == SOCKET_ERROR ){
+		if( sErrno != S_EINTR ){
+			ShowFatalError( "do_sockets: epoll_wait() failed, %s!\n", error_msg() );
+			exit( EXIT_FAILURE );
+		}
+
+		return 0; // interrupted by a signal, just loop and try again
+	}
+#endif
+
+	last_tick = time(nullptr);
+
+#if defined(WIN32)
+	// on windows, enumerating all members of the fd_set is way faster if we access the internals
+	for( i = 0; i < (int32)rfd.fd_count; ++i )
+	{
+		int32 fd = sock2fd(rfd.fd_array[i]);
+		if( session[fd] )
+			session[fd]->func_recv(fd);
+	}
+#elif defined(SOCKET_EPOLL)
+	// epoll based selection
+
+	for( i = 0; i < ret; i++ ){
+		struct epoll_event *it = &epevents[i];
+		int32 fd = it->data.fd;
+		struct socket_data *sock = session[fd];
+
+		if( !sock ){
+			continue;
+		}
+
+		if( ( it->events & (EPOLLERR|EPOLLHUP) ) || !( it->events & EPOLLIN ) ){
+			// Got Error on this connection
+			set_eof( fd );
+		}else if( it->events & EPOLLIN ){
+			// data waiting
+			sock->func_recv( fd );
+		}
+	}
+#else
+	// otherwise assume that the fd_set is a bit-array and enumerate it in a standard way
+	for( i = 1; ret && i < fd_max; ++i )
+	{
+		if(sFD_ISSET(i,&rfd) && session[i])
+		{
+			session[i]->func_recv(i);
+			--ret;
+		}
+	}
+#endif
+
+	// POSTSEND Send remaining data and handle eof sessions.
+#ifdef SEND_SHORTLIST
+	send_shortlist_do_sends();
+#else
+	for (i = 1; i < fd_max; i++)
+	{
+		if(!session[i])
+			continue;
+
+		if(session[i]->wdata_size)

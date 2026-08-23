@@ -1,0 +1,500 @@
+	uint8 off = 5;
+	
+	if(!script_rid2bl(2,bl))
+	{
+		script_pushint(st, 0);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	ud = unit_bl2ud(bl);
+
+	// Unit was already forced to walk.
+	if (ud != nullptr && ud->state.force_walk) {
+		script_pushint(st, 0);
+		ShowWarning("buildin_%s: Unit has already been forced to walk and not reached it's destination yet.\n", cmd);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (bl->type == BL_NPC) {
+		if (!((TBL_NPC*)bl)->status.hp)
+			status_calc_npc(((TBL_NPC*)bl), SCO_FIRST);
+		else
+			status_calc_npc(((TBL_NPC*)bl), SCO_NONE);
+	}
+
+	if (!strcmp(cmd,"unitwalk")) {
+		int32 x = script_getnum(st,3);
+		int32 y = script_getnum(st,4);
+
+		if (script_pushint(st, unit_can_reach_pos(bl,x,y,0))) {
+			if (ud != nullptr)
+				ud->state.force_walk = true;
+			add_timer(gettick()+50, unit_delay_walktoxy_timer, bl->id, (x<<16)|(y&0xFFFF)); // Need timer to avoid mismatches
+		}
+	} else {
+		block_list* tbl = map_id2bl(script_getnum(st,3));
+
+		if (!tbl) {
+			ShowError("buildin_unitwalk: Bad target destination.\n");
+			script_pushint(st, 0);
+			return SCRIPT_CMD_FAILURE;
+		} else if (script_pushint(st, unit_can_reach_bl(bl, tbl, distance_bl(bl, tbl)+1, 0, nullptr, nullptr))) {
+			if (ud != nullptr)
+				ud->state.force_walk = true;
+			add_timer(gettick()+50, unit_delay_walktobl_timer, bl->id, tbl->id); // Need timer to avoid mismatches
+		}
+		off = 4;
+	}
+
+	if (ud && script_hasdata(st, off)) {
+		done_label = script_getstr(st, off);
+		check_event(st, done_label);
+		safestrncpy(ud->walk_done_event, done_label, sizeof(ud->walk_done_event));
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Kills the unit.
+///
+/// unitkill <unit_id>;
+BUILDIN_FUNC(unitkill)
+{
+	block_list* bl;
+
+	if(script_rid2bl(2,bl))
+		status_kill(bl);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Warps the unit to the target position in the target map.
+/// Returns if it was successful.
+///
+/// unitwarp(<unit_id>,"<map name>",<x>,<y>) -> <bool>
+BUILDIN_FUNC(unitwarp)
+{
+	int32 map_idx;
+	int16 x;
+	int16 y;
+	block_list* bl;
+	const char *mapname;
+
+	mapname = script_getstr(st, 3);
+	x = (int16)script_getnum(st,4);
+	y = (int16)script_getnum(st,5);
+
+	if(!script_rid2bl(2,bl))
+	{
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (!strcmp(mapname,"this"))
+		map_idx = bl?bl->m:-1;
+	else
+		map_idx = map_mapname2mapid(mapname);
+
+	if (map_idx >= 0 && bl != nullptr)
+		script_pushint(st, unit_warp(bl,map_idx,x,y,CLR_OUTSIGHT));
+	else
+		script_pushint(st, 0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Makes the unit attack the target.
+/// If the unit is a player and <action type> is not 0, it does a continuous
+/// attack instead of a single attack.
+/// Returns if the request was successful.
+///
+/// unitattack(<unit_id>,"<target name>"{,<action type>}) -> <bool>
+/// unitattack(<unit_id>,<target_id>{,<action type>}) -> <bool>
+BUILDIN_FUNC(unitattack)
+{
+	block_list* unit_bl;
+	block_list* target_bl = nullptr;
+	int32 actiontype = 0;
+
+	if (!script_rid2bl(2,unit_bl)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_isstring(st, 3)) {
+		TBL_PC* sd = map_nick2sd(script_getstr(st, 3),false);
+		if( sd != nullptr )
+			target_bl = sd;
+	} else
+		target_bl = map_id2bl(script_getnum(st, 3));
+
+	if (!target_bl) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st,4))
+		actiontype = script_getnum(st,4);
+
+	switch(unit_bl->type) {
+		case BL_PC: {
+			map_session_data* sd = (map_session_data*)unit_bl;
+
+			clif_parse_ActionRequest_sub( *sd, actiontype > 0 ? DMG_REPEAT : DMG_NORMAL, target_bl->id, gettick() );
+			script_pushint(st, sd->ud.target == target_bl->id);
+			return SCRIPT_CMD_SUCCESS;
+		}
+		case BL_MOB:
+			((TBL_MOB *)unit_bl)->target_id = target_bl->id;
+			break;
+		case BL_PET:
+			((TBL_PET *)unit_bl)->target_id = target_bl->id;
+			break;
+		default:
+			ShowError("buildin_unitattack: Unsupported source unit type %d.\n", unit_bl->type);
+			script_pushint(st, false);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st, unit_walktobl(unit_bl, target_bl, 65025, 2));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Makes the unit stop attacking.
+///
+/// unitstopattack <unit_id>;
+BUILDIN_FUNC(unitstopattack)
+{
+	block_list* bl;
+
+	if(script_rid2bl(2,bl))
+	{
+		unit_stop_attack(bl);
+		if (bl->type == BL_MOB)
+			((TBL_MOB*)bl)->target_id = 0;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Makes the unit stop walking.
+///
+/// unitstopwalk <unit_id>{,<flag>};
+BUILDIN_FUNC(unitstopwalk)
+{
+	block_list* bl;
+	int32 flag = USW_NONE;
+
+	if (script_hasdata(st, 3))
+		flag = script_getnum(st, 3);
+
+	if(script_rid2bl(2,bl)) {
+		unit_data *ud = unit_bl2ud(bl);
+
+		if (ud != nullptr)
+			ud->state.force_walk = false;
+
+		if( !unit_stop_walking( bl, flag ) && flag != USW_FORCE_STOP ){
+			ShowWarning("buildin_unitstopwalk: Unable to find unit or unit is not walking.\n");
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		return SCRIPT_CMD_SUCCESS;
+	} else {
+		return SCRIPT_CMD_FAILURE;
+	}
+}
+
+/**
+ * Makes the unit say the given message.
+ *
+ * unittalk <unit_id>,"<message>"{,"<flag>"};
+ * @param flag: Specify target
+ *   bc_area - Message is sent to players in the vicinity of the source (default).
+ *   bc_self - Message is sent only to player attached.
+ */
+BUILDIN_FUNC(unittalk)
+{
+	const char* message;
+	block_list* bl;
+
+	message = script_getstr(st, 3);
+
+	if(script_rid2bl(2,bl))
+	{
+		send_target target = AREA;
+		struct StringBuf sbuf;
+
+		if (script_hasdata(st, 4)) {
+			if (script_getnum(st, 4) == BC_SELF) {
+				if (map_id2sd(bl->id) == nullptr) {
+					ShowWarning("script: unittalk: bc_self can't be used for non-players objects.\n");
+					return SCRIPT_CMD_FAILURE;
+				}
+				target = SELF;
+			}
+		}
+
+		StringBuf_Init(&sbuf);
+		StringBuf_Printf(&sbuf, "%s", message);
+		clif_disp_overhead_(bl, StringBuf_Value(&sbuf), target);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Makes the unit cast the skill on the target or self if no target is specified.
+///
+/// unitskilluseid <unit_id>,<skill_id>,<skill_lv>{,<target_id>,<casttime>,<cancel>,<Line_ID>};
+/// unitskilluseid <unit_id>,"<skill name>",<skill_lv>{,<target_id>,<casttime>,<cancel>,<Line_ID>};
+BUILDIN_FUNC(unitskilluseid)
+{
+	int32 unit_id, target_id, casttime;
+	uint16 skill_id, skill_lv;
+	block_list* bl;
+
+	unit_id  = script_getnum(st,2);
+	if (script_isstring(st, 3)) {
+		const char *name = script_getstr(st, 3);
+
+		if (!(skill_id = skill_name2id(name))) {
+			ShowError("buildin_unitskilluseid: Invalid skill name %s passed to item bonus. Skipping.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		skill_id = script_getnum(st, 3);
+
+		if (!skill_get_index(skill_id)) {
+			ShowError("buildin_unitskilluseid: Invalid skill ID %d passed to item bonus. Skipping.\n", skill_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	skill_lv = script_getnum(st,4);
+	target_id = ( script_hasdata(st,5) ? script_getnum(st,5) : unit_id );
+	casttime = ( script_hasdata(st,6) ? script_getnum(st,6) : 0 );
+	bool cancel = ( script_hasdata(st,7) ? script_getnum(st,7) > 0 : skill_get_castcancel(skill_id) );
+	int32 msg_id = (script_hasdata(st, 8) ? script_getnum(st, 8) : 0);
+	bool ignore_range = (script_hasdata(st, 9) ? script_getnum(st, 9) > 0 : false);
+
+	if(script_rid2bl(2,bl)){
+		if (msg_id > 0) {
+			if (bl->type != BL_MOB) {
+				ShowError("buildin_unitskilluseid: Msg can only be used for monster.\n");
+				return SCRIPT_CMD_FAILURE;
+			}
+			TBL_MOB* md = map_id2md(bl->id);
+			if (md)
+				mob_chat_display_message(*md, static_cast<uint16>(msg_id));
+		}
+		if (bl->type == BL_NPC) {
+			if (!((TBL_NPC*)bl)->status.hp)
+				status_calc_npc(((TBL_NPC*)bl), SCO_FIRST);
+			else
+				status_calc_npc(((TBL_NPC*)bl), SCO_NONE);
+		}
+		unit_skilluse_id2(bl, target_id, skill_id, skill_lv, (casttime * 1000) + skill_castfix(bl, skill_id, skill_lv), cancel, ignore_range);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Makes the unit cast the skill on the target position.
+///
+/// unitskillusepos <unit_id>,<skill_id>,<skill_lv>,<target_x>,<target_y>{,<casttime>,<cancel>,<Line_ID>};
+/// unitskillusepos <unit_id>,"<skill name>",<skill_lv>,<target_x>,<target_y>{,<casttime>,<cancel>,<Line_ID>};
+BUILDIN_FUNC(unitskillusepos)
+{
+	int32 skill_x, skill_y, casttime;
+	uint16 skill_id, skill_lv;
+	block_list* bl;
+
+	if (script_isstring(st, 3)) {
+		const char *name = script_getstr(st, 3);
+
+		if (!(skill_id = skill_name2id(name))) {
+			ShowError("buildin_unitskillusepos: Invalid skill name %s.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		skill_id = script_getnum(st, 3);
+
+		if (!skill_get_index(skill_id)) {
+			ShowError("buildin_unitskillusepos: Invalid skill ID %d.\n", skill_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+	skill_lv = script_getnum(st,4);
+	skill_x  = script_getnum(st,5);
+	skill_y  = script_getnum(st,6);
+	casttime = ( script_hasdata(st,7) ? script_getnum(st,7) : 0 );
+	bool cancel = ( script_hasdata(st,8) ? script_getnum(st,8) > 0 : skill_get_castcancel(skill_id) );
+	int32 msg_id = (script_hasdata(st, 9) ? script_getnum(st, 9) : 0);
+	bool ignore_range = (script_hasdata(st, 10) ? script_getnum(st, 10) > 0 : false);
+
+	if(script_rid2bl(2,bl)){
+		if (msg_id > 0) {
+			if (bl->type != BL_MOB) {
+				ShowError("buildin_unitskilluseid: Msg can only be used for monster.\n");
+				return SCRIPT_CMD_FAILURE;
+			}
+			TBL_MOB* md = map_id2md(bl->id);
+			if (md)
+				mob_chat_display_message(*md, static_cast<uint16>(msg_id));
+		}
+		if (bl->type == BL_NPC) {
+			if (!((TBL_NPC*)bl)->status.hp)
+				status_calc_npc(((TBL_NPC*)bl), SCO_FIRST);
+			else
+				status_calc_npc(((TBL_NPC*)bl), SCO_NONE);
+		}
+		unit_skilluse_pos2(bl, skill_x, skill_y, skill_id, skill_lv, (casttime * 1000) + skill_castfix(bl, skill_id, skill_lv), cancel, ignore_range);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// <--- [zBuffer] List of unit control commands
+
+/// Pauses the execution of the script, detaching the player
+///
+/// sleep <milli seconds>;
+BUILDIN_FUNC(sleep)
+{
+	// First call(by function call)
+	if (st->sleep.tick == 0) {
+		int32 ticks;
+
+		ticks = script_getnum(st, 2);
+
+		if (ticks <= 0) {
+			ShowError("buildin_sleep: negative or zero amount('%d') of milli seconds is not supported\n", ticks);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		// detach the player
+		script_detach_rid(st);
+
+		// sleep for the target amount of time
+		st->state = RERUNLINE;
+		st->sleep.tick = ticks;
+	// Second call(by timer after sleeping time is over)
+	} else {		
+		// Continue the script
+		st->state = RUN;
+		st->sleep.tick = 0;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Pauses the execution of the script, keeping the unit attached
+/// Stops the script if no unit is attached
+///
+/// sleep2(<milli seconds>)
+BUILDIN_FUNC(sleep2)
+{
+	// First call(by function call)
+	if (st->sleep.tick == 0) {
+		int32 ticks;
+
+		ticks = script_getnum(st, 2);
+
+		if (ticks <= 0) {
+			ShowError( "buildin_sleep2: negative or zero amount('%d') of milli seconds is not supported\n", ticks );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (map_id2bl(st->rid) == nullptr) {
+			ShowError( "buildin_sleep2: no unit is attached\n" );
+			return SCRIPT_CMD_FAILURE;
+		}
+		
+		// sleep for the target amount of time
+		st->state = RERUNLINE;
+		st->sleep.tick = ticks;
+	// Second call(by timer after sleeping time is over)
+	} else {		
+		// Check if the unit is still attached
+		// NOTE: This should never happen, since run_script_timer already checks this
+		if (map_id2bl(st->rid) == nullptr) {
+			// The unit is not attached anymore - terminate the script
+			st->rid = 0;
+			st->state = END;
+		} else {
+			// The unit is still attached - continue the script
+			st->state = RUN;
+			st->sleep.tick = 0;
+		}
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Awakes all the sleep timers of the target npc
+///
+/// awake "<npc name>";
+BUILDIN_FUNC(awake)
+{
+	DBIterator *iter;
+	struct script_state *tst;
+	npc_data* nd;
+
+	if ((nd = npc_name2id(script_getstr(st, 2))) == nullptr) {
+		ShowError("buildin_awake: NPC \"%s\" not found\n", script_getstr(st, 2));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 rid = st->rid;
+
+	// No need to keep the player attached if we are going to run other scripts now, where he might get attached
+	if( rid ){
+		script_detach_rid(st);
+	}
+
+	iter = db_iterator(st_db);
+
+	for (tst = static_cast<script_state *>(dbi_first(iter)); dbi_exists(iter); tst = static_cast<script_state *>(dbi_next(iter))) {
+		if (tst->oid == nd->id) {
+			if (tst->sleep.timer == INVALID_TIMER) { // already awake ???
+				continue;
+			}
+
+			delete_timer(tst->sleep.timer, run_script_timer);
+
+			// Trigger the timer function
+			run_script_timer(INVALID_TIMER, gettick(), tst->sleep.charid, (intptr_t)tst);
+		}
+	}
+	dbi_destroy(iter);
+
+	// If a player had been attached, now is the time to restore it
+	if( rid ){
+		st->rid = rid;
+		script_attach_state(st);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns a reference to a variable of the target NPC.
+/// Returns 0 if an error occurs.
+///
+/// getvariableofnpc(<variable>, "<npc name>") -> <reference>
+BUILDIN_FUNC(getvariableofnpc)
+{
+	struct script_data* data;
+	const char* name;
+	npc_data* nd;
+
+	data = script_getdata(st,2);
+	if( !data_isreference(data) )
+	{// Not a reference (aka varaible name)
+		ShowError("buildin_getvariableofnpc: not a variable\n");
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	name = reference_getname(data);
+	if( *name != '.' || name[1] == '@' )

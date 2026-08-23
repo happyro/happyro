@@ -1,0 +1,500 @@
+	// Add each result to the list
+	for (let i = 0; i < results.length; i++) {
+		const result = results[i];
+		const resultItem = document.createElement('li');
+		resultItem.className = 'result-item';
+
+		// Add type icon (NPC or MOB)
+		const typeIcon = result.type === 'NPC' ? 'npc_icon' : 'mob_icon';
+		resultItem.innerHTML =
+			`<span class="result-type ${typeIcon}">${result.type}</span>` +
+			`<span class="result-name">${result.name}</span>` +
+			`<span class="result-map">${result.mapName}</span>`;
+
+		// Store result data
+		resultItem._resultData = result;
+
+		// Add click handler
+		resultItem.addEventListener('click', () => {
+			this.navigateToSearchResult(result);
+		});
+
+		resultsList.appendChild(resultItem);
+	}
+
+	// Show the results container
+	resultsContainer.style.display = '';
+};
+
+/**
+ * Navigate to a search result
+ */
+Navigation.navigateToSearchResult = function navigateToSearchResult(result) {
+	if (!result || !result.mapName) {
+		return;
+	}
+
+	this.targetResult = result;
+	_isMapClickTarget = false;
+
+	const currentMap = getCurrentMap();
+	const currentPos = getPlayerPosition();
+
+	this.navigateTo({
+		startMap: currentMap,
+		startX: currentPos.x,
+		startY: currentPos.y,
+		endMap: result.mapName,
+		endX: result.x,
+		endY: result.y,
+		displayName: result.name
+	});
+
+	// Hide the search results
+	const root = Navigation.getRoot();
+	const resultsContainer = root.querySelector('.search-results');
+	if (resultsContainer) {
+		resultsContainer.style.display = 'none';
+	}
+};
+
+/**
+ * Find the closest walkable cell to the given coordinates
+ */
+Navigation.findClosestWalkableCell = function findClosestWalkableCell(x, y, maxRadius) {
+	if (x >= 0 && x < _mapData.width && y >= 0 && y < _mapData.height) {
+		const index = x + y * _mapData.width;
+		const cellType = _mapData.cellTypes[index];
+
+		if (cellType & _mapData.walkableType) {
+			return { x: x, y: y };
+		}
+	}
+
+	maxRadius = maxRadius || 10;
+	let radius = 1;
+	let bestDistance = Infinity;
+	let bestCell = null;
+
+	while (radius <= maxRadius) {
+		for (let offsetY = -radius; offsetY <= radius; offsetY++) {
+			for (let offsetX = -radius; offsetX <= radius; offsetX++) {
+				if (Math.abs(offsetX) !== radius && Math.abs(offsetY) !== radius) {
+					continue;
+				}
+
+				const cx = x + offsetX;
+				const cy = y + offsetY;
+
+				if (cx >= 0 && cx < _mapData.width && cy >= 0 && cy < _mapData.height) {
+					const index = cx + cy * _mapData.width;
+					const cellType = _mapData.cellTypes[index];
+
+					if (cellType & _mapData.walkableType) {
+						const distance = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+						if (distance < bestDistance) {
+							bestDistance = distance;
+							bestCell = { x: cx, y: cy };
+						}
+					}
+				}
+			}
+		}
+
+		if (bestCell) {
+			return bestCell;
+		}
+
+		radius++;
+	}
+
+	return null;
+};
+
+/**
+ * Handle map click event
+ */
+Navigation.onMapClick = function onMapClick(event) {
+	const root = Navigation.getRoot();
+	const mapDisplay = root.querySelector('.map-display');
+	const rect = mapDisplay.getBoundingClientRect();
+	const x = Math.floor(event.clientX - rect.left);
+	const y = Math.floor(event.clientY - rect.top);
+
+	const mapCoords = this.screenToMapCoordinates(x, y);
+
+	const currentMap = getCurrentMap();
+	const currentPos = getPlayerPosition();
+
+	_isMapClickTarget = true;
+
+	this.navigateTo({
+		startMap: currentMap,
+		startX: currentPos.x,
+		startY: currentPos.y,
+		endMap: currentMap,
+		endX: mapCoords.x,
+		endY: mapCoords.y,
+		displayName: 'Map Click'
+	});
+};
+
+/**
+ * Load a map for display
+ */
+Navigation.loadMap = function loadMap(mapName, displayName) {
+	if (_isMapClickTarget && _mapData && _mapData.map && _mapData.map !== mapName) {
+		this.clear();
+		_isMapClickTarget = false;
+	}
+
+	const mapBaseName = mapName.replace(/\..*/, '');
+
+	// Load town info
+	_towninfo = DB.getTownInfo(mapBaseName) || [];
+
+	// Get the correct map path using DB.mapalias
+	let bmpPath = DB.INTERFACE_PATH.replace('data/texture/', '') + 'map/' + mapBaseName + '.bmp';
+	bmpPath = bmpPath.replace(/\//g, '\\');
+	bmpPath = DB.mapalias[bmpPath] || bmpPath;
+
+	// Load the map image
+	Client.loadFile('data/texture/' + bmpPath, dataURI => {
+		if (dataURI) {
+			_map.src = dataURI;
+		} else {
+			_map.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==';
+		}
+	});
+
+	// Get the correct map path using DB.mapalias
+	let gatPath = mapBaseName + '.gat';
+	gatPath = gatPath.replace(/\//g, '\\');
+	gatPath = DB.mapalias[gatPath] || gatPath;
+
+	// Load the GAT file for pathfinding
+	Client.loadFile('data/' + gatPath, gatData => {
+		if (gatData) {
+			if (gatData.cells && gatData.width && gatData.height) {
+				_mapData.width = gatData.width;
+				_mapData.height = gatData.height;
+				_mapData.cells = gatData.cells;
+
+				const cellCount = gatData.width * gatData.height;
+				const cellTypes = new Uint8Array(cellCount);
+
+				for (let i = 0; i < cellCount; i++) {
+					const cellIndex = i * 5 + 4;
+					cellTypes[i] = gatData.cells[cellIndex];
+				}
+
+				_mapData.cellTypes = cellTypes;
+				_mapData.map = mapBaseName;
+			}
+		}
+	});
+
+	this.setMapNameText(mapName);
+};
+
+/**
+ * Clear the end marker
+ */
+Navigation.clear = function clear() {
+	this.clearPath();
+	_finalTargetData = null;
+	_targetData = null;
+	_isMapClickTarget = false;
+
+	// Hide the target coordinates display
+	const root = Navigation.getRoot();
+	const targetInfo = root.querySelector('.target-info');
+	if (targetInfo) {
+		targetInfo.style.display = 'none';
+	}
+
+	// Update location title with current map name
+	const currentMap = getCurrentMap();
+	if (currentMap) {
+		this.setLocationTitle(currentMap, null);
+	}
+};
+
+Navigation.clearPath = function clearPath() {
+	_path = [];
+	_lastPathUpdate = 0;
+	_pathUpdateLock = false;
+};
+
+/**
+ * Add a marker to the map
+ */
+Navigation.addMarker = function addMarker(x, y, color, label) {
+	_markers.push({
+		x: x,
+		y: y,
+		color: color || 'rgb(255,0,0)',
+		label: label || ''
+	});
+};
+
+/**
+ * Render the map and markers
+ */
+Navigation.renderCanvas = function renderCanvas(tick) {
+	const hostDisplay = this._host ? getComputedStyle(this._host).display : 'none';
+	if (hostDisplay === 'none') {
+		return;
+	}
+
+	const width = 280;
+	const height = 230;
+	const ctx = _ctx;
+
+	if (!ctx) {
+		return;
+	}
+
+	// Check if player position has changed
+	const currentMap = getCurrentMap();
+	const currentPos = getPlayerPosition();
+	if (_finalTargetData && tick - _lastPathUpdate > _pathUpdateThrottle && !_pathUpdateLock) {
+		this.navigateTo({
+			startMap: currentMap,
+			startX: currentPos.x,
+			startY: currentPos.y,
+			endMap: _finalTargetData.map,
+			endX: _finalTargetData.x,
+			endY: _finalTargetData.y,
+			displayName: _finalTargetData.displayName
+		});
+		_lastPathUpdate = tick;
+	}
+
+	// Clear canvas
+	ctx.clearRect(0, 0, width, height);
+
+	// Draw map background
+	ctx.fillStyle = '#000';
+	ctx.fillRect(0, 0, width, height);
+
+	// Draw the map image if loaded
+	if (_map.complete && _map.width) {
+		const scaleX = width / _mapData.width;
+		const scaleY = height / _mapData.height;
+		const scale = Math.min(scaleX, scaleY);
+
+		ctx.save();
+		ctx.translate(width / 2, height / 2);
+		ctx.scale(scale, scale);
+		ctx.translate(-_mapData.width / 2, -_mapData.height / 2);
+		ctx.drawImage(_map, 0, 0, _mapData.width, _mapData.height);
+		ctx.restore();
+	}
+
+	const mapToScreenBound = (x, y) => {
+		return mapToScreen(x, y, width, height);
+	};
+
+	// Draw town info icons
+	if (_towninfo && _towninfo.length) {
+		for (let i = 0; i < _towninfo.length; i++) {
+			const info = _towninfo[i];
+			const pos = mapToScreenBound(info.X, info.Y);
+
+			let img;
+			switch (info.Type) {
+				case 0:
+					img = _toolDealer;
+					break;
+				case 1:
+					img = _weaponDealer;
+					break;
+				case 2:
+					img = _armorDealer;
+					break;
+				case 3:
+					img = _blacksmith;
+					break;
+				case 4:
+					img = _guide;
+					break;
+				case 5:
+					img = _inn;
+					break;
+				case 6:
+					img = _kafra;
+					break;
+				default:
+					continue;
+			}
+
+			if (img.complete && img.width) {
+				ctx.drawImage(img, pos.x - img.width / 2, pos.y - img.height / 2);
+			}
+		}
+	}
+
+	// Draw the path
+	if (_path && _path.length > 0) {
+		ctx.lineWidth = 2;
+
+		let currentSegment = [];
+		for (let i = 0; i < _path.length; i++) {
+			const point = _path[i];
+			const pos = mapToScreenBound(point.x, point.y);
+
+			if (currentSegment.length === 0) {
+				currentSegment.push(pos);
+				continue;
+			}
+
+			if (point.isWarp || i === _path.length - 1) {
+				currentSegment.push(pos);
+
+				ctx.strokeStyle = 'cyan';
+				ctx.beginPath();
+				ctx.moveTo(currentSegment[0].x, currentSegment[0].y);
+				for (let j = 1; j < currentSegment.length; j++) {
+					ctx.lineTo(currentSegment[j].x, currentSegment[j].y);
+				}
+				ctx.stroke();
+
+				if (point.isWarp) {
+					ctx.beginPath();
+					ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
+					ctx.fillStyle = 'yellow';
+					ctx.fill();
+
+					if (i + 1 < _path.length) {
+						const exitPos = mapToScreenBound(_path[i + 1].x, _path[i + 1].y);
+
+						ctx.beginPath();
+						ctx.arc(exitPos.x, exitPos.y, 3, 0, Math.PI * 2);
+						ctx.fillStyle = 'yellow';
+						ctx.fill();
+
+						currentSegment = [exitPos];
+						i++;
+					} else {
+						currentSegment = [pos];
+					}
+				} else {
+					currentSegment = [pos];
+				}
+			} else {
+				currentSegment.push(pos);
+			}
+		}
+	}
+
+	// Draw end marker (target position)
+	if (_targetData) {
+		const lastPoint = mapToScreenBound(_targetData.x, _targetData.y);
+		ctx.fillStyle = 'red';
+		ctx.beginPath();
+		ctx.arc(lastPoint.x, lastPoint.y, 3, 0, Math.PI * 2);
+		ctx.fill();
+	}
+
+	// Draw start marker (player position)
+	const startPos = mapToScreenBound(currentPos.x, currentPos.y);
+	if (_arrow.complete && _arrow.width) {
+		ctx.save();
+		ctx.translate(startPos.x, startPos.y);
+		ctx.rotate(((Session.Entity.direction + 4) * 45 * Math.PI) / 180);
+		ctx.drawImage(_arrow, -_arrow.width / 2, -_arrow.height / 2);
+		ctx.restore();
+	}
+
+	// Draw custom markers
+	for (let i = 0; i < _markers.length; i++) {
+		const marker = _markers[i];
+		const pos = mapToScreenBound(marker.x, marker.y);
+
+		ctx.fillStyle = marker.color;
+		ctx.beginPath();
+		ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
+		ctx.fill();
+
+		if (marker.label) {
+			ctx.fillStyle = '#fff';
+			ctx.font = '10px Arial';
+			ctx.fillText(marker.label, pos.x + 5, pos.y + 3);
+		}
+	}
+};
+
+/**
+ * Update the target coordinates text
+ */
+Navigation.updateTargetText = function updateTargetText(noPathFound) {
+	const root = Navigation.getRoot();
+	const targetInfo = root.querySelector('.target-info');
+	if (targetInfo) {
+		targetInfo.style.display = 'flex';
+	}
+
+	if (_finalTargetData) {
+		this.setTargetCoordinatesText(_finalTargetData.x, _finalTargetData.y, {
+			noPathFound: noPathFound,
+			targetMap: _finalTargetData.map
+		});
+	}
+};
+
+/**
+ * Set target coordinates text with proper formatting
+ */
+Navigation.setTargetCoordinatesText = function setTargetCoordinatesText(x, y, options) {
+	const root = Navigation.getRoot();
+	if (!root) {
+		return;
+	}
+
+	const text = formatTargetCoordinates(x, y, options);
+	const targetCoords = root.querySelector('.target-coordinates');
+	if (targetCoords) {
+		targetCoords.textContent = text;
+		targetCoords.style.display = '';
+	}
+	const targetInfo = root.querySelector('.target-info');
+	if (targetInfo) {
+		targetInfo.style.display = 'flex';
+	}
+};
+
+Navigation.setTargetCoordinatesBlinking = function setTargetCoordinatesBlinking(blinking) {
+	const root = Navigation.getRoot();
+	if (!root) {
+		return;
+	}
+
+	const targetCoordinates = root.querySelector('.target-coordinates');
+	if (!targetCoordinates) {
+		return;
+	}
+
+	if (blinking) {
+		if (!_blinking) {
+			_blinking = true;
+			_originalColor = getComputedStyle(targetCoordinates).color || '#ffffff';
+
+			let fadeStep = 0;
+			let fadeDirection = -1;
+			_fadeInterval = setInterval(() => {
+				fadeStep += fadeDirection * 0.1;
+
+				if (fadeStep <= 0.3) {
+					fadeDirection = 1;
+				} else if (fadeStep >= 1) {
+					fadeDirection = -1;
+				}
+
+				targetCoordinates.style.opacity = fadeStep;
+			}, 50);
+		}
+	} else {
+		if (_blinking) {
+			clearInterval(_fadeInterval);
+			_fadeInterval = null;

@@ -1,0 +1,500 @@
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%255s %23[^\n]", atcmd_output, atcmd_player_name) < 2) {
+		sprintf(output, msg_txt(sd,1022), command); // Please enter ban time and a player name (usage: %s <time> <char name>).
+		clif_displaymessage(fd, output);
+		return -1;
+	}
+
+	atcmd_output[sizeof(atcmd_output)-1] = '\0';
+
+	modif_p = atcmd_output;
+	timediff = (int32)solve_time(modif_p); //discard seconds
+
+	if (timediff == 0) { //allow negative ?
+		safesnprintf(output, sizeof(output), msg_txt(sd,85), command, timediff); // Invalid time for %s command (time=%d)
+		clif_displaymessage(fd, output);
+		clif_displaymessage(fd, msg_txt(sd,702)); // Time parameter format is +/-<value> to alter. y/a = Year, m = Month, d/j = Day, h = Hour, n/mn = Minute, s = Second.
+		return -1;
+	}
+	
+	if( timediff < 0 ){
+		clif_displaymessage(fd,msg_txt(sd,1023)); // You are not allowed to alter the time of a ban.
+		return -1;
+	}
+
+	chrif_req_charban( sd->status.account_id, atcmd_player_name, timediff );
+
+	safesnprintf(output, sizeof(output), msg_txt(sd,88), "char"); // Sending request to %s server...
+	clif_displaymessage(fd, output);
+
+	return 0;
+}
+
+/*==========================================
+ * charunblock command (usage: charunblock <player_name>)
+ *------------------------------------------*/
+ACMD_FUNC(char_unblock)
+{
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		sprintf(atcmd_output, msg_txt(sd, 1021), command); // Please enter a player name (usage: %s <char name>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	// send answer to login server via char-server
+	chrif_req_login_operation(sd->status.account_id, atcmd_player_name, CHRIF_OP_LOGIN_UNBLOCK, 0, 0, 0);
+	sprintf(atcmd_output, msg_txt(sd,88), "login"); // Sending request to %s server...
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/*==========================================
+ * acc unban command (usage: unban <player_name>)
+ *------------------------------------------*/
+ACMD_FUNC(unban){
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		sprintf(atcmd_output, msg_txt(sd,435), command); // Please enter a player name (usage: %s <char name>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	chrif_req_login_operation(sd->status.account_id, atcmd_player_name, CHRIF_OP_LOGIN_UNBAN, 0, 0, 0);
+
+	sprintf(atcmd_output, msg_txt(sd,88), "login"); // Sending request to %s server...
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/*==========================================
+ * char unban command (usage: charunban <player_name>)
+ *------------------------------------------*/
+ACMD_FUNC(char_unban){
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		sprintf(atcmd_output, msg_txt(sd,435), command); // Please enter a player name (usage: %s <char name>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	chrif_req_charunban(sd->status.account_id,atcmd_player_name);
+
+	sprintf(atcmd_output, msg_txt(sd,88), "char"); // Sending request to %s server...
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(night)
+{
+	nullpo_retr(-1, sd);
+
+	if (night_flag != 1) {
+		map_night_timer(night_timer_tid, 0, 0, 1);
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,89)); // Night mode is already enabled.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(day)
+{
+	nullpo_retr(-1, sd);
+
+	if (night_flag != 0) {
+		map_day_timer(day_timer_tid, 0, 0, 1);
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,90)); // Day mode is already enabled.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(doom)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+
+	nullpo_retr(-1, sd);
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if (pl_sd->fd != fd && pc_get_group_level(sd) >= pc_get_group_level(pl_sd))
+		{
+			status_kill(pl_sd);
+			clif_specialeffect(pl_sd,EF_GRANDCROSS2,AREA);
+			clif_displaymessage(pl_sd->fd, msg_txt(sd,61)); // The holy messenger has given judgement.
+		}
+	}
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,62)); // Judgement was made.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(doommap)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+
+	nullpo_retr(-1, sd);
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if (pl_sd->fd != fd && sd->m == pl_sd->m && pc_get_group_level(sd) >= pc_get_group_level(pl_sd))
+		{
+			status_kill(pl_sd);
+			clif_specialeffect(pl_sd,EF_GRANDCROSS2,AREA);
+			clif_displaymessage(pl_sd->fd, msg_txt(sd,61)); // The holy messenger has given judgement.
+		}
+	}
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,62)); // Judgement was made.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+static void atcommand_raise_sub(map_session_data* sd) {
+
+	status_revive(sd, 100, 100);
+
+	clif_skill_nodamage(sd, *sd, ALL_RESURRECTION, 4);
+	clif_displaymessage(sd->fd, msg_txt(sd,63)); // Mercy has been shown.
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(raise)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+
+	nullpo_retr(-1, sd);
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+		if( pc_isdead(pl_sd) )
+			atcommand_raise_sub(pl_sd);
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,64)); // Mercy has been granted.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(raisemap)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+
+	nullpo_retr(-1, sd);
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+		if (sd->m == pl_sd->m && pc_isdead(pl_sd) )
+			atcommand_raise_sub(pl_sd);
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,64)); // Mercy has been granted.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(kick)
+{
+	map_session_data *pl_sd;
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1026)); // Please enter a player name (usage: @kick <char name/ID>).
+		return -1;
+	}
+
+	if((pl_sd=map_nick2sd(atcmd_player_name,false)) == nullptr && (pl_sd=map_charid2sd(atoi(atcmd_player_name))) == nullptr)
+	{
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	if ( pc_get_group_level(sd) < pc_get_group_level(pl_sd) )
+	{
+		clif_displaymessage(fd, msg_txt(sd,81)); // Your GM level don't authorise you to do this action on this player.
+		return -1;
+	}
+
+	clif_GM_kick(sd, pl_sd);
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(kickall)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+	nullpo_retr(-1, sd);
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if (pc_get_group_level(sd) >= pc_get_group_level(pl_sd)) { // you can kick only lower or same gm level
+			if (sd->status.account_id != pl_sd->status.account_id)
+				clif_GM_kick(nullptr, pl_sd);
+		}
+	}
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,195)); // All players have been kicked!
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(allskill)
+{
+	nullpo_retr(-1, sd);
+	pc_allskillup(sd); // all skills
+	sd->status.skill_point = 0; // 0 skill points
+	clif_updatestatus(*sd, SP_SKILLPOINT); // update
+	clif_displaymessage(fd, msg_txt(sd,76)); // All skills have been added to your skill tree.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(questskill)
+{
+	uint16 skill_id;
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message || (skill_id = atoi(message)) <= 0)
+	{// also send a list of skills applicable to this command
+		const char* text;
+
+		// attempt to find the text corresponding to this command
+		text = atcommand_help_string( command );
+
+		// send the error message as always
+		clif_displaymessage(fd, msg_txt(sd,1027)); // Please enter a quest skill number.
+
+		if( text )
+		{// send the skill ID list associated with this command
+			clif_displaymessage( fd, text );
+		}
+
+		return -1;
+	}
+
+	if( !skill_db.exists( skill_id ) ){
+		clif_displaymessage(fd, msg_txt(sd,198)); // This skill number doesn't exist.
+		return -1;
+	}
+	if (!skill_get_inf2(skill_id, INF2_ISQUEST)) {
+		clif_displaymessage(fd, msg_txt(sd,197)); // This skill number doesn't exist or isn't a quest skill.
+		return -1;
+	}
+	if (pc_checkskill(sd, skill_id) > 0) {
+		clif_displaymessage(fd, msg_txt(sd,196)); // You already have this quest skill.
+		return -1;
+	}
+
+	pc_skill(sd, skill_id, 1, ADDSKILL_PERMANENT);
+	clif_displaymessage(fd, msg_txt(sd,70)); // You have learned the skill.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(lostskill)
+{
+	uint16 skill_id = 0, sk_idx = 0;
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message || (skill_id = atoi(message)) <= 0)
+	{// also send a list of skills applicable to this command
+		const char* text;
+
+		// attempt to find the text corresponding to this command
+		text = atcommand_help_string( command );
+
+		// send the error message as always
+		clif_displaymessage(fd, msg_txt(sd,1027)); // Please enter a quest skill number.
+
+		if( text )
+		{// send the skill ID list associated with this command
+			clif_displaymessage( fd, text );
+		}
+
+		return -1;
+	}
+	if (!(sk_idx = skill_get_index(skill_id))) {
+		clif_displaymessage(fd, msg_txt(sd,198)); // This skill number doesn't exist.
+		return -1;
+	}
+	if (!skill_get_inf2(skill_id, INF2_ISQUEST)) {
+		clif_displaymessage(fd, msg_txt(sd,197)); // This skill number doesn't exist or isn't a quest skill.
+		return -1;
+	}
+	if (pc_checkskill(sd, skill_id) == 0) {
+		clif_displaymessage(fd, msg_txt(sd,201)); // You don't have this quest skill.
+		return -1;
+	}
+
+	sd->status.skill[sk_idx].lv = 0;
+	sd->status.skill[sk_idx].flag = SKILL_FLAG_PERMANENT;
+	clif_deleteskill(*sd,skill_id);
+	clif_displaymessage(fd, msg_txt(sd,71)); // You have forgotten the skill.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(spiritball)
+{
+	int32 number;
+	nullpo_retr(-1, sd);
+
+	if( !message || !*message || ( number = atoi( message ) ) < 0 || number > MAX_SPIRITBALL ){
+		char msg[CHAT_SIZE_MAX];
+		safesnprintf( msg, sizeof( msg ), msg_txt( sd, 1028 ), MAX_SPIRITBALL ); // Please enter an amount (usage: @spiritball <number: 0-%d>).
+		clif_displaymessage(fd, msg);
+		return -1;
+	}
+
+	if( sd->spiritball > 0 )
+		pc_delspiritball(sd, sd->spiritball, 1);
+	sd->spiritball = number;
+	clif_spiritball(sd);
+	// no message, player can look the difference
+
+	return 0;
+}
+
+ACMD_FUNC(soulball)
+{
+	int32 number;
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message || (number = atoi(message)) < 0 || number > MAX_SOUL_BALL) {
+		char msg[CHAT_SIZE_MAX];
+
+		safesnprintf(msg, sizeof(msg), "Usage: @soulball <number: 0-%d>", MAX_SOUL_BALL);
+		clif_displaymessage(fd, msg);
+		return -1;
+	}
+
+	if (sd->soulball > 0)
+		pc_delsoulball( *sd, sd->soulball, true );
+	pc_addsoulball( *sd, number );
+	clif_soulball(sd);
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(party)
+{
+	char party[NAME_LENGTH];
+	nullpo_retr(-1, sd);
+
+	memset(party, '\0', sizeof(party));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", party) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1029)); // Please enter a party name (usage: @party <party_name>).
+		return -1;
+	}
+
+	party_create( *sd, party, 0, 0 );
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(guild)
+{
+	char guild[NAME_LENGTH];
+	int32 prev;
+	nullpo_retr(-1, sd);
+
+	memset(guild, '\0', sizeof(guild));
+
+	if (sd->clan) {
+		clif_displaymessage(fd, msg_txt(sd, 1498)); // You cannot create a guild because you are in a clan.
+		return -1;
+	}
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", guild) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1030)); // Please enter a guild name (usage: @guild <guild_name>).
+		return -1;
+	}
+
+	prev = battle_config.guild_emperium_check;
+	battle_config.guild_emperium_check = 0;
+	guild_create( *sd, guild );
+	battle_config.guild_emperium_check = prev;
+
+	return 0;
+}
+

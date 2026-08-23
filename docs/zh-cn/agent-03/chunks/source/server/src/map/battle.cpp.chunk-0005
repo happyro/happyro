@@ -1,0 +1,500 @@
+			if (hd && (rnd()%100<50) ) hom_addspiritball(hd, 10); // According to WarpPortal, this is a flat 50% chance
+		}
+
+		if (flag & BF_WEAPON && (sce = sc->getSCE(SC_ADD_ATK_DAMAGE)))
+			damage += damage * sce->val1 / 100;
+		if (flag & BF_MAGIC && (sce = sc->getSCE(SC_ADD_MATK_DAMAGE)))
+			damage += damage * sce->val1 / 100;
+		if (sc->getSCE(SC_DANCEWITHWUG) && (flag&(BF_LONG|BF_WEAPON)) == (BF_LONG|BF_WEAPON))
+			damage += damage * sc->getSCE(SC_DANCEWITHWUG)->val1 / 100;
+		if (sc->getSCE(SC_UNLIMITEDHUMMINGVOICE) && flag&BF_MAGIC)
+			damage += damage * sc->getSCE(SC_UNLIMITEDHUMMINGVOICE)->val3 / 100;
+
+		if (tsd && (sce = sc->getSCE(SC_SOULREAPER))) {
+			if (rnd()%100 < sce->val2 && tsd->soulball < MAX_SOUL_BALL) {
+				clif_specialeffect(src, 1208, AREA);
+				pc_addsoulball( *tsd, 1, 5 + 3 * pc_checkskill(tsd, SP_SOULENERGY) );
+			}
+		}
+	} //End of caster SC_ check
+
+	//PK damage rates
+	if (battle_config.pk_mode == 1 && map_getmapflag(bl->m, MF_PVP) > 0)
+		damage = battle_calc_pk_damage(*src, *bl, damage, skill_id, flag);
+
+	if(battle_config.skill_min_damage && damage > 0 && damage < div_) {
+		if ((flag&BF_WEAPON && battle_config.skill_min_damage&1)
+			|| (flag&BF_MAGIC && battle_config.skill_min_damage&2)
+			|| (flag&BF_MISC && battle_config.skill_min_damage&4)
+		)
+			damage = div_;
+	}
+
+	if (sd && pc_ismadogear(sd)) {
+		pc_overheat(*sd, (battle_get_weapon_element(*d, *src, *bl, skill_id, skill_lv, EQI_HAND_R, false) == ELE_FIRE ? 3 : 1));
+	}
+
+	// Target status (again), required for RELIEVE
+	sc = status_get_sc(bl);
+
+	// !TODO: Should RELIEVE needed to be down here or after some other check? Should the skill be independent of damagetaken from mob_db.yml?
+	if (sc != nullptr && !sc->empty()) {
+		if ((sce = sc->getSCE(SC_RELIEVE_ON)) && !sc->getSCE(SC_RELIEVE_OFF))
+			damage = i64max((damage - damage * sce->val2 / 100), 1);
+	}
+
+	if (bl->type == BL_MOB) { // Reduces damage received for Green Aura MVP
+		mob_data *md = BL_CAST(BL_MOB, bl);
+
+		if (md && md->damagetaken != 100)
+			damage = i64max(damage * md->damagetaken / 100, 1);
+	}
+	else if (bl->type == BL_ELEM) {
+		s_elemental_data* ed = BL_CAST(BL_ELEM, bl);
+
+		if (ed != nullptr && ed->db->damagetaken != 100)
+			damage = i64max(damage * ed->db->damagetaken / 100, 1);
+	}
+
+	if (tsc != nullptr && !tsc->empty()) {
+		if (!battle_status_block_damage(src, bl, tsc, d, damage, skill_id, skill_lv)) // Statuses that reduce damage to 0.
+			return 0;
+	}
+
+	return damage;
+}
+
+/**
+ * Determines whether battleground target can be hit
+ * @param src: Source of attack
+ * @param bl: Target of attack
+ * @param skill_id: Skill ID used
+ * @param flag: Special flags
+ * @return Can be hit (true) or can't be hit (false)
+ */
+bool battle_can_hit_bg_target(block_list *src, block_list *bl, uint16 skill_id, int32 flag)
+{
+	mob_data* md = BL_CAST(BL_MOB, bl);
+	struct unit_data *ud = unit_bl2ud(bl);
+
+	if (ud && ud->immune_attack)
+		return false;
+	if (md && md->bg_id) {
+		if (status_bl_has_mode(bl, MD_SKILLIMMUNE) && flag&BF_SKILL) //Skill immunity.
+			return false;
+		if (src->type == BL_PC) {
+			map_session_data *sd = map_id2sd(src->id);
+
+			if (sd && sd->bg_id == md->bg_id)
+				return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * Calculates BG related damage adjustments.
+ * @param src
+ * @param bl
+ * @param damage
+ * @param skill_id
+ * @param flag
+ * @return damage
+ * Credits:
+ *	Original coder Skotlex
+ *	Initial refactoring by Baalberith
+ *	Refined and optimized by helvetica
+ */
+int64 battle_calc_bg_damage(block_list *src, block_list *bl, int64 damage, uint16 skill_id, int32 flag)
+{
+	if( !damage )
+		return 0;
+
+	if (!battle_can_hit_bg_target(src, bl, skill_id, flag))
+		return 0;
+
+	if(skill_get_inf2(skill_id, INF2_IGNOREBGREDUCTION))
+		return damage; //skill that ignore bg map reduction
+
+	if( flag&BF_SKILL ) { //Skills get a different reduction than non-skills. [Skotlex]
+		if( flag&BF_WEAPON )
+			damage = damage * battle_config.bg_weapon_damage_rate / 100;
+		if( flag&BF_MAGIC )
+			damage = damage * battle_config.bg_magic_damage_rate / 100;
+		if(	flag&BF_MISC )
+			damage = damage * battle_config.bg_misc_damage_rate / 100;
+	} else { //Normal attacks get reductions based on range.
+		if( flag&BF_SHORT )
+			damage = damage * battle_config.bg_short_damage_rate / 100;
+		if( flag&BF_LONG )
+			damage = damage * battle_config.bg_long_damage_rate / 100;
+	}
+
+	damage = i64max(damage,1); //min 1 damage
+	return damage;
+}
+
+/**
+ * Determines whether target can be hit
+ * @param src
+ * @param bl
+ * @param skill_id
+ * @param flag
+ * @return Can be hit (true) or can't be hit (false)
+ */
+bool battle_can_hit_gvg_target(block_list *src,block_list *bl,uint16 skill_id,int32 flag)
+{
+	mob_data* md = BL_CAST(BL_MOB, bl);
+	struct unit_data *ud = unit_bl2ud(bl);
+	int32 class_ = status_get_class(bl);
+
+	if (ud && ud->immune_attack)
+		return false;
+	if(md && (md->guardian_data || md->special_state.ai == AI_GUILD)) {
+		if ((status_bl_has_mode(bl,MD_SKILLIMMUNE) || (class_ == MOBID_EMPERIUM && !skill_get_inf2(skill_id, INF2_TARGETEMPERIUM))) && flag&BF_SKILL) //Skill immunity.
+			return false;
+		if( src->type != BL_MOB || mob_is_clone( ((mob_data*)src)->mob_id ) ){
+			auto g = src->type == BL_PC ? ((TBL_PC *)src)->guild : guild_search(status_get_guild_id(src));
+
+			if (class_ == MOBID_EMPERIUM && (!g || guild_checkskill(g->guild, GD_APPROVAL) <= 0 ))
+				return false;
+
+			if (g != nullptr) {
+				if (battle_config.guild_max_castles && guild_checkcastles(g->guild)>=battle_config.guild_max_castles)
+					return false; // [MouseJstr]
+
+				if (md->special_state.ai == AI_GUILD && g->guild.guild_id == md->master_id)
+					return false;
+			}
+		}
+	}
+	return true;
+}
+
+/**
+ * Calculates GVG related damage adjustments.
+ * @param src
+ * @param bl
+ * @param damage
+ * @param skill_id
+ * @param flag
+ * @return damage
+ */
+int64 battle_calc_gvg_damage(block_list *src,block_list *bl,int64 damage,uint16 skill_id,int32 flag)
+{
+	if (!damage) //No reductions to make.
+		return 0;
+
+	if (!battle_can_hit_gvg_target(src,bl,skill_id,flag))
+		return 0;
+
+	if (skill_get_inf2(skill_id, INF2_IGNOREGVGREDUCTION)) //Skills with no gvg damage reduction.
+		return damage;
+
+	if (flag & BF_SKILL) { //Skills get a different reduction than non-skills. [Skotlex]
+		if (flag&BF_WEAPON)
+			damage = damage * battle_config.gvg_weapon_damage_rate / 100;
+		if (flag&BF_MAGIC)
+			damage = damage * battle_config.gvg_magic_damage_rate / 100;
+		if (flag&BF_MISC)
+			damage = damage * battle_config.gvg_misc_damage_rate / 100;
+	} else { //Normal attacks get reductions based on range.
+		if (flag & BF_SHORT)
+			damage = damage * battle_config.gvg_short_damage_rate / 100;
+		if (flag & BF_LONG)
+			damage = damage * battle_config.gvg_long_damage_rate / 100;
+	}
+	damage = i64max(damage,1);
+	return damage;
+}
+
+/**
+ * Calculates PK related damage adjustments (between players only).
+ * @param src: Source object
+ * @param bl: Target object
+ * @param damage: Damage being done
+ * @param skill_id: Skill used
+ * @param flag: Battle flag type
+ * @return Modified damage
+ */
+int64 battle_calc_pk_damage(block_list &src, block_list &bl, int64 damage, uint16 skill_id, int32 flag) {
+	if (damage == 0) // No reductions to make.
+		return 0;
+
+	if (battle_config.pk_mode == 0) // PK mode is disabled.
+		return damage;
+
+	if (src.type == BL_PC && bl.type == BL_PC) {
+		if (flag & BF_SKILL) { //Skills get a different reduction than non-skills. [Skotlex]
+			if (flag & BF_WEAPON)
+				damage = damage * battle_config.pk_weapon_damage_rate / 100;
+			if (flag & BF_MAGIC)
+				damage = damage * battle_config.pk_magic_damage_rate / 100;
+			if (flag & BF_MISC)
+				damage = damage * battle_config.pk_misc_damage_rate / 100;
+		} else { //Normal attacks get reductions based on range.
+			if (flag & BF_SHORT)
+				damage = damage * battle_config.pk_short_damage_rate / 100;
+			if (flag & BF_LONG)
+				damage = damage * battle_config.pk_long_damage_rate / 100;
+		}
+	}
+
+	return i64max(damage, 1);
+}
+
+/**
+ * HP/SP drain calculation
+ * @param damage Damage inflicted to the enemy
+ * @param rate Success chance 1000 = 100%
+ * @param per HP/SP drained
+ * @return diff
+ */
+static int32 battle_calc_drain(int64 damage, int32 rate, int32 per)
+{
+	int64 diff = 0;
+
+	if (per && (rate > 1000 || rnd()%1000 < rate)) {
+		diff = (damage * per) / 100;
+		if (diff == 0) {
+			if (per > 0)
+				diff = 1;
+			else
+				diff = -1;
+		}
+	}
+	return (int32)cap_value(diff, INT_MIN, INT_MAX);
+}
+
+/**
+ * Passive skill damage increases
+ * @param sd
+ * @param target
+ * @param dmg
+ * @param type
+ * @return damage
+ */
+int64 battle_addmastery(map_session_data *sd,block_list *target,int64 dmg,int32 type)
+{
+	int64 damage;
+	status_data* status = status_get_status_data(*target);
+	int32 weapon, skill;
+
+#ifdef RENEWAL
+	damage = 0;
+#else
+	damage = dmg;
+#endif
+
+	nullpo_ret(sd);
+
+	if((skill = pc_checkskill(sd,AL_DEMONBANE)) > 0 &&
+		target->type == BL_MOB && //This bonus doesn't work against players.
+		(battle_check_undead(status->race,status->def_ele) || status->race == RC_DEMON) )
+		damage += static_cast<decltype(damage)>(skill * (sd->status.base_level / 20.0 + 3.0));
+	if( (skill = pc_checkskill(sd, RA_RANGERMAIN)) > 0 && (status->race == RC_BRUTE || status->race == RC_PLAYER_DORAM || status->race == RC_PLANT || status->race == RC_FISH) )
+		damage += (skill * 5);
+	if( (skill = pc_checkskill(sd,NC_RESEARCHFE)) > 0 && (status->def_ele == ELE_FIRE || status->def_ele == ELE_EARTH) )
+		damage += (skill * 10);
+
+	damage += (15 * pc_checkskill(sd, NC_MADOLICENCE)); // Attack bonus is granted even without the Madogear
+
+	if((skill = pc_checkskill(sd,HT_BEASTBANE)) > 0 && (status->race == RC_INSECT || status->race == RC_BRUTE || status->race == RC_PLAYER_DORAM) ) {
+		damage += (skill * 4);
+		if (sd->sc.getSCE(SC_SPIRIT) && sd->sc.getSCE(SC_SPIRIT)->val2 == SL_HUNTER)
+			damage += sd->status.str;
+	}
+
+#ifdef RENEWAL
+	//Weapon Research bonus applies to all weapons
+	if((skill = pc_checkskill(sd,BS_WEAPONRESEARCH)) > 0)
+		damage += (skill * 2);
+#endif
+
+	if ((skill = pc_checkskill(sd, NV_BREAKTHROUGH)) > 0)
+		damage += 15 * skill + (skill > 4 ? 25 : 0);
+
+	// Kagerou/Oboro Spirit Charm bonus
+	if (sd->spiritcharm >= MAX_SPIRITCHARM) {
+		if ((sd->spiritcharm_type == CHARM_TYPE_FIRE && status->def_ele == ELE_EARTH) ||
+			(sd->spiritcharm_type == CHARM_TYPE_WATER && status->def_ele == ELE_FIRE) ||
+			(sd->spiritcharm_type == CHARM_TYPE_LAND && status->def_ele == ELE_WIND) ||
+			(sd->spiritcharm_type == CHARM_TYPE_WIND && status->def_ele == ELE_WATER))
+			damage += damage * 30 / 100;
+	}
+
+	if(type == 0)
+		weapon = sd->weapontype1;
+	else
+		weapon = sd->weapontype2;
+
+	switch(weapon) {
+		case W_1HSWORD:
+#ifdef RENEWAL
+			if((skill = pc_checkskill(sd,AM_AXEMASTERY)) > 0)
+				damage += (skill * 3);
+#endif
+		case W_DAGGER:
+			if((skill = pc_checkskill(sd,SM_SWORD)) > 0)
+				damage += (skill * 4);
+			if((skill = pc_checkskill(sd,GN_TRAINING_SWORD)) > 0)
+				damage += skill * 10;
+			break;
+		case W_2HSWORD:
+			if((skill = pc_checkskill(sd,SM_TWOHAND)) > 0)
+				damage += (skill * 4);
+			break;
+		case W_1HSPEAR:
+		case W_2HSPEAR:
+			if((skill = pc_checkskill(sd,KN_SPEARMASTERY)) > 0) {
+				if(!pc_isriding(sd) && !pc_isridingdragon(sd))
+					damage += (skill * 4);
+				else
+					damage += (skill * 5);
+				// Increase damage by level of KN_SPEARMASTERY * 10
+				if(pc_checkskill(sd,RK_DRAGONTRAINING) > 0)
+					damage += (skill * 10);
+			}
+			break;
+		case W_1HAXE:
+		case W_2HAXE:
+			if((skill = pc_checkskill(sd,AM_AXEMASTERY)) > 0)
+				damage += (skill * 3);
+			if((skill = pc_checkskill(sd,NC_TRAININGAXE)) > 0)
+				damage += (skill * 5);
+			break;
+		case W_MACE:
+		case W_2HMACE:
+			if((skill = pc_checkskill(sd,PR_MACEMASTERY)) > 0)
+				damage += (skill * 3);
+			if((skill = pc_checkskill(sd,NC_TRAININGAXE)) > 0)
+				damage += (skill * 4);
+			break;
+		case W_FIST:
+			if((skill = pc_checkskill(sd,TK_RUN)) > 0)
+				damage += (skill * 10);
+			[[fallthrough]];
+		case W_KNUCKLE:
+			if((skill = pc_checkskill(sd,MO_IRONHAND)) > 0)
+				damage += (skill * 3);
+			break;
+		case W_MUSICAL:
+			if((skill = pc_checkskill(sd,BA_MUSICALLESSON)) > 0)
+				damage += (skill * 3);
+			break;
+		case W_WHIP:
+			if((skill = pc_checkskill(sd,DC_DANCINGLESSON)) > 0)
+				damage += (skill * 3);
+			break;
+		case W_BOOK:
+			if((skill = pc_checkskill(sd,SA_ADVANCEDBOOK)) > 0)
+				damage += (skill * 3);
+			break;
+		case W_KATAR:
+			if((skill = pc_checkskill(sd,AS_KATAR)) > 0)
+				damage += (skill * 3);
+			break;
+	}
+
+	return damage;
+}
+
+/** Calculates overrefine damage bonus and weapon related bonuses (unofficial)
+* @param sd Player
+* @param damage Current damage
+* @param lr_type EQI_HAND_L:left-hand weapon, EQI_HAND_R:right-hand weapon
+*/
+static void battle_add_weapon_damage(map_session_data *sd, int64 *damage, int32 lr_type) {
+	if (!sd)
+		return;
+	//rodatazone says that Overrefine bonuses are part of baseatk
+	//Here we also apply the weapon_damage_rate bonus so it is correctly applied on left/right hands.
+	if (lr_type == EQI_HAND_L) {
+		if (sd->left_weapon.overrefine)
+			(*damage) = (*damage) + rnd() % sd->left_weapon.overrefine + 1;
+		if (sd->indexed_bonus.weapon_damage_rate[sd->weapontype2])
+			(*damage) += (*damage) * sd->indexed_bonus.weapon_damage_rate[sd->weapontype2] / 100;
+	}
+	else if (lr_type == EQI_HAND_R) {
+		if (sd->right_weapon.overrefine)
+			(*damage) = (*damage) + rnd() % sd->right_weapon.overrefine + 1;
+		if (sd->indexed_bonus.weapon_damage_rate[sd->weapontype1])
+			(*damage) += (*damage) * sd->indexed_bonus.weapon_damage_rate[sd->weapontype1] / 100;
+	}
+}
+
+#ifdef RENEWAL
+static int32 battle_calc_sizefix(int64 damage, map_session_data *sd, unsigned char t_size, unsigned char weapon_type, int16 flag)
+{
+	if (sd && !sd->special_state.no_sizefix && !flag) // Size fix only for players
+		damage = damage * (weapon_type == EQI_HAND_L ? sd->left_weapon.atkmods[t_size] : sd->right_weapon.atkmods[t_size]) / 100;
+
+	return (int32)cap_value(damage, INT_MIN, INT_MAX);
+}
+
+/**
+ * Calculates renewal Variance, OverUpgradeBonus, and SizePenaltyMultiplier of weapon damage parts for player
+ * @param src Block list of attacker
+ * @param tstatus Target's status data
+ * @param wa Weapon attack data
+ * @param sd Player
+ * @return Base weapon damage
+ */
+static int32 battle_calc_base_weapon_attack(block_list *src, struct status_data *tstatus, struct weapon_atk *wa, map_session_data *sd, bool critical)
+{
+	status_data* status = status_get_status_data(*src);
+	uint8 type = (wa == &status->lhw)?EQI_HAND_L:EQI_HAND_R;
+	uint16 atkmin = (type == EQI_HAND_L)?status->watk2:status->watk;
+	uint16 atkmax = atkmin;
+	int64 damage = atkmin;
+	bool weapon_perfection = false;
+	status_change *sc = status_get_sc(src);
+
+	if (sd && sd->equip_index[type] >= 0 && sd->inventory_data[sd->equip_index[type]]) {
+		int16 base_stat;
+
+		switch (sd->status.weapon) {
+			case W_BOW:
+			case W_MUSICAL:
+			case W_WHIP:
+			case W_REVOLVER:
+			case W_RIFLE:
+			case W_GATLING:
+			case W_SHOTGUN:
+			case W_GRENADE:
+				if (pc_checkskill(sd, SU_SOULATTACK) > 0)
+					base_stat = status->str;
+				else
+					base_stat = status->dex;
+				break;
+			default:
+				base_stat = status->str;
+				break;
+		}
+
+		float variance = 5.0f * wa->atk * wa->wlv / 100.0f;
+		float base_stat_bonus = wa->atk * base_stat / 200.0f;
+
+		atkmin = max(0, (int32)(atkmin - variance + base_stat_bonus));
+		atkmax = min(UINT16_MAX, (int32)(atkmax + variance + base_stat_bonus));
+
+		if ((sc && sc->getSCE(SC_MAXIMIZEPOWER)) || critical == true)
+			damage = atkmax;
+		else
+			damage = rnd_value(atkmin, atkmax);
+	}
+
+	if (sc && sc->getSCE(SC_WEAPONPERFECTION))
+		weapon_perfection = true;
+
+	battle_add_weapon_damage(sd, &damage, type);
+
+	damage = battle_calc_sizefix(damage, sd, tstatus->size, type, weapon_perfection);
+
+	return (int32)cap_value(damage, INT_MIN, INT_MAX);
+}
+#endif
+
+/*==========================================
+ * Calculates the standard damage of a normal attack assuming it hits
+ * This applies to pre-renewal and non-sd in renewal

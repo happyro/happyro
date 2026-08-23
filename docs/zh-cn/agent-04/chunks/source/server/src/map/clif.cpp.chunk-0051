@@ -1,0 +1,500 @@
+	if( chance < 100000 && rnd_value( 0, 100000 ) > chance ){
+		clif_enchantwindow_result( *sd, false );
+		return;
+	}
+
+	// Log removal of item
+	log_pick_pc( sd, LOG_TYPE_ENCHANT, -1, &selected_item );
+
+	for( int32 i = sd->inventory_data[index]->slots; i < MAX_SLOTS; i++ ){
+		selected_item.card[i] = 0;
+	}
+
+	// Log retrieving the item again -> with the new enchant
+	log_pick_pc( sd, LOG_TYPE_ENCHANT, 1, &selected_item );
+
+	clif_enchantwindow_result( *sd, true );
+#endif
+}
+
+void clif_parse_enchantwindow_close( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20201118 || PACKETVER_RE_NUM >= 20211103 || PACKETVER_ZERO_NUM >= 20221024
+	sd->state.item_enchant_index = 0;
+#endif
+}
+
+void clif_parse_itempackage_select( int32 fd, map_session_data* sd ){
+#if PACKETVER_MAIN_NUM >= 20220216 || PACKETVER_ZERO_NUM >= 20220316
+	const PACKET_CZ_USE_PACKAGEITEM* p = reinterpret_cast<PACKET_CZ_USE_PACKAGEITEM*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd->status.account_id ){
+		return;
+	}
+
+	uint16 index = server_index( p->index );
+
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	if( sd->inventory_data[index] == nullptr ){
+		return;
+	}
+
+	if( sd->inventory_data[index]->nameid != p->itemID ){
+		return;
+	}
+
+	if( sd->inventory_data[index]->elv > sd->status.base_level ){
+		return;
+	}
+
+	std::shared_ptr<s_item_package> package = item_package_db.find( p->itemID );
+
+	if( package == nullptr ){
+		return;
+	}
+
+	std::shared_ptr<s_item_package_group> group = util::umap_find( package->groups, p->BoxIndex );
+
+	if( group == nullptr ){
+		return;
+	}
+
+	if( pc_delitem( sd, index, 1, 0, 0, LOG_TYPE_PACKAGE ) != 0 ){
+		return;
+	}
+
+	for( const auto& entry : group->items ){
+		struct item item = {};
+
+		item.nameid = entry.second->item_id;
+		item.identify = 1;
+		item.refine = (char)entry.second->refine;
+		item.enchantgrade = static_cast<uint8>(entry.second->grade);
+
+		if( entry.second->rentalhours ){
+			item.expire_time = (uint32)( time( nullptr ) + entry.second->rentalhours * 3600 );
+		}
+
+		// Check if it is a pet egg
+		std::shared_ptr<s_pet_db> pet = pet_db_search( item.nameid, PET_EGG );
+
+		if( pet != nullptr ){
+			for( int32 i = 0; i < entry.second->amount; i++ ){
+				pet_create_egg( sd, item.nameid );
+			}
+		}else if( entry.second->amount > 1 && ( !itemdb_isstackable( item.nameid ) || item.expire_time > 0 ) ){
+			for( int32 i = 0; i < entry.second->amount; i++ ){
+				// New random options on each iteration
+				if( entry.second->randomOptionGroup != nullptr ){
+					entry.second->randomOptionGroup->apply( item );
+				}
+
+				pc_additem( sd, &item, 1, LOG_TYPE_PACKAGE );
+			}
+		}else{
+			if( entry.second->randomOptionGroup != nullptr ){
+				entry.second->randomOptionGroup->apply( item );
+			}
+
+			pc_additem( sd, &item, entry.second->amount, LOG_TYPE_PACKAGE );
+		}
+	}
+#endif
+}
+
+void clif_broadcast_refine_result(const map_session_data& sd, t_itemid itemId, int8 level, bool success)
+{
+#if PACKETVER_MAIN_NUM >= 20170906 || PACKETVER_RE_NUM >= 20170830 || defined(PACKETVER_ZERO)
+	PACKET_ZC_BROADCAST_ITEMREFINING_RESULT p{};
+	p.packetType = HEADER_ZC_BROADCAST_ITEMREFINING_RESULT;
+	p.itemId = itemId;
+	p.refine_level = level;
+	p.status = (int8)success;
+
+	if (battle_config.broadcast_hide_name) {
+		std::string dispname = clif_hide_name(sd.status.name);
+		safestrncpy(p.name, dispname.c_str(), sizeof(p.name));
+	}
+	else {
+		safestrncpy(p.name, sd.status.name, sizeof(p.name));
+	}
+
+	clif_send(&p, sizeof(p), &sd, ALL_CLIENT);
+#endif
+}
+
+void clif_parse_captcha_register(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20160316
+	nullpo_retv(sd);
+
+	if (!pc_has_permission(sd, PC_PERM_MACRO_REGISTER)) {
+		clif_displaymessage(sd->fd, msg_txt(sd, 246)); // Your GM level doesn't authorize you to perform this action.
+		return;
+	}
+
+	const PACKET_CZ_REQ_UPLOAD_MACRO_DETECTOR* p = reinterpret_cast<PACKET_CZ_REQ_UPLOAD_MACRO_DETECTOR*>( RFIFOP( fd, 0 ) );
+
+	pc_macro_captcha_register(*sd, p->imageSize, p->answer);
+#endif
+}
+
+void clif_captcha_upload_request(const map_session_data &sd) {
+#if PACKETVER >= 20160330
+	PACKET_ZC_ACK_UPLOAD_MACRO_DETECTOR p = {};
+
+	p.PacketType = HEADER_ZC_ACK_UPLOAD_MACRO_DETECTOR;
+	safestrncpy(p.captchaKey, "", sizeof(p.captchaKey));
+	if (sd.captcha_upload.cd != nullptr) {
+		p.captchaFlag = 0;
+	} else {
+		p.captchaFlag = 1;
+	}
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#endif
+}
+
+void clif_parse_captcha_upload(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20160316
+	nullpo_retv(sd);
+
+	if (!pc_has_permission(sd, PC_PERM_MACRO_REGISTER)) {
+		clif_displaymessage(sd->fd, msg_txt(sd, 246)); // Your GM level doesn't authorize you to perform this action.
+		return;
+	}
+
+	const PACKET_CZ_UPLOAD_MACRO_DETECTOR_CAPTCHA* p = reinterpret_cast<PACKET_CZ_UPLOAD_MACRO_DETECTOR_CAPTCHA*>( RFIFOP( fd, 0 ) );
+	int16 upload_size = p->PacketLength - sizeof( * p );
+
+	if (upload_size < 1 || upload_size > MAX_CAPTCHA_CHUNK_SIZE)
+		return;
+
+	if (sd->captcha_upload.upload_size + upload_size > sd->captcha_upload.cd->image_size)
+		return;
+
+	pc_macro_captcha_register_upload(*sd, upload_size, p->imageData);
+#endif
+}
+
+void clif_captcha_upload_end(const map_session_data &sd) {
+#if PACKETVER >= 20160330
+	PACKET_ZC_COMPLETE_UPLOAD_MACRO_DETECTOR_CAPTCHA p = {};
+
+	p.PacketType = HEADER_ZC_COMPLETE_UPLOAD_MACRO_DETECTOR_CAPTCHA;
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#endif
+}
+
+void clif_parse_captcha_preview_request(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20160323
+	nullpo_retv(sd);
+
+	if (!(pc_has_permission(sd, PC_PERM_MACRO_REGISTER) && pc_has_permission(sd, PC_PERM_MACRO_DETECT))) {
+		clif_displaymessage(sd->fd, msg_txt(sd, 246)); // Your GM level doesn't authorize you to perform this action.
+		return;
+	}
+
+	const PACKET_CZ_REQ_PREVIEW_MACRO_DETECTOR* p = reinterpret_cast<PACKET_CZ_REQ_PREVIEW_MACRO_DETECTOR*>( RFIFOP( fd, 0 ) );
+
+	clif_captcha_preview_response(*sd, captcha_db.find(p->captchaID));
+#endif
+}
+
+void clif_captcha_preview_response(const map_session_data &sd, const std::shared_ptr<const s_captcha_data> cd) {
+#if PACKETVER >= 20160330
+	PACKET_ZC_ACK_PREVIEW_MACRO_DETECTOR p = {};
+
+	p.PacketType = HEADER_ZC_ACK_PREVIEW_MACRO_DETECTOR;
+	safestrncpy(p.captchaKey, "", sizeof(p.captchaKey));
+	if (cd == nullptr) {
+		p.captchaFlag = 1;
+		p.imageSize = 0;
+	} else {
+		p.captchaFlag = 0;
+		p.imageSize = cd->image_size;
+	}
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+
+	if (cd != nullptr) {
+		for (uint16 offset = 0; offset < cd->image_size;) {
+			uint16 chunk_size = min(cd->image_size - offset, MAX_CAPTCHA_CHUNK_SIZE);
+			PACKET_ZC_PREVIEW_MACRO_DETECTOR_CAPTCHA* p2 = reinterpret_cast<PACKET_ZC_PREVIEW_MACRO_DETECTOR_CAPTCHA*>( packet_buffer );
+
+			p2->PacketType = HEADER_ZC_PREVIEW_MACRO_DETECTOR_CAPTCHA;
+			p2->PacketLength = sizeof( *p2 );
+			safestrncpy(p2->captchaKey, p.captchaKey, sizeof(p2->captchaKey));
+			memcpy(p2->imageData, &cd->image_data[offset], chunk_size);
+			p2->PacketLength += static_cast<decltype(p2->PacketLength)>( chunk_size );
+
+			clif_send(p2, p2->PacketLength, &sd, SELF);
+
+			offset += chunk_size;
+		}
+	}
+#endif
+}
+
+void clif_macro_detector_request(const map_session_data &sd) {
+#if PACKETVER >= 20160330
+	std::shared_ptr<const s_captcha_data> cd = sd.macro_detect.cd;
+
+	if (cd == nullptr) {
+		return;
+	}
+
+	// Send preview initialization request to the client.
+	PACKET_ZC_APPLY_MACRO_DETECTOR p = {};
+
+	p.PacketType = HEADER_ZC_APPLY_MACRO_DETECTOR;
+	p.imageSize = cd->image_size;
+	safestrncpy(p.captchaKey, "", sizeof(p.captchaKey));
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+
+	for (uint16 offset = 0; offset < cd->image_size;) {
+		uint16 chunk_size = min(cd->image_size - offset, MAX_CAPTCHA_CHUNK_SIZE);
+		PACKET_ZC_APPLY_MACRO_DETECTOR_CAPTCHA* p2 = reinterpret_cast<PACKET_ZC_APPLY_MACRO_DETECTOR_CAPTCHA*>( packet_buffer );
+
+		p2->PacketType = HEADER_ZC_APPLY_MACRO_DETECTOR_CAPTCHA;
+		p2->PacketLength = sizeof( *p2 );
+		safestrncpy(p2->captchaKey, p.captchaKey, sizeof(p2->captchaKey));
+		memcpy(p2->imageData, &cd->image_data[offset], chunk_size);
+		p2->PacketLength += static_cast<decltype(p2->PacketLength)>( chunk_size );
+
+		clif_send(p2, p2->PacketLength, &sd, SELF);
+
+		offset += chunk_size;
+	}
+#endif
+}
+
+void clif_macro_detector_request_show(const map_session_data &sd) {
+#if PACKETVER >= 20160330
+	PACKET_ZC_REQ_ANSWER_MACRO_DETECTOR p = {};
+
+	p.PacketType = HEADER_ZC_REQ_ANSWER_MACRO_DETECTOR;
+	p.retryCount = sd.macro_detect.retry;
+	p.timeout = battle_config.macro_detection_timeout;
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#endif
+}
+
+void clif_parse_macro_detector_download_ack(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20160316
+	nullpo_retv(sd);
+
+	if (sd->macro_detect.retry != 0) {
+		//const PACKET_CZ_COMPLETE_APPLY_MACRO_DETECTOR_CAPTCHA* p = reinterpret_cast<PACKET_CZ_COMPLETE_APPLY_MACRO_DETECTOR_CAPTCHA*>( RFIFOP( fd, 0 ) );
+
+		clif_macro_detector_request_show(*sd);
+	}
+#endif
+}
+
+void clif_parse_macro_detector_answer(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20160316
+	nullpo_retv(sd);
+
+	const PACKET_CZ_ACK_ANSWER_MACRO_DETECTOR* p = reinterpret_cast<PACKET_CZ_ACK_ANSWER_MACRO_DETECTOR*>( RFIFOP( fd, 0 ) );
+
+	pc_macro_detector_process_answer(*sd, p->answer);
+#endif
+}
+
+void clif_macro_detector_status(const map_session_data &sd, e_macro_detect_status stype) {
+#if PACKETVER >= 20160330
+	PACKET_ZC_CLOSE_MACRO_DETECTOR p = {};
+
+	p.PacketType = HEADER_ZC_CLOSE_MACRO_DETECTOR;
+	p.status = stype;
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#endif
+}
+
+void clif_parse_macro_reporter_select(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20160330
+	nullpo_retv(sd);
+
+	if (!pc_has_permission(sd, PC_PERM_MACRO_DETECT)) {
+		clif_displaymessage(sd->fd, msg_txt(sd, 246)); // Your GM level doesn't authorize you to perform this action.
+		return;
+	}
+
+	const PACKET_CZ_REQ_PLAYER_AID_IN_RANGE* p = reinterpret_cast<PACKET_CZ_REQ_PLAYER_AID_IN_RANGE*>( RFIFOP( fd, 0 ) );
+
+	pc_macro_reporter_area_select(*sd, p->xPos, p->yPos, p->RadiusRange);
+#endif
+}
+
+void clif_macro_reporter_select(const map_session_data &sd, const std::vector<uint32> &aid_list) {
+#if PACKETVER >= 20160330
+	PACKET_ZC_ACK_PLAYER_AID_IN_RANGE* p = reinterpret_cast<PACKET_ZC_ACK_PLAYER_AID_IN_RANGE*>( packet_buffer );
+
+	p->PacketType = HEADER_ZC_ACK_PLAYER_AID_IN_RANGE;
+	p->PacketLength = sizeof( *p );
+
+	for (size_t i = 0; i < aid_list.size(); i++){
+		p->AID[i] = aid_list[static_cast<int32>(i)];
+
+		p->PacketLength += static_cast<decltype(p->PacketLength)>( sizeof( p->AID[0] ) );
+	}
+
+	clif_send(p, p->PacketLength, &sd, SELF);
+#endif
+}
+
+void clif_parse_macro_reporter_ack(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20160316
+	nullpo_retv(sd);
+
+	if (!pc_has_permission(sd, PC_PERM_MACRO_DETECT)) {
+		clif_displaymessage(sd->fd, msg_txt(sd, 246)); // Your GM level doesn't authorize you to perform this action.
+		return;
+	}
+
+	const PACKET_CZ_REQ_APPLY_MACRO_DETECTOR* p = reinterpret_cast<PACKET_CZ_REQ_APPLY_MACRO_DETECTOR*>( RFIFOP( fd, 0 ) );
+	map_session_data *tsd = map_id2sd(p->AID);
+
+	if (tsd == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd, 3)); // Character not found.
+		return;
+	}
+	if (tsd->macro_detect.retry != 0) {
+		clif_macro_reporter_status(*sd, MCR_INPROGRESS);
+		return;
+	}
+	if (captcha_db.empty()) {
+		clif_macro_reporter_status(*sd, MCR_NO_DATA);
+		return;
+	}
+
+	pc_macro_reporter_process(*tsd, sd->status.account_id);
+	clif_macro_reporter_status(*sd, MCR_MONITORING);
+#endif
+}
+
+void clif_macro_reporter_status(const map_session_data &sd, e_macro_report_status stype) {
+#if PACKETVER >= 20160330
+	PACKET_ZC_ACK_APPLY_MACRO_DETECTOR p = {};
+
+	p.PacketType = HEADER_ZC_ACK_APPLY_MACRO_DETECTOR;
+	p.status = stype;
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#endif
+}
+
+void clif_dynamicnpc_result( const map_session_data& sd, e_dynamicnpc_result result ){
+#if PACKETVER_MAIN_NUM >= 20140430 || PACKETVER_RE_NUM >= 20140430 || defined(PACKETVER_ZERO)
+	PACKET_ZC_DYNAMICNPC_CREATE_RESULT p = {};
+
+	p.PacketType = HEADER_ZC_DYNAMICNPC_CREATE_RESULT;
+	p.result = result;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+void clif_partybooking_ask( map_session_data* sd, map_session_data* joining_sd ){
+#if PACKETVER >= 20191204
+	PACKET_ZC_PARTY_REQ_MASTER_TO_JOIN p = {};
+
+	p.packetType = HEADER_ZC_PARTY_REQ_MASTER_TO_JOIN;
+	p.CID = joining_sd->status.char_id;
+	p.AID = joining_sd->status.account_id;
+	safestrncpy( p.name, joining_sd->status.name, NAME_LENGTH );
+	p.x = joining_sd->status.base_level;
+	p.y = joining_sd->status.class_;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+void clif_parse_partybooking_join( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20191204
+	const PACKET_CZ_PARTY_REQ_MASTER_TO_JOIN* p = reinterpret_cast<PACKET_CZ_PARTY_REQ_MASTER_TO_JOIN*>( RFIFOP( fd, 0 ) );
+
+	// Character is already in a party
+	if( sd->status.party_id != 0 ){
+		return;
+	}
+
+	map_session_data* tsd = map_charid2sd( p->CID );
+
+	// Target player is offline
+	if( tsd == nullptr ){
+		return;
+	}
+
+	if( tsd->status.account_id != p->AID ){
+		return;
+	}
+
+	struct s_party_booking_requirement requirement;
+
+	if( !party_booking_load( tsd->status.account_id, tsd->status.char_id, &requirement ) ){
+		return;
+	}
+
+	if( sd->status.base_level < requirement.minimum_level ){
+		return;
+	}
+
+	if( sd->status.base_level > requirement.maximum_level ){
+		return;
+	}
+
+	// Already requested to join this party
+	if( util::vector_exists( tsd->party_booking_requests, sd->status.char_id ) ){
+		return;
+	}
+
+	// Store information that the player tried to join the party
+	tsd->party_booking_requests.push_back( sd->status.char_id );
+
+	clif_partybooking_ask( tsd, sd );
+#endif
+}
+
+void clif_partybooking_reply( map_session_data* sd, map_session_data* party_leader_sd, bool accepted ){
+#if PACKETVER >= 20191204
+	PACKET_ZC_PARTY_JOIN_REQ_ACK_FROM_MASTER p = {};
+
+	if( party_leader_sd->status.party_id == 0 ){
+		return;
+	}
+
+	struct party_data* party = party_search( party_leader_sd->status.party_id );
+
+	if( party == nullptr ){
+		return;
+	}
+
+	p.packetType = HEADER_ZC_PARTY_JOIN_REQ_ACK_FROM_MASTER;
+	safestrncpy( p.player_name, party_leader_sd->status.name, NAME_LENGTH );
+	safestrncpy( p.party_name, party->party.name, NAME_LENGTH );
+	p.AID = party_leader_sd->status.account_id;
+	p.refused = !accepted;
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+void clif_parse_partybooking_reply( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20191204
+	const PACKET_CZ_PARTY_REQ_ACK_MASTER_TO_JOIN* p = reinterpret_cast<PACKET_CZ_PARTY_REQ_ACK_MASTER_TO_JOIN*>( RFIFOP( fd, 0 ) );
+
+	map_session_data* tsd = map_charid2sd( p->CID );
+
+	// Target player is offline
+	if( tsd == nullptr ){
+		return;
+	}
+
+	if( tsd->status.account_id != p->AID ){

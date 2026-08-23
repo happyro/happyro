@@ -1,0 +1,500 @@
+/**
+ * Renderer/EntityRender.js
+ *
+ * Entity rendering pipeline — WebGL sprite rendering, action animation frame
+ * calculation, picking, shadow rendering, palette binding, and 3D GR2 model attachments.
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+/**
+ * EntityRender mixin
+ * Adds rendering methods (render, renderEntityGUI, renderShadow, isVisible, depth) to Entity.
+ *
+ * @mixin EntityRender
+ * @property {function(mat4, mat4): void} render Render WebGL entity sprite / 3D model
+ * @property {function(mat4, mat4): void} renderEntityGUI Render entity health bar, speech bubble, and nameplate
+ * @property {function(mat4, mat4): void} renderShadow Render entity ground shadow
+ * @property {function(): boolean} isVisible Check if entity is currently visible
+ */
+
+import glMatrix from 'Utils/gl-matrix.js';
+import Camera from 'Renderer/Camera.js';
+import Client from 'Core/Client.js';
+import StatusConst from 'DB/Status/StatusState.js';
+import SpriteRenderer from 'Renderer/SpriteRenderer.js';
+import Ground from 'Renderer/Map/Ground.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import Session from 'Engine/SessionStorage.js';
+import JobId from 'DB/Jobs/JobConst.js';
+import DB from 'DB/DBManager.js';
+import GraphicsSettings from 'Preferences/Graphics.js';
+import GR2ModelRenderer from 'Renderer/GR2/GR2ModelRenderer.js';
+
+/**
+ * Load dependencies
+ */
+// Official client uses: floor(dist * 0.37 * 4 / motionSpeed) % motionCount
+// where dist is in the client's internal move units (not map-cell units).
+// In roBrowser, `entity.walk.dist` is accumulated in *map cells*.
+// We scale cells -> client-like units so the stride cadence matches.
+//
+// roBrowser stores .act delays in milliseconds (loader multiplies by 25ms ticks),
+// while the official formula uses delays in 25ms ticks. Converting gives:
+// frame = floor(distCells * stepSize * 0.37 * 4 * 25 / actDelayMs)
+// stepSize ≈ 4.6 maps cell-units to the official internal move units.
+const WALK_STEP_SIZE = 4.6;
+const WALK_DIST_TO_MOTION = WALK_STEP_SIZE * 0.37 * 4 * 25; // ≈ 170.2
+
+/**
+ * Render an Entity
+ *
+ * @param {mat4} modelView
+ * @param {mat4} projection
+ */
+function render(modelView, projection) {
+	// GR2 3D body: attach (or re-attach on a body change) an instance the renderer draws in
+	// the map pass. The billboard body + shadow are suppressed below while this.gr2 is set.
+	// `path` and `this.gr2` are both path strings; JS `!==` on strings is value equality
+	// (string interning is irrelevant), so this correctly fires only when the model file
+	// actually changed -- detach the old instance and let the block below attach the new one.
+	if (this.gr2Model && this.gr2Model.path !== this.gr2) {
+		GR2ModelRenderer.detach(this.gr2Model);
+		this.gr2Model = null;
+	}
+	if (this.gr2 && !this.gr2Model) {
+		this.gr2Model = GR2ModelRenderer.attach(this);
+	}
+	// A supported model whose file 404'd or decode threw is now flagged missing: drop the (invisible)
+	// 3D path and re-resolve the body, which falls back to the Poring sprite via isMissing in
+	// UpdateBody. Runs once -- UpdateBody clears this.gr2, so the guard is false next frame.
+	if (this.gr2 && GR2ModelRenderer.isMissing(this.gr2)) {
+		if (this.gr2Model) {
+			GR2ModelRenderer.detach(this.gr2Model);
+			this.gr2Model = null;
+		}
+		this.job = this._job;
+	}
+
+	// Process action
+	this.animations.process();
+
+	// Always process walk. It will decide it for itself if it is walking or not and handles it accordingly.
+	this.walkProcess();
+	this.entitiesWalkProcess(); // falcon/wug
+
+	this.boundingRect.x1 = Infinity;
+	this.boundingRect.y1 = -Infinity;
+	this.boundingRect.x2 = -Infinity;
+	this.boundingRect.y2 = Infinity;
+
+	// Render it only if visible
+	if (this.effectColor[3]) {
+		this.renderEntity();
+		this.attachments.render(Date.now());
+	}
+
+	// Update character UI (life, dialog, etc.)
+	renderGUI(this, modelView, projection);
+}
+
+/**
+ * Calculate zIndex and render UI elements
+ *
+ * @param {Entity}
+ * @param {mat4} modelView
+ * @param {mat4} projection
+ */
+const renderGUI = (function renderGUIClosure() {
+	const mat4 = glMatrix.mat4;
+	const vec4 = glMatrix.vec4;
+	const _matrix = mat4.create();
+	const _vector = vec4.create();
+
+	return function _renderGUI(entity, modelView, projection) {
+		// Move to camera
+		_vector[0] = entity.position[0] + 0.5;
+		_vector[1] = -entity.position[2];
+		_vector[2] = entity.position[1] + 0.5;
+		mat4.translate(_matrix, modelView, _vector);
+
+		// Set-up Spherical billboard
+		_matrix[0] = 1.0;
+		_matrix[1] = 0.0;
+		_matrix[2] = 0.0;
+		_matrix[4] = 0.0;
+		_matrix[5] = 1.0;
+		_matrix[6] = 0.0;
+		_matrix[8] = 0.0;
+		_matrix[9] = 0.0;
+		_matrix[10] = 1.0;
+
+		// Project to screen
+		mat4.multiply(_matrix, projection, _matrix);
+
+		if (entity.effectColor[3] && entity._job !== 139) {
+			calculateBoundingRect(entity, _matrix);
+		}
+
+		// Get depth for rendering order
+		_vector[0] = 0.0;
+		_vector[1] = 0.0;
+		_vector[2] = 0.0;
+		_vector[3] = 1.0;
+
+		vec4.transformMat4(_vector, _vector, _matrix);
+		entity.depth = _vector[3];
+
+		// Display UI
+		if (entity.life.display) {
+			entity.life.render(_matrix);
+		}
+		if (entity.emblem.display) {
+			entity.emblem.render(_matrix);
+		}
+		if (entity.display.display) {
+			entity.display.render(_matrix);
+		}
+		if (entity.dialog.display) {
+			entity.dialog.render(_matrix);
+		}
+		if (entity.cast.display) {
+			entity.cast.render(_matrix);
+		}
+		if (entity.room.display) {
+			entity.room.render(_matrix);
+		}
+	};
+})();
+
+/**
+ * Calculate Bounding Rectangle
+ *
+ * @param {Entity}
+ * @param {mat4}
+ */
+const calculateBoundingRect = (function calculateBoundingRectClosure() {
+	const vec4 = glMatrix.vec4;
+	const size = glMatrix.vec2.create();
+	const vector = vec4.create();
+	const out = vec4.create();
+
+	function projectPoint(x, y, matrix) {
+		vector[0] = x;
+		vector[1] = y;
+		vector[2] = 0.0;
+		vector[3] = 1.0;
+
+		vec4.transformMat4(out, vector, matrix);
+
+		out[3] = out[3] === 0.0 ? 1.0 : 1.0 / out[3];
+		out[0] *= out[3];
+		out[1] *= out[3];
+	}
+
+	return function _calculateBoundingRect(entity, matrix) {
+		let tmp;
+
+		const fx = entity.xSize / 175;
+		const fy = entity.ySize / 175;
+
+		size[0] = window.innerWidth * 0.5;
+		size[1] = window.innerHeight * 0.5;
+
+		const rect = entity.boundingRect;
+		const minSize = entity.objecttype === entity.constructor.TYPE_ITEM ? 30 : 60;
+
+		// GR2 3D body: renderEntity early-returns for GR2, so no sprite body accumulates a rect.
+		// Use the screen-space box the GR2 renderer projected from the model AABB this frame so the
+		// hover/click test matches the visible model instead of the tiny default sprite box.
+		const gr2Model = entity.gr2Model;
+		if (gr2Model && gr2Model.screenRect) {
+			const sr = gr2Model.screenRect;
+			rect.x1 = sr.x1;
+			rect.y1 = sr.y1;
+			rect.x2 = sr.x2;
+			rect.y2 = sr.y2;
+			if (rect.x2 - rect.x1 < minSize) {
+				rect.x1 = (rect.x1 + rect.x2) * 0.5 - minSize * 0.5;
+				rect.x2 = rect.x1 + minSize;
+			}
+			if (rect.y2 - rect.y1 < minSize) {
+				rect.y1 = (rect.y1 + rect.y2) * 0.5 - minSize * 0.5;
+				rect.y2 = rect.y1 + minSize;
+			}
+			return;
+		}
+
+		// No body ? Default picking (sprite 110 for example)
+		if (rect.x1 === Infinity || rect.x2 === -Infinity || rect.y1 === -Infinity || rect.y2 === Infinity) {
+			rect.x1 = -25;
+			rect.x2 = +25;
+			rect.y1 = +45;
+			rect.y2 = 0;
+		}
+
+		// Swap x1 and x2 if needed
+		if (rect.x1 > rect.x2) {
+			tmp = rect.x1;
+			rect.x1 = rect.x2;
+			rect.x2 = tmp;
+		}
+
+		// Top left
+		projectPoint(rect.x1 * fx, rect.y1 * fy, matrix);
+		rect.x1 = size[0] + size[0] * out[0];
+		rect.y1 = size[1] - size[1] * out[1];
+
+		// Bottom right
+		projectPoint(rect.x2 * fx, rect.y2 * fy, matrix);
+		rect.x2 = size[0] + size[0] * out[0];
+		rect.y2 = size[1] - size[1] * out[1];
+
+		// Cap it to minSize
+		if (rect.x2 - rect.x1 < minSize) {
+			rect.x1 = (rect.x1 + rect.x2) * 0.5 - minSize * 0.5;
+			rect.x2 = rect.x1 + minSize;
+		}
+
+		if (rect.y2 - rect.y1 < minSize) {
+			rect.y1 = (rect.y1 + rect.y2) * 0.5 - minSize * 0.5;
+			rect.y2 = rect.y1 + minSize;
+		}
+	};
+})();
+
+/**
+ * Render Entity
+ */
+const renderEntity = (function renderEntityClosure() {
+	const _position = new Int32Array(2);
+
+	return function _renderEntity() {
+		if (this.hideEntity) {
+			return;
+		}
+
+		// Update shadow
+		SpriteRenderer.shadow = Ground.getShadowFactor(this.position[0], this.position[1]);
+		SpriteRenderer.zIndex = 1;
+
+		const animation = this.animation;
+		const Entity = this.constructor;
+		_position[0] = 0;
+		_position[1] = 0;
+
+		// Animation change ! Get it now
+		if (animation.save && animation.delay < Date.now()) {
+			this.setAction(animation.save);
+		}
+
+		// GR2 3D body: the model is drawn by GR2ModelRenderer in the map pass. Suppress the 2D
+		// billboard body AND the shadow blob (Phase 0: no blob under a GR2). Name / lifebar /
+		// emblem overlays render in renderGUI (called separately) and are kept.
+		// Returning here also skips attachments.renderBefore() below -- intentional: the current
+		// GR2 set (guardians/emperium/flag/treasure) carries no sprite attachments. attachments.render()
+		// (the always-behind pass, called from the map-pass entry above) still runs on the parent.
+		if (this.gr2) {
+			return;
+		}
+
+		// Avoid look up, render as IDLE all not supported frames
+		const action = this.action < 0 ? this.ACTION.IDLE : this.action;
+		const direction = (Camera.direction + this.direction + 8) % 8;
+		const behind = direction > 1 && direction < 6;
+		const self = this;
+
+		// Render shadow (shadow isn't render when player is sit or dead).
+		if (action !== this.ACTION.DIE && action !== this.ACTION.SIT && this.job !== 45 && !this.hideShadow) {
+			SpriteRenderer.zIndex = -1;
+			// Shadow is base on gat height
+			SpriteRenderer.position[0] = this.position[0];
+			SpriteRenderer.position[1] = this.position[1];
+			SpriteRenderer.position[2] = Altitude.getCellHeight(this.position[0], this.position[1]) + 0.05;
+
+			// Keep shadow on ground: depth test on, depth write off, disabledepthcorrection
+			SpriteRenderer.runWithDepth(true, false, false, function () {
+				renderElement(self, self.files.shadow, 'shadow', _position, false);
+			});
+		}
+
+		SpriteRenderer.position.set(self.position);
+		// Render attachments that should appear behind the entity first
+		this.attachments.renderBefore(Date.now());
+		SpriteRenderer.zIndex = 1;
+
+		// ------------------------------------------------------------------
+		// ENTITY RENDER PIPELINE
+		//
+		// - Write depth (3D world occluders)
+		// - Use depth correction (isometric projection)
+		// - Use zIndex only for same-entity layering
+		//
+		// ------------------------------------------------------------------
+		switch (self.objecttype) {
+			case Entity.TYPE_PC:
+			case Entity.TYPE_MERC:
+				SpriteRenderer.position[2] = SpriteRenderer.position[2] + 0.2;
+
+				// Main sprite pass:
+				// depthTest  = resolve world occlusion
+				// depthWrite = allow entity to occlude others
+				// depthCorrection ENABLED (required for isometric depth)
+				SpriteRenderer.runWithDepth(true, true, false, function () {
+					let cartidx;
+					// madogear don't appear costumes
+					const RIDING_STATUS =
+						self.effectState &
+							(StatusConst.EffectState.RIDING |
+								StatusConst.EffectState.DRAGON1 |
+								StatusConst.EffectState.DRAGON2 |
+								StatusConst.EffectState.DRAGON3 |
+								StatusConst.EffectState.DRAGON4 |
+								StatusConst.EffectState.DRAGON5 |
+								StatusConst.EffectState.WUGRIDER) || self.allRidingState;
+
+					function robeCorrection(lookingFront) {
+						if (self.robe > 0 && self.robeHeight && self.bodyHeight) {
+							const HEAD_SIZE = 64;
+							const COMPENSATION = 25;
+							if (
+								self.robeHeight +
+									(self.action === self.ACTION.SIT
+										? 0
+										: RIDING_STATUS && lookingFront
+											? COMPENSATION * 2
+											: COMPENSATION) >
+								self.bodyHeight + HEAD_SIZE
+							) {
+								if (self.action === self.ACTION.SIT) {
+									return lookingFront ? -450 : RIDING_STATUS ? 1 : -100;
+								}
+								return lookingFront ? -300 : RIDING_STATUS ? 100 : 1;
+							}
+						}
+						if (self.action === self.ACTION.SIT) {
+							return lookingFront ? -100 : 550;
+						}
+						return lookingFront ? 1 : 400;
+					}
+
+					// Shield is behind on some position, seems to be hardcoded by the client
+					if (self.shield && behind) {
+						SpriteRenderer.runWithDepth(true, false, false, function () {
+							SpriteRenderer.zIndex = -1;
+							renderElement(self, self.files.shield, 'shield', _position, true);
+						});
+					}
+
+					if (!(direction > 2 && direction < 6)) {
+						// looking front
+						if (Session.Playing == true && self.hasCart == true) {
+							cartidx = DB.isSuperNovice(self._job) ? 0 : self.CartNum;
+
+							// Draw Cart
+							SpriteRenderer.runWithDepth(true, false, false, function () {
+								SpriteRenderer.zIndex = -1;
+								renderElement(self, self.files.cart_shadow, 'cartshadow', _position, false);
+								SpriteRenderer.zIndex = 1;
+								renderElement(self, self.files.cart[cartidx], 'cart', _position, false);
+							});
+						}
+
+						// Draw Robe
+						if (self.robe > 0) {
+							SpriteRenderer.zIndex = robeCorrection(true);
+							renderElement(self, self.files.robe, 'robe', _position, true);
+						}
+					}
+
+					SpriteRenderer.zIndex = 150;
+					if (
+						RIDING_STATUS &&
+						!(direction > 2 && direction < 6) &&
+						(self.action === self.ACTION.SIT || self.action === self.ACTION.WALK)
+					) {
+						SpriteRenderer.zIndex *= 2;
+					}
+
+					// Draw Body
+					renderElement(self, self.files.body, 'body', _position, true);
+
+					// Isometric Projection Body Offset
+					let bodyZOffset = 250;
+					if (RIDING_STATUS) {
+						bodyZOffset *= 2;
+						if (self.action === self.ACTION.WALK && !(direction > 2 && direction < 6)) {
+							bodyZOffset += 250;
+						}
+					}
+
+					SpriteRenderer.zIndex = bodyZOffset + 50;
+
+					// Draw Head
+					renderElement(self, self.files.head, 'head', _position, false);
+
+					// TB_Layer_Priority = {Default_Mid = 100, Default_Top = 200, Default_Bottom = 300, Default_Robe = 400 }
+					// Values*10 reference https://github.com/zhad3/zrenderer/blob/c10b337dfb9d44e33b146551191b3398630823b5/source/sprite.d#L84
+
+					// Hat Middle
+					if (self.accessory3 > 0 && self.accessory3 !== self.accessory) {
+						// accessory already rendered, avoid render same item again
+						SpriteRenderer.zIndex = bodyZOffset + 100;
+						renderElement(self, self.files.accessory3, 'head', _position, false);
+					}
+
+					// Hat Top
+					if (
+						self.accessory2 > 0 &&
+						self.accessory2 !== self.accessory &&
+						self.accessory2 !== self.accessory3
+					) {
+						// accessory and accessory3 already rendered, avoid render same item again
+						SpriteRenderer.zIndex = bodyZOffset + 200;
+						renderElement(self, self.files.accessory2, 'head', _position, false);
+					}
+
+					// Hat Bottom
+					if (self.accessory > 0) {
+						SpriteRenderer.zIndex = bodyZOffset + 300;
+						renderElement(self, self.files.accessory, 'head', _position, false);
+					}
+
+					if (direction > 2 && direction < 6) {
+						// looking back
+
+						// Draw Robe
+						if (self.robe > 0) {
+							SpriteRenderer.zIndex = bodyZOffset + robeCorrection(false);
+							renderElement(self, self.files.robe, 'robe', _position, true);
+						}
+
+						// Draw Cart
+						if (Session.Playing == true && self.hasCart == true) {
+							SpriteRenderer.zIndex = bodyZOffset + 500;
+							cartidx = DB.isSuperNovice(self._job) ? 0 : self.CartNum;
+							SpriteRenderer.runWithDepth(true, false, false, function () {
+								renderElement(self, self.files.cart_shadow, 'cartshadow', _position, false);
+								renderElement(self, self.files.cart[cartidx], 'cart', _position, false);
+							});
+						}
+					}
+
+					// Draw Weapon
+					if (self.weapon > 0) {
+						SpriteRenderer.zIndex = bodyZOffset + 250;
+						renderElement(self, self.files.weapon, 'weapon', _position, true);
+						renderElement(self, self.files.weapon_trail, 'weapon_trail', _position, true);
+					}
+
+					if (self.shield > 0 && !behind) {
+						SpriteRenderer.zIndex = bodyZOffset + 300;
+						renderElement(self, self.files.shield, 'shield', _position, true);
+					}
+				});
+				break;
+			case Entity.TYPE_HOM:
+				SpriteRenderer.position[2] = SpriteRenderer.position[2] + 0.2;
+				SpriteRenderer.zIndex = 150;

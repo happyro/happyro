@@ -1,0 +1,500 @@
+				SpriteRenderer.runWithDepth(true, true, false, function () {
+					renderElement(self, self.files.body, 'body', _position, true);
+				});
+				break;
+			case Entity.TYPE_FALCON:
+				SpriteRenderer.position[2] = SpriteRenderer.position[2] + 0.2;
+				SpriteRenderer.zIndex = 1000;
+				SpriteRenderer.runWithDepth(true, true, false, function () {
+					renderElement(self, self.files.body, 'body', _position, true);
+				});
+				break;
+			default:
+				SpriteRenderer.position[2] = SpriteRenderer.position[2] + 0.2;
+				SpriteRenderer.zIndex = 150;
+				// Non-player entities:
+				// - Do not write depth to avoid breaking PC occlusion and internal layer issues
+				// - Still use depth test for correct ordering
+				SpriteRenderer.runWithDepth(true, false, false, function () {
+					renderElement(self, self.files.body, 'body', _position, true);
+				});
+				break;
+		}
+		SpriteRenderer.zIndex = 1;
+	};
+})();
+
+/**
+ * Render second body (BL_DOUBLE_BODY + EF_MAKEBLUR)
+ * @param {Entity} entity
+ * @param {Array} layers
+ * @param {string} spr
+ * @param {string} pal
+ * @param {object} files
+ * @param {string} type
+ * @param {number[]} _position
+ * @param {object} options
+ */
+function renderSecondBody(entity, layers, spr, pal, files, type, _position, options = {}) {
+	// options:
+	// - options.enableHalo: boolean  -> halo type Assumptio (BL_DOUBLE_BODY)
+	// - options.enableTrail: boolean -> trail behind the character (EF_MAKEBLUR)
+	// - options.trailLength: number  -> number of ghosts to keep
+	// - options.blurType: number     -> 1 (standard) EF_MAKEBLUR , 3 (spaced) - EF_MAKEBLUR3, 4 (once), 5 (attack only) - EF_MAKEBLUR5
+	const { enableHalo = false, enableTrail = false, trailLength = 5, blurType = 1 } = options;
+
+	if (!enableHalo && !enableTrail) {
+		return;
+	}
+
+	if (type === 'shadow' || type === 'cartshadow') {
+		return;
+	}
+
+	// -------------------------
+	// 1) Halo (second body) - Assumptio
+	// -------------------------
+	if (enableHalo) {
+		const originalR = entity.effectColor[0];
+		const originalG = entity.effectColor[1];
+		const originalB = entity.effectColor[2];
+		const originalA = entity.effectColor[3];
+
+		entity.effectColor[0] = 1.0;
+		entity.effectColor[1] = 1.0;
+		entity.effectColor[2] = 1.0;
+		entity.effectColor[3] = 0.6;
+
+		// Bigger, visible contour
+		const haloScale = 1.15;
+		const zIndex = SpriteRenderer.zIndex;
+		SpriteRenderer.zIndex = zIndex - 100;
+
+		SpriteRenderer.runWithDepth(true, false, false, function () {
+			for (let i = 0; i < layers.length; ++i) {
+				const oldX = layers[i].scale[0];
+				const oldY = layers[i].scale[1];
+				layers[i].scale[0] = oldX * haloScale;
+				layers[i].scale[1] = oldY * haloScale;
+				entity.renderLayer(layers[i], spr, pal, files.size, _position, type, true);
+				layers[i].scale[0] = oldX;
+				layers[i].scale[1] = oldY;
+			}
+		});
+
+		SpriteRenderer.zIndex = zIndex;
+
+		// restore
+		entity.effectColor[0] = originalR;
+		entity.effectColor[1] = originalG;
+		entity.effectColor[2] = originalB;
+		entity.effectColor[3] = originalA;
+	}
+
+	// -------------------------
+	// 2) Trail - After-images (MakeBlur variants)
+	// -------------------------
+	if (enableTrail) {
+		// Initialize trail storage for each element type
+		if (!entity._trailData) {
+			entity._trailData = {};
+		}
+		if (!entity._trailData[type]) {
+			entity._trailData[type] = {
+				snapshots: [],
+				lastTick: 0
+			};
+		}
+
+		const trail = entity._trailData[type];
+		const now = Date.now();
+
+		// Determine blur type: 1 (standard), 3 (10f), 4 (once), 5 (10f, attack only)
+		const interval = blurType === 3 || blurType === 5 ? 560 : 80; // 10 frames vs 5 frames
+		const maxLen =
+			blurType === 4 ? 1 : GraphicsSettings.performanceMode ? Math.floor(trailLength / 2) : trailLength;
+
+		let shouldCapture = false;
+
+		// Snapshot logic
+		if (blurType === 1 || blurType === 3) {
+			shouldCapture = entity.action === entity.ACTION.WALK && now - trail.lastTick > interval;
+		} else if (blurType === 4) {
+			shouldCapture = trail.snapshots.length === 0;
+		} else if (blurType === 5) {
+			const isCombat = [
+				entity.ACTION.ATTACK,
+				entity.ACTION.ATTACK1,
+				entity.ACTION.ATTACK2,
+				entity.ACTION.ATTACK3,
+				entity.ACTION.SKILL
+			].includes(entity.action);
+			shouldCapture = isCombat && now - trail.lastTick > interval;
+		}
+
+		if (shouldCapture) {
+			trail.snapshots.unshift({
+				position: glMatrix.vec3.clone(entity.position),
+				tick: now,
+				layers: layers, // Reference current animation frames
+				spr: spr,
+				pal: pal,
+				_position: new Int32Array(_position),
+				color: [...entity.effectColor]
+			});
+			trail.lastTick = now;
+
+			if (trail.snapshots.length > maxLen) {
+				trail.snapshots.pop();
+			}
+		}
+
+		if (trail.snapshots.length) {
+			const originalPos = glMatrix.vec3.clone(SpriteRenderer.position);
+			const originalZ = SpriteRenderer.zIndex;
+			const originalColor = new Float32Array(entity.effectColor);
+
+			SpriteRenderer.runWithDepth(true, false, false, function () {
+				const duration = blurType === 4 || blurType === 3 ? 800 : 400; // Static image lasts longer
+				for (let idx = 0; idx < trail.snapshots.length; idx++) {
+					const snp = trail.snapshots[idx];
+					const age = now - snp.tick;
+
+					if (age > duration && blurType !== 4) {
+						continue;
+					}
+
+					let alpha = Math.max(0, 0.4 * (1.0 - age / duration));
+					if (alpha <= 0.05 && blurType !== 4) {
+						continue;
+					}
+					if (blurType === 3) alpha *= 2;
+
+					// Set Colors based on mode
+					if (blurType !== 1) {
+						// MakeBlur3/4/5: White (255, 255, 255)
+						entity.effectColor[0] = 1.0;
+						entity.effectColor[1] = 1.0;
+						entity.effectColor[2] = 1.0;
+					}
+					entity.effectColor[3] = alpha;
+
+					// Move SpriteRenderer base to ghost world position
+					SpriteRenderer.position.set(snp.position);
+					SpriteRenderer.zIndex = originalZ - 10 - idx;
+
+					// Render captured layers
+					for (let i = 0; i < snp.layers.length; ++i) {
+						entity.renderLayer(snp.layers[i], snp.spr, snp.pal, files.size, snp._position, type, false);
+					}
+				}
+			});
+
+			// Restore global/entity state
+			SpriteRenderer.position.set(originalPos);
+			SpriteRenderer.zIndex = originalZ;
+			entity.effectColor.set(originalColor);
+		}
+	}
+}
+
+/**
+ * Render each Entity elements (body, head, hats, ...)
+ *
+ * @param {Entity}
+ * @param {object} files {spr, act, pal}
+ * @param {string} type
+ * @param {vec2}   position (reference)
+ * @param {boolean} is_main - true if it's the main element (body)
+ */
+const renderElement = (function renderElementClosure() {
+	const _position = new Int32Array(2);
+
+	return function _renderElement(entity, files, type, position, is_main) {
+		let isBlendModeOne = false;
+
+		// Nothing to render
+		if (typeof files === 'undefined' || !files.spr || !files.act) {
+			return;
+		}
+
+		// Get back sprite and act
+		const spr = Client.loadFile(files.spr);
+		const act = Client.loadFile(files.act);
+
+		// Not loaded yet
+		if (!spr || !act) {
+			return;
+		}
+
+		// If palette, load palette, else get back sprite palette
+		const pal = (files.pal && Client.loadFile(files.pal)) || spr;
+
+		// Obtain animations from the action and direction.
+		const action =
+			act.actions[
+				(entity.action * 8 + // Action
+					((Camera.direction + entity.direction + 8) % 8)) % // Direction
+					act.actions.length
+			]; // Avoid overflow on action (ex: if there is just one action)
+
+		// Find animation
+		const animation_id = calcAnimation(entity, action, type, Date.now() - entity.animation.tick);
+		const animation = action.animations[animation_id];
+		const layers = animation.layers;
+
+		// Play sound
+		if (animation.sound > -1) {
+			entity.sound.play(act.sounds[animation.sound], entity.action, animation_id);
+		}
+
+		_position[0] = 0;
+		_position[1] = 0;
+
+		if (animation.pos.length && !is_main) {
+			_position[0] = position[0] - animation.pos[0].x;
+			_position[1] = position[1] - animation.pos[0].y;
+		}
+
+		if (type === 'cart' || type === 'cartshadow') {
+			const direction = (Camera.direction + entity.direction + 8) % 8;
+
+			switch (direction) {
+				case 0:
+					{
+						_position[0] = 0;
+						_position[1] = -30;
+					}
+					break;
+				case 1:
+					_position[0] = 30;
+					_position[1] = -10;
+					break;
+				case 2:
+					_position[0] = 40;
+					_position[1] = 0;
+					break;
+				case 3:
+					_position[0] = 30;
+					_position[1] = 10;
+					break;
+				case 4:
+					{
+						_position[0] = 0;
+						_position[1] = 20;
+					}
+					break;
+				case 5:
+					_position[0] = -30;
+					_position[1] = 10;
+					break;
+				case 6:
+					_position[0] = -40;
+					_position[1] = 0;
+					break;
+				case 7:
+					_position[0] = -30;
+					_position[1] = -10;
+					break;
+			}
+		}
+
+		// Check if special body effect and enable the correct blend mode
+		const hasBerserkOrMarionette =
+			(type !== 'shadow' && entity.getOpt3(StatusConst.Status.BERSERK)) ||
+			entity.getOpt3(StatusConst.Status.MARIONETTE);
+
+		if (hasBerserkOrMarionette) {
+			isBlendModeOne = true;
+		}
+
+		// Trail / Blur variations
+		const isBUNSIN = entity.getOpt3(StatusConst.Status.NJ_BUNSINJYUTSU);
+		const isHALLUCINATIONWALK = entity.getOpt3(StatusConst.Status.HALLUCINATIONWALK);
+		const isENERGYCOAT = entity.getOpt3(StatusConst.Status.ENERGYCOAT);
+		const isQUICKEN = entity.virtue & StatusConst.OPT3.QUICKEN;
+		const isOVERTHRUST = entity.getOpt3(StatusConst.Status.OVERTHRUST);
+		const isEXPLOSIONSPIRITS = entity.getOpt3(StatusConst.Status.EXPLOSIONSPIRITS);
+		const isBERSERK = entity.getOpt3(StatusConst.Status.BERSERK);
+
+		renderSecondBody(entity, layers, spr, pal, files, type, _position, {
+			enableHalo: entity.getOpt3(StatusConst.Status.ASSUMPTIO) || !!entity._enableHalo,
+			enableTrail:
+				isENERGYCOAT ||
+				isBUNSIN ||
+				isHALLUCINATIONWALK ||
+				isQUICKEN ||
+				isOVERTHRUST ||
+				isEXPLOSIONSPIRITS ||
+				isBERSERK ||
+				!!entity._enableTrail,
+			blurType: isBUNSIN ? 5 : isHALLUCINATIONWALK ? 3 : entity._blurType || 1
+		});
+
+		// Render all frames
+		for (let i = 0, count = layers.length; i < count; ++i) {
+			entity.renderLayer(layers[i], spr, pal, files.size, _position, type, isBlendModeOne);
+		}
+
+		// Save reference
+		if (is_main && animation.pos.length) {
+			position[0] = animation.pos[0].x;
+			position[1] = animation.pos[0].y;
+		}
+	};
+})();
+
+/**
+ * Get animation delay
+ * TODO: search how works the delay on walk and aspd.
+ *
+ * @param {string} type
+ * @param {string} entity
+ * @param {object} act
+ * @returns {number} delay
+ */
+function getAnimationDelay(type, entity, act) {
+	if (type === 'body' && entity.action === entity.ACTION.WALK) {
+		return (act.delay / 150) * entity.walk.speed;
+	}
+
+	// Delay on attack
+	if (
+		entity.action === entity.ACTION.ATTACK ||
+		entity.action === entity.ACTION.ATTACK1 ||
+		entity.action === entity.ACTION.ATTACK2 ||
+		entity.action === entity.ACTION.ATTACK3
+	) {
+		return entity.attack_speed / act.animations.length;
+	}
+
+	return act.delay;
+}
+
+/**
+ * Calculate animations
+ */
+function calcAnimation(entity, act, type, tick) {
+	// Fix for shadow
+	if (type === 'shadow' || type === 'cartshadow') {
+		return 0;
+	}
+
+	// To avoid look up
+	const ACTION = entity.ACTION;
+	const action = entity.action;
+	const animation = entity.animation;
+	let animCount = act.animations.length;
+	const animSize = animCount;
+	const animLastIndex = animSize - 1;
+	const isIdle = action === ACTION.IDLE || action === ACTION.SIT;
+	let delay = getAnimationDelay(type, entity, act);
+	let headDir = 0;
+	let anim = 0;
+
+	//overrides
+	if (animation.length) {
+		animCount = animation.length;
+	}
+	if (animation.speed) {
+		delay = animation.speed;
+	}
+
+	if (type === 'cart' && isIdle) {
+		return 0;
+	}
+
+	// Get rid of doridori
+
+	if (
+		(type === 'body' || type === 'robe') &&
+		(entity.objecttype === entity.constructor.TYPE_PC || entity.objecttype === entity.constructor.TYPE_MERC) &&
+		isIdle
+	) {
+		if (entity.headDir <= animLastIndex) {
+			return entity.headDir;
+		}
+		return animLastIndex;
+	}
+
+	// If hat/hair, divide to 3 since there is doridori include
+	// TODO: fixed, just on IDLE and SIT ?
+	if (
+		type === 'head' &&
+		(entity.objecttype === entity.constructor.TYPE_PC || entity.objecttype === entity.constructor.TYPE_MERC) &&
+		isIdle
+	) {
+		animCount = Math.floor(animCount / 3);
+		headDir = entity.headDir <= animLastIndex ? entity.headDir : animLastIndex;
+	}
+
+	// Don't play, so stop at the current frame.
+	if (animation.play === false) {
+		anim += animCount * headDir; // get rid of doridori
+		anim += animation.frame; // set frame
+		anim %= animSize; // avoid overflow
+
+		return anim;
+	}
+
+	// Distance-driven walk animation to keep motion synced to ground distance.
+	// Adapted from official client: floor(dist * stepSize * 0.37 * 4 / (delay/24)) % motionCount
+	// In roBrowser, `entity.walk.dist` is in map cells and WALK_DIST_TO_MOTION encodes
+	// stepSize * 0.37 * 4 * 24, so we divide by act.delay (ms).
+	// Apply to all sprite parts so hats/weapons stay in phase with the body.
+	if (action === ACTION.WALK && entity.walk && entity.objecttype !== entity.constructor.TYPE_FALCON) {
+		let motionCount = animCount || 1;
+		if (animation.length) {
+			motionCount = animation.length;
+		}
+		motionCount = Math.max(motionCount, 1);
+
+		// motionSpeed is the per-action delay from the .act file.
+		// Cache a shared walk phase per render tick so all parts stay in step.
+		const motionSpeed = Math.max(act.delay || 1, 1);
+		let phase;
+		const nowTick = Date.now();
+		const havePhaseThisTick =
+			entity.walk._motionPhaseTick === nowTick && typeof entity.walk._motionPhase === 'number';
+		const isBodyPart = type === 'body';
+
+		// Body is authoritative for motionSpeed; recompute when we render it.
+		if (!havePhaseThisTick || isBodyPart) {
+			phase = (entity.walk.dist * WALK_DIST_TO_MOTION) / motionSpeed;
+			entity.walk._motionPhase = phase;
+			entity.walk._motionPhaseTick = nowTick;
+		} else {
+			phase = entity.walk._motionPhase;
+		}
+
+		let motion = Math.floor(phase);
+		motion %= motionCount;
+		motion += motionCount * headDir; // keep head dir offset handling consistent
+		motion += animation.frame;
+		motion %= animSize;
+
+		return motion;
+	}
+
+	// Repeatable
+	if (animation.repeat) {
+		anim = Math.floor(tick / delay);
+
+		entity.sound.freeOnAnimationEnd(anim, animCount);
+
+		anim %= animCount;
+		anim += animCount * headDir; // get rid of doridori
+		anim += animation.frame; // don't forget the previous frame
+		anim %= animSize; // avoid overflow
+
+		return anim;
+	}
+
+	// No repeat
+	anim = Math.min((tick / delay) | 0, animCount || animCount - 1); // Avoid an error if animation = 0, search for -1 :(
+
+	anim %= animCount;
+	anim += animCount * headDir; // get rid of doridori
+	anim += animation.frame; // previous frame
+	anim %= animSize; // avoid overflow
+

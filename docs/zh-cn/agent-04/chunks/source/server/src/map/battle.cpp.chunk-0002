@@ -1,0 +1,500 @@
+ * Note: Passing src/target == nullptr is perfectly valid, it skips SC_ checks.
+ * @param src
+ * @param target
+ * @param damage
+ * @param atk_elem
+ * @param def_type
+ * @param def_lv
+ * @param flag 0x1 = allow to return negative values even if config for healing through negative resist is disabled
+ * @return damage
+ */
+int64 battle_attr_fix(block_list *src, block_list *target, int64 damage,int32 atk_elem,int32 def_type, int32 def_lv, int32 flag)
+{
+	status_change *sc = nullptr, *tsc = nullptr;
+	int32 ratio;
+
+	if (src) sc = status_get_sc(src);
+	if (target) tsc = status_get_sc(target);
+
+	if (!CHK_ELEMENT(atk_elem))
+		atk_elem = rnd()%ELE_ALL;
+
+	if (!CHK_ELEMENT(def_type) || !CHK_ELEMENT_LEVEL(def_lv)) {
+		ShowError("battle_attr_fix: unknown attribute type: atk=%d def_type=%d def_lv=%d\n",atk_elem,def_type,def_lv);
+		return damage;
+	}
+
+	ratio = elemental_attribute_db.getAttribute(def_lv, atk_elem, def_type);
+	if (sc != nullptr && !sc->empty()) { //increase dmg by src status
+		switch(atk_elem){
+			case ELE_FIRE:
+				if (sc->getSCE(SC_VOLCANO))
+#ifdef RENEWAL
+					ratio += sc->getSCE(SC_VOLCANO)->val3;
+#else
+					damage += (int64)((damage*sc->getSCE(SC_VOLCANO)->val3) / 100);
+#endif
+				break;
+			case ELE_WIND:
+				if (sc->getSCE(SC_VIOLENTGALE))
+#ifdef RENEWAL
+					ratio += sc->getSCE(SC_VIOLENTGALE)->val3;
+#else
+					damage += (int64)((damage*sc->getSCE(SC_VIOLENTGALE)->val3) / 100);
+#endif
+				break;
+			case ELE_WATER:
+				if (sc->getSCE(SC_DELUGE))
+#ifdef RENEWAL
+					ratio += sc->getSCE(SC_DELUGE)->val3;
+#else
+					damage += (int64)((damage*sc->getSCE(SC_DELUGE)->val3) / 100);
+#endif
+				break;
+			case ELE_GHOST:
+				if (sc->getSCE(SC_TELEKINESIS_INTENSE)) {
+					// At least for SC_TELEKINESIS_INTENSE:
+					// damage after elemental_attribute_db should be calculated first to avoid rounding issues
+					damage = damage - (int64)((damage * (100 - ratio)) / 100);
+					// Initialize ratio to 100 (default)
+					ratio = 100;
+
+					ratio += ratio * sc->getSCE(SC_TELEKINESIS_INTENSE)->val3 / 100;
+				}
+				break;
+		}
+	}
+
+	if( target && target->type == BL_SKILL ) {
+		if( atk_elem == ELE_FIRE && battle_getcurrentskill(target) == GN_WALLOFTHORN ) {
+			skill_unit *su = (skill_unit*)target;
+			std::shared_ptr<s_skill_unit_group> sg;
+			block_list *src2;
+
+			if( !su || !su->alive || (sg = su->group) == nullptr || !sg || sg->val3 == -1 ||
+			   (src2 = map_id2bl(sg->src_id)) == nullptr || status_isdead(*src2) )
+				return 0;
+
+			if( sg->unit_id != UNT_FIREWALL ) {
+				int32 x,y;
+				x = sg->val3 >> 16;
+				y = sg->val3 & 0xffff;
+				skill_unitsetting(src2,su->group->skill_id,su->group->skill_lv,x,y,1);
+				sg->val3 = -1;
+				sg->limit = DIFF_TICK(gettick(),sg->tick)+300;
+			}
+		}
+	}
+
+	if (tsc != nullptr && !tsc->empty()) { //increase dmg by target status
+		switch(atk_elem) {
+			case ELE_FIRE:
+				if (tsc->getSCE(SC_SPIDERWEB)) { //Double damage
+#ifdef RENEWAL
+					ratio += 100;
+#else
+					damage *= 2;
+#endif
+					//Remove a unit group or end whole status change
+					status_change_end(target, SC_SPIDERWEB);
+				}
+				if (tsc->getSCE(SC_THORNSTRAP) && battle_getcurrentskill(src) != GN_CARTCANNON)
+					status_change_end(target, SC_THORNSTRAP);
+				if (tsc->getSCE(SC_CRYSTALIZE))
+					status_change_end(target, SC_CRYSTALIZE);
+				if (tsc->getSCE(SC_EARTH_INSIGNIA))
+#ifdef RENEWAL
+					ratio += 50;
+#else
+					damage += (int64)(damage * 50 / 100);
+#endif
+				if( tsc->getSCE(SC_WIDEWEB) ) {
+#ifdef RENEWAL
+					ratio += 100;
+#else
+					damage *= 2;
+#endif
+					status_change_end(target,SC_WIDEWEB);
+				}
+				if( tsc->getSCE(SC_BURNT) ) {
+#ifdef RENEWAL
+					ratio += 400;
+#else
+					damage += (int64)(damage * 400 / 100);
+#endif
+				}
+				break;
+			case ELE_HOLY:
+				if (tsc->getSCE(SC_ORATIO))
+#ifdef RENEWAL
+					ratio += tsc->getSCE(SC_ORATIO)->val1 * 2;
+#else
+					damage += (int64)(damage * (tsc->getSCE(SC_ORATIO)->val1 * 2) / 100);
+#endif
+				break;
+			case ELE_POISON:
+				if (tsc->getSCE(SC_VENOMIMPRESS))
+#ifdef RENEWAL
+					ratio += tsc->getSCE(SC_VENOMIMPRESS)->val2;
+#else
+					damage += (int64)(damage * tsc->getSCE(SC_VENOMIMPRESS)->val2 / 100);
+#endif
+				break;
+			case ELE_WIND:
+				if (tsc->getSCE(SC_WATER_INSIGNIA))
+#ifdef RENEWAL
+					ratio += 50;
+#else
+					damage += (int64)(damage * 50 / 100);
+#endif
+				if (tsc->getSCE(SC_CRYSTALIZE)) {
+					uint16 skill_id = battle_getcurrentskill(src);
+
+					if (skill_get_type(skill_id)&BF_MAGIC)
+#ifdef RENEWAL
+						ratio += 50;
+#else
+						damage += (int64)(damage * 50 / 100);
+#endif
+				}
+				break;
+			case ELE_WATER:
+				if (tsc->getSCE(SC_FIRE_INSIGNIA))
+#ifdef RENEWAL
+					ratio += 50;
+#else
+					damage += (int64)(damage * 50 / 100);
+#endif
+				break;
+			case ELE_EARTH:
+				if (tsc->getSCE(SC_WIND_INSIGNIA))
+#ifdef RENEWAL
+					ratio += 50;
+#else
+					damage += (int64)(damage * 50 / 100);
+#endif
+				status_change_end(target, SC_MAGNETICFIELD); //freed if received earth dmg
+				break;
+			case ELE_NEUTRAL:
+				if (tsc->getSCE(SC_ANTI_M_BLAST))
+#ifdef RENEWAL
+					ratio += tsc->getSCE(SC_ANTI_M_BLAST)->val2;
+#else
+					damage += (int64)(damage * tsc->getSCE(SC_ANTI_M_BLAST)->val2 / 100);
+#endif
+				break;
+			case ELE_DARK:
+				if (tsc->getSCE(SC_SOULCURSE)) {
+					if (status_get_class_(target) == CLASS_BOSS)
+#ifdef RENEWAL
+						ratio += 20;
+#else
+						damage += (int64)(damage * 20 / 100);
+#endif
+					else
+#ifdef RENEWAL
+						ratio += 100;
+#else
+						damage *= 2;
+#endif
+				}
+				break;
+		}
+	}
+
+	if (battle_config.attr_recover == 0 && !(flag & 1) && ratio < 0)
+		ratio = 0;
+
+#ifdef RENEWAL
+	//In renewal, reductions are always rounded down so damage can never reach 0 unless ratio is 0
+	damage = damage - (int64)((damage * (100 - ratio)) / 100);
+#else
+	damage = (int64)((damage*ratio)/100);
+#endif
+
+	//Damage can be negative, see battle_config.attr_recover
+	return damage;
+}
+
+/**
+ * Statuses that affect the target's element in battle_calc_cardfix.
+ * @param tsc Target status change
+ * @param rh_ele Right-hand weapon element
+ * @return ele_fix ratio affecting damage
+ */
+static int32 battle_calc_cardfix_debuff( status_change& tsc, int32 rh_ele ){
+	int32 ele_fix = 0;
+
+	if (tsc.getSCE(SC_MAGIC_POISON))
+		ele_fix += 50;
+
+	// !TODO: unknown how it should work for physical damage, lh_ele is ignored for now
+	switch(rh_ele) {
+		case ELE_FIRE:
+			if (tsc.getSCE(SC_CLIMAX_BLOOM))
+				ele_fix += 100;
+			break;
+		case ELE_EARTH:
+			if (tsc.getSCE(SC_CLIMAX_EARTH))
+				ele_fix += 100;
+			break;
+		case ELE_WATER:
+			if (tsc.getSCE(SC_MISTYFROST))
+				ele_fix += 15;
+			break;
+		case ELE_POISON:
+			if (tsc.getSCE(SC_CLOUD_POISON))
+				ele_fix += 5 * tsc.getSCE(SC_CLOUD_POISON)->val1;
+			break;
+	}
+	return ele_fix;
+}
+
+/**
+ * Calculates card bonuses damage adjustments.
+ * @param attack_type @see enum e_battle_flag
+ * @param src Attacker
+ * @param target Target
+ * @param nk Skill's nk @see enum e_skill_nk [NK_IGNOREATKCARD|NK_IGNOREELEMENT|NK_IGNOREDEFCARD]
+ * @param rh_ele Right-hand weapon element
+ * @param lh_ele Left-hand weapon element (BF_MAGIC and BF_MISC ignore this value)
+ * @param damage Original damage
+ * @param left Left hand flag (BF_MISC and BF_MAGIC ignore flag value)
+ *         3: Calculates attacker bonuses in both hands.
+ *         2: Calculates attacker bonuses in right-hand only.
+ *         0 or 1: Only calculates target bonuses.
+ * @param flag Misc value of skill & damage flags
+ * @return damage Damage diff between original damage and after calculation
+ */
+int32 battle_calc_cardfix(int32 attack_type, block_list *src, block_list *target, std::bitset<NK_MAX> nk, int32 rh_ele, int32 lh_ele, int64 damage, int32 left, int32 flag){
+	map_session_data *sd, ///< Attacker session data if BL_PC
+		*tsd; ///< Target session data if BL_PC
+	int32 cardfix = 1000;
+	int32 s_class, ///< Attacker class
+		t_class; ///< Target class
+	std::vector<e_race2> s_race2, /// Attacker Race2
+		t_race2; ///< Target Race2
+	enum e_element s_defele; ///< Attacker Element (not a weapon or skill element!)
+	int64 original_damage;
+
+	if( !damage )
+		return 0;
+
+	original_damage = damage;
+
+	sd = BL_CAST(BL_PC, src);
+	tsd = BL_CAST(BL_PC, target);
+	t_class = status_get_class(target);
+	s_class = status_get_class(src);
+	///< Attacker status data
+	status_data* sstatus = status_get_status_data(*src);
+	///< Target status data
+	status_data* tstatus = status_get_status_data(*target);
+	status_change *tsc = status_get_sc(target);
+	s_race2 = status_get_race2(src);
+	t_race2 = status_get_race2(target);
+	s_defele = (tsd) ? (enum e_element)status_get_element(src) : ELE_NONE;
+
+	// When the attacker is a monster, then all bonuses on BF_WEAPON will work and no bonuses on BF_MAGIC
+	// Does not impact the attack type
+	if (src && src->type == BL_MOB && battle_config.cardfix_monster_physical) {
+		flag |= BF_WEAPON;
+		flag &= ~BF_MAGIC;
+	}
+
+//Official servers apply the cardfix value on a base of 1000 and round down the reduction/increase
+#define APPLY_CARDFIX(damage, fix) { (damage) = (damage) - (int64)(((damage) * (1000 - max(0, fix))) / 1000); }
+
+	switch( attack_type ) {
+		case BF_MAGIC:
+			// Affected by attacker ATK bonuses
+			if( sd && !nk[NK_IGNOREATKCARD] ) {
+				int32 race2_val = 0;
+#ifdef RENEWAL
+
+// Simplified formula to round down the damage
+#define APPLY_CARDFIX_RE(damage, fix) { (damage) = (damage) - (int64)(((damage) * (100 - max(0, 100+(fix)))) / 100); }
+				// On (at least) BF_MAGIC, damages are calculated consecutively and rounded down in the following order to match official damage :
+				// size, race2, ele, atk_ele, race, class
+				APPLY_CARDFIX_RE( damage, sd->indexed_bonus.magic_addsize[tstatus->size] + sd->indexed_bonus.magic_addsize[SZ_ALL] );
+
+				// race2 is the same as the bonus per class ID
+				for (const auto &raceit : t_race2)
+					race2_val += sd->indexed_bonus.magic_addrace2[raceit];
+				for (const auto &it : sd->add_mdmg) {
+					if (it.id == t_class) {
+						race2_val += it.val;
+						break;
+					}
+				}
+				APPLY_CARDFIX_RE( damage, race2_val );
+
+				if( !nk[NK_IGNOREELEMENT] ) { // Affected by Element modifier bonuses
+					APPLY_CARDFIX_RE( damage, sd->indexed_bonus.magic_addele[tstatus->def_ele] + sd->indexed_bonus.magic_addele[ELE_ALL] +
+						sd->indexed_bonus.magic_addele_script[tstatus->def_ele] + sd->indexed_bonus.magic_addele_script[ELE_ALL] );
+				}
+			}
+			// Statuses that affect the target's element and should be calculated right after magic_addele, independently of it
+			if (tsc != nullptr && !nk[NK_IGNOREDEFCARD] && !nk[NK_IGNOREELEMENT]) {
+				APPLY_CARDFIX_RE( damage, battle_calc_cardfix_debuff( *tsc, rh_ele ) );
+			}
+			if( sd && !nk[NK_IGNOREATKCARD] ) {
+				if( !nk[NK_IGNOREELEMENT] ) {
+					APPLY_CARDFIX_RE( damage, sd->indexed_bonus.magic_atk_ele[rh_ele] + sd->indexed_bonus.magic_atk_ele[ELE_ALL] );
+				}
+				APPLY_CARDFIX_RE( damage, sd->indexed_bonus.magic_addrace[tstatus->race] + sd->indexed_bonus.magic_addrace[RC_ALL] );
+				APPLY_CARDFIX_RE( damage, sd->indexed_bonus.magic_addclass[tstatus->class_] + sd->indexed_bonus.magic_addclass[CLASS_ALL] );
+#undef APPLY_CARDFIX_RE
+
+// Pre-renewal / old renewal behaviour
+#else
+				for (const auto &raceit : t_race2)
+					race2_val += sd->indexed_bonus.magic_addrace2[raceit];
+				cardfix = cardfix * (100 + sd->indexed_bonus.magic_addrace[tstatus->race] + sd->indexed_bonus.magic_addrace[RC_ALL] + race2_val) / 100;
+				if( !nk[NK_IGNOREELEMENT] ) { // Affected by Element modifier bonuses
+					cardfix = cardfix * (100 + sd->indexed_bonus.magic_addele[tstatus->def_ele] + sd->indexed_bonus.magic_addele[ELE_ALL] +
+						sd->indexed_bonus.magic_addele_script[tstatus->def_ele] + sd->indexed_bonus.magic_addele_script[ELE_ALL]) / 100;
+					cardfix = cardfix * (100 + sd->indexed_bonus.magic_atk_ele[rh_ele] + sd->indexed_bonus.magic_atk_ele[ELE_ALL]) / 100;
+				}
+				cardfix = cardfix * (100 + sd->indexed_bonus.magic_addsize[tstatus->size] + sd->indexed_bonus.magic_addsize[SZ_ALL]) / 100;
+				cardfix = cardfix * (100 + sd->indexed_bonus.magic_addclass[tstatus->class_] + sd->indexed_bonus.magic_addclass[CLASS_ALL]) / 100;
+				for (const auto &it : sd->add_mdmg) {
+					if (it.id == t_class) {
+						cardfix = cardfix * (100 + it.val) / 100;
+						break;
+					}
+				}
+				APPLY_CARDFIX(damage, cardfix);
+#endif
+			}
+
+			// Affected by target DEF bonuses
+			if( tsd && !nk[NK_IGNOREDEFCARD] ) {
+				cardfix = 1000; // reset var for target
+
+				if( !nk[NK_IGNOREELEMENT] ) { // Affected by Element modifier bonuses
+					int32 ele_fix = tsd->indexed_bonus.subele[rh_ele] + tsd->indexed_bonus.subele[ELE_ALL] + tsd->indexed_bonus.subele_script[rh_ele] + tsd->indexed_bonus.subele_script[ELE_ALL];
+
+					for (const auto &it : tsd->subele2) {
+						if (it.ele != ELE_ALL && it.ele != rh_ele)
+							continue;
+						if (!(((it.flag)&flag)&BF_WEAPONMASK &&
+							((it.flag)&flag)&BF_RANGEMASK &&
+							((it.flag)&flag)&BF_SKILLMASK))
+							continue;
+						ele_fix += it.rate;
+					}
+					if (s_defele != ELE_NONE)
+						ele_fix += tsd->indexed_bonus.magic_subdefele[s_defele] + tsd->indexed_bonus.magic_subdefele[ELE_ALL];
+#ifndef RENEWAL
+					// Custom to follow SC_ debuff renewal behavior
+					if (tsc != nullptr)
+						ele_fix += battle_calc_cardfix_debuff( *tsc, rh_ele );
+#endif
+					cardfix = cardfix * (100 - ele_fix) / 100;
+				}
+				cardfix = cardfix * (100 - tsd->indexed_bonus.subsize[sstatus->size] - tsd->indexed_bonus.subsize[SZ_ALL]) / 100;
+				cardfix = cardfix * (100 - tsd->indexed_bonus.magic_subsize[sstatus->size] - tsd->indexed_bonus.magic_subsize[SZ_ALL]) / 100;
+
+				int32 race_fix = 0;
+
+				for (const auto &raceit : s_race2)
+					race_fix += tsd->indexed_bonus.subrace2[raceit];
+				cardfix = cardfix * (100 - race_fix) / 100;
+				race_fix = tsd->indexed_bonus.subrace[sstatus->race] + tsd->indexed_bonus.subrace[RC_ALL];
+				for (const auto &it : tsd->subrace3) {
+					if (it.race != RC_ALL && it.race != sstatus->race)
+						continue;
+					if (!(((it.flag)&flag)&BF_WEAPONMASK &&
+						((it.flag)&flag)&BF_RANGEMASK &&
+						((it.flag)&flag)&BF_SKILLMASK))
+						continue;
+					race_fix += it.rate;
+				}
+				cardfix = cardfix * (100 - race_fix) / 100;
+				cardfix = cardfix * (100 - tsd->indexed_bonus.subclass[sstatus->class_] - tsd->indexed_bonus.subclass[CLASS_ALL]) / 100;
+
+				for (const auto &it : tsd->add_mdef) {
+					if (it.id == s_class) {
+						cardfix = cardfix * (100 - it.val) / 100;
+						break;
+					}
+				}
+#ifndef RENEWAL
+				//It was discovered that ranged defense also counts vs magic! [Skotlex]
+				if( flag&BF_SHORT )
+					cardfix = cardfix * (100 - tsd->bonus.near_attack_def_rate) / 100;
+				else if (!nk[NK_IGNORELONGCARD])
+					cardfix = cardfix * (100 - tsd->bonus.long_attack_def_rate) / 100;
+#endif
+				cardfix = cardfix * (100 - tsd->bonus.magic_def_rate) / 100;
+
+				if( tsc->getSCE(SC_MDEF_RATE) )
+					cardfix = cardfix * (100 - tsc->getSCE(SC_MDEF_RATE)->val1) / 100;
+				APPLY_CARDFIX(damage, cardfix);
+			}
+			break;
+
+		case BF_WEAPON:
+			// Affected by attacker ATK bonuses
+			if( sd && !nk[NK_IGNOREATKCARD] && (left&2) ) {
+				int16 cardfix_ = 1000;
+
+				if( sd->state.arrow_atk ) { // Ranged attack
+					cardfix = cardfix * (100 + sd->right_weapon.addrace[tstatus->race] + sd->indexed_bonus.arrow_addrace[tstatus->race] +
+						sd->right_weapon.addrace[RC_ALL] + sd->indexed_bonus.arrow_addrace[RC_ALL]) / 100;
+					if( !nk[NK_IGNOREELEMENT] ) { // Affected by Element modifier bonuses
+						int32 ele_fix = sd->right_weapon.addele[tstatus->def_ele] + sd->indexed_bonus.arrow_addele[tstatus->def_ele] +
+							sd->right_weapon.addele[ELE_ALL] + sd->indexed_bonus.arrow_addele[ELE_ALL];
+
+						for (const auto &it : sd->right_weapon.addele2) {
+							if (it.ele != ELE_ALL && it.ele != tstatus->def_ele)
+								continue;
+							if (!(((it.flag)&flag)&BF_WEAPONMASK &&
+								((it.flag)&flag)&BF_RANGEMASK &&
+								((it.flag)&flag)&BF_SKILLMASK))
+								continue;
+							ele_fix += it.rate;
+						}
+						cardfix = cardfix * (100 + ele_fix) / 100;
+					}
+					cardfix = cardfix * (100 + sd->right_weapon.addsize[tstatus->size] + sd->indexed_bonus.arrow_addsize[tstatus->size] +
+						sd->right_weapon.addsize[SZ_ALL] + sd->indexed_bonus.arrow_addsize[SZ_ALL]) / 100;
+
+					int32 race_fix = 0;
+
+					for (const auto &raceit : t_race2)
+						race_fix += sd->right_weapon.addrace2[raceit];
+					cardfix = cardfix * (100 + race_fix) / 100;
+					cardfix = cardfix * (100 + sd->right_weapon.addclass[tstatus->class_] + sd->indexed_bonus.arrow_addclass[tstatus->class_] +
+						sd->right_weapon.addclass[CLASS_ALL] + sd->indexed_bonus.arrow_addclass[CLASS_ALL]) / 100;
+				} else { // Melee attack
+					int32 skill = 0;
+
+					// Calculates each right & left hand weapon bonuses separatedly
+					if( !battle_config.left_cardfix_to_right ) {
+						// Right-handed weapon
+						cardfix = cardfix * (100 + sd->right_weapon.addrace[tstatus->race] + sd->right_weapon.addrace[RC_ALL]) / 100;
+						if( !nk[NK_IGNOREELEMENT] ) { // Affected by Element modifier bonuses
+							int32 ele_fix = sd->right_weapon.addele[tstatus->def_ele] + sd->right_weapon.addele[ELE_ALL];
+
+							for (const auto &it : sd->right_weapon.addele2) {
+								if (it.ele != ELE_ALL && it.ele != tstatus->def_ele)
+									continue;
+								if (!(((it.flag)&flag)&BF_WEAPONMASK &&
+									((it.flag)&flag)&BF_RANGEMASK &&
+									((it.flag)&flag)&BF_SKILLMASK))
+									continue;
+								ele_fix += it.rate;
+							}
+							cardfix = cardfix * (100 + ele_fix) / 100;
+						}
+						cardfix = cardfix * (100 + sd->right_weapon.addsize[tstatus->size] + sd->right_weapon.addsize[SZ_ALL]) / 100;
+						for (const auto &raceit : t_race2)
+							cardfix = cardfix * (100 + sd->right_weapon.addrace2[raceit]) / 100;
+						cardfix = cardfix * (100 + sd->right_weapon.addclass[tstatus->class_] + sd->right_weapon.addclass[CLASS_ALL]) / 100;
+
+						if( left&1 ) { // Left-handed weapon
+							cardfix_ = cardfix_ * (100 + sd->left_weapon.addrace[tstatus->race] + sd->left_weapon.addrace[RC_ALL]) / 100;
+							if( !nk[NK_IGNOREELEMENT] ) { // Affected by Element modifier bonuses
+								int32 ele_fix_lh = sd->left_weapon.addele[tstatus->def_ele] + sd->left_weapon.addele[ELE_ALL];

@@ -1,0 +1,500 @@
+					if (!status_has_mode(tstatus,MD_CASTSENSORCHASE))
+						break;
+
+					md->target_id = src->id;
+					md->state.aggressive = status_has_mode(tstatus,MD_ANGRY)?1:0;
+					break;
+				case MSS_IDLE:
+				case MSS_WALK:
+					if (!status_has_mode(tstatus,MD_CASTSENSORIDLE))
+						break;
+
+					md->target_id = src->id;
+					md->state.aggressive = status_has_mode(tstatus,MD_ANGRY)?1:0;
+					break;
+			}
+		}
+	}
+
+	if( casttime <= 0 )
+		ud->state.skillcastcancel = 0;
+
+	if( sd ) {
+		switch( skill_id ) {
+			case CG_ARROWVULCAN:
+				sd->canequip_tick = tick + casttime;
+				break;
+		}
+	}
+
+	ud->skilltarget  = target_id;
+	ud->skillx       = 0;
+	ud->skilly       = 0;
+	ud->skill_id      = skill_id;
+	ud->skill_lv      = skill_lv;
+
+	// Set attack and act delays
+	// Please note that the call below relies on ud->skill_id being set!
+	unit_set_attackdelay(*src, tick, DELAY_EVENT_CASTBEGIN_ID);
+	// Apply cast time and general delays
+	unit_set_castdelay(*ud, tick, (skill_get_cast(skill_id, skill_lv) != 0) ? casttime : 0);
+
+	if( sc ) {
+		// These 3 status do not stack, so it's efficient to use if-else
+ 		if( sc->getSCE(SC_CLOAKING) && !(sc->getSCE(SC_CLOAKING)->val4&4) && skill_id != AS_CLOAKING && skill_id != SHC_SHADOW_STAB) {
+			status_change_end(src, SC_CLOAKING);
+
+			if (!src->prev)
+				return 0; // Warped away!
+		} else if( sc->getSCE(SC_CLOAKINGEXCEED) && !(sc->getSCE(SC_CLOAKINGEXCEED)->val4&4) && skill_id != GC_CLOAKINGEXCEED && skill_id != SHC_SHADOW_STAB  && skill_id != SHC_SAVAGE_IMPACT ) {
+			status_change_end(src,SC_CLOAKINGEXCEED);
+
+			if (!src->prev)
+				return 0;
+		} else if (sc->getSCE(SC_NEWMOON) && skill_id != SJ_NEWMOONKICK) {
+			status_change_end(src, SC_NEWMOON);
+			if (!src->prev)
+				return 0; // Warped away!
+		}
+	}
+
+
+	if( casttime > 0 ) {
+		ud->skilltimer = add_timer( tick+casttime, skill_castend_id, src->id, 0 );
+
+		if( sd && (pc_checkskill(sd,SA_FREECAST) > 0 || skill_id == LG_EXEEDBREAK) )
+			status_calc_bl(sd, { SCB_SPEED, SCB_ASPD });
+	} else
+		skill_castend_id(ud->skilltimer,tick,src->id,0);
+
+	if( sd && battle_config.prevent_logout_trigger&PLT_SKILL )
+		sd->canlog_tick = gettick();
+
+	return 1;
+}
+
+/**
+ * Initiates a placement (ground/non-targeted) skill
+ * @param src: Object using skill
+ * @param skill_x: X coordinate where skill is being casted (center)
+ * @param skill_y: Y coordinate where skill is being casted (center)
+ * @param skill_id: Skill ID
+ * @param skill_lv: Skill Level
+ * @return unit_skilluse_pos2()
+ */
+int32 unit_skilluse_pos(block_list *src, int16 skill_x, int16 skill_y, uint16 skill_id, uint16 skill_lv)
+{
+	return unit_skilluse_pos2(
+		src, skill_x, skill_y, skill_id, skill_lv,
+		skill_castfix(src, skill_id, skill_lv),
+		skill_get_castcancel(skill_id)
+	);
+}
+
+/**
+ * Performs checks for a unit using a skill and executes after cast time completion
+ * @param src: Object using skill
+ * @param skill_x: X coordinate where skill is being casted (center)
+ * @param skill_y: Y coordinate where skill is being casted (center)
+ * @param skill_id: Skill ID
+ * @param skill_lv: Skill Level
+ * @param casttime: Initial cast time before cast time reductions
+ * @param castcancel: Whether or not the skill can be cancelled by interuption (hit)
+ * @return Success(1); Fail(0);
+ */
+int32 unit_skilluse_pos2( block_list *src, int16 skill_x, int16 skill_y, uint16 skill_id, uint16 skill_lv, int32 casttime, int32 castcancel, bool ignore_range)
+{
+	map_session_data *sd = nullptr;
+	struct unit_data *ud = nullptr;
+	status_change *sc;
+	block_list bl;
+	t_tick tick = gettick();
+	int32 range;
+
+	nullpo_ret(src);
+
+	if (!src->prev)
+		return 0; // Not on the map
+
+	if(status_isdead(*src))
+		return 0;
+
+	sd = BL_CAST(BL_PC, src);
+	ud = unit_bl2ud(src);
+
+	if(ud == nullptr)
+		return 0;
+
+	if (ud && ud->state.blockedskill)
+		return 0;
+
+	if(ud->skilltimer != INVALID_TIMER) // Normally not needed since clif.cpp checks for it, but at/char/script commands don't! [Skotlex]
+		return 0;
+
+	sc = status_get_sc(src);
+
+	if (sc != nullptr && sc->empty())
+		sc = nullptr;
+
+	if (!skill_db.find(skill_id))
+		return 0;
+
+	if( sd ) {
+		if( skill_isNotOk(skill_id, *sd) || !skill_check_condition_castbegin(*sd, skill_id, skill_lv) )
+			return 0;
+		if (skill_id == MG_FIREWALL && !skill_pos_maxcount_check(src, skill_x, skill_y, skill_id, skill_lv, BL_PC, true))
+			return 0; // Special check for Firewall only
+	}
+
+	if( (skill_id >= SC_MANHOLE && skill_id <= SC_FEINTBOMB) && map_getcell(src->m, skill_x, skill_y, CELL_CHKMAELSTROM) ) {
+		if (sd)
+			clif_skill_fail( *sd, skill_id );
+		return 0;
+	}
+
+	if (!status_check_skilluse(src, nullptr, skill_id, 0))
+		return 0;
+
+	// Fail if the targetted skill is near NPC [Cydh]
+	if(skill_get_inf2(skill_id, INF2_DISABLENEARNPC) && !ignore_range && skill_isNotOk_npcRange(src,skill_id,skill_lv,skill_x,skill_y)) {
+		if (sd)
+			clif_skill_fail( *sd, skill_id );
+
+		return 0;
+	}
+
+	// Check range and obstacle
+	bl.type = BL_NUL;
+	bl.m = src->m;
+	bl.x = skill_x;
+	bl.y = skill_y;
+
+	if (src->type == BL_NPC) // NPC-objects can override cast distance
+		range = AREA_SIZE; // Maximum visible distance before NPC goes out of sight
+	else
+		range = skill_get_range2(src, skill_id, skill_lv, true); // Skill cast distance from database
+
+	// New action request received, delete previous action request if not executed yet
+	if(ud->stepaction || ud->steptimer != INVALID_TIMER)
+		unit_stop_stepaction(src);
+	// Remember the skill request from the client while walking to the next cell
+	if(src->type == BL_PC && ud->walktimer != INVALID_TIMER && (!battle_check_range(src, &bl, range-1) || ignore_range)) {
+		struct map_data *md = &map[src->m];
+		// Convert coordinates to target_to so we can use it as target later
+		ud->stepaction = true;
+		ud->target_to = (skill_x + skill_y*md->xs);
+		ud->stepskill_id = skill_id;
+		ud->stepskill_lv = skill_lv;
+		return 0; // Attacking will be handled by unit_walktoxy_timer in this case
+	}
+
+	if (!ignore_range) {
+		if( skill_get_state(ud->skill_id) == ST_MOVE_ENABLE ) {
+			if( !unit_can_reach_bl(src, &bl, range + 1, 1, nullptr, nullptr) )
+				return 0; // Walk-path check failed.
+		}else if( !battle_check_range(src, &bl, range) )
+			return 0; // Arrow-path check failed.
+	}
+	unit_stop_attack(src);
+
+	// Moved here to prevent Suffragium from ending if skill fails
+#ifndef RENEWAL_CAST
+	casttime = skill_castfix_sc(src, casttime, skill_get_castnodex(skill_id));
+#else
+	casttime = skill_vfcastfix(src, casttime, skill_id, skill_lv );
+#endif
+
+	ud->state.skillcastcancel = castcancel&&casttime>0?1:0;
+
+// 	if( sd )
+// 	{
+// 		switch( skill_id )
+// 		{
+// 		case ????:
+// 			sd->canequip_tick = tick + casttime;
+// 		}
+// 	}
+
+	ud->skill_id    = skill_id;
+	ud->skill_lv    = skill_lv;
+	ud->skillx      = skill_x;
+	ud->skilly      = skill_y;
+	ud->skilltarget = 0;
+
+	// Set attack and act delays
+	// Please note that the call below relies on ud->skill_id being set!
+	unit_set_attackdelay(*src, tick, DELAY_EVENT_CASTBEGIN_POS);
+	// Apply cast time and general delays
+	unit_set_castdelay(*ud, tick, (skill_get_cast(skill_id, skill_lv) != 0) ? casttime : 0);
+
+	if( sc ) {
+		// These 3 status do not stack, so it's efficient to use if-else
+		if (sc->getSCE(SC_CLOAKING) && !(sc->getSCE(SC_CLOAKING)->val4&4)) {
+			status_change_end(src, SC_CLOAKING);
+
+			if (!src->prev)
+				return 0; // Warped away!
+		} else if (sc->getSCE(SC_CLOAKINGEXCEED) && !(sc->getSCE(SC_CLOAKINGEXCEED)->val4&4)) {
+			status_change_end(src, SC_CLOAKINGEXCEED);
+
+			if (!src->prev)
+				return 0;
+		} else if (sc->getSCE(SC_NEWMOON)) {
+			status_change_end(src, SC_NEWMOON);
+
+			if (!src->prev)
+				return 0;
+		}
+	}
+
+	unit_stop_walking( src, USW_FIXPOS );
+
+	// SC_MAGICPOWER needs to switch states at start of cast
+#ifndef RENEWAL
+	skill_toggle_magicpower(src, skill_id);
+#endif
+
+	// In official this is triggered even if no cast time.
+	clif_skillcasting(*src, nullptr, skill_x, skill_y, skill_id, skill_lv, static_cast<e_element>(skill_get_ele(skill_id, skill_lv)), casttime);
+
+	if( casttime > 0 ) {
+		ud->skilltimer = add_timer( tick+casttime, skill_castend_pos, src->id, 0 );
+
+		if( (sd && pc_checkskill(sd,SA_FREECAST) > 0) || skill_id == LG_EXEEDBREAK)
+			status_calc_bl(sd, { SCB_SPEED, SCB_ASPD });
+	} else {
+		ud->skilltimer = INVALID_TIMER;
+		skill_castend_pos(ud->skilltimer,tick,src->id,0);
+	}
+
+	if( sd && battle_config.prevent_logout_trigger&PLT_SKILL )
+		sd->canlog_tick = gettick();
+
+	return 1;
+}
+
+/**
+ * Update a unit's attack target
+ * @param ud: Unit data
+ * @param target_id: Target ID (bl->id)
+ * @return 0
+ */
+int32 unit_set_target( unit_data* ud, int32 target_id )
+{
+	nullpo_ret(ud);
+
+	if( ud->target != target_id ) {
+		struct unit_data * ux;
+		block_list* target;
+	
+		if (ud->target && (target = map_id2bl(ud->target)) && (ux = unit_bl2ud(target)) && ux->target_count > 0)
+			ux->target_count--;
+
+		if (target_id && (target = map_id2bl(target_id)) && (ux = unit_bl2ud(target)) && ux->target_count < 255)
+			ux->target_count++;
+	}
+
+	ud->target = target_id;
+
+	return 0;
+}
+
+/**
+ * Helper function used in foreach calls to stop auto-attack timers
+ * @param bl: Block object
+ * @param ap: func* with va_list values
+ *   Parameter: '0' - everyone, 'id' - only those attacking someone with that id
+ * @return 1 on success or 0 otherwise
+ */
+int32 unit_stopattack(block_list *bl, va_list ap)
+{
+	struct unit_data *ud = unit_bl2ud(bl);
+	int32 id = va_arg(ap, int32);
+
+	if (ud && ud->attacktimer != INVALID_TIMER && (!id || id == ud->target)) {
+		unit_stop_attack(bl);
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
+ * Stop a unit's attacks
+ * @param bl: Object to stop
+ */
+void unit_stop_attack(block_list *bl)
+{
+	struct unit_data *ud;
+	nullpo_retv(bl);
+	ud = unit_bl2ud(bl);
+	nullpo_retv(ud);
+
+	//Clear target
+	unit_set_target(ud, 0);
+
+	if(ud->attacktimer == INVALID_TIMER)
+		return;
+
+	//Clear timer
+	delete_timer(ud->attacktimer, unit_attack_timer);
+	ud->attacktimer = INVALID_TIMER;
+}
+
+/**
+ * Stop a unit's step action
+ * @param bl: Object to stop
+ */
+void unit_stop_stepaction(block_list *bl)
+{
+	struct unit_data *ud;
+	nullpo_retv(bl);
+	ud = unit_bl2ud(bl);
+	nullpo_retv(ud);
+
+	//Clear remembered step action
+	ud->stepaction = false;
+	ud->target_to = 0;
+	ud->stepskill_id = 0;
+	ud->stepskill_lv = 0;
+
+	if(ud->steptimer == INVALID_TIMER)
+		return;
+
+	//Clear timer
+	delete_timer(ud->steptimer, unit_step_timer);
+	ud->steptimer = INVALID_TIMER;
+}
+
+/**
+ * Removes a unit's target due to being unattackable
+ * @param bl: Object to unlock target
+ * @return 0
+ */
+int32 unit_unattackable(block_list *bl)
+{
+	struct unit_data *ud = unit_bl2ud(bl);
+
+	if (ud) {
+		ud->state.attack_continue = 0;
+		ud->state.step_attack = 0;
+		ud->target_to = 0;
+		unit_set_target(ud, 0);
+	}
+
+	if(bl->type == BL_MOB)
+		mob_unlocktarget((mob_data*)bl, gettick());
+	else if(bl->type == BL_PET)
+		pet_unlocktarget((pet_data*)bl);
+
+	return 0;
+}
+
+/**
+ * Requests a unit to attack a target
+ * @param src: Object initiating attack
+ * @param target_id: Target ID (bl->id)
+ * @param continuous: 
+ *		0x1 - Whether or not the attack is ongoing
+ *		0x2 - Whether function was called from unit_step_timer or not
+ * @return How the unit should stop; see e_unit_stop_walking
+ */
+int32 unit_attack(block_list *src,int32 target_id,int32 continuous)
+{
+	block_list *target;
+	int32 range;
+
+	unit_data* ud = unit_bl2ud(src);
+	if (ud == nullptr)
+		return USW_NONE;
+
+	mob_data* md = BL_CAST(BL_MOB, src);
+
+	// Check for special monster random target mode, function might overwrite the original target
+	if (md != nullptr && !mob_randomtarget(*md, target_id))
+		return USW_NONE; // Continue walking
+
+	int32 stop_flag = (USW_FIXPOS|USW_RELEASE_TARGET);
+
+	target = map_id2bl(target_id);
+	if( target == nullptr || status_isdead(*target) ) {
+		unit_unattackable(src);
+		return stop_flag;
+	}
+
+	if( src->type == BL_PC &&
+		target->type == BL_NPC ) {
+		// Monster npcs [Valaris]
+		npc_click((TBL_PC*)src,(TBL_NPC*)target);
+		return stop_flag;
+	}
+
+	if( !unit_can_attack(src, target_id) ) {
+		unit_stop_attack(src);
+		return USW_NONE; // Continue walking
+	}
+
+	if( battle_check_target(src,target,BCT_ENEMY) <= 0 || !status_check_skilluse(src, target, 0, 0) ) {
+		unit_unattackable(src);
+		return stop_flag;
+	}
+
+	ud->state.attack_continue = (continuous&1)?1:0;
+	ud->state.step_attack = (continuous&2)?1:0;
+	unit_set_target(ud, target_id);
+
+	range = status_get_range(src);
+
+	if (continuous) // If you're to attack continously, set to auto-chase character
+		ud->chaserange = range;
+
+	// Just change target/type. [Skotlex]
+	if(ud->attacktimer != INVALID_TIMER)
+		return stop_flag;
+
+	// New action request received, delete previous action request if not executed yet
+	if(ud->stepaction || ud->steptimer != INVALID_TIMER)
+		unit_stop_stepaction(src);
+	// Remember the attack request from the client while walking to the next cell
+	if(src->type == BL_PC && ud->walktimer != INVALID_TIMER && !battle_check_range(src, target, range-1)) {
+		ud->stepaction = true;
+		ud->target_to = ud->target;
+		ud->stepskill_id = 0;
+		ud->stepskill_lv = 0;
+		// Attacking will be handled by unit_walktoxy_timer in this case
+		return USW_NONE;
+	}
+
+	// Source may die due to reflect damage
+	FreeBlockLock freeLock;
+
+	if(DIFF_TICK(ud->attackabletime, gettick()) > 0) // Do attack next time it is possible. [Skotlex]
+		ud->attacktimer=add_timer(ud->attackabletime,unit_attack_timer,src->id,0);
+	else { // Attack NOW.
+		// We need to send fixpos before the attack so that we don't cancel the attack animation
+		clif_fixpos(*src);
+		unit_attack_timer(INVALID_TIMER, gettick(), src->id, 0);
+		stop_flag &= ~USW_FIXPOS;
+	}
+
+	// Monster state is set regardless of whether the attack is executed now or later
+	// The check is here because unit_attack can be called from both the monster AI and the walking logic
+	if (md != nullptr)
+		mob_setstate(*md, MSS_BERSERK);
+
+	return stop_flag;
+}
+
+/** 
+ * Cancels an ongoing combo, resets attackable time, and restarts the
+ * attack timer to resume attack after amotion time
+ * @author [Skotlex]
+ * @param bl: Object to cancel combo
+ * @return Success(1); Fail(0);
+ */
+int32 unit_cancel_combo(block_list *bl)
+{
+	struct unit_data  *ud;
+
+	if (!status_change_end(bl, SC_COMBO))
+		return 0; // Combo wasn't active.

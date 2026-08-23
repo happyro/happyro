@@ -1,0 +1,500 @@
+	map_foreachinmap(buildin_killmonster_sub_strip, m, BL_MOB, event ,allflag);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+static int32 buildin_killmonsterall_sub_strip(block_list *bl,va_list ap)
+{ //Strips the event from the mob if it's killed the old method.
+	mob_data* md = BL_CAST(BL_MOB, bl);
+
+	if( md != nullptr ){
+		strcpy( md->npc_event, "" );
+	}
+
+	status_kill(bl);
+	return 0;
+}
+static int32 buildin_killmonsterall_sub(block_list *bl,va_list ap)
+{
+	status_kill(bl);
+	return 0;
+}
+BUILDIN_FUNC(killmonsterall)
+{
+	const char *mapname;
+	int16 m;
+	mapname=script_getstr(st,2);
+
+	if( (m = map_mapname2mapid(mapname))<0 )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( script_hasdata(st,3) ) {
+		if ( script_getnum(st,3) == 1 ) {
+			map_foreachinmap(buildin_killmonsterall_sub,m,BL_MOB);
+			return SCRIPT_CMD_SUCCESS;
+		}
+	}
+
+	map_foreachinmap(buildin_killmonsterall_sub_strip,m,BL_MOB);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Creates a clone of a player.
+ * clone map, x, y, event, char_id, master_id, mode, flag, duration
+ *------------------------------------------*/
+BUILDIN_FUNC(clone)
+{
+	TBL_PC *sd, *msd=nullptr;
+	uint32 char_id, master_id = 0, x, y, flag = 0;
+	int16 m;
+	enum e_mode mode = MD_NONE;
+
+	uint32 duration = 0;
+	const char *mapname,*event;
+
+	mapname=script_getstr(st,2);
+	x=script_getnum(st,3);
+	y=script_getnum(st,4);
+	event=script_getstr(st,5);
+	char_id=script_getnum(st,6);
+
+	if( script_hasdata(st,7) )
+		master_id=script_getnum(st,7);
+
+	if( script_hasdata(st,8) )
+		mode=static_cast<e_mode>(script_getnum(st,8));
+
+	if( script_hasdata(st,9) )
+		flag=script_getnum(st,9);
+
+	if( script_hasdata(st,10) )
+		duration=script_getnum(st,10);
+
+	check_event(st, event);
+
+	m = map_mapname2mapid(mapname);
+	if (m < 0)
+		return SCRIPT_CMD_SUCCESS;
+
+	sd = map_charid2sd(char_id);
+
+	if (master_id) {
+		msd = map_charid2sd(master_id);
+		if (msd)
+			master_id = msd->id;
+		else
+			master_id = 0;
+	}
+	if (sd) //Return ID of newly crafted clone.
+		script_pushint(st,mob_clone_spawn(sd, m, x, y, event, master_id, mode, flag, 1000*duration));
+	else //Failed to create clone.
+		script_pushint(st,0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(doevent)
+{
+	const char* event;
+	map_session_data* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	event = script_getstr(st,2);
+
+	check_event(st, event);
+	npc_event(sd, event, 0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(donpcevent)
+{
+	const char* event = script_getstr(st,2);
+	check_event(st, event);
+	if( !npc_event_do(event) ) {
+		npc_data * nd = map_id2nd(st->oid);
+		ShowDebug("NPCEvent '%s' not found! (source: %s)\n",event,nd?nd->name:"Unknown");
+		script_pushint(st, 0);
+	} else
+		script_pushint(st, 1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// for Aegis compatibility
+/// basically a specialized 'donpcevent', with the event specified as two arguments instead of one
+BUILDIN_FUNC(cmdothernpc)	// Added by RoVeRT
+{
+	const char* npc = script_getstr(st,2);
+	const char* command = script_getstr(st,3);
+	char event[EVENT_NAME_LENGTH];
+
+	safesnprintf(event,EVENT_NAME_LENGTH, "%s::%s%s",npc,script_config.oncommand_event_name,command);
+	check_event(st, event);
+
+	if( npc_event_do(event) ){
+		script_pushint(st, true);
+	}else{
+		npc_data * nd = map_id2nd(st->oid);
+		ShowDebug("NPCEvent '%s' not found! (source: %s)\n", event, nd ? nd->name : "Unknown");
+		script_pushint(st, false);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(addtimer)
+{
+	int32 tick;
+	const char* event;
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	tick = script_getnum(st,2);
+	event = script_getstr(st, 3);
+
+	check_event(st, event);
+
+	if (!pc_addeventtimer(sd,tick,event)) {
+		ShowWarning("buildin_addtimer: Event timer is full, can't add new event timer. (cid:%d timer:%s)\n",sd->status.char_id,event);
+		return SCRIPT_CMD_FAILURE;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(deltimer)
+{
+	const char *event;
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	event=script_getstr(st, 2);
+
+	check_event(st, event);
+	pc_deleventtimer(sd,event);
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(addtimercount)
+{
+	const char *event;
+	int32 tick;
+	TBL_PC* sd;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	tick=script_getnum(st,2);
+	event=script_getstr(st,3);
+
+	check_event(st, event);
+	pc_addeventtimercount(sd,event,tick);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(initnpctimer)
+{
+	npc_data *nd;
+	int32 flag = 0;
+
+	if( script_hasdata(st,3) )
+	{	//Two arguments: NPC name and attach flag.
+		nd = npc_name2id(script_getstr(st, 2));
+		flag = script_getnum(st,3);
+	}
+	else if( script_hasdata(st,2) )
+	{	//Check if argument is numeric (flag) or string (npc name)
+		if( script_isstring(st, 2) ) //NPC name
+			nd = npc_name2id(script_getstr(st, 2));
+		else //Flag
+		{
+			nd = (npc_data *)map_id2bl(st->oid);
+			flag = script_getnum(st, 2);
+		}
+	}
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( !nd )
+		return SCRIPT_CMD_SUCCESS;
+	if( flag ) //Attach
+	{
+		TBL_PC* sd;
+		if( !script_rid2sd(sd) )
+			return SCRIPT_CMD_SUCCESS;
+		nd->u.scr.rid = sd->id;
+	}
+
+	nd->u.scr.timertick = 0;
+	npc_settimerevent_tick(nd,0);
+	npc_timerevent_start(nd, st->rid);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(startnpctimer)
+{
+	npc_data *nd;
+	int32 flag = 0;
+
+	if( script_hasdata(st,3) )
+	{	//Two arguments: NPC name and attach flag.
+		nd = npc_name2id(script_getstr(st, 2));
+		flag = script_getnum(st,3);
+	}
+	else if( script_hasdata(st,2) )
+	{	//Check if argument is numeric (flag) or string (npc name)
+		if( script_isstring(st, 2) ) //NPC name
+			nd = npc_name2id(script_getstr(st, 2));
+		else //Flag
+		{
+			nd = (npc_data *)map_id2bl(st->oid);
+			flag = script_getnum(st, 2);
+		}
+	}
+	else
+		nd=(npc_data *)map_id2bl(st->oid);
+
+	if( !nd )
+		return SCRIPT_CMD_SUCCESS;
+	if( flag ) //Attach
+	{
+		TBL_PC* sd;
+		if( !script_rid2sd(sd) )
+			return SCRIPT_CMD_SUCCESS;
+		nd->u.scr.rid = sd->id;
+	}
+
+	npc_timerevent_start(nd, st->rid);
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(stopnpctimer)
+{
+	npc_data *nd;
+	int32 flag = 0;
+
+	if( script_hasdata(st,3) )
+	{	//Two arguments: NPC name and attach flag.
+		nd = npc_name2id(script_getstr(st, 2));
+		flag = script_getnum(st,3);
+	}
+	else if( script_hasdata(st,2) )
+	{	//Check if argument is numeric (flag) or string (npc name)
+		if( script_isstring(st, 2) ) //NPC name
+			nd = npc_name2id(script_getstr(st, 2));
+		else //Flag
+		{
+			nd = (npc_data *)map_id2bl(st->oid);
+			flag = script_getnum(st, 2);
+		}
+	}
+	else
+		nd=(npc_data *)map_id2bl(st->oid);
+
+	if( !nd )
+		return SCRIPT_CMD_SUCCESS;
+	if( flag ) //Detach
+		nd->u.scr.rid = 0;
+
+	npc_timerevent_stop(nd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(getnpctimer)
+{
+	npc_data *nd;
+	TBL_PC *sd;
+	int32 type = script_getnum(st,2);
+	t_tick val = 0;
+
+	if( script_hasdata(st,3) )
+		nd = npc_name2id(script_getstr(st,3));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( !nd || nd->type != BL_NPC )
+	{
+		script_pushint(st,0);
+		ShowError("getnpctimer: Invalid NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	switch( type )
+	{
+	case 0: val = npc_gettimerevent_tick(nd); break;
+	case 1:
+		if( nd->u.scr.rid )
+		{
+			sd = map_id2sd(nd->u.scr.rid);
+			if( !sd )
+			{
+				ShowError("buildin_getnpctimer: Attached player not found!\n");
+				break;
+			}
+			val = (sd->npc_timer_id != INVALID_TIMER);
+		}
+		else
+			val = (nd->u.scr.timerid != INVALID_TIMER);
+		break;
+	case 2: val = nd->u.scr.timeramount; break;
+	}
+
+	script_pushint(st,val);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(setnpctimer)
+{
+	int32 tick;
+	npc_data *nd;
+
+	tick = script_getnum(st,2);
+	if( script_hasdata(st,3) )
+		nd = npc_name2id(script_getstr(st,3));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( !nd || nd->type != BL_NPC )
+	{
+		script_pushint(st,1);
+		ShowError("setnpctimer: Invalid NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	npc_settimerevent_tick(nd,tick);
+	script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * attaches the player rid to the timer [Celest]
+ *------------------------------------------*/
+BUILDIN_FUNC(attachnpctimer)
+{
+	TBL_PC *sd;
+	npc_data *nd = (npc_data *)map_id2bl(st->oid);
+
+	if( !nd || nd->type != BL_NPC )
+	{
+		script_pushint(st,1);
+		ShowError("setnpctimer: Invalid NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !script_nick2sd(2,sd) ){
+		script_pushint(st,1);
+		ShowWarning("attachnpctimer: Invalid player.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	nd->u.scr.rid = sd->id;
+	script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * detaches a player rid from the timer [Celest]
+ *------------------------------------------*/
+BUILDIN_FUNC(detachnpctimer)
+{
+	npc_data *nd;
+
+	if( script_hasdata(st,2) )
+		nd = npc_name2id(script_getstr(st,2));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( !nd || nd->type != BL_NPC )
+	{
+		script_pushint(st,1);
+		ShowError("detachnpctimer: Invalid NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	nd->u.scr.rid = 0;
+	script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * To avoid "player not attached" script errors, this function is provided,
+ * it checks if there is a player attached to the current script. [Skotlex]
+ * If no, returns 0, if yes, returns the account_id of the attached player.
+ *------------------------------------------*/
+BUILDIN_FUNC(playerattached)
+{
+	if(st->rid == 0 || map_id2sd(st->rid) == nullptr)
+		script_pushint(st,0);
+	else
+		script_pushint(st,st->rid);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(announce)
+{
+	const char *mes       = script_getstr(st,2);
+	int32         flag      = script_getnum(st,3);
+	const char *fontColor = script_hasdata(st,4) ? script_getstr(st,4) : nullptr;
+	int32         fontType  = script_hasdata(st,5) ? script_getnum(st,5) : FW_NORMAL; // default fontType
+	int32         fontSize  = script_hasdata(st,6) ? script_getnum(st,6) : 12;    // default fontSize
+	int32         fontAlign = script_hasdata(st,7) ? script_getnum(st,7) : 0;     // default fontAlign
+	int32         fontY     = script_hasdata(st,8) ? script_getnum(st,8) : 0;     // default fontY
+
+	if (flag&(BC_TARGET_MASK|BC_SOURCE_MASK)) // Broadcast source or broadcast region defined
+	{
+		send_target target;
+		block_list *bl;
+
+		// If bc_npc flag is set, use NPC as broadcast source
+		if(flag&BC_NPC){
+			bl = map_id2bl(st->oid);
+		}else{
+			map_session_data* sd;
+
+			if(script_charid2sd(9, sd))
+				bl = sd;
+			else
+				bl = nullptr;
+		}
+		
+		if (bl == nullptr)
+			return SCRIPT_CMD_SUCCESS;
+
+		switch (flag&BC_TARGET_MASK) {
+			case BC_MAP:	target = ALL_SAMEMAP;	break;
+			case BC_AREA:	target = AREA;			break;
+			case BC_SELF:	target = SELF;			break;
+			default:		target = ALL_CLIENT;	break; // BC_ALL
+		}
+
+		if (fontColor)
+			clif_broadcast2(bl, mes, (int32)strlen(mes)+1, strtol(fontColor, (char **)nullptr, 0), fontType, fontSize, fontAlign, fontY, target);
+		else
+			clif_broadcast(bl, mes, (int32)strlen(mes)+1, flag&BC_COLOR_MASK, target);
+	}
+	else
+	{

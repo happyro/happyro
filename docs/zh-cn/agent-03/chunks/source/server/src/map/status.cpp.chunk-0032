@@ -1,0 +1,500 @@
+		(vd = status_get_viewdata(bl)) && vd->dead_sit == 2)
+	{ // Apply sitting regen bonus.
+		sregen = regen->ssregen;
+		if(flag&(RGN_SHP)) { // Sitting HP regen
+			rate = (int32)(natural_heal_diff_tick * (sregen->rate.hp / 100.));
+			if (regen->state.overweight)
+				rate /= 2; // Half as fast when overweight.
+			sregen->tick.hp += rate;
+			while(sregen->tick.hp >= (uint32)battle_config.natural_heal_skill_interval) {
+				sregen->tick.hp -= battle_config.natural_heal_skill_interval;
+				if(status_heal(bl, sregen->hp, 0, 3) < sregen->hp) { // Full
+					flag &= ~RGN_SHP;
+					break;
+				}
+			}
+		}
+		if(flag&(RGN_SSP)) { // Sitting SP regen
+			rate = (int32)(natural_heal_diff_tick * (sregen->rate.sp / 100.));
+			if (regen->state.overweight)
+				rate /= 2; // Half as fast when overweight.
+			sregen->tick.sp += rate;
+			while(sregen->tick.sp >= (uint32)battle_config.natural_heal_skill_interval) {
+				sregen->tick.sp -= battle_config.natural_heal_skill_interval;
+				if(status_heal(bl, 0, sregen->sp, 3) < sregen->sp) { // Full
+					flag &= ~RGN_SSP;
+					break;
+				}
+			}
+		}
+	}
+
+	if (flag && regen->state.overweight)
+		flag = RGN_NONE;
+
+	ud = unit_bl2ud(bl);
+
+	if (ud && ud->walktimer != INVALID_TIMER) {
+		flag &= ~(RGN_SHP|RGN_SSP);
+		//Mercenaries recover HP even while walking
+		if(bl->type != BL_MER && !regen->state.walk)
+			flag &= ~RGN_HP;
+		//Homunculus don't recover SP while walking
+		if (bl->type == BL_HOM && !regen->state.walk)
+			flag &= ~RGN_SP;
+	}
+
+	if (flag&(RGN_HP|RGN_SP)) {
+		if(!vd)
+			vd = status_get_viewdata(bl);
+		if(vd && vd->dead_sit == 2)
+			multi += 1; //This causes the interval to be halved
+		if(regen->state.gc)
+			multi += 1; //This causes the interval to be halved
+	}
+
+	// Natural Hp regen
+	if (flag&RGN_HP) {
+		// Interval to next recovery tick
+		rate = (int32)(battle_config.natural_healhp_interval / (regen->rate.hp/100. * multi));
+		// Half recovery while moving only applies to players with certain traits
+		if (sd && ud && ud->walktimer != INVALID_TIMER)
+			rate *= 2;
+		// Homun HP regen fix (2 seconds instead of 6 seconds)
+		if(bl->type == BL_HOM)
+			rate /= 3;
+		// Mercenary HP regen fix (8 seconds instead of 6 seconds)
+		if (bl->type == BL_MER)
+			rate = (rate * 4) / 3;
+
+		// Our timer system isn't 100% accurate so make sure we use the closest interval
+		rate -= NATURAL_HEAL_INTERVAL / 2;
+
+		if(regen->tick.hp + rate <= natural_heal_prev_tick) {
+			regen->tick.hp = natural_heal_prev_tick;
+			if (status->hp >= status->max_hp)
+				flag &= ~(RGN_HP | RGN_SHP);
+			else if (status_heal(bl, regen->hp, 0, 1) < regen->hp)
+				flag &= ~RGN_SHP; // Full
+		}
+	}
+	else {
+		regen->tick.hp = natural_heal_prev_tick;
+	}
+
+	// Natural SP regen
+	if(flag&RGN_SP) {
+		// Interval to next recovery tick
+		rate = (int32)(battle_config.natural_healsp_interval / (regen->rate.sp/100. * multi));
+		// Homun SP regen fix (4 seconds instead of 8 seconds)
+		if(bl->type==BL_HOM)
+			rate /= 2;
+		// Mercenary SP regen fix (6 seconds instead of 8 seconds)
+		if (bl->type == BL_MER)
+			rate = (rate * 3) / 4;
+#ifdef RENEWAL
+		if (sd && (sd->class_&MAPID_SECONDMASK) == MAPID_MONK &&
+			sc && sc->getSCE(SC_EXPLOSIONSPIRITS) && (!sc->getSCE(SC_SPIRIT) || sc->getSCE(SC_SPIRIT)->val2 != SL_MONK))
+			rate *= 2; // Tick is doubled in Fury state
+#endif
+
+		// Our timer system isn't 100% accurate so make sure we use the closest interval
+		rate -= NATURAL_HEAL_INTERVAL / 2;
+
+		if(regen->tick.sp + rate <= natural_heal_prev_tick) {
+			regen->tick.sp = natural_heal_prev_tick;
+			if (status->sp >= status->max_sp)
+				flag &= ~(RGN_SP | RGN_SSP);
+			else if (status_heal(bl, 0, regen->sp, 1) < regen->sp)
+				flag &= ~RGN_SSP; // Full
+		}
+	}
+	else {
+		regen->tick.sp = natural_heal_prev_tick;
+	}
+
+	if (!regen->sregen)
+		return flag;
+
+	// Skill regen
+	sregen = regen->sregen;
+
+	if(flag&RGN_SHP) { // Skill HP regen
+		sregen->tick.hp += (int32)(natural_heal_diff_tick * (sregen->rate.hp / 100.));
+
+		while(sregen->tick.hp >= (uint32)battle_config.natural_heal_skill_interval) {
+			sregen->tick.hp -= battle_config.natural_heal_skill_interval;
+			if(status_heal(bl, sregen->hp, 0, 3) < sregen->hp)
+				break; // Full
+		}
+	}
+	if(flag&RGN_SSP) { // Skill SP regen
+		sregen->tick.sp += (int32)(natural_heal_diff_tick * (sregen->rate.sp /100.));
+		while(sregen->tick.sp >= (uint32)battle_config.natural_heal_skill_interval) {
+			int32 val = sregen->sp;
+			if (sd && sd->state.doridori) {
+				val *= 2;
+				sd->state.doridori = 0;
+				if ((rate = pc_checkskill(sd,TK_SPTIME)))
+					sc_start(bl,bl,skill_get_sc(TK_SPTIME),
+						100,rate,skill_get_time(TK_SPTIME, rate));
+				if (
+					(sd->class_&MAPID_SECONDMASK) == MAPID_STAR_GLADIATOR &&
+					rnd()%10000 < battle_config.sg_angel_skill_ratio
+				) { // Angel of the Sun/Moon/Star
+					clif_feel_hate_reset(sd);
+					pc_resethate(sd);
+					pc_resetfeel(sd);
+				}
+			}
+			sregen->tick.sp -= battle_config.natural_heal_skill_interval;
+			if(status_heal(bl, 0, val, 3) < val)
+				break; // Full
+		}
+	}
+	return flag;
+}
+
+/**
+ * Natural heal main timer
+ * @param tid: Timer ID
+ * @param tick: Current tick (time)
+ * @param id: Object ID to heal
+ * @param data: data pushed through timer function
+ * @return 0
+ */
+static TIMER_FUNC(status_natural_heal_timer){
+	natural_heal_diff_tick = DIFF_TICK(tick,natural_heal_prev_tick);
+	natural_heal_prev_tick = tick;
+	map_foreachregen(status_natural_heal);
+	return 0;
+}
+
+/**
+ * Clears the lastEffect value from a target
+ * @param tid: Timer ID
+ * @param tick: Current tick (time)
+ * @param id: Object ID
+ * @param data: data pushed through timer function
+ * @return 0
+ */
+TIMER_FUNC(status_clear_lastEffect_timer) {
+	block_list *bl = map_id2bl(id);
+
+	if (bl != nullptr) {
+		status_change *sc = status_get_sc(bl);
+
+		if (sc != nullptr) {
+			sc->lastEffect = SC_NONE;
+			sc->lastEffectTimer = INVALID_TIMER;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * Check if status is disabled on a map
+ * @param type: Status Change data
+ * @param mapIsVS: If the map is a map_flag_vs type
+ * @param mapisPVP: If the map is a PvP type
+ * @param mapIsGVG: If the map is a map_flag_gvg type
+ * @param mapIsBG: If the map is a Battleground type
+ * @param mapZone: Map Zone type
+ * @param mapIsTE: If the map us WOE TE
+ * @return True - SC disabled on map; False - SC not disabled on map/Invalid SC
+ */
+static bool status_change_isDisabledOnMap_(sc_type type, bool mapIsVS, bool mapIsPVP, bool mapIsGVG, bool mapIsBG, uint32 mapZone, bool mapIsTE)
+{
+	if (!status_db.validateStatus(type))
+		return false;
+
+	if ((!mapIsVS && SCDisabled[type]&1) ||
+		(mapIsPVP && SCDisabled[type]&2) ||
+		(mapIsGVG && SCDisabled[type]&4) ||
+		(mapIsBG && SCDisabled[type]&8) ||
+		(mapIsTE && SCDisabled[type]&16) ||
+		(SCDisabled[type]&(mapZone)))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * Clear a status if it is disabled on a map
+ * @param bl: Block list data
+ * @param sc: Status Change data
+ */
+void status_change_clear_onChangeMap(block_list *bl, status_change *sc)
+{
+	nullpo_retv(bl);
+
+	if (sc != nullptr && !sc->empty()) {
+		struct map_data *mapdata = map_getmapdata(bl->m);
+		bool mapIsVS = mapdata_flag_vs2(mapdata);
+		bool mapIsPVP = mapdata->getMapFlag(MF_PVP) != 0;
+		bool mapIsGVG = mapdata_flag_gvg2_no_te(mapdata);
+		bool mapIsBG = mapdata->getMapFlag(MF_BATTLEGROUND) != 0;
+		bool mapIsTE = mapdata_flag_gvg2_te(mapdata);
+
+		for (const auto &it : status_db) {
+			sc_type type = static_cast<sc_type>(it.first);
+
+			if (!sc->getSCE(type) || !SCDisabled[type])
+				continue;
+
+			if (status_change_isDisabledOnMap_(type, mapIsVS, mapIsPVP, mapIsGVG, mapIsBG, mapdata->zone, mapIsTE))
+				status_change_end(bl, type);
+		}
+	}
+}
+
+/**
+ * Read status_disabled.txt file
+ * @param str: Fields passed from sv_readdb
+ * @param columns: Columns passed from sv_readdb function call
+ * @param current: Current row being read into SCDisabled array
+ * @return True - Successfully stored, False - Invalid SC
+ */
+static bool status_readdb_status_disabled( char **str, size_t columns, size_t current ){
+	int64 type = SC_NONE;
+
+	if (ISDIGIT(str[0][0]))
+		type = atoi(str[0]);
+	else {
+		if (!script_get_constant(str[0],&type))
+			type = SC_NONE;
+	}
+
+	if (type <= SC_NONE || type >= SC_MAX) {
+		ShowError("status_readdb_status_disabled: Invalid SC with type %s.\n", str[0]);
+		return false;
+	}
+
+	SCDisabled[type] = (uint32)atol(str[1]);
+	return true;
+}
+
+const std::string AttributeDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/attr_fix.yml";
+}
+
+/**
+ * Reads and parses an entry from the attr_fix.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 AttributeDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	uint16 level;
+
+	if (!this->asUInt16(node, "Level", level))
+		return 0;
+
+	if (!CHK_ELEMENT_LEVEL(level)) {
+		this->invalidWarning(node["Level"], "Invalid element level %hu.\n", level);
+		return 0;
+	}
+
+	for (const auto &itatk : um_eleid2elename) {
+		if (!this->nodeExists(node, itatk.first))
+			continue;
+
+		const auto& eleNode = node[c4::to_csubstr(itatk.first)];
+
+		for (const auto &itdef : um_eleid2elename) {
+			if (!this->nodeExists(eleNode, itdef.first))
+				continue;
+
+			int16 val;
+
+			if (!this->asInt16(eleNode, itdef.first, val))
+				return 0;
+
+			if (val < -100) {
+				this->invalidWarning(eleNode[c4::to_csubstr(itdef.first)], "%s %h is out of range %d~%d. Setting to -100.\n", itdef.first.c_str(), val, -100, 200);
+				val = -100;
+			}
+			else if (val > 200) {
+				this->invalidWarning(eleNode[c4::to_csubstr(itdef.first)], "%s %h is out of range %d~%d. Setting to 200.\n", itdef.first.c_str(), val, -100, 200);
+				val = 200;
+			}
+
+			this->attr_fix_table[level-1][itatk.second][itdef.second] = val;
+		}
+	}
+
+	return 1;
+}
+
+AttributeDatabase elemental_attribute_db;
+
+/**
+ * Get attribute ratio
+ * @param atk_ele Attack element enum e_element
+ * @param def_ele Defense element enum e_element
+ * @param level Element level 1 ~ MAX_ELE_LEVEL
+ */
+int16 AttributeDatabase::getAttribute(uint16 level, uint16 atk_ele, uint16 def_ele) {
+	if (!CHK_ELEMENT(atk_ele) || !CHK_ELEMENT(def_ele) || !CHK_ELEMENT_LEVEL(level))
+		return 100;
+
+	return this->attr_fix_table[level-1][atk_ele][def_ele];
+}
+
+s_status_change_db::s_status_change_db(){
+	this->type = SC_NONE;
+	this->icon = EFST_BLANK;
+	this->state = {};
+	this->calc_flag = {};
+	this->opt1 = OPT1_NONE;
+	this->opt2 = OPT2_NONE;
+	this->opt3 = OPT3_NORMAL;
+	this->look = OPTION_NOTHING;
+	this->flag = {};
+	this->skill_id = 0;
+	this->endonstart = {};
+	this->fail = {};
+	this->endreturn = {};
+	this->endonend = {};
+	this->min_duration = 1;
+	this->min_rate = 0;
+	this->script = nullptr;
+}
+
+s_status_change_db::~s_status_change_db(){
+	if( this->script != nullptr ){
+		script_free_code( this->script );
+		this->script = nullptr;
+	}
+}
+
+const std::string StatusDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/status.yml";
+}
+
+/**
+ * Reads and parses an entry from status_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 StatusDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string status_name;
+
+	if (!this->asString(node, "Status", status_name))
+		return 0;
+
+	std::string status_constant = "SC_" + status_name;
+	int64 constant;
+
+	if (!script_get_constant(status_constant.c_str(), &constant)) {
+		this->invalidWarning(node["Status"], "Invalid Status %s.\n", status_name.c_str());
+		return 0;
+	}
+
+	if (!this->validateStatus(static_cast<sc_type>(constant))) {
+		this->invalidWarning(node["Status"], "Status %s is out of bounds.\n", status_name.c_str());
+		return 0;
+	}
+
+	int32 status_id = static_cast<int32>(constant);
+	std::shared_ptr<s_status_change_db> status = this->find(status_id);
+	bool exists = status != nullptr;
+
+	if (!exists) {
+		status = std::make_shared<s_status_change_db>();
+		status->type = static_cast<sc_type>(status_id);
+	}
+
+	if (this->nodeExists(node, "Icon")) {
+		std::string icon_name;
+
+		if (!this->asString(node, "Icon", icon_name))
+			return 0;
+
+		int64 constant;
+
+		if (!script_get_constant(icon_name.c_str(), &constant)) {
+			this->invalidWarning(node["Icon"], "Icon %s is invalid, defaulting to EFST_BLANK.\n", icon_name.c_str());
+			constant = EFST_BLANK;
+		}
+		
+		if (constant < EFST_BLANK || constant >= EFST_MAX) {
+			this->invalidWarning(node["Icon"], "Icon %s is out of bounds, defaulting to EFST_BLANK.\n", icon_name.c_str());
+			constant = EFST_BLANK;
+		}
+
+		status->icon = static_cast<efst_type>(constant);
+	} else {
+		if (!exists)
+			status->icon = EFST_BLANK;
+	}
+
+	if (this->nodeExists(node, "DurationLookup")) {
+		std::string skill_name;
+
+		if (!this->asString(node, "DurationLookup", skill_name))
+			return 0;
+
+		uint16 skill_id = skill_name2id(skill_name.c_str());
+
+		if (skill_id == 0)
+			this->invalidWarning(node["DurationLookup"], "DurationLookup skill %s is invalid, defaulting to none.\n", skill_name.c_str());
+
+		status->skill_id = skill_id;
+	} else {
+		if (!exists)
+			status->skill_id = 0;
+	}
+
+	if (this->nodeExists(node, "States")) {
+		const ryml::NodeRef& stateNode = node["States"];
+
+		for (const auto &it : stateNode) {
+			std::string state;
+			c4::from_chars(it.key(), &state);
+
+			std::string state_constant = "SCS_" + state;
+			int64 constant;
+
+			if (!script_get_constant(state_constant.c_str(), &constant)) {
+				this->invalidWarning(stateNode, "State %s is invalid.\n", state.c_str());
+				return 0;
+			}
+
+			if (constant < SCS_NONE || constant >= SCS_MAX) {
+				this->invalidWarning(stateNode, "State %s is out of bounds.\n", state.c_str());
+				return 0;
+			}
+
+			bool active;
+
+			if (!this->asBool(stateNode, state, active))
+				return 0;
+
+			if (active)
+				status->state.set(static_cast<e_scs_flag>(constant));
+			else
+				status->state.reset(static_cast<e_scs_flag>(constant));
+		}
+	} else {
+		if (!exists)
+			status->state.reset();
+	}
+
+	if (this->nodeExists(node, "CalcFlags")) {
+		const ryml::NodeRef& flagNode = node["CalcFlags"];
+
+		if (this->nodeExists(flagNode, "All")) {
+			bool active;
+
+			if (!this->asBool(flagNode, "All", active))
+				return 0;
+
+			if (active)
+				status->calc_flag = this->getSCB_ALL();
+			else
+				status->calc_flag.reset();
+		}
+

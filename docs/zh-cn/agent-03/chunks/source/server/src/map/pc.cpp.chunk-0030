@@ -1,0 +1,500 @@
+		}
+	}
+
+	if( !exists ){
+		this->put( level, entry );
+	}
+
+	return 1;
+}
+
+/**
+ * Generate the remaining parts of the db if necessary.
+ */
+void PlayerStatPointDatabase::loadingFinished(){
+	const uint16 trait_start_level = 200;
+	std::shared_ptr<s_statpoint_entry> level_one = this->find( 1 );
+
+	if( level_one == nullptr ){
+		if( battle_config.use_statpoint_table ){
+			ShowError( "Missing status points for Level 1\n" );
+		}
+
+		level_one = std::make_shared<s_statpoint_entry>();
+
+		level_one->level = 1;
+		level_one->statpoints = inter_config.start_status_points;
+		level_one->traitpoints = 0;
+
+		this->put( 1, level_one );
+	}else if( battle_config.use_statpoint_table ){
+		if( level_one->statpoints != inter_config.start_status_points ){
+			ShowError( "Status points for Level 1 (=%u) do not match inter_athena.conf value (=%u).\n", level_one->statpoints, inter_config.start_status_points );
+			level_one->statpoints = inter_config.start_status_points;
+		}
+	}else{
+		level_one->statpoints = inter_config.start_status_points;
+		level_one->traitpoints = 0;
+	}
+
+	std::shared_ptr<s_statpoint_entry> last_level = level_one;
+	for( uint16 level = 2; level <= MAX_LEVEL; level++ ){
+		std::shared_ptr<s_statpoint_entry> entry = this->find( level );
+		bool exists = entry != nullptr;
+
+		if( !exists ){
+			entry = std::make_shared<s_statpoint_entry>();
+			entry->level = level;
+			this->put( level, entry );
+		}
+
+		if( !battle_config.use_statpoint_table || !exists ){
+			if( battle_config.use_statpoint_table ){
+				ShowError("Missing status points for Level %hu\n", level);
+			}
+
+			if( level <= trait_start_level ){
+				entry->statpoints = last_level->statpoints + ( ( level - 1 + 15 ) / 5 );
+			}else{
+				entry->statpoints = last_level->statpoints;
+			}
+		}
+
+		if( !battle_config.use_traitpoint_table || !exists ){
+			if( battle_config.use_traitpoint_table && level > trait_start_level ){
+				ShowError( "Missing trait points for Level %hu\n", level );
+			}
+
+			if( level > trait_start_level ){
+				entry->traitpoints = ( level - trait_start_level ) * 3 + ( level - trait_start_level ) / 5 * 4;
+			}else{
+				entry->traitpoints = 0;
+			}
+		}
+
+		// Store it for next iteration
+		last_level = entry;
+	}
+
+	TypesafeCachedYamlDatabase::loadingFinished();
+}
+
+/*==========================================
+ * pc DB reading.
+ * job_stats.yml	- Job values
+ * skill_tree.txt	- skill tree for every class
+ * attr_fix.yml		- elemental adjustment table
+ *------------------------------------------*/
+void pc_readdb(void) {
+	int32 i, s = 1;
+	const char* dbsubpath[] = {
+		"",
+		"/" DBIMPORT,
+		//add other path here
+	};
+		
+	//reset
+	job_db.clear(); // job_info table
+
+#if defined(RENEWAL_DROP) || defined(RENEWAL_EXP)
+	penalty_db.load();
+#endif
+
+	statpoint_db.clear();
+	job_db.load();
+
+	for(i=0; i<ARRAYLENGTH(dbsubpath); i++){
+		uint8 n1 = (uint8)(strlen(db_path)+strlen(dbsubpath[i])+1);
+		uint8 n2 = (uint8)(strlen(db_path)+strlen(DBPATH)+strlen(dbsubpath[i])+1);
+		char* dbsubpath1 = (char*)aMalloc(n1+1);
+		char* dbsubpath2 = (char*)aMalloc(n2+1);
+
+		if(i==0) {
+			safesnprintf(dbsubpath1,n1,"%s%s",db_path,dbsubpath[i]);
+			safesnprintf(dbsubpath2,n2,"%s/%s%s",db_path,DBPATH,dbsubpath[i]);
+		}
+		else {
+			safesnprintf(dbsubpath1,n1,"%s%s",db_path,dbsubpath[i]);
+			safesnprintf(dbsubpath2,n1,"%s%s",db_path,dbsubpath[i]);
+		}
+
+		sv_readdb(dbsubpath2, "job_noenter_map.txt", ',', 3, 3, CLASS_COUNT, &pc_readdb_job_noenter_map, i > 0);
+		aFree(dbsubpath1);
+		aFree(dbsubpath2);
+	}
+
+	// Reset and read skilltree - needs to be read after pc_readdb_job_exp to get max base and job levels
+	skill_tree_db.reload();
+
+	statpoint_db.load();
+}
+
+// Read MOTD on startup. [Valaris]
+int32 pc_read_motd(void)
+{
+	FILE* fp;
+	// clear old MOTD
+	memset(motd_text, 0, sizeof(motd_text));
+
+	// read current MOTD
+	if( ( fp = fopen(motd_txt, "r") ) != nullptr )
+	{
+		uint32 entries = 0;
+		char buf[CHAT_SIZE_MAX];
+
+		while( entries < MOTD_LINE_SIZE && fgets(buf, CHAT_SIZE_MAX, fp) )
+		{
+			uint32 lines = 0;
+			size_t len;
+			lines++;
+			if( buf[0] == '/' && buf[1] == '/' )
+				continue;
+			len = strlen(buf);
+			while( len && ( buf[len-1] == '\r' || buf[len-1] == '\n' ) ) // strip trailing EOL characters
+				len--;
+			if( len ) {
+				char * ptr;
+				buf[len] = 0;
+				if( ( ptr = strstr(buf, " :") ) != nullptr && ptr-buf >= NAME_LENGTH ) // crashes newer clients
+					ShowWarning("Found sequence '" CL_WHITE " :" CL_RESET "' on line '" CL_WHITE "%u" CL_RESET "' in '" CL_WHITE "%s" CL_RESET "'. This can cause newer clients to crash.\n", lines, motd_txt);
+			}
+			else {// empty line
+				buf[0] = ' ';
+				buf[1] = 0;
+			}
+			safestrncpy(motd_text[entries], buf, CHAT_SIZE_MAX);
+			entries++;
+		}
+		fclose(fp);
+		ShowStatus("Done reading '" CL_WHITE "%u" CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'.\n", entries, motd_txt);
+	}
+	else
+		ShowWarning("File '" CL_WHITE "%s" CL_RESET "' not found.\n", motd_txt);
+
+	return 0;
+}
+
+void pc_itemcd_do(map_session_data *sd, bool load) {
+	int32 i,cursor = 0;
+	struct item_cd* cd = nullptr;
+
+	if( load ) {
+		if( !(cd = (struct item_cd*)idb_get(itemcd_db, sd->status.char_id)) ) {
+			// no item cooldown is associated with this character
+			return;
+		}
+		for(i = 0; i < MAX_ITEMDELAYS; i++) {
+			if( cd->nameid[i] && DIFF_TICK(gettick(),cd->tick[i]) < 0 ) {
+				sd->item_delay[cursor].tick = cd->tick[i];
+				sd->item_delay[cursor].nameid = cd->nameid[i];
+				cursor++;
+			}
+		}
+		idb_remove(itemcd_db,sd->status.char_id);
+	} else {
+		if( !(cd = (struct item_cd*)idb_get(itemcd_db,sd->status.char_id)) ) {
+			// create a new skill cooldown object for map storage
+			CREATE( cd, struct item_cd, 1 );
+			idb_put( itemcd_db, sd->status.char_id, cd );
+		}
+		for(i = 0; i < MAX_ITEMDELAYS; i++) {
+			if( sd->item_delay[i].nameid && DIFF_TICK(gettick(),sd->item_delay[i].tick) < 0 ) {
+				cd->tick[cursor] = sd->item_delay[i].tick;
+				cd->nameid[cursor] = sd->item_delay[i].nameid;
+				cursor++;
+			}
+		}
+	}
+	return;
+}
+
+/**
+ * Add item delay to player's item delay data
+ * @param sd Player
+ * @param id Item data
+ * @param tick Current tick
+ * @param n Item index in inventory
+ * @return 0: No delay, can consume item.
+ *         1: Has delay, cancel consumption.
+ **/
+uint8 pc_itemcd_add(map_session_data *sd, struct item_data *id, t_tick tick, uint16 n) {
+	int32 i;
+	ARR_FIND(0, MAX_ITEMDELAYS, i, sd->item_delay[i].nameid == id->nameid );
+	if( i == MAX_ITEMDELAYS ) /* item not found. try first empty now */
+		ARR_FIND(0, MAX_ITEMDELAYS, i, !sd->item_delay[i].nameid );
+	if( i < MAX_ITEMDELAYS ) {
+		if( sd->item_delay[i].nameid ) {// found
+			if( DIFF_TICK(sd->item_delay[i].tick, tick) > 0 ) {
+				t_tick e_tick = DIFF_TICK(sd->item_delay[i].tick, tick)/1000;
+				char e_msg[CHAT_SIZE_MAX];
+				if( e_tick > 99 )
+					sprintf(e_msg,msg_txt(sd,379), // Item Failed. [%s] is cooling down. Wait %.1f minutes.
+									itemdb_ename(sd->item_delay[i].nameid), (double)e_tick / 60);
+				else
+					sprintf(e_msg,msg_txt(sd,380), // Item Failed. [%s] is cooling down. Wait %d seconds.
+									itemdb_ename(sd->item_delay[i].nameid), e_tick+1);
+				clif_messagecolor(sd,color_table[COLOR_YELLOW],e_msg,false,SELF);
+				return 1; // Delay has not expired yet
+			}
+		} else {// not yet used item (all slots are initially empty)
+			sd->item_delay[i].nameid = id->nameid;
+		}
+		if( !(id->nameid == ITEMID_REINS_OF_MOUNT && sd->sc.option&(OPTION_WUGRIDER|OPTION_RIDING|OPTION_DRAGON|OPTION_MADOGEAR)) )
+			sd->item_delay[i].tick = tick + sd->inventory_data[n]->delay.duration;
+	} else {// should not happen
+		ShowError("pc_itemcd_add: Exceeded item delay array capacity! (nameid=%u, char_id=%d)\n", id->nameid, sd->status.char_id);
+	}
+	//clean up used delays so we can give room for more
+	for(i = 0; i < MAX_ITEMDELAYS; i++) {
+		if( DIFF_TICK(sd->item_delay[i].tick, tick) <= 0 ) {
+			sd->item_delay[i].tick = 0;
+			sd->item_delay[i].nameid = 0;
+		}
+	}
+	return 0;
+}
+
+/**
+ * Check if player has delay to reuse item
+ * @param sd Player
+ * @param id Item data
+ * @param tick Current tick
+ * @param n Item index in inventory
+ * @return 0: No delay, can consume item.
+ *         1: Has delay, cancel consumption.
+ **/
+uint8 pc_itemcd_check(map_session_data *sd, struct item_data *id, t_tick tick, uint16 n) {
+	status_change *sc = nullptr;
+
+	nullpo_retr(0, sd);
+	nullpo_retr(0, id);
+
+	// Do normal delay assignment
+	if (id->delay.sc <= SC_NONE || id->delay.sc >= SC_MAX || !(sc = &sd->sc))
+		return pc_itemcd_add(sd, id, tick, n);
+
+	// Send reply of delay remains
+	if (sc->getSCE(id->delay.sc)) {
+		const struct TimerData *timer = get_timer(sc->getSCE(id->delay.sc)->timer);
+		clif_msg_value( *sd, MSI_ITEM_REUSE_LIMIT_SECOND, (int32)(timer ? DIFF_TICK(timer->tick, tick) / 1000 : 99) );
+		return 1;
+	}
+
+	sc_start(sd, sd, id->delay.sc, 100, id->nameid, id->delay.duration);
+	return 0;
+}
+
+/**
+ * Status change data arrived from char-server
+ * @param sd: Player data
+ */
+void pc_scdata_received(map_session_data *sd) {
+	pc_inventory_rentals(sd); // Needed here to remove rentals that have Status Changes after chrif_load_scdata has finished
+
+	clif_weight_limit( sd );
+
+	if( pc_has_permission( sd, PC_PERM_ATTENDANCE ) && pc_attendance_enabled() && !pc_attendance_rewarded_today( sd ) && pc_attendance_counter(sd) < 200 ){
+		clif_ui_open( *sd, OUT_UI_ATTENDANCE, pc_attendance_counter( sd ) );
+	}
+
+	sd->state.pc_loaded = true;
+
+	if (sd->state.connect_new == 0 && sd->fd) { // Character already loaded map! Gotta trigger LoadEndAck manually.
+		sd->state.connect_new = 1;
+		clif_parse_LoadEndAck(sd->fd, sd);
+	}
+
+	if (pc_iscarton(sd)) {
+		sd->cart_weight_max = 0; // Force a client refesh
+		status_calc_cart_weight(sd, (e_status_calc_weight_opt)(CALCWT_ITEM|CALCWT_MAXBONUS|CALCWT_CARTSTATE));
+	}
+
+	if (sd->sc.getSCE(SC_SOULENERGY))
+		sd->soulball = sd->sc.getSCE(SC_SOULENERGY)->val1;
+}
+
+/**
+ * Check player account expiration time and rental item expirations
+ * @param sd: Player data
+ */
+void pc_check_expiration(map_session_data *sd) {
+#ifndef ENABLE_SC_SAVING
+	pc_inventory_rentals(sd); // Check here if Status Change saving is disabled
+#endif
+
+	if (sd->expiration_time != 0) { //Don't display if it's unlimited or unknow value
+		time_t exp_time = sd->expiration_time;
+		char tmpstr[1024];
+
+		strftime(tmpstr,sizeof(tmpstr) - 1,msg_txt(sd,501),localtime(&exp_time)); // "Your account time limit is: %d-%m-%Y %H:%M:%S."
+		clif_wis_message(sd,wisp_server_name,tmpstr,strlen(tmpstr) + 1,0);
+
+		pc_expire_check(sd);
+	}
+}
+
+TIMER_FUNC(pc_expiration_timer){
+	map_session_data *sd = map_id2sd(id);
+
+	if( !sd ) return 0;
+
+	sd->expiration_tid = INVALID_TIMER;
+
+	if( sd->fd )
+		clif_authfail_fd(sd->fd,10);
+
+	map_quit(sd);
+
+	return 0;
+}
+
+TIMER_FUNC(pc_autotrade_timer){
+	map_session_data *sd = map_id2sd(id);
+
+	if (!sd)
+		return 0;
+
+	sd->autotrade_tid = INVALID_TIMER;
+
+	if (sd->state.autotrade&2)
+		vending_reopen(*sd);
+	if (sd->state.autotrade&4)
+		buyingstore_reopen(sd);
+
+	if (!sd->vender_id && !sd->buyer_id) {
+		sd->state.autotrade = 0;
+		map_quit(sd);
+	}
+
+	return 0;
+}
+
+/* this timer exists only when a character with a expire timer > 24h is online */
+/* it loops thru online players once an hour to check whether a new < 24h is available */
+TIMER_FUNC(pc_global_expiration_timer){
+	struct s_mapiterator* iter;
+	map_session_data* sd;
+
+	iter = mapit_getallusers();
+
+	for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter) )
+		if( sd->expiration_time )
+			pc_expire_check(sd);
+
+	mapit_free(iter);
+
+  return 0;
+}
+
+void pc_expire_check(map_session_data *sd) {  
+	/* ongoing timer */
+	if( sd->expiration_tid != INVALID_TIMER )
+		return;
+
+	/* not within the next 24h, enable the global check */
+	if( sd->expiration_time > (time(nullptr) + ((60 * 60) * 24)) ) {
+
+		/* global check not running, enable */
+		if( pc_expiration_tid == INVALID_TIMER ) /* Starts in 1h, repeats every hour */
+			pc_expiration_tid = add_timer_interval(gettick() + ((1000 * 60) * 60), pc_global_expiration_timer, 0, 0, ((1000 * 60) * 60));
+
+		return;
+	}
+
+	sd->expiration_tid = add_timer(gettick() + (uint32)(sd->expiration_time - time(nullptr)) * 1000, pc_expiration_timer, sd->id, 0);
+}
+
+/**
+* Deposit some money to bank
+* @param sd
+* @param money Amount of money to deposit
+**/
+enum e_BANKING_DEPOSIT_ACK pc_bank_deposit(map_session_data *sd, int32 money) {
+	if (battle_config.feature_banking_state_enforce && !sd->state.banking) {
+		return BDA_ERROR;
+	}
+
+	uint32 limit_check = money + sd->bank_vault;
+	if( money <= 0 || limit_check > MAX_BANK_ZENY ) {
+		return BDA_OVERFLOW;
+	} else if ( money > sd->status.zeny ) {
+		return BDA_NO_MONEY;
+	}
+
+	if( pc_payzeny(sd, money, LOG_TYPE_BANK) )
+		return BDA_NO_MONEY;
+
+	sd->bank_vault += money;
+	pc_setreg2(sd, BANK_VAULT_VAR, sd->bank_vault);
+	if( save_settings&CHARSAVE_BANK )
+		chrif_save(sd, CSAVE_NORMAL);
+	return BDA_SUCCESS;
+}
+
+/**
+* Withdraw money from bank
+* @param sd
+* @param money Amount of money that will be withdrawn
+**/
+enum e_BANKING_WITHDRAW_ACK pc_bank_withdraw(map_session_data *sd, int32 money) {
+	if (battle_config.feature_banking_state_enforce && !sd->state.banking) {
+		return BWA_UNKNOWN_ERROR;
+	}
+
+	uint32 limit_check = money + sd->status.zeny;
+	if( money <= 0 ) {
+		return BWA_UNKNOWN_ERROR;
+	} else if ( money > sd->bank_vault ) {
+		return BWA_NO_MONEY;
+	} else if ( limit_check > MAX_ZENY ) {
+		/* no official response for this scenario exists. */
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,1495),false,SELF); //You can't withdraw that much money
+		return BWA_UNKNOWN_ERROR;
+	}
+	
+	if( pc_getzeny(sd,money, LOG_TYPE_BANK) )
+		return BWA_NO_MONEY;
+	
+	sd->bank_vault -= money;
+	pc_setreg2(sd, BANK_VAULT_VAR, sd->bank_vault);
+	if( save_settings&CHARSAVE_BANK )
+		chrif_save(sd, CSAVE_NORMAL);
+	return BWA_SUCCESS;
+}
+
+/**
+* Clear Crimson Marker data from caster
+* @param sd: Player
+**/
+void pc_crimson_marker_clear(map_session_data *sd) {
+	uint8 i;
+
+	if (!sd)
+		return;
+
+	for (i = 0; i < MAX_SKILL_CRIMSON_MARKER; i++) {
+		block_list *bl = nullptr;
+		if (sd->c_marker[i] && (bl = map_id2bl(sd->c_marker[i])))
+			status_change_end(bl,SC_C_MARKER);
+		sd->c_marker[i] = 0;
+	}
+}
+
+/**
+* Show version to player
+* @param sd: Player
+**/
+void pc_show_version(map_session_data *sd) {
+	const char* svn = get_svn_revision();
+	char buf[CHAT_SIZE_MAX];
+
+	if( svn[0] != UNKNOWN_VERSION )
+		sprintf(buf,msg_txt(sd,1295),"SVN: r",svn); //rAthena Version SVN: r%s
+	else {
+		const char* git = get_git_hash();
+		if( git[0] != UNKNOWN_VERSION )
+			sprintf(buf,msg_txt(sd,1295),"Git Hash: ",git); //rAthena Version Git Hash: %s
+		else
+			sprintf(buf,"%s",msg_txt(sd,1296)); //Cannot determine SVN/Git version.
+	}
+	clif_displaymessage(sd->fd,buf);

@@ -1,0 +1,500 @@
+				continue;
+			}
+
+			if (constant < MD_NONE || constant > MD_SKILLIMMUNE) {
+				this->invalidWarning(modeNode[modeit.key()], "Invalid monster mode %s, skipping.\n", modeName.c_str());
+				continue;
+			}
+
+			bool active;
+
+			if (!this->asBool(modeNode, modeName, active))
+				return 0;
+
+			if (active)
+				mob->status.mode = static_cast<e_mode>(mob->status.mode | constant);
+			else
+				mob->status.mode = static_cast<e_mode>(mob->status.mode & ~constant);
+		}
+	}
+
+	if (this->nodeExists(node, "MvpDrops")) {
+		if (!this->parseDropNode("MvpDrops", node, MAX_MVP_DROP, mob->mvpitem))
+			return 0;
+	}
+
+	if (this->nodeExists(node, "Drops")) {
+		if (!this->parseDropNode("Drops", node, MAX_MOB_DROP, mob->dropitem))
+			return 0;
+	}
+
+	if (!exists)
+		this->put(mob_id, mob);
+
+	return true;
+}
+
+void MobDatabase::loadingFinished() {
+	for (auto &mobdata : *this) {
+		std::shared_ptr<s_mob_db> mob = mobdata.second;
+
+		switch (mob->status.class_) {
+			case CLASS_BOSS:
+				mob->status.mode = static_cast<e_mode>(mob->status.mode | (MD_DETECTOR | MD_STATUSIMMUNE | MD_KNOCKBACKIMMUNE));
+				break;
+			case CLASS_GUARDIAN:
+				mob->status.mode = static_cast<e_mode>(mob->status.mode | MD_STATUSIMMUNE);
+				break;
+			case CLASS_BATTLEFIELD:
+				mob->status.mode = static_cast<e_mode>(mob->status.mode | (MD_STATUSIMMUNE | MD_SKILLIMMUNE));
+				break;
+			case CLASS_EVENT:
+				mob->status.mode = static_cast<e_mode>(mob->status.mode | MD_FIXEDITEMDROP);
+				break;
+		}
+
+		if (battle_config.view_range_rate != 100)
+			mob->range2 = max(1, mob->range2 * battle_config.view_range_rate / 100);
+
+		if (battle_config.chase_range_rate != 100)
+			mob->range3 = max(mob->range2, mob->range3 * battle_config.chase_range_rate / 100);
+
+		// If the attack animation is longer than the delay, the client crops the attack animation!
+		// On aegis there is no real visible effect of having a recharge-time less than amotion anyway.
+		mob->status.adelay = max(mob->status.adelay, mob->status.amotion);
+		mob->status.aspd_rate = 1000;
+
+		if (!battle_config.monster_active_enable)
+			mob->status.mode = static_cast<enum e_mode>(mob->status.mode & ~MD_AGGRESSIVE);
+
+		// Fill in remaining status data by using a dummy monster.
+		mob_data data;
+
+		data.type = BL_MOB;
+		data.level = mob->lv;
+		memcpy(&data.status, &mob->status, sizeof(status_data));
+		status_calc_misc(&data, &mob->status, mob->lv);
+
+		// Now that we know if it is a MVP or not, apply battle_config modifiers [Skotlex]
+		double maxhp = (double)mob->status.max_hp;
+
+		if (mob->get_bosstype() == BOSSTYPE_MVP) { // MVP
+			if (battle_config.mvp_hp_rate != 100)
+				maxhp = maxhp * (double)battle_config.mvp_hp_rate / 100.;
+		} else { // Normal mob
+			if (battle_config.monster_hp_rate != 100)
+				maxhp = maxhp * (double)battle_config.monster_hp_rate / 100.;
+		}
+
+		mob->status.max_hp = cap_value(static_cast<uint32>(maxhp), 1, UINT32_MAX);
+		mob->status.max_sp = cap_value(mob->status.max_sp, 1, UINT32_MAX);
+		mob->status.hp = mob->status.max_hp;
+		mob->status.sp = mob->status.max_sp;
+	}
+
+	TypesafeCachedYamlDatabase::loadingFinished();
+}
+
+MobDatabase mob_db;
+
+/**
+ * Convert SQL data to YAML Node
+ * @param str: Array of parsed SQL data
+ * @return True on success or false otherwise
+ */
+static bool mob_read_sqldb_sub(std::vector<std::string> str) {
+	ryml::Tree tree;
+	ryml::NodeRef node = tree.rootref();
+	node |= ryml::MAP;
+	int32 index = -1;
+
+	node["Id"] << str[++index];
+	if (!str[++index].empty())
+		node["AegisName"] << str[index];
+	if (!str[++index].empty())
+		node["Name"] << str[index];
+	if (!str[++index].empty())
+		node["JapaneseName"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["Level"] << str[index];
+	if (!str[++index].empty() && std::stoul(str[index]) > 1)
+		node["Hp"] << str[index];
+	if (!str[++index].empty() && std::stoul(str[index]) > 1)
+		node["Sp"] << str[index];
+	if (!str[++index].empty())
+		node["BaseExp"] << str[index];
+	if (!str[++index].empty())
+		node["JobExp"] << str[index];
+	if (!str[++index].empty())
+		node["MvpExp"] << str[index];
+	if (!str[++index].empty())
+		node["Attack"] << str[index];
+	if (!str[++index].empty())
+		node["Attack2"] << str[index];
+	if (!str[++index].empty())
+		node["Defense"] << str[index];
+	if (!str[++index].empty())
+		node["MagicDefense"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["Str"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["Agi"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["Vit"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["Int"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["Dex"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["Luk"] << str[index];
+	if (!str[++index].empty())
+		node["AttackRange"] << str[index];
+	if (!str[++index].empty())
+		node["SkillRange"] << str[index];
+	if (!str[++index].empty())
+		node["ChaseRange"] << str[index];
+	if (!str[++index].empty() && strcmp(str[index].c_str(), "Small") != 0)
+		node["Size"] << str[index];
+	if (!str[++index].empty() && strcmp(str[index].c_str(), "Formless") != 0)
+		node["Race"] << str[index];
+
+	ryml::NodeRef raceGroupsNode = node["RaceGroups"];
+	raceGroupsNode |= ryml::MAP;
+
+	for (uint16 i = 1; i < RC2_MAX; i++) {
+		if (!str[i + index].empty()) {
+			raceGroupsNode[c4::to_csubstr(script_get_constant_str("RC2_", i) + 4)] << (std::stoi(str[i + index]) ? "true" : "false");
+		}
+	}
+
+	index += RC2_MAX - 1;
+
+	if (!str[++index].empty() && strcmp(str[index].c_str(), "Neutral") != 0)
+		node["Element"] << str[index];
+	if (!str[++index].empty() && std::stoi(str[index]) > 1)
+		node["ElementLevel"] << str[index];
+	if (!str[++index].empty())
+		node["WalkSpeed"] << str[index];
+	if (!str[++index].empty())
+		node["AttackDelay"] << str[index];
+	if (!str[++index].empty())
+		node["AttackMotion"] << str[index];
+	if (!str[++index].empty())
+		node["DamageMotion"] << str[index];
+	if (!str[++index].empty())
+		node["DamageTaken"] << str[index];
+	if (!str[++index].empty())
+		node["GroupId"] << str[index];
+	if (!str[++index].empty())
+		node["Title"] << str[index];	
+	if (!str[++index].empty() && strcmp(str[index].c_str(), "06") != 0)
+		node["Ai"] << str[index];
+	if (!str[++index].empty() && strcmp(str[index].c_str(), "Normal") != 0)
+		node["Class"] << str[index];
+
+	ryml::NodeRef modes = node["Modes"];
+	modes |= ryml::MAP;
+
+	if (!str[++index].empty())
+		modes["CanMove"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["Looter"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["Aggressive"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["Assist"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["CastSensorIdle"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["NoRandomWalk"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["NoCast"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["CanAttack"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["CastSensorChase"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["ChangeChase"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["Angry"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["ChangeTargetMelee"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["ChangeTargetChase"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["TargetWeak"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["RandomTarget"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["IgnoreMelee"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["IgnoreMagic"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["IgnoreRanged"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["Mvp"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["IgnoreMisc"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["KnockBackImmune"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["TeleportBlock"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["FixedItemDrop"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["Detector"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["StatusImmune"] << (std::stoi(str[index]) ? "true" : "false");
+	if (!str[++index].empty())
+		modes["SkillImmune"] << (std::stoi(str[index]) ? "true" : "false");
+
+	ryml::NodeRef mvpDropsNode = node["MvpDrops"];
+	mvpDropsNode |= ryml::SEQ;
+
+	for (uint8 i = 0; i < MAX_MVP_DROP; i++) {
+		if (!str[++index].empty()) {
+			ryml::NodeRef entry = mvpDropsNode[i];
+			entry |= ryml::MAP;
+
+			entry["Item"] << str[index];
+			if (!str[++index].empty())
+				entry["Rate"] << str[index];
+			if (!str[++index].empty() && strcmp(str[index].c_str(), "None") != 0)
+				entry["RandomOptionGroup"] << str[index];
+			if (!str[++index].empty() && std::stoi(str[index]) >= 0)
+				entry["Index"] << str[index];
+		} else
+			index += 3;
+	}
+
+	ryml::NodeRef dropsNode = node["Drops"];
+	dropsNode |= ryml::SEQ;
+
+	for (uint8 i = 0; i < MAX_MOB_DROP; i++) {
+		if (!str[++index].empty()) {
+			ryml::NodeRef entry = dropsNode[i];
+			entry |= ryml::MAP;
+
+			entry["Item"] << str[index];
+			if (!str[++index].empty())
+				entry["Rate"] << str[index];
+			if (!str[++index].empty())
+				entry["StealProtected"] << (std::stoi(str[index]) ? "true" : "false");
+			if (!str[++index].empty() && strcmp(str[index].c_str(), "None") != 0)
+				entry["RandomOptionGroup"] << str[index];
+			if (!str[++index].empty() && std::stoi(str[index]) >= 0)
+				entry["Index"] << str[index];
+		} else
+			index += 4;
+	}
+
+#ifdef RENEWAL
+	if (!str[++index].empty())
+		node["Resistance"] << std::stoi(str[index]);
+	if (!str[++index].empty())
+		node["MagicResistance"] << std::stoi(str[index]);
+#endif
+
+	if( !modes.has_children() ){
+		node.remove_child( modes );
+	}
+
+	if( !mvpDropsNode.has_children() ){
+		node.remove_child( mvpDropsNode );
+	}
+
+	if( !dropsNode.has_children() ){
+		node.remove_child( dropsNode );
+	}
+
+	return mob_db.parseBodyNode(node) > 0;
+}
+
+/**
+ * Read SQL mob_db table
+ */
+static int32 mob_read_sqldb(void)
+{
+	const char* mob_db_name[] = {
+		mob_table,
+		mob2_table
+	};
+
+	for( uint8 fi = 0; fi < ARRAYLENGTH(mob_db_name); ++fi ) {
+		// retrieve all rows from the mob database
+		if( SQL_ERROR == Sql_Query(mmysql_handle, "SELECT `id`,`name_aegis`,`name_english`,`name_japanese`,`level`,`hp`,`sp`,`base_exp`,`job_exp`,`mvp_exp`,`attack`,`attack2`,`defense`,`magic_defense`,`str`,`agi`,`vit`,`int`,`dex`,`luk`,`attack_range`,`skill_range`,`chase_range`,`size`,`race`,"
+			"`racegroup_goblin`,`racegroup_kobold`,`racegroup_orc`,`racegroup_golem`,`racegroup_guardian`,`racegroup_ninja`,`racegroup_gvg`,`racegroup_battlefield`,`racegroup_treasure`,`racegroup_biolab`,`racegroup_manuk`,`racegroup_splendide`,`racegroup_scaraba`,`racegroup_ogh_atk_def`,`racegroup_ogh_hidden`,"
+			"`racegroup_bio5_swordman_thief`,`racegroup_bio5_acolyte_merchant`,`racegroup_bio5_mage_archer`,`racegroup_bio5_mvp`,`racegroup_clocktower`,`racegroup_thanatos`,`racegroup_faceworm`,`racegroup_hearthunter`,`racegroup_rockridge`,`racegroup_werner_lab`,`racegroup_temple_demon`,`racegroup_illusion_vampire`,"
+			"`racegroup_malangdo`,`racegroup_ep172alpha`,`racegroup_ep172beta`,`racegroup_ep172bath`,`racegroup_illusion_turtle`,`racegroup_rachel_sanctuary`,`racegroup_illusion_luanda`,`racegroup_illusion_frozen`,`racegroup_illusion_moonlight`,`racegroup_ep16_def`,`racegroup_edda_arunafeltz`,`racegroup_lasagna`,`racegroup_glast_heim_abyss`,"
+			"`racegroup_destroyed_valkyrie_realm`,`racegroup_encroached_gephenia`,"
+			"`element`,`element_level`,`walk_speed`,`attack_delay`,`attack_motion`,`damage_motion`,`damage_taken`,`groupid`,`title`,`ai`,`class`,"
+			"`mode_canmove`,`mode_looter`,`mode_aggressive`,`mode_assist`,`mode_castsensoridle`,`mode_norandomwalk`,`mode_nocast`,`mode_canattack`,`mode_castsensorchase`,`mode_changechase`,`mode_angry`,`mode_changetargetmelee`,`mode_changetargetchase`,`mode_targetweak`,`mode_randomtarget`,`mode_ignoremelee`,`mode_ignoremagic`,`mode_ignoreranged`,`mode_mvp`,`mode_ignoremisc`,`mode_knockbackimmune`,`mode_teleportblock`,`mode_fixeditemdrop`,`mode_detector`,`mode_statusimmune`,`mode_skillimmune`,"
+			"`mvpdrop1_item`,`mvpdrop1_rate`,`mvpdrop1_option`,`mvpdrop1_index`,`mvpdrop2_item`,`mvpdrop2_rate`,`mvpdrop2_option`,`mvpdrop2_index`,`mvpdrop3_item`,`mvpdrop3_rate`,`mvpdrop3_option`,`mvpdrop3_index`,"
+			"`drop1_item`,`drop1_rate`,`drop1_nosteal`,`drop1_option`,`drop1_index`,`drop2_item`,`drop2_rate`,`drop2_nosteal`,`drop2_option`,`drop2_index`,`drop3_item`,`drop3_rate`,`drop3_nosteal`,`drop3_option`,`drop3_index`,`drop4_item`,`drop4_rate`,`drop4_nosteal`,`drop4_option`,`drop4_index`,`drop5_item`,`drop5_rate`,`drop5_nosteal`,`drop5_option`,`drop5_index`,`drop6_item`,`drop6_rate`,`drop6_nosteal`,`drop6_option`,`drop6_index`,`drop7_item`,`drop7_rate`,`drop7_nosteal`,`drop7_option`,`drop7_index`,`drop8_item`,`drop8_rate`,`drop8_nosteal`,`drop8_option`,`drop8_index`,`drop9_item`,`drop9_rate`,`drop9_nosteal`,`drop9_option`,`drop9_index`,`drop10_item`,`drop10_rate`,`drop10_nosteal`,`drop10_option`,`drop10_index`"
+#ifdef RENEWAL
+			",`resistance`,`magic_resistance`"
+#endif
+			" FROM `%s`", mob_db_name[fi]) ) {
+			Sql_ShowDebug(mmysql_handle);
+			continue;
+		}
+
+		uint32 total_columns = Sql_NumColumns(mmysql_handle);
+		uint64 total_rows = Sql_NumRows(mmysql_handle), rows = 0, count = 0;
+
+		ShowStatus("Loading '" CL_WHITE "%" PRIdPTR CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'\n", total_rows, mob_db_name[fi]);
+
+		// process rows one by one
+		while( SQL_SUCCESS == Sql_NextRow(mmysql_handle) ) {
+#ifdef DETAILED_LOADING_OUTPUT
+			ShowStatus("Loading [%" PRIu64 "/%" PRIu64 "] entries in '" CL_WHITE "%s" CL_RESET "'" CL_CLL "\r", ++rows, total_rows, mob_db_name[fi]);
+#endif
+			std::vector<std::string> data = {};
+
+			for (uint32 i = 0; i < total_columns; i++) {
+				char *str;
+
+				Sql_GetData(mmysql_handle, i, &str, nullptr);
+				if (str == nullptr)
+					data.push_back("");
+				else
+					data.push_back(str);
+			}
+
+			if (!mob_read_sqldb_sub(data))
+				continue;
+
+			count++;
+		}
+
+		// free the query result
+		Sql_FreeResult(mmysql_handle);
+
+		ShowStatus("Done reading '" CL_WHITE "%" PRIu64 CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'.\n", count, mob_db_name[fi]);
+	}
+
+	mob_db.loadingFinished();
+
+	return 0;
+}
+
+const std::string MobAvailDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/" + DBIMPORT + "/mob_avail.yml";
+}
+
+/**
+ * Reads and parses an entry from the mob_avail.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 MobAvailDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string mob_name;
+
+	if (!this->asString(node, "Mob", mob_name))
+		return 0;
+
+	std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname(mob_name.c_str());
+
+	if (mob == nullptr) {
+		this->invalidWarning(node["Mob"], "Unknown mob %s.\n", mob_name.c_str());
+		return 0;
+	}
+
+	if (this->nodeExists(node, "Sprite")) {
+		std::string sprite;
+
+		if (!this->asString(node, "Sprite", sprite))
+			return 0;
+
+		int64 constant;
+
+		if (script_get_constant(sprite.c_str(), &constant)) {
+			if (npcdb_checkid(constant) == 0 && pcdb_checkid(constant) == 0) {
+				this->invalidWarning(node["Sprite"], "Unknown sprite constant %s.\n", sprite.c_str());
+				return 0;
+			}
+		} else {
+			std::shared_ptr<s_mob_db> sprite_mob = mobdb_search_aegisname(sprite.c_str());
+
+			if (sprite_mob == nullptr) {
+				this->invalidWarning(node["Sprite"], "Unknown mob sprite constant %s.\n", sprite.c_str());
+				return 0;
+			}
+
+			constant = sprite_mob->id;
+		}
+
+		mob->vd.look[LOOK_BASE] = static_cast<int32>( constant );
+		mob->vd.look[LOOK_BODY2] = static_cast<int32>( constant );
+	} else {
+		this->invalidWarning(node["Sprite"], "Sprite is missing.\n");
+		return 0;
+	}
+
+	if (this->nodeExists(node, "Sex")) {
+		if (pcdb_checkid(mob->vd.look[LOOK_BASE]) == 0) {
+			this->invalidWarning(node["Sex"], "Sex is only applicable to Job sprites.\n");
+			return 0;
+		}
+
+		std::string sex;
+
+		if (!this->asString(node, "Sex", sex))
+			return 0;
+
+		std::string sex_constant = "SEX_" + sex;
+
+		int64 constant;
+
+		if (!script_get_constant(sex_constant.c_str(), &constant)) {
+			this->invalidWarning(node["Sex"], "Unknown sex constant %s.\n", sex.c_str());
+			return 0;
+		}
+
+		if (constant < SEX_FEMALE || constant > SEX_MALE) {
+			this->invalidWarning(node["Sex"], "Sex %s is not valid.\n", sex.c_str());
+			return 0;
+		}
+
+		mob->vd.sex = (char)constant;
+	}
+
+	if (this->nodeExists(node, "HairStyle")) {
+		if (pcdb_checkid(mob->vd.look[LOOK_BASE]) == 0) {
+			this->invalidWarning(node["HairStyle"], "HairStyle is only applicable to Job sprites.\n");
+			return 0;
+		}
+
+		uint16 hair_style;
+
+		if (!this->asUInt16(node, "HairStyle", hair_style))
+			return 0;
+
+		if (hair_style < MIN_HAIR_STYLE || hair_style > MAX_HAIR_STYLE) {
+			this->invalidWarning(node["HairStyle"], "HairStyle %d is out of range %d~%d. Setting to MIN_HAIR_STYLE.\n", hair_style, MIN_HAIR_STYLE, MAX_HAIR_STYLE);
+			hair_style = MIN_HAIR_STYLE;
+		}
+
+		mob->vd.look[LOOK_HAIR] = hair_style;
+	}
+
+	if (this->nodeExists(node, "HairColor")) {
+		if (pcdb_checkid(mob->vd.look[LOOK_BASE]) == 0) {
+			this->invalidWarning(node["HairColor"], "HairColor is only applicable to Job sprites.\n");
+			return 0;
+		}
+
+		uint16 hair_color;
+
+		if (!this->asUInt16(node, "HairColor", hair_color))
+			return 0;
+
+		if (hair_color < MIN_HAIR_COLOR || hair_color > MAX_HAIR_COLOR) {
+			this->invalidWarning(node["HairColor"], "HairColor %d is out of range %d~%d. Setting to MIN_HAIR_COLOR.\n", hair_color, MIN_HAIR_COLOR, MAX_HAIR_COLOR);
+			hair_color = MIN_HAIR_COLOR;
+		}
+
+		mob->vd.look[LOOK_HAIR_COLOR] = hair_color;
+	}
+
+	if (this->nodeExists(node, "ClothColor")) {

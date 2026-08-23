@@ -1,0 +1,314 @@
+ */
+function requestMoveItem(index, fromContent, toContent, isAdding) {
+	let count;
+	const item = isAdding ? _input[index] : _output[index];
+	const isStackable =
+		item.type !== ItemType.WEAPON &&
+		item.type !== ItemType.EQUIP &&
+		item.type !== ItemType.PETEGG &&
+		item.type !== ItemType.PETEQUIP;
+
+	if (isAdding) {
+		count = isFinite(_input[index].count) ? _input[index].count : 1;
+	} else {
+		count = _output[index].count;
+	}
+
+	if ((_type === NpcStore.Type.BUY || _type === NpcStore.Type.VENDING_STORE) && !isStackable && isAdding) {
+		if (toContent.querySelector(`.item[data-index="${item.index}"]`)) {
+			return false;
+		}
+	}
+
+	if (item.count === 1 || (_type === NpcStore.Type.SELL && _preferences.select_all) || !isStackable) {
+		transferItem(fromContent, toContent, isAdding, index, isFinite(item.count) ? item.count : 1);
+		return false;
+	}
+
+	InputBox.append();
+	InputBox.setType('number', false, count);
+	InputBox.onSubmitRequest = function (_count) {
+		InputBox.remove();
+		if (_count > 0) {
+			transferItem(fromContent, toContent, isAdding, index, _count);
+		}
+	};
+}
+
+/**
+ * Drop an input in the InputWindow or OutputWindow
+ */
+function onDrop(event) {
+	let data;
+
+	event.preventDefault();
+	event.stopImmediatePropagation();
+
+	try {
+		data = JSON.parse(event.dataTransfer.getData('Text'));
+	} catch (_e) {
+		return false;
+	}
+
+	if (data.type !== 'item' || data.from !== 'NpcStore' || data.container === this.className) {
+		return false;
+	}
+
+	const root = NpcStore.getRoot();
+
+	requestMoveItem(
+		data.index,
+		root.querySelector('.' + data.container + ' .content'),
+		this.querySelector('.content'),
+		this.className.indexOf('OutputWindow') !== -1
+	);
+
+	return false;
+}
+
+/**
+ * Get informations about an item
+ */
+function onItemInfo(event) {
+	const index = parseInt(this.parentNode.getAttribute('data-index'), 10);
+	const item = _input[index];
+
+	event.stopImmediatePropagation();
+
+	if (!item) {
+		return false;
+	}
+
+	if (ItemInfo.uid === item.ITID) {
+		ItemInfo.remove();
+		return false;
+	}
+
+	ItemInfo.append();
+	ItemInfo.uid = item.ITID;
+	ItemInfo.setItem(item);
+	return false;
+}
+
+/**
+ * Select an item, put it on the other box
+ */
+function onItemSelected() {
+	let from, to;
+
+	if ((_type === NpcStore.Type.BUY || _type === NpcStore.Type.VENDING_STORE) && !Session.isTouchDevice) {
+		return;
+	}
+
+	const root = NpcStore.getRoot();
+	const input = root.querySelector('.InputWindow');
+
+	if (input.contains(this)) {
+		from = input;
+		to = root.querySelector('.OutputWindow');
+	} else {
+		from = root.querySelector('.OutputWindow');
+		to = input;
+	}
+
+	requestMoveItem(
+		parseInt(this.getAttribute('data-index'), 10),
+		from.querySelector('.content'),
+		to.querySelector('.content'),
+		from === input
+	);
+}
+
+/**
+ * Focus an item
+ */
+function onItemFocus() {
+	const root = NpcStore.getRoot();
+	root.querySelectorAll('.item.selected').forEach(el => el.classList.remove('selected'));
+	this.classList.add('selected');
+}
+
+/**
+ * Update scroll by block (32px)
+ */
+function onScroll(event) {
+	let delta;
+
+	if (event.deltaY) {
+		delta = event.deltaY > 0 ? -1 : 1;
+	} else if (event.wheelDelta) {
+		delta = event.wheelDelta / 120;
+	} else if (event.detail) {
+		delta = -event.detail;
+	}
+
+	this.scrollTop = Math.floor(this.scrollTop / 32) * 32 - delta * 32;
+	event.preventDefault();
+}
+
+/**
+ * Start dragging an item
+ */
+function onDragStart(event) {
+	const root = NpcStore.getRoot();
+	const InputWindow = root.querySelector('.InputWindow');
+	const OutputWindow = root.querySelector('.OutputWindow');
+	const AvailableItemsWindow = root.querySelector('.AvailableItemsWindow');
+
+	let container;
+	if (InputWindow.contains(this)) {
+		container = InputWindow.className;
+	} else if (AvailableItemsWindow.contains(this)) {
+		container = AvailableItemsWindow.className;
+	} else {
+		container = OutputWindow.className;
+	}
+
+	const img = new Image();
+	const bgImage = this.firstChild.style.backgroundImage;
+	const match = bgImage.match(/url\(["']?([^"')]+)["']?\)/);
+	if (match) {
+		img.decoding = 'async';
+		img.src = match[1];
+		event.dataTransfer.setDragImage(img, 12, 12);
+	}
+
+	event.dataTransfer.setData(
+		'Text',
+		JSON.stringify(
+			(window._OBJ_DRAG_ = {
+				type: 'item',
+				from: 'NpcStore',
+				container: container,
+				index: this.getAttribute('data-index')
+			})
+		)
+	);
+}
+
+/**
+ * Option to automatically buy/sell all items instead of specify the amount
+ */
+function onToggleSelectAmount() {
+	_preferences.select_all = !_preferences.select_all;
+
+	Client.loadFile(
+		DB.INTERFACE_PATH + 'checkbox_' + (_preferences.select_all ? 1 : 0) + '.bmp',
+		function (data) {
+			this.style.backgroundImage = `url(${data})`;
+		}.bind(this)
+	);
+}
+
+/**
+ * Handles the packet to send to the server when closing stores
+ */
+NpcStore.closeStore = function () {
+	NpcStore.remove();
+	const root = NpcStore.getRoot();
+	root.querySelectorAll('.total').forEach(el => {
+		el.style.display = '';
+	});
+};
+
+/**
+ * Handles packet to close store based on the store type
+ */
+NpcStore.StoreClosePacket = function (type) {
+	const root = NpcStore.getRoot();
+	const inputWindow = root.querySelector('.InputWindow');
+	const outputWindow = root.querySelector('.OutputWindow');
+
+	InputBox.remove();
+
+	let pkt;
+
+	if (PACKETVER.value < 20131223) {
+		if (type === NpcStore.Type.SELL) {
+			pkt = new PACKET.CZ.PC_SELL_ITEMLIST();
+		} else {
+			pkt = new PACKET.CZ.PC_PURCHASE_ITEMLIST();
+		}
+	} else {
+		switch (type) {
+			case NpcStore.Type.MARKETSHOP:
+				pkt = new PACKET.CZ.NPC_MARKET_CLOSE();
+				inputWindow.style.display = '';
+				outputWindow.style.display = '';
+				break;
+			case NpcStore.Type.BARTER_MARKET:
+				pkt = new PACKET.CZ.NPC_BARTER_MARKET_CLOSE();
+				break;
+			case NpcStore.Type.BARTER_MARKET_EXTENDED:
+				pkt = new PACKET.CZ.NPC_EXPANDED_BARTER_MARKET_CLOSE();
+				break;
+			default:
+				pkt = new PACKET.CZ.NPC_TRADE_QUIT();
+				break;
+			case NpcStore.Type.VENDING_STORE:
+			case NpcStore.Type.BUYING_STORE:
+				_closePacketSent = true;
+				return;
+		}
+	}
+	_closePacketSent = true;
+	Network.sendPacket(pkt);
+};
+
+/**
+ * Returns Npc Store Type
+ */
+NpcStore.getCurrentType = function () {
+	return _type;
+};
+
+/**
+ * Returns the current preference for NPCStore Type
+ */
+function getCurrentPref() {
+	if (!_preferences[_type]) {
+		_preferences[_type] = JSON.parse(JSON.stringify(initialPreferences[_type] || initialPreferences.DEFAULT));
+	}
+	return _preferences[_type];
+}
+
+/**
+ * Update Marketshop Result UI
+ */
+NpcStore.onMarketShopResultUI = function (itemList) {
+	const root = NpcStore.getRoot();
+	const InputWindow = root.querySelector('.InputWindow');
+	const OutputWindow = root.querySelector('.OutputWindow');
+	const OutputWindowContent = OutputWindow.querySelector('.content');
+	const resultUI = root.querySelector('.PurchaseResult');
+	const resultUIContent = resultUI.querySelector('.content');
+
+	InputWindow.style.display = 'none';
+	OutputWindow.style.display = 'none';
+	resultUI.style.display = 'block';
+	resultUIContent.innerHTML = '';
+
+	if (!itemList || itemList.length === 0) {
+		return;
+	}
+
+	resultUIContent.innerHTML = OutputWindowContent.innerHTML;
+
+	resultUI.querySelector('.resize').addEventListener('mousedown', () => {
+		onResize(resultUI);
+	});
+};
+
+/**
+ * Exports
+ */
+NpcStore.onSubmit = function onSubmit(/* itemList */) {};
+
+NpcStore.setClosePacketSent = function (bool) {
+	_closePacketSent = bool;
+};
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(NpcStore);
