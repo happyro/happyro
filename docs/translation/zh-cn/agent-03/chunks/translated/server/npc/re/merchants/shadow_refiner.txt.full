@@ -1,0 +1,168 @@
+//===== rAthena Script =======================================
+//= Shadow Blacksmith
+//===== Description: =========================================
+//= [Official Conversion]
+//= Shadow equipments refining NPC.
+//===== Changelog: ===========================================
+//= 1.0 First version [Aleos]
+//= 1.1 Removed re-roll behavior and fetch materials from db
+//=     [Secret]
+//= 1.2 Added Refine UI [Atemo, Lemongrass]
+//= 1.3 Moved to Cash Mall [Lemongrass]
+//============================================================
+-	script	::ShadowBlacksmith	-1,{
+	if( getbattleflag( "feature.refineui" ) ){
+		mes "[影子铁匠]";
+		mes "现在由巴斯塔负责影子装备精炼。";
+		mes "想精炼影子装备请去找他。";
+		close;
+	}
+
+	.@zeny_cost = 200000; // Zeny cost is 200,000 according to official script [Secret]
+	disable_items;
+	mes "[影子铁匠]";
+	mes "想精炼影子装备吗？选择你的矿石吧！";
+	next;
+	setarray .@indices[1], EQI_SHADOW_ARMOR, EQI_SHADOW_WEAPON, EQI_SHADOW_SHIELD, EQI_SHADOW_SHOES, EQI_SHADOW_ACC_R, EQI_SHADOW_ACC_L;
+	.@indlen = getarraysize(.@indices) - 1;
+	for(.@i = 1; .@i <= .@indlen; .@i++)
+		.@menu$ = .@menu$ + (getequipisequiped(.@indices[.@i]) ? getequipname(.@indices[.@i]) : F_getpositionname(.@indices[.@i]) +"-[未装备]") +":";
+	.@menu$ = .@menu$ + "精炼说明";
+	.@choice = select(.@menu$);
+	if (.@choice == .@indlen + 1) { // 精炼说明
+		mes "[影子铁匠]";
+		mes "影子装备精炼后会获得额外加成，就像普通装备一样。";
+		next;
+		mes "[影子铁匠]";
+		mes "武器：每成功精炼 +1，ATK、MATK 增加 1。";
+		mes "其他：每成功精炼 +1，HP 增加 10。";
+		next;
+		mes "[影子铁匠]";
+		mes "所有类型的神之金属和铝都可用于精炼影子装备。每次尝试还需支付 20,000 Zeny。";
+		next;
+		mes "[影子铁匠]";
+		mes "HD 矿石可用于至少 +7 的装备，只要持续与我对话，就能防止装备损坏。";
+		close;
+	}
+
+	.@part = .@indices[.@choice];
+
+	if (!getequipisequiped(.@part)) {
+		mes "[影子铁匠]";
+		mes "这里什么都没有！";
+		close;
+	}
+	.@equip_id = getequipid(.@part);
+	setarray .@card[0], getequipcardid(.@part,0), getequipcardid(.@part,1), getequipcardid(.@part,2), getequipcardid(.@part,3);
+
+	while(1) {
+		.@equip_refine = getequiprefinerycnt(.@part);
+		mes "[影子铁匠]";
+		mes "我需要 " + callfunc("F_InsertComma", .@zeny_cost) + " Zeny 作为每次精炼的费用。";
+		mes "选择矿石开始精炼。";
+		next;
+
+		.@material[0] = getequiprefinecost(.@part, REFINE_COST_NORMAL, REFINE_MATERIAL_ID);
+		.@material[1] = getequiprefinecost(.@part, REFINE_COST_ENRICHED, REFINE_MATERIAL_ID);
+		.@material[2] = getequiprefinecost(.@part, REFINE_COST_HD, REFINE_MATERIAL_ID);
+		.@is_enriched = false;
+
+		if (countitem(.@material[0]))
+			.@mate$[0] = getitemname(.@material[0]);
+		else
+			.@mate$[0] = "^8C8C8C"+ getitemname(.@material[0]) +"^000000";
+		if (countitem(.@material[1]))
+			.@mate$[1] = getitemname(.@material[1]);
+		else
+			.@mate$[1] = "^8C8C8C"+ getitemname(.@material[1]) +"^000000";
+		if (.@equip_refine > 6 && countitem(.@material[2]))
+			.@mate$[2] = getitemname(.@material[2]);
+		else
+			.@mate$[2] = "^8C8C8C"+ getitemname(.@material[2]) +"^000000";
+
+		switch( select( .@mate$[0], .@mate$[1], .@mate$[2], "Cancel" ) ) {
+		case 1:// NORMAL
+			.@choose = .@material[0];
+			break;
+		case 2:// ENRICHED
+			.@is_enriched = true;
+			.@choose = .@material[1];
+			break;
+		case 3:// HD
+			if (.@equip_refine < 7) {
+				mes "[影子铁匠]";
+				mes "HD 矿石只能用于 +7 或更高精炼等级的装备。";
+				close;
+			}
+			.@hoihoi = 1;
+			.@choose = .@material[2];
+			break;
+		case 4:
+			mes "[影子铁匠]";
+			mes "你取消了精炼。";
+			close;
+		}
+		if (!countitem(.@choose)) {
+			mes "[影子铁匠]";
+			mes "你的"+ getitemname(.@choose) +"数量不足。";
+			close;
+		}
+		if (Zeny < .@zeny_cost) {
+			mes "[影子铁匠]";
+			mes "你的 Zeny 不足。";
+			close;
+		}
+		if (.@equip_refine > 9) {
+			mes "[影子铁匠]";
+			mes "影子装备最多只能精炼到 +10……";
+			close;
+		}
+		if (!getequipisenableref(.@part)) {
+			mes "[影子铁匠]";
+			mes "这个物品无法精炼。";
+			close;
+		}
+		if (getequippercentrefinery(.@part) < 100) {
+			mes "[影子铁匠]";
+			mes "影子装备的安全精炼等级为 +4。";
+			if (!.@hoihoi)
+				mes "后续精炼可能会损坏影子装备。要开始吗？";
+			else
+				mes "下一次精炼失败会降低精炼等级。要精炼吗？";
+			next;
+			if (select("继续","Cancel") == 2) {
+				mes "[影子铁匠]";
+				mes "嘿，我就知道！";
+				close;
+			}
+		}
+		mes "[影子铁匠]";
+		mes "那么……开始吧！";
+		next;
+		delitem .@choose,1;
+		Zeny -= .@zeny_cost;
+
+		// anti-hack
+		if (callfunc("F_IsEquipIDHack", .@part, .@equip_id) || callfunc("F_IsEquipCardHack", .@part, .@card[0], .@card[1], .@card[2], .@card[3]) || callfunc("F_IsEquipRefineHack", .@part, .@equip_refine))
+			close;
+
+		if (getequippercentrefinery(.@part, .@is_enriched) > rand(100)) {
+			successrefitem .@part;
+			mes "[影子铁匠]";
+			mes "成功了！成功了！";
+			next;
+		} else {
+			if (.@hoihoi)
+				downrefitem .@part;
+			else
+				failedrefitem .@part;
+			mes "[影子铁匠]";
+			mes "奥丁啊，不！";
+			close;
+		}
+	}
+}
+
+//moc_paraup,45,185,5	duplicate(ShadowBlacksmith)	Shadow Blacksmith#eden1	4_F_JOB_BLACKSMITH // Commented out until it's added to the map index
+//prt_in,61,54,3	duplicate(ShadowBlacksmith)	Shadow Blacksmith#itemmall	4_F_JOB_BLACKSMITH
+itemmall,31,76,3	duplicate(ShadowBlacksmith)	Shadow Blacksmith#itemmall	4_F_JOB_BLACKSMITH

@@ -1,0 +1,500 @@
+	mes "如果你连他都对付不了，现在也无法对付神，对吧？";
+	npctalk "Morroc: 如果你连他都对付不了，现在也无法对付神，对吧？";
+	next;
+	mes "[Morroc]";
+	mes "我会看着你。呜哈哈哈！";
+	npctalk "Morroc: 我会看着你。呜哈哈哈！";
+	close2;
+	cutin "",255;
+	if ('step == 6) {
+		'step = 7;
+		setpcblock PCBLOCK_NPC, true;
+		enablenpc instance_npcname("#fire_event01");
+		donpcevent instance_npcname("#gate_to_fire") + "::OnEnable";
+		sleep2 2000;
+		setpcblock PCBLOCK_NPC, false;
+		specialeffect EF_ENTRY;
+		cloakonnpc instance_npcname("Morroc#mockid02");	// cloakonnpc to properly display the previous effect
+	}
+	end;
+}
+
+1@eom,104,120,0	script	#gate_to_fire	WARPNPC,1,1,{
+	end;
+OnTouch_:
+	if (isbegin_quest(7603) == 0 && isbegin_quest(7604) == 0)
+		setquest 7603;
+	warp 'map_eom$,132,93;
+	end;
+OnEnable:
+	enablenpc instance_npcname("#gate_to_fire");
+	specialeffect EF_METEORSTORM;
+	sleep 1000;
+	specialeffect EF_MAPPILLAR;
+	end;
+}
+
+1@eom,132,93,0	script	#fire_event01	HIDDEN_WARP_NPC,1,1,{
+	end;
+OnTouch_:
+	disablenpc instance_npcname("#fire_event01");
+	sleep 1000;
+	mapannounce 'map_eom$, "咕……", bc_map, 0xff0000;
+	sleep 3000;
+	mapannounce 'map_eom$, "我闻到了人类的气味……咕……", bc_map, 0xff0000;
+	monster 'map_eom$,139,101, "Frenzied Kasa",3089,1;	// MM_LOCO_KASA
+	sleep 1000;
+	monster 'map_eom$,142, 98, "Frenzied Kasa",3089,1;
+	sleep 1000;
+	monster 'map_eom$,144, 92, "Frenzied Kasa",3089,1;
+	sleep 3000;
+	monster 'map_eom$,145,104, "Frenzied Kasa",3089,1;
+	sleep 1000;
+	monster 'map_eom$,148, 98, "Frenzied Kasa",3089,1;
+	sleep 1000;
+	monster 'map_eom$,150, 93, "Frenzied Kasa",3089,1;
+	sleep 3000;
+	monster 'map_eom$,151,106, "Frenzied Kasa",3089,1;
+	sleep 1000;
+	monster 'map_eom$,153,100, "Frenzied Kasa",3089,1;
+	sleep 1000;
+	monster 'map_eom$,156, 95, "Frenzied Kasa",3089,1;
+	mapannounce 'map_eom$, "……燃烧！", bc_map, 0xff0000;
+	donpcevent instance_npcname("#skollmaster") + "::OnStart";
+	end;
+}
+
+1@eom,3,1,0	script	#skollmaster	CLEAR_NPC,{
+	end;
+OnStart:
+	enablenpc instance_npcname("#skollmaster");
+	enablenpc instance_npcname("Flowing Lava#lavapond01");
+	enablenpc instance_npcname("Flowing Lava#lavapond02");
+	enablenpc instance_npcname("#lavazone11");
+	enablenpc instance_npcname("#lavazone12");
+	enablenpc instance_npcname("#lavazone21");
+	enablenpc instance_npcname("#lavazone22");
+	'flowing_lava_deactivate[0] = 'flowing_lava_deactivate[1] = false;
+
+	monster 'map_eom$,148,98, "Muspellskoll",3092,1, instance_npcname("#skollmaster") + "::OnMobDead";	// MM_MUSPELLSKOLL
+	'boss_id = $@mobid[0];
+	getunitdata 'boss_id, .@data;
+	'boss_hp = .@data[UMOB_MAXHP];
+	sleep 1000;
+	if ('boss_id)
+		unittalk 'boss_id, "You're the ones... 咕…… Good, I'll crush your bones! 咕……";
+	sleep 4000;
+	if ('boss_id)
+		donpcevent instance_npcname("#skollmaster") + "::OnLava_heal";
+	end;
+
+OnLava_heal:
+	'lava_heal = true;
+	donpcevent instance_npcname("#fire_combo") + "::OnEnd";
+	stopnpctimer instance_npcname("#fire_hpcheck");
+	callsub S_Event, 0, 156,117;
+	initnpctimer;
+	end;
+OnTimer2000:
+	callsub S_Event, 1, 180,129;
+	end;
+OnTimer4000:
+	callsub S_ReSpawn, 168,121;
+	unitskilluseid 'boss_id, "CR_REFLECTSHIELD",1;
+	unittalk 'boss_id, "Let's do this again. Come on!";
+	donpcevent instance_npcname("#loco_call") + "::OnSpawn";
+	end;
+OnTimer6000:
+	stopnpctimer;
+	'lava_heal = false;
+	donpcevent instance_npcname("#fire_hpcheck") + "::OnStart";
+	donpcevent instance_npcname("#fire_combo") + "::OnEvent";
+	end;
+S_ReSpawn:
+	getunitdata 'boss_id, .@data;
+	'boss_hp = .@data[UMOB_HP];
+	killmonster 'map_eom$, instance_npcname("#skollmaster") + "::OnMobDead";
+	monster 'map_eom$,getarg(0),getarg(1), "Muspellskoll",3092,1, instance_npcname("#skollmaster") + "::OnMobDead";	// MM_MUSPELLSKOLL
+	'boss_id = $@mobid[0];
+	setunitdata 'boss_id, UMOB_HP, 'boss_hp;
+	return;
+S_Event:
+	callsub S_ReSpawn, getarg(1),getarg(2);
+	if ('flowing_lava_deactivate[ getarg(0) ] == false) {
+		for ( .@i = 0; .@i < 8; .@i++ ) {
+			unitskilluseid 'boss_id, "AL_HEAL",11;
+			sleep 100;
+			if ('boss_id == 0)
+				end;
+		}
+		unitskilluseid 'boss_id, "AL_HEAL",11;
+	}
+	mapannounce 'map_eom$, "尼德霍格：穆斯佩尔斯考尔正试图利用熔岩再生！", bc_map, 0x00ff00;
+	getunitdata 'boss_id, .@data;
+	'boss_hp = .@data[UMOB_HP];
+	donpcevent instance_npcname("#loco_call") + "::OnSpawn";
+	return;
+
+OnMobDead:
+	stopnpctimer instance_npcname("#fire_hpcheck");
+	stopnpctimer instance_npcname("#muspellskoll_event_1");
+	stopnpctimer instance_npcname("#muspellskoll_event_2");
+	stopnpctimer instance_npcname("#muspellskoll_event_3");
+	donpcevent instance_npcname("#fire_combo") + "::OnEnd";
+	donpcevent instance_npcname("#loco_call") + "::OnEnd";
+
+	killmonster 'map_eom$, instance_npcname("#skollmaster") + "::OnMobDead";
+	mapannounce 'map_eom$, "尼德霍格：穆斯佩尔斯考尔的影响消散了，新的传送门出现了。", bc_map, 0x00ff00;
+
+	enablenpc instance_npcname("Nidhogg#eomnyd03");
+	enablenpc instance_npcname("#fire_to_center");
+	enablenpc instance_npcname("Strange Young Man#mocadt01");
+
+	'step = 8;
+	donpcevent instance_npcname("#demon_god_variables") + "::OnVariableReset";
+	end;
+
+OnTest_hp:
+	if ('boss_id && mobcount( 'map_eom$, instance_npcname("#skollmaster") + "::OnMobDead" ) > 0)
+		setunitdata 'boss_id, UMOB_HP, 2000000;
+	end;
+}
+
+1@eom,3,7,0	script	#fire_hpcheck	CLEAR_NPC,{
+	end;
+OnStart:
+	initnpctimer;
+	end;
+OnTimer3000:
+	getunitdata 'boss_id, .@data;
+	.@hp = .@data[UMOB_HP];
+	if ('boss_hp < .@hp) {
+		initnpctimer;
+		end;
+	}
+	if (('boss_hp - .@hp) > 1000000) {
+		'boss_hp = .@hp;
+		donpcevent instance_npcname("#fire_hpcheck") + "::OnHeal";	// the event can stack and the boss can stay in this state until it demise
+		initnpctimer;
+		end;
+	}
+	'boss_hp = .@hp;
+
+	if ('lava_heal == false) {
+		if (.@hp > 29500000 && .@hp < 30000000 || .@hp > 35500000 && .@hp < 36000000 || .@hp > 39500000 && .@hp < 40000000 || .@hp > 44500000 && .@hp < 45000000) {
+			unittalk 'boss_id, "I'm not going down without a fight!";
+			donpcevent instance_npcname("#skollmaster") + "::OnLava_heal";
+		}
+	}
+	initnpctimer;
+	end;
+
+OnHeal:
+	if ('fire_combo)
+		donpcevent instance_npcname("#fire_combo") + "::OnEnd";
+	unittalk 'boss_id, "Do I look easy to you? I'll burn you to ashes!";
+	sleep 2000;
+	if ('boss_id == 0)
+		end;
+	getunitdata 'boss_id, .@data;
+	unitskillusepos 'boss_id,"WZ_METEOR",11,.@data[UMOB_X],.@data[UMOB_Y],-50;
+	sleep 1000;
+	if ('boss_id == 0)
+		end;
+	for ( .@i = 0; .@i < 18; .@i++ ) {
+		unitskilluseid 'boss_id, "AL_HEAL",11;
+		sleep 200;
+		if ('boss_id == 0)
+			end;
+	}
+	getunitdata 'boss_id, .@data;
+	unitskillusepos 'boss_id,"WZ_METEOR",11,.@data[UMOB_X],.@data[UMOB_Y],-50;
+	for ( .@i = 0; .@i < 18; .@i++ ) {
+		unitskilluseid 'boss_id, "AL_HEAL",11;
+		sleep 200;
+		if ('boss_id == 0)
+			end;
+	}
+	getunitdata 'boss_id, .@data;
+	'boss_hp = .@data[UMOB_HP];
+	if (!'fire_combo)
+		donpcevent instance_npcname("#fire_combo") + "::OnEvent";
+	end;
+}
+
+1@eom,3,5,0	script	#loco_call	CLEAR_NPC,{
+	end;
+OnSpawn:
+	enablenpc instance_npcname("#loco_call");
+	initnpctimer;
+	getunitdata 'boss_id, .@data;
+	'x_loco = .@data[UMOB_X];
+	'y_loco = .@data[UMOB_Y];
+	end;
+OnTimer1000:
+	.@label$ = instance_npcname("#loco_call") + "::OnMobDead";
+	if (mobcount( 'map_eom$, .@label$ ) < 6)
+		areamonster 'map_eom$,('x_loco-5),('y_loco-5),('x_loco+5),('y_loco+5)," ",3089,3, .@label$;	// MM_LOCO_KASA
+	end;
+OnTimer16000:
+	stopnpctimer;
+	disablenpc instance_npcname("#loco_call");
+	end;
+OnMobDead:
+	end;
+OnEnd:
+	stopnpctimer;
+	disablenpc instance_npcname("#loco_call");
+	end;
+}
+
+1@eom,1,1,0	script	#muspellskoll_event_1	-1,{
+	end;
+OnEvent:
+	initnpctimer;
+	unittalk 'boss_id, "Crash and burn!";
+	end;
+OnTimer1000:
+	unitskilluseid 'boss_id, "NPC_FIRESTORM",3;
+	end;
+OnTimer3000:
+	stopnpctimer;
+	unitskilluseid 'boss_id, "WZ_SIGHTRASHER",10;
+	if ('fire_combo)
+		donpcevent instance_npcname("#fire_combo") + "::OnEvent";
+	end;
+}
+
+1@eom,1,1,0	script	#muspellskoll_event_2	-1,{
+	end;
+OnEvent:
+	initnpctimer;
+	unittalk 'boss_id, "咕……";
+	end;
+OnTimer1000:
+	getunitdata 'boss_id, .@data;
+	'bossx = .@data[UMOB_X];
+	'bossy = .@data[UMOB_Y];
+	unitskilluseid 'boss_id, "NPC_FIRESTORM",3;
+	end;
+OnTimer3000:
+	unitskillusepos 'boss_id,"WZ_FIREPILLAR",1,('bossx-3),('bossy+3),-50;
+	end;
+OnTimer5000:
+	unitskillusepos 'boss_id,"WZ_FIREPILLAR",1,('bossx+3),('bossy+3),-50;
+	end;
+OnTimer7000:
+	unitskillusepos 'boss_id,"WZ_FIREPILLAR",1,('bossx-3),('bossy-3),-50;
+	end;
+OnTimer9000:
+	unitskillusepos 'boss_id,"WZ_FIREPILLAR",1,('bossx+3),('bossy-3),-50;
+	end;
+OnTimer19000:
+	stopnpctimer;
+	if ('fire_combo)
+		donpcevent instance_npcname("#fire_combo") + "::OnEvent";
+	end;
+}
+
+1@eom,1,1,0	script	#muspellskoll_event_3	-1,{
+	end;
+OnEvent:
+	initnpctimer;
+	unittalk 'boss_id, "My fire will swallow you whole!";
+	end;
+OnTimer1000:
+	unitskilluseid 'boss_id, "NPC_FIRESTORM",3;
+	end;
+OnTimer2000:
+	donpcevent instance_npcname("#flamecross") + "::OnStart";
+	end;
+OnTimer7000:
+	getunitdata 'boss_id, .@data;
+	'bossx = .@data[UMOB_X];
+	'bossy = .@data[UMOB_Y];
+	unitskillusepos 'boss_id,"WZ_METEOR",5,('bossx),('bossy+5),-50;
+	end;
+OnTimer9000:
+	unitskillusepos 'boss_id,"WZ_METEOR",5,('bossx),('bossy-5),-50;
+	end;
+OnTimer11000:
+	unitskillusepos 'boss_id,"WZ_METEOR",5,('bossx),('bossy+10),-50;
+	end;
+OnTimer13000:
+	stopnpctimer;
+	unitskillusepos 'boss_id,"WZ_METEOR",5,'bossx,('bossy-10),-50;
+	if ('fire_combo)
+		donpcevent instance_npcname("#fire_combo") + "::OnEvent";
+	end;
+}
+
+1@eom,3,3,0	script	#fire_combo	CLEAR_NPC,{
+	end;
+OnEvent:
+	initnpctimer;
+	'fire_combo = true;
+	end;
+OnTimer10000:
+	stopnpctimer;
+	.@r = rand(1,4);
+	if (.@r == 1)
+		donpcevent instance_npcname("#muspellskoll_event_1") + "::OnEvent";
+	else if (.@r == 2)
+		donpcevent instance_npcname("#muspellskoll_event_2") + "::OnEvent";
+	else if (.@r == 3)
+		donpcevent instance_npcname("#muspellskoll_event_3") + "::OnEvent";
+	else
+		donpcevent instance_npcname("#flamecross") + "::OnSpawn";
+	end;
+OnEnd:
+	stopnpctimer;
+	'fire_combo = false;
+	disablenpc instance_npcname("#fire_combo");
+	end;
+}
+
+1@eom,3,8,0	script	#flamecross	CLEAR_NPC,{
+	end;
+OnStart:
+	getunitdata 'boss_id, .@data;
+	.@x = .@data[UMOB_X];
+	.@y = .@data[UMOB_Y];
+	callsub( S_Spawn,.@x,.@y,3 );
+	sleep 300;
+	callsub( S_Spawn,.@x,.@y,6 );
+	sleep 300;
+	callsub( S_Spawn,.@x,.@y,9 );
+	sleep 300;
+	callsub( S_Spawn,.@x,.@y,13 );
+	sleep 5000;
+	killmonster 'map_eom$, instance_npcname("#flamecross") + "::OnMobDead";
+	end;
+
+S_Spawn:
+	if (!'boss_id) {
+		killmonster 'map_eom$, instance_npcname("#flamecross") + "::OnMobDead";
+		end;
+	}
+	.@x = getarg(0);
+	.@y = getarg(1);
+	.@dxy = getarg(2);
+	.@label$ = instance_npcname("#flamecross") + "::OnMobDead";
+	monster 'map_eom$,(.@x+.@dxy),(.@y+.@dxy)," ",2960,1, .@label$;// MM_FLAMECROSS
+	monster 'map_eom$,(.@x-.@dxy),(.@y-.@dxy)," ",2960,1, .@label$;
+	monster 'map_eom$,(.@x+.@dxy),(.@y-.@dxy)," ",2960,1, .@label$;
+	monster 'map_eom$,(.@x-.@dxy),(.@y+.@dxy)," ",2960,1, .@label$;
+	return;
+
+OnSpawn:
+	getunitdata 'boss_id, .@data;
+	.@label$ = instance_npcname("#flamecross") + "::OnMobDead";	// same OnMobDead than OnStart?
+	if (mobcount( 'map_eom$, .@label$ ) < 2)
+		areamonster 'map_eom$,(.@data[UMOB_X]-1),(.@data[UMOB_Y]-1),(.@data[UMOB_X]+1),(.@data[UMOB_Y]+1)," ",3090,2, .@label$;	// MM_LOCO_SALAMANDER
+	if ('fire_combo)
+		donpcevent instance_npcname("#fire_combo") + "::OnEvent";
+	end;
+
+OnMobDead:
+	end;
+}
+
+1@eom,154,119,0	script	Flowing Lava#lavapond01	CLEAR_NPC,{	// todo, custom text
+	if (countitem(22566) < 1)
+		end;
+	mes "可以使用寒霜水晶阻挡熔岩流动。";
+	next;
+	if (select( "使用寒霜水晶", "不使用寒霜水晶" ) == 2)
+		end;
+	if ('flowing_lava_deactivate[0] == true)
+		end;
+	'flowing_lava_deactivate[0] = true;
+	delitem 22566,1;// Frost_Crystal
+	disablenpc instance_npcname("Flowing Lava#lavapond01");
+	donpcevent instance_npcname("Hardened Lava#lavaseal01") + "::OnEnable";
+	initnpctimer;
+	end;
+OnTimer300:
+	donpcevent instance_npcname("Hardened Lava#lavaseal01") + "::OnEffect";
+	end;
+OnTimer120000:
+	'flowing_lava_deactivate[0] = false;
+	donpcevent instance_npcname("Hardened Lava#lavaseal01") + "::OnDisable";
+	enablenpc instance_npcname("Flowing Lava#lavapond01");
+	mapannounce 'map_eom$, "尼德霍格：寒霜融化了。熔岩又开始流动！", bc_map, 0x00ff00;
+	stopnpctimer;
+	end;
+}
+
+1@eom,182,129,0	script	Flowing Lava#lavapond02	CLEAR_NPC,{	// todo, custom text
+	if (countitem(22566) < 1)
+		end;
+	mes "可以使用寒霜水晶阻挡熔岩流动。";
+	next;
+	if (select( "使用寒霜水晶", "不使用寒霜水晶" ) == 2)
+		end;
+	if ('flowing_lava_deactivate[1] == true)
+		end;
+	'flowing_lava_deactivate[1] = true;
+	delitem 22566,1;// Frost_Crystal
+	disablenpc instance_npcname("Flowing Lava#lavapond02");
+	donpcevent instance_npcname("Hardened Lava#lavaseal02") + "::OnEnable";
+	initnpctimer;
+	end;
+OnTimer300:
+	donpcevent instance_npcname("Hardened Lava#lavaseal02") + "::OnEffect";
+	end;
+OnTimer120000:
+	'flowing_lava_deactivate[1] = false;
+	donpcevent instance_npcname("Hardened Lava#lavaseal02") + "::OnDisable";
+	enablenpc instance_npcname("Flowing Lava#lavapond02");
+	mapannounce 'map_eom$, "尼德霍格：寒霜融化了。熔岩又开始流动！", bc_map, 0x00ff00;
+	stopnpctimer;
+	end;
+}
+
+1@eom,154,119,0	script	Hardened Lava#lavaseal01	CLEAR_NPC,{
+	end;
+OnEnable:
+	enablenpc instance_npcname("Hardened Lava#lavaseal01");
+	disablenpc instance_npcname("#lavazone11");
+	disablenpc instance_npcname("#lavazone12");
+	end;
+OnDisable:
+	stopnpctimer;
+	disablenpc instance_npcname("Hardened Lava#lavaseal01");
+	enablenpc instance_npcname("#lavazone11");
+	enablenpc instance_npcname("#lavazone12");
+	end;
+OnEffect:
+	initnpctimer;
+	specialeffect EF_LIGHTNINGLOADER;
+	end;
+OnTimer3000:
+	initnpctimer;
+	end;
+}
+
+1@eom,182,129,0	script	Hardened Lava#lavaseal02	CLEAR_NPC,{
+	end;
+OnEnable:
+	enablenpc instance_npcname("Hardened Lava#lavaseal02");
+	disablenpc instance_npcname("#lavazone21");
+	disablenpc instance_npcname("#lavazone22");
+	end;
+OnDisable:
+	stopnpctimer;
+	disablenpc instance_npcname("Hardened Lava#lavaseal02");
+	enablenpc instance_npcname("#lavazone21");
+	enablenpc instance_npcname("#lavazone22");
+	end;
+OnEffect:
+	initnpctimer;
+	specialeffect EF_LIGHTNINGLOADER;
+	end;
+OnTimer3000:
+	initnpctimer;
+	end;
+}
+
+1@eom,161,122,0	script	#lavazone11	HIDDEN_WARP_NPC,10,10,{
+	end;

@@ -1,0 +1,500 @@
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(mount_peco)
+{
+	nullpo_retr(-1, sd);
+
+	if (sd->disguise) {
+		clif_displaymessage(fd, msg_txt(sd,212)); // Cannot mount while in disguise.
+		return -1;
+	}
+
+	if( (sd->class_&MAPID_THIRDMASK) == MAPID_RUNE_KNIGHT && pc_checkskill(sd,RK_DRAGONTRAINING) > 0 ) {
+		if( !(sd->sc.option&OPTION_DRAGON) ) {
+			uint32 option = OPTION_DRAGON1;
+			if( message[0] ) {
+				int32 color = atoi(message);
+				option = ( color == 2 ? OPTION_DRAGON2 :
+				           color == 3 ? OPTION_DRAGON3 :
+				           color == 4 ? OPTION_DRAGON4 :
+				           color == 5 ? OPTION_DRAGON5 :
+				                        OPTION_DRAGON1 );
+			}
+			clif_displaymessage(sd->fd,msg_txt(sd,1119)); // You have mounted your Dragon.
+			pc_setoption(sd, sd->sc.option|option);
+		} else {
+			clif_displaymessage(sd->fd,msg_txt(sd,1120)); // You have released your Dragon.
+			pc_setoption(sd, sd->sc.option&~OPTION_DRAGON);
+		}
+		return 0;
+	}
+	if( (sd->class_&MAPID_THIRDMASK) == MAPID_RANGER && pc_checkskill(sd,RA_WUGRIDER) > 0 && (!pc_isfalcon(sd) || (pc_checkskill(sd, WH_HAWK_M) || battle_config.warg_can_falcon)) ) {
+		if( !pc_isridingwug(sd) ) {
+			clif_displaymessage(sd->fd,msg_txt(sd,1121)); // You have mounted your Warg.
+			pc_setoption(sd, sd->sc.option|OPTION_WUGRIDER);
+		} else {
+			clif_displaymessage(sd->fd,msg_txt(sd,1122)); // You have released your Warg.
+			pc_setoption(sd, sd->sc.option&~OPTION_WUGRIDER);
+		}
+		return 0;
+	}
+	if( (sd->class_&MAPID_THIRDMASK) == MAPID_MECHANIC ) {
+		if( !pc_ismadogear(sd) ) {
+			e_mado_type type = MADO_ROBOT;
+
+			if (message[0]) {
+				int32 tmp = strtol(message, nullptr, 10);
+
+				switch (tmp) {
+					case MADO_ROBOT:
+					case MADO_SUIT:
+						type = static_cast<e_mado_type>(tmp);
+						break;
+					default:
+						type = MADO_ROBOT;
+						break;
+				}
+			}
+
+			clif_displaymessage(sd->fd,msg_txt(sd,1123)); // You have mounted your Mado Gear.
+			pc_setmadogear(sd, true, type);
+		} else {
+			clif_displaymessage(sd->fd,msg_txt(sd,1124)); // You have released your Mado Gear.
+			pc_setmadogear(sd, false);
+		}
+		return 0;
+	}
+	if (!pc_isriding(sd)) { // if actually no peco
+
+		if (!pc_checkskill(sd, KN_RIDING)) {
+			clif_displaymessage(fd, msg_txt(sd,213)); // You can not mount a Peco Peco with your current job.
+			return -1;
+		}
+
+		pc_setoption(sd, sd->sc.option | OPTION_RIDING);
+		clif_displaymessage(fd, msg_txt(sd,102)); // You have mounted a Peco Peco.
+	} else {//Dismount
+		pc_setoption(sd, sd->sc.option & ~OPTION_RIDING);
+		clif_displaymessage(fd, msg_txt(sd,214)); // You have released your Peco Peco.
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *Spy Commands by Syrus22
+ *------------------------------------------*/
+ACMD_FUNC(guildspy)
+{
+	char guild_name[NAME_LENGTH];
+	nullpo_retr(-1, sd);
+
+	memset(guild_name, '\0', sizeof(guild_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!enable_spy)
+	{
+		clif_displaymessage(fd, msg_txt(sd,1125)); // The mapserver has spy command support disabled.
+		return -1;
+	}
+	if (!message || !*message || sscanf(message, "%23[^\n]", guild_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1126)); // Please enter a guild name/ID (usage: @guildspy <guild_name/ID>).
+		return -1;
+	}
+
+	auto g = guild_searchnameid(guild_name);
+	if (!g) {
+		clif_displaymessage(fd, msg_txt(sd,94)); // Incorrect name/ID, or no one from the specified guild is online.
+		return -1;
+	}
+
+	if (sd->guildspy == g->guild.guild_id) {
+		sd->guildspy = 0;
+		sprintf(atcmd_output, msg_txt(sd,103), g->guild.name); // No longer spying on the %s guild.
+		clif_displaymessage(fd, atcmd_output);
+	} else {
+		sd->guildspy = g->guild.guild_id;
+		sprintf(atcmd_output, msg_txt(sd,104), g->guild.name); // Spying on the %s guild.
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(partyspy)
+{
+	char party_name[NAME_LENGTH];
+	struct party_data *p;
+	nullpo_retr(-1, sd);
+
+	memset(party_name, '\0', sizeof(party_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!enable_spy)
+	{
+		clif_displaymessage(fd, msg_txt(sd,1125)); // The mapserver has spy command support disabled.
+		return -1;
+	}
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", party_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1127)); // Please enter a party name/ID (usage: @partyspy <party_name/ID>).
+		return -1;
+	}
+
+	if ((p = party_searchname(party_name)) != nullptr || // name first to avoid error when name begin with a number
+	    (p = party_search(atoi(message))) != nullptr) {
+		if (sd->partyspy == p->party.party_id) {
+			sd->partyspy = 0;
+			sprintf(atcmd_output, msg_txt(sd,105), p->party.name); // No longer spying on the %s party.
+			clif_displaymessage(fd, atcmd_output);
+		} else {
+			sd->partyspy = p->party.party_id;
+			sprintf(atcmd_output, msg_txt(sd,106), p->party.name); // Spying on the %s party.
+			clif_displaymessage(fd, atcmd_output);
+		}
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,96)); // Incorrect name/ID, or no one from the specified party is online.
+		return -1;
+	}
+
+	return 0;
+}
+
+ACMD_FUNC(clanspy){
+	char clan_name[NAME_LENGTH];
+	struct clan* c;
+	nullpo_retr(-1, sd);
+
+	memset(clan_name, '\0', sizeof(clan_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if( !enable_spy ){
+		clif_displaymessage(fd, msg_txt(sd, 1125)); // The mapserver has spy command support disabled.
+		return -1;
+	}
+
+	if( !message || !*message || sscanf( message, "%23[^\n]", clan_name ) < 1 ){
+		clif_displaymessage(fd, msg_txt(sd, 1499)); // Please enter a clan name/ID (usage: @clanspy <clan_name/ID>).
+		return -1;
+	}
+
+	if ((c = clan_searchname(clan_name)) != nullptr || // name first to avoid error when name begin with a number
+		(c = clan_search(atoi(message))) != nullptr) {
+		if (sd->clanspy == c->id) {
+			sd->clanspy = 0;
+			sprintf(atcmd_output, msg_txt(sd, 1500), c->name); // No longer spying on the %s clan.
+			clif_displaymessage(fd, atcmd_output);
+		}
+		else {
+			sd->clanspy = c->id;
+			sprintf(atcmd_output, msg_txt(sd, 1501), c->name); // Spying on the %s clan.
+			clif_displaymessage(fd, atcmd_output);
+		}
+	}
+	else {
+		clif_displaymessage(fd, msg_txt(sd, 1502)); // Incorrect clan name/ID.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * @repairall [Valaris]
+ *------------------------------------------*/
+ACMD_FUNC(repairall)
+{
+	int32 count, i;
+	nullpo_retr(-1, sd);
+
+	count = 0;
+	for (i = 0; i < MAX_INVENTORY; i++) {
+		if (sd->inventory.u.items_inventory[i].nameid && sd->inventory.u.items_inventory[i].attribute == 1 && !itemdb_ishatched_egg(&sd->inventory.u.items_inventory[i])) {
+			sd->inventory.u.items_inventory[i].attribute = 0;
+			clif_produceeffect(sd, 0, sd->inventory.u.items_inventory[i].nameid);
+			count++;
+		}
+	}
+
+	if (count > 0) {
+		clif_misceffect(*sd, NOTIFYEFFECT_REFINE_SUCCESS);
+		clif_equiplist(sd);
+		clif_displaymessage(fd, msg_txt(sd,107)); // All items have been repaired.
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,108)); // No item need to be repaired.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * @nuke [Valaris]
+ *------------------------------------------*/
+ACMD_FUNC(nuke)
+{
+	map_session_data *pl_sd;
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1128)); // Please enter a player name (usage: @nuke <char name>).
+		return -1;
+	}
+
+	if ((pl_sd = map_nick2sd(atcmd_player_name,false)) != nullptr) {
+		if (pc_get_group_level(sd) >= pc_get_group_level(pl_sd)) { // you can kill only lower or same GM level
+			skill_castend_nodamage_id(pl_sd, pl_sd, NPC_SELFDESTRUCTION, 99, gettick(), 0);
+			clif_displaymessage(fd, msg_txt(sd,109)); // Player has been nuked!
+		} else {
+			clif_displaymessage(fd, msg_txt(sd,81)); // Your GM level don't authorise you to do this action on this player.
+			return -1;
+		}
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * @tonpc
+ *------------------------------------------*/
+ACMD_FUNC(tonpc)
+{
+	char npcname[NPC_NAME_LENGTH];
+	npc_data *nd;
+
+	nullpo_retr(-1, sd);
+
+	memset(npcname, 0, sizeof(npcname));
+
+	if (!message || !*message || sscanf(message, "%49[^\n]", npcname) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1129)); // Please enter a NPC name (usage: @tonpc <NPC_name>).
+		return -1;
+	}
+
+	if ((nd = npc_name2id(npcname)) != nullptr) {
+		if (pc_setpos(sd, map_id2index(nd->m), nd->x, nd->y, CLR_TELEPORT) == SETPOS_OK)
+			clif_displaymessage(fd, msg_txt(sd,0)); // Warped.
+		else
+			return -1;
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,111)); // This NPC doesn't exist.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(shownpc)
+{
+	char NPCname[NPC_NAME_LENGTH];
+	nullpo_retr(-1, sd);
+
+	memset(NPCname, '\0', sizeof(NPCname));
+
+	if (!message || !*message || sscanf(message, "%49[^\n]", NPCname) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1130)); // Please enter a NPC name (usage: @enablenpc <NPC_name>).
+		return -1;
+	}
+
+	npc_data* nd = npc_name2id(NPCname);
+
+	if (nd) {
+		npc_enable(*nd, NPCVIEW_ENABLE);
+		clif_displaymessage(fd, msg_txt(sd,110)); // Npc Enabled.
+	} else {
+		clif_displaymessage(fd, msg_txt(sd,111)); // This NPC doesn't exist.
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(hidenpc)
+{
+	char NPCname[NPC_NAME_LENGTH];
+	nullpo_retr(-1, sd);
+
+	memset(NPCname, '\0', sizeof(NPCname));
+
+	if (!message || !*message || sscanf(message, "%49[^\n]", NPCname) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1131)); // Please enter a NPC name (usage: @hidenpc <NPC_name>).
+		return -1;
+	}
+
+	npc_data* nd = npc_name2id(NPCname);
+
+	if (!nd) {
+		clif_displaymessage(fd, msg_txt(sd,111)); // This NPC doesn't exist.
+		return -1;
+	}
+
+	npc_enable(*nd, NPCVIEW_DISABLE);
+	clif_displaymessage(fd, msg_txt(sd,112)); // Npc Disabled.
+	return 0;
+}
+
+ACMD_FUNC(loadnpc)
+{
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1132)); // Please enter a script file name (usage: @loadnpc <file name>).
+		return -1;
+	}
+
+	char path[1024];
+	atcommand_normalize_npc_path(path, message, sizeof(path));
+
+	if (!npc_addsrcfile(path, true)) {
+		clif_displaymessage(fd, msg_txt(sd,261)); // Script could not be loaded.
+		return -1;
+	}
+
+	npc_read_event_script();
+
+	ShowStatus( "NPC file '" CL_WHITE "%s" CL_RESET "' was loaded.\n", path );
+	npc_event_doall_path( script_config.init_event_name, path );
+
+	clif_displaymessage(fd, msg_txt(sd,262)); // Script loaded.
+	return 0;
+}
+
+ACMD_FUNC(unloadnpc)
+{
+	npc_data *nd;
+	char NPCname[NPC_NAME_LENGTH];
+	nullpo_retr(-1, sd);
+
+	memset(NPCname, '\0', sizeof(NPCname));
+
+	if (!message || !*message || sscanf(message, "%49[^\n]", NPCname) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1133)); // Please enter a NPC name (usage: @unloadnpc <NPC_name>).
+		return -1;
+	}
+
+	if ((nd = npc_name2id(NPCname)) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd,111)); // This NPC doesn't exist.
+		return -1;
+	}
+
+	npc_unload_duplicates(nd);
+	npc_unload(nd,true);
+	npc_read_event_script();
+	clif_displaymessage(fd, msg_txt(sd,112)); // Npc Disabled.
+	return 0;
+}
+
+ACMD_FUNC(reloadnpcfile) {
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,733)); // Please enter a NPC file name (usage: @reloadnpcfile <file name>).
+		return -1;
+	}
+
+	char path[1024];
+	atcommand_normalize_npc_path(path, message, sizeof(path));
+
+	if (npc_unloadfile(path))
+		clif_displaymessage(fd, msg_txt(sd,1386)); // File unloaded. Be aware that mapflags and monsters spawned directly are not removed.
+
+	if (!npc_addsrcfile(path, true)) {
+		clif_displaymessage(fd, msg_txt(sd,261)); // Script could not be loaded.
+		return -1;
+	}
+
+	npc_read_event_script();
+
+	ShowStatus( "NPC file '" CL_WHITE "%s" CL_RESET "' was reloaded.\n", path );
+	npc_event_doall_path( script_config.init_event_name, path );
+
+	clif_displaymessage(fd, msg_txt(sd,262)); // Script loaded.
+	return 0;
+}
+
+/*==========================================
+ * time in txt for time command (by [Yor])
+ *------------------------------------------*/
+char* txt_time(t_tick duration_)
+{
+	int32 days, hours, minutes, seconds;
+	char temp[CHAT_SIZE_MAX];
+	static char temp1[CHAT_SIZE_MAX];
+
+	memset(temp, '\0', sizeof(temp));
+	memset(temp1, '\0', sizeof(temp1));
+
+	// Cap it
+	int32 duration = (int32)duration_;
+
+	days = duration / (60 * 60 * 24);
+	duration = duration - (60 * 60 * 24 * days);
+	hours = duration / (60 * 60);
+	duration = duration - (60 * 60 * hours);
+	minutes = duration / 60;
+	seconds = duration - (60 * minutes);
+
+	if (days == 1)
+		sprintf(temp, msg_txt(nullptr,219), days); // %d day
+	else if (days > 1)
+		sprintf(temp, msg_txt(nullptr,220), days); // %d days
+	if (hours == 1)
+		sprintf(temp1, msg_txt(nullptr,221), temp, hours); // %s %d hour
+	else if (hours > 1)
+		sprintf(temp1, msg_txt(nullptr,222), temp, hours); // %s %d hours
+	if (minutes < 2)
+		sprintf(temp, msg_txt(nullptr,223), temp1, minutes); // %s %d minute
+	else
+		sprintf(temp, msg_txt(nullptr,224), temp1, minutes); // %s %d minutes
+	if (seconds == 1)
+		sprintf(temp1, msg_txt(nullptr,225), temp, seconds); // %s and %d second
+	else if (seconds > 1)
+		sprintf(temp1, msg_txt(nullptr,226), temp, seconds); // %s and %d seconds
+
+	return temp1;
+}
+
+/*==========================================
+ * @time/@date/@serverdate/@servertime: Display the date/time of the server (by [Yor]
+ * Calculation management of GM modification (@day/@night GM commands) is done
+ *------------------------------------------*/
+ACMD_FUNC(servertime)
+{
+	const struct TimerData * timer_data;
+	time_t time_server;  // variable for number of seconds (used with time() function)
+	struct tm *datetime; // variable for time in structure ->tm_mday, ->tm_sec, ...
+	char temp[CHAT_SIZE_MAX];
+	nullpo_retr(-1, sd);
+
+	memset(temp, '\0', sizeof(temp));
+
+	time(&time_server);  // get time in seconds since 1/1/1970
+	datetime = localtime(&time_server); // convert seconds in structure
+	// like sprintf, but only for date/time (Sunday, November 02 2003 15:12:52)
+	strftime(temp, sizeof(temp)-1, msg_txt(sd,230), datetime); // Server time (normal time): %A, %B %d %Y %X.
+	clif_displaymessage(fd, temp);
+
+	if (battle_config.night_duration == 0 && battle_config.day_duration == 0) {
+		if (night_flag == 0)
+			clif_displaymessage(fd, msg_txt(sd,231)); // Game time: The game is in permanent daylight.
+		else
+			clif_displaymessage(fd, msg_txt(sd,232)); // Game time: The game is in permanent night.
+	} else if (battle_config.night_duration == 0)
+		if (night_flag == 1) { // we start with night
+			if ((timer_data = get_timer(day_timer_tid)) != nullptr) {
+				sprintf(temp, msg_txt(sd,233), txt_time(DIFF_TICK(timer_data->tick,gettick())/1000)); // Game time: The game is in night for %s.
+				clif_displaymessage(fd, temp);

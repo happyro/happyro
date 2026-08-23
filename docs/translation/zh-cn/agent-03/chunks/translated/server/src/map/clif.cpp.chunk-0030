@@ -1,0 +1,500 @@
+
+	if(!sd->state.gmaster_flag)
+		return;
+
+	// compensate for some client defects when using multilanguage mode
+	if (msg1[0] == '|' && msg1[3] == '|') msg1+= 3; // skip duplicate marker
+	if (msg2[0] == '|' && msg2[3] == '|') msg2+= 3; // skip duplicate marker
+	if (msg2[0] == '|') msg2[strnlen(msg2, MAX_GUILDMES2)-1] = '\0'; // delete extra space at the end of string
+
+	guild_change_notice(sd, guild_id, msg1, msg2);
+}
+
+/// Guild invite request.
+/// 0168 <account id>.L <inviter account id>.L <inviter char id>.L (CZ_REQ_JOIN_GUILD)
+void clif_parse_GuildInvite( int32 fd,map_session_data *sd ){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_JOIN_GUILD* p = reinterpret_cast<PACKET_CZ_REQ_JOIN_GUILD*>( RFIFOP( fd, 0 ) );
+
+	guild_invite( *sd, map_id2sd( p->AID ) );
+}
+
+/// Guild invite request (/guildinvite)
+/// 0916 <char name>.24B (CZ_REQ_JOIN_GUILD2)
+void clif_parse_GuildInvite2( int32 fd, map_session_data *sd ){
+#if PACKETVER >= 20120410
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_JOIN_GUILD2* p = reinterpret_cast<PACKET_CZ_REQ_JOIN_GUILD2*>( RFIFOP( fd, 0 ) );
+
+	char nick[NAME_LENGTH] = {0};
+
+	safestrncpy( nick, p->name, NAME_LENGTH );
+
+	guild_invite( *sd, map_nick2sd( nick, false ) );
+#endif
+}
+
+/// Answer to guild invitation.
+/// 016b <guild id>.L <answer>.L (CZ_JOIN_GUILD)
+/// answer:
+///     0 = refuse
+///     1 = accept
+void clif_parse_GuildReplyInvite( int32 fd, map_session_data *sd ){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_JOIN_GUILD* p = reinterpret_cast<PACKET_CZ_JOIN_GUILD*>( RFIFOP( fd, 0 ) );
+
+	guild_reply_invite( *sd, p->guild_id, p->answer );
+}
+
+/// Request to leave guild.
+/// 0159 <guild id>.L <account id>.L <char id>.L <reason>.40B (CZ_REQ_LEAVE_GUILD)
+void clif_parse_GuildLeave(int32 fd,map_session_data *sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_LEAVE_GUILD* p = reinterpret_cast<PACKET_CZ_REQ_LEAVE_GUILD*>( RFIFOP( fd, 0 ) );
+
+	guild_leave( *sd, p->guild_id, p->AID, p->CID, p->message );
+}
+
+
+/// Request to expel a member of a guild.
+/// 015b <guild id>.L <account id>.L <char id>.L <reason>.40B (CZ_REQ_BAN_GUILD)
+void clif_parse_GuildExpulsion(int32 fd,map_session_data *sd){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_BAN_GUILD* p = reinterpret_cast<PACKET_CZ_REQ_BAN_GUILD*>( RFIFOP( fd, 0 ) );
+
+	guild_expulsion( *sd, p->guild_id, p->AID, p->CID, p->message );
+}
+
+
+/// Validates and processes guild messages (CZ_GUILD_CHAT).
+/// 017e <packet len>.W <text>.?B (<name> : <message>) 00
+void clif_parse_GuildMessage(int32 fd, map_session_data* sd){
+	char name[NAME_LENGTH], message[CHAT_SIZE_MAX], output[CHAT_SIZE_MAX+NAME_LENGTH*2];
+
+	// validate packet and retrieve name and message
+	if( !clif_process_message( sd, false, name, message, output ) )
+		return;
+
+	if( sd->bg_id )
+		bg_send_message(sd, output, strlen(output) );
+	else
+		guild_send_message(sd, output, strlen(output) );
+}
+
+
+/// Guild alliance request (CZ_REQ_ALLY_GUILD).
+/// 0170 <account id>.L <inviter account id>.L <inviter char id>.L
+void clif_parse_GuildRequestAlliance(int32 fd, map_session_data *sd)
+{
+	map_session_data *t_sd;
+
+	if(!sd->state.gmaster_flag)
+		return;
+
+	if(map_getmapflag(sd->m, MF_GUILDLOCK)) { //Guild locked.
+		clif_displaymessage(fd, msg_txt(sd,228));
+		return;
+	}
+
+	t_sd = map_id2sd(RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+	//inv_aid = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[1]);
+	//inv_cid = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[2]);
+
+	// @noask [LuzZza]
+	if(t_sd && t_sd->state.noask) {
+		clif_noask_sub( *sd, *t_sd, 396 ); // Autorejected alliance request from %s.
+		return;
+	}
+
+	guild_reqalliance(sd,t_sd);
+}
+
+
+/// Answer to a guild alliance request (CZ_ALLY_GUILD).
+/// 0172 <inviter account id>.L <answer>.L
+/// answer:
+///     0 = refuse
+///     1 = accept
+void clif_parse_GuildReplyAlliance(int32 fd, map_session_data *sd){
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	guild_reply_reqalliance(sd,
+	    RFIFOL(fd,info->pos[0]),
+	    RFIFOL(fd,info->pos[1]));
+}
+
+
+/// Request to delete a guild alliance or opposition (CZ_REQ_DELETE_RELATED_GUILD).
+/// 0183 <opponent guild id>.L <relation>.L
+/// relation:
+///     0 = Ally
+///     1 = Enemy
+void clif_parse_GuildDelAlliance(int32 fd, map_session_data *sd){
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	if(!sd->state.gmaster_flag)
+		return;
+
+	if(map_getmapflag(sd->m, MF_GUILDLOCK)) { //Guild locked.
+		clif_displaymessage(fd, msg_txt(sd,228));
+		return;
+	}
+	guild_delalliance(sd,
+	    RFIFOL(fd,info->pos[0]),
+	    RFIFOL(fd,info->pos[1]));
+}
+
+
+/// Request to set a guild as opposition (CZ_REQ_HOSTILE_GUILD).
+/// 0180 <account id>.L
+void clif_parse_GuildOpposition(int32 fd, map_session_data *sd)
+{
+	map_session_data *t_sd;
+
+	if(!sd->state.gmaster_flag)
+		return;
+
+	if(map_getmapflag(sd->m, MF_GUILDLOCK)) { //Guild locked.
+		clif_displaymessage(fd, msg_txt(sd,228));
+		return;
+	}
+
+	t_sd = map_id2sd(RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+
+	// @noask [LuzZza]
+	if(t_sd && t_sd->state.noask) {
+		clif_noask_sub( *sd, *t_sd, 397 ); // Autorejected opposition request from %s.
+		return;
+	}
+
+	guild_opposition(sd,t_sd);
+}
+
+
+/// Request to delete own guild.
+/// 015d <key>.40B (CZ_REQ_DISORGANIZE_GUILD)
+/// key:
+///     now guild name; might have been (intended) email, since the
+///     field name and size is same as the one in CH_DELETE_CHAR.
+void clif_parse_GuildBreak( int32 fd, map_session_data *sd ){
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_REQ_DISORGANIZE_GUILD* p = reinterpret_cast<PACKET_CZ_REQ_DISORGANIZE_GUILD*>( RFIFOP( fd, 0 ) );
+
+	guild_break( *sd, p->key );
+}
+
+
+/// Pet
+///
+
+/// Request to invoke a pet menu action (CZ_COMMAND_PET).
+/// 01a1 <type>.B
+/// type:
+///     0 = pet information
+///     1 = feed
+///     2 = performance
+///     3 = return to egg
+///     4 = unequip accessory
+void clif_parse_PetMenu(int32 fd, map_session_data *sd){
+	pet_menu(sd,RFIFOB(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+}
+
+
+/// Attempt to tame a monster (CZ_TRYCAPTURE_MONSTER).
+/// 019f <id>.L
+void clif_parse_CatchPet(int32 fd, map_session_data *sd){
+	pet_catch_process_end(*sd,RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+}
+
+
+/// Answer to pet incubator egg selection dialog (CZ_SELECT_PETEGG).
+/// 01a7 <index>.W
+void clif_parse_SelectEgg(int32 fd, map_session_data *sd){
+	if (sd->menuskill_id != SA_TAMINGMONSTER || sd->menuskill_val != -1)
+		return;
+
+	pet_select_egg(sd,RFIFOW(fd,packet_db[RFIFOW(fd,0)].pos[0])-2);
+	clif_menuskill_clear(sd);
+}
+
+
+/// Request to display pet's emotion/talk (CZ_PET_ACT).
+/// 01a9 <data>.L
+/// data:
+///     is either emotion (@see enum emotion_type) or a compound value
+///     (((mob id)-100)*100+(act id)*10+(hunger)) that describes an
+///     entry (given in parentheses) in data\pettalktable.xml
+///     act id:
+///         0 = feeding
+///         1 = hunting
+///         2 = danger
+///         3 = dead
+///         4 = normal (stand)
+///         5 = special performance (perfor_s)
+///         6 = level up (levelup)
+///         7 = performance 1 (perfor_1)
+///         8 = performance 2 (perfor_2)
+///         9 = performance 3 (perfor_3)
+///        10 = log-in greeting (connect)
+///     hungry value:
+///         0 = very hungry (hungry)
+///         1 = hungry (bit_hungry)
+///         2 = satisfied (noting)
+///         3 = stuffed (full)
+///         4 = full (so_full)
+void clif_parse_SendEmotion(int32 fd, map_session_data *sd)
+{
+	if(sd->pd)
+		clif_pet_emotion( *sd->pd, RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]) );
+}
+
+
+/// Request to change pet's name (CZ_RENAME_PET).
+/// 01a5 <name>.24B
+void clif_parse_ChangePetName(int32 fd, map_session_data *sd)
+{
+	pet_change_name(sd,RFIFOCP(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+}
+
+
+/// /kill (CZ_DISCONNECT_CHARACTER).
+/// Request to disconnect a character.
+/// 00cc <account id>.L
+/// NOTE: Also sent when using GM right click menu "(name) force to quit"
+void clif_parse_GMKick(int32 fd, map_session_data *sd)
+{
+	block_list *target;
+	int32 tid;
+
+	tid = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	target = map_id2bl(tid);
+	if (!target) {
+		clif_GM_kickack(sd, 0);
+		return;
+	}
+
+	switch (target->type) {
+		case BL_PC:
+		{
+			char command[NAME_LENGTH+6];
+			safesnprintf(command,sizeof(command),"%ckick %s", atcommand_symbol, status_get_name(*target));
+			is_atcommand(fd, sd, command, 1);
+		}
+		break;
+
+		/**
+		 * This one does not invoke any atcommand, so we need to check for permissions.
+		 */
+		case BL_MOB:
+		{
+			char command[100];
+			if( !pc_can_use_command(sd, "killmonster", COMMAND_ATCOMMAND)) {
+				clif_GM_kickack(sd, 0);
+				return;
+			}
+			safesnprintf(command,sizeof(command),"/kick %s (%d)", status_get_name(*target), status_get_class(target));
+			log_atcommand(sd, command);
+			status_percent_damage(sd, target, 100, 0, true); // can invalidate 'target'
+		}
+		break;
+
+		case BL_NPC:
+		{
+			npc_data* nd = (npc_data *)target;
+			if( pc_can_use_command(sd, "unloadnpc", COMMAND_ATCOMMAND)) {
+				npc_unload_duplicates(nd);
+				npc_unload(nd,true);
+				npc_read_event_script();
+			}
+		}
+		break;
+
+		default:
+			clif_GM_kickack(sd, 0);
+	}
+}
+
+
+/// /killall (CZ_DISCONNECT_ALL_CHARACTER).
+/// Request to disconnect all characters.
+/// 00ce
+void clif_parse_GMKickAll(int32 fd, map_session_data* sd) {
+	char cmd[15];
+	safesnprintf(cmd,sizeof(cmd),"%ckickall",atcommand_symbol);
+	is_atcommand(fd, sd, cmd, 1);
+}
+
+
+/// /remove (CZ_REMOVE_AID).
+/// Request to warp to a character with given login ID.
+/// 01ba <account name>.24B
+
+/// /shift (CZ_SHIFT).
+/// Request to warp to a character with given name.
+/// 01bb <char name>.24B
+void clif_parse_GMShift(int32 fd, map_session_data *sd)
+{// FIXME: remove is supposed to receive account name for clients prior 20100803RE
+	char *player_name;
+	char command[NAME_LENGTH+8];
+
+	player_name = RFIFOCP(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	player_name[NAME_LENGTH-1] = '\0';
+
+	safesnprintf(command,sizeof(command),"%cjumpto %s", atcommand_symbol, player_name);
+	is_atcommand(fd, sd, command, 1);
+}
+
+
+/// /remove (CZ_REMOVE_AID_SSO).
+/// Request to warp to a character with given account ID.
+/// 0843 <account id>.L
+void clif_parse_GMRemove2(int32 fd, map_session_data* sd)
+{
+	uint32 account_id;
+	map_session_data* pl_sd;
+
+	account_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	if( (pl_sd = map_id2sd(account_id)) != nullptr ) {
+		char command[NAME_LENGTH+8];
+		safesnprintf(command,sizeof(command),"%cjumpto %s", atcommand_symbol, pl_sd->status.name);
+		is_atcommand(fd, sd, command, 1);
+	}
+}
+
+
+/// /recall (CZ_RECALL).
+/// Request to summon a player with given login ID to own position.
+/// 01bc <account name>.24B
+
+/// /summon (CZ_RECALL_GID).
+/// Request to summon a player with given name to own position.
+/// 01bd <char name>.24B
+void clif_parse_GMRecall(int32 fd, map_session_data *sd)
+{// FIXME: recall is supposed to receive account name for clients prior 20100803RE
+	char *player_name;
+	char command [NAME_LENGTH+8];
+
+	player_name = RFIFOCP(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	player_name[NAME_LENGTH-1] = '\0';
+
+	safesnprintf(command,sizeof(command),"%crecall %s", atcommand_symbol, player_name);
+	is_atcommand(fd, sd, command, 1);
+}
+
+
+/// /recall (CZ_RECALL_SSO).
+/// Request to summon a player with given account ID to own position.
+/// 0842 <account id>.L
+void clif_parse_GMRecall2(int32 fd, map_session_data* sd)
+{
+	uint32 account_id;
+	map_session_data* pl_sd;
+
+	account_id = RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]);
+	if( (pl_sd = map_id2sd(account_id)) != nullptr ) {
+		char command[NAME_LENGTH+8];
+		safesnprintf(command,sizeof(command),"%crecall %s", atcommand_symbol, pl_sd->status.name);
+		is_atcommand(fd, sd, command, 1);
+	}
+}
+
+
+/// /item /monster (CZ_ITEM_CREATE).
+/// Request to execute GM commands.
+/// Usage:
+/// /item n - summon n monster or acquire n item/s
+/// /item money - grants 2147483647 zenies
+/// /item whereisboss - locate boss mob in current map.(not yet implemented)
+/// /item regenboss_n t - regenerate n boss monster by t millisecond.(not yet implemented)
+/// /item onekillmonster - toggle an ability to kill mobs in one hit.(not yet implemented)
+/// /item bossinfo - display the information of a boss monster in current map.(not yet implemented)
+/// /item cap_n - capture n monster as pet.(not yet implemented)
+/// /item agitinvest - reset current global agit investments.(not yet implemented)
+/// 013f <item/mob name>.24B
+/// 09ce <item/mob name>.100B [Ind/Yommy]
+void clif_parse_GM_Item_Monster(int32 fd, map_session_data *sd)
+{
+	struct s_packet_db* info = &packet_db[RFIFOW(fd,0)];
+	StringBuf command;
+	char *str;
+//#if PACKETVER >= 20131218
+//	char str[100];
+//#else
+//	char str[24];
+//#endif
+
+	str = RFIFOCP(fd,info->pos[0]);
+	if (!str || str[0] == '\0')
+		return;
+	if (strcmpi(str,"SPPOINT") == 0 || strcmpi(str,"JOBLEVEL") == 0) //! TODO /sp sends these values
+		return;
+	trim(str);
+
+	// Zeny
+	if( strcmpi(str, "money") == 0 ) {
+		StringBuf_Init(&command);
+		StringBuf_Printf(&command, "%czeny %d", atcommand_symbol, INT_MAX);
+		is_atcommand(fd, sd, StringBuf_Value(&command), 1);
+		return;
+	}
+
+	std::shared_ptr<item_data> id = item_db.searchname( str );
+
+	// Item
+	if( id ){
+		StringBuf_Init(&command);
+		if( !itemdb_isstackable2( id.get() ) ){ //Nonstackable
+			StringBuf_Printf(&command, "%citem2 %u 1 0 0 0 0 0 0 0", atcommand_symbol, id->nameid);
+		}else{
+			if (id->flag.guid)
+				StringBuf_Printf(&command, "%citem %u 1", atcommand_symbol, id->nameid);
+			else
+				StringBuf_Printf(&command, "%citem %u 20", atcommand_symbol, id->nameid);
+		}
+		is_atcommand(fd, sd, StringBuf_Value(&command), 1);
+		return;
+	}
+
+	// Monster
+	if (pc_can_use_command(sd, "monster", COMMAND_ATCOMMAND)) {
+		// If AegisName matches exactly, summon that monster (official behavior)
+		std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname(str);
+		// Otherwise, search for monster with that ID or name (rAthena added behavior)
+		if (mob == nullptr) {
+			// Check for ID first as this is faster; if search string is not a number it will return 0
+			int32 mob_id = util::strtoint32def(str);
+			if (mob_id == 0 || mobdb_checkid(mob_id) == 0) {
+				mob_id = mobdb_searchname(str);
+
+				if (mob_id != 0) {
+					mob = mob_db.find(mob_id);
+				}
+			}
+			else
+				mob = mob_db.find(mob_id);
+		}
+		// Call corresponding atcommand when a valid monster was found
+		if (mob != nullptr) {
+			char command[CHAT_SIZE_MAX];
+			safesnprintf(command, sizeof(command), "%cmonster %s", atcommand_symbol, mob->sprite.c_str());
+			is_atcommand(fd, sd, command, 1);
+			return;
+		}
+	}
+}

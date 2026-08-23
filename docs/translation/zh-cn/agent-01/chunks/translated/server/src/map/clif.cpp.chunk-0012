@@ -1,0 +1,500 @@
+			WBUFB(buf,pos+20) = (unsigned char)unit->group->skill_lv;
+			break;
+	}
+	clif_send(buf, len, bl, target);
+
+	if (unit->group->skill_id == WZ_ICEWALL)
+		clif_changemapcell( unit->m, unit->x, unit->y, 5, SELF, bl );
+}
+
+/// 09ca <length>.W <id> L <creator id>.L <x>.W <y>.W <unit id>.L <range>.B <visible>.B <skill level>.B (ZC_SKILL_ENTRY5)
+void clif_skill_unit_test(block_list *bl, int16 x, int16 y, int32 unit_id, int16 range, int16 skill_lv) {
+	unsigned char buf[128];
+
+	nullpo_retv(bl);
+
+	WBUFW(buf, 0) = 0x09ca;
+	WBUFW(buf, 2) = packet_len(0x09ca);
+	WBUFL(buf, 4) = 1000;
+	WBUFL(buf, 8) = 2000;
+	WBUFW(buf, 12) = x;
+	WBUFW(buf, 14) = y;
+	WBUFL(buf, 16) = unit_id;
+	WBUFB(buf, 20) = (unsigned char)range;
+	WBUFB(buf, 21) = 1;
+	WBUFB(buf, 22) = (unsigned char)skill_lv;
+
+	clif_send(buf, packet_len(0x09ca), bl, AREA);
+}
+
+/// Server tells client to remove unit of id 'unit->id'
+/// 0120 <id>.L (ZC_SKILL_DISAPPEAR)
+static void clif_clearchar_skillunit( const skill_unit& unit, const map_session_data& sd ){
+	PACKET_ZC_SKILL_DISAPPEAR packet{};
+
+	packet.packetType = HEADER_ZC_SKILL_DISAPPEAR;
+	packet.GID = unit.id;
+
+	clif_send( &packet, sizeof( packet ), &sd, SELF );
+
+	if( unit.group && unit.group->skill_id == WZ_ICEWALL ){
+		clif_changemapcell( unit.m, unit.x, unit.y, unit.val2, SELF, &sd );
+	}
+}
+
+
+/// Removes a skill unit.
+/// 0120 <id>.L (ZC_SKILL_DISAPPEAR)
+void clif_skill_delunit( skill_unit& unit ){
+	PACKET_ZC_SKILL_DISAPPEAR packet{};
+
+	packet.packetType = HEADER_ZC_SKILL_DISAPPEAR;
+	packet.GID = unit.id;
+
+	clif_send( &packet, sizeof( packet ), &unit, AREA );
+}
+
+
+/// Sent when an object gets ankle-snared.
+/// 01ac <id>.L (ZC_SKILL_UPDATE)
+/// Only affects units with class [139,153] client-side.
+void clif_skillunit_update( block_list& bl ){
+	PACKET_ZC_SKILL_UPDATE packet{};
+
+	packet.packetType = HEADER_ZC_SKILL_UPDATE;
+	packet.GID = bl.id;
+
+	clif_send( &packet, sizeof( packet ), &bl, AREA );
+}
+
+
+/*==========================================
+ *
+ *------------------------------------------*/
+static int32 clif_getareachar(block_list* bl,va_list ap)
+{
+	map_session_data *sd;
+
+	nullpo_ret(bl);
+
+	sd=va_arg(ap,map_session_data*);
+
+	if (!clif_session_isValid(sd))
+		return 0;
+
+	switch(bl->type){
+	case BL_ITEM:
+		clif_getareachar_item( *sd, *reinterpret_cast<flooritem_data*>( bl ) );
+		break;
+	case BL_SKILL:
+		skill_getareachar_skillunit_visibilty_single((TBL_SKILL*)bl, sd);
+		break;
+	default:
+		if(sd == bl)
+			break;
+		clif_getareachar_unit(sd,bl);
+		break;
+	}
+	return 0;
+}
+
+/*==========================================
+ * tbl has gone out of view-size of bl
+ *------------------------------------------*/
+int32 clif_outsight(block_list *bl,va_list ap)
+{
+	block_list *tbl;
+	struct view_data *vd;
+	TBL_PC *sd, *tsd;
+	tbl=va_arg(ap,block_list*);
+	if(bl == tbl) return 0;
+	sd = BL_CAST(BL_PC, bl);
+	tsd = BL_CAST(BL_PC, tbl);
+
+	if (clif_session_isValid(tsd)) { //tsd has lost sight of the bl object.
+		nullpo_ret(bl);
+		switch(bl->type){
+		case BL_PC:
+			if(sd->vd.look[LOOK_BASE] != JT_INVISIBLE)
+				clif_clearunit_single( bl->id, CLR_OUTSIGHT, *tsd );
+			if(sd->chatID){
+				chat_data *cd;
+				cd=(chat_data*)map_id2bl(sd->chatID);
+				if(cd->usersd[0]==sd)
+					clif_dispchat(*cd);
+			}
+			if(sd->state.vending)
+				clif_closevendingboard( *bl, SELF, tsd );
+			if(sd->state.buyingstore)
+				clif_buyingstore_disappear_entry( *sd, tsd );
+			break;
+		case BL_ITEM:
+			clif_clearflooritem( *static_cast<const flooritem_data*>( bl ), tsd );
+			break;
+		case BL_SKILL:
+			clif_clearchar_skillunit( *static_cast<const skill_unit*>( bl ), *tsd );
+			break;
+		case BL_NPC:
+			if( !clif_npc_mayapurple( *bl ) ){
+				clif_clearunit_single( bl->id, CLR_OUTSIGHT, *tsd );
+			}
+			break;
+		default:
+			if((vd=status_get_viewdata(bl)) && vd->look[LOOK_BASE] != JT_INVISIBLE)
+				clif_clearunit_single( bl->id, CLR_OUTSIGHT, *tsd );
+			break;
+		}
+	}
+	if (clif_session_isValid(sd)) { //sd is watching tbl go out of view.
+		nullpo_ret(tbl);
+		if(tbl->type == BL_SKILL) //Trap knocked out of sight
+			clif_clearchar_skillunit( *((skill_unit *)tbl), *sd );
+		else if(((vd=status_get_viewdata(tbl)) && vd->look[LOOK_BASE] != JT_INVISIBLE) &&
+			!clif_npc_mayapurple( *tbl ) )
+			clif_clearunit_single( tbl->id, CLR_OUTSIGHT, *sd );
+	}
+	return 0;
+}
+
+/*==========================================
+ * tbl has come into view of bl
+ *------------------------------------------*/
+int32 clif_insight(block_list *bl,va_list ap)
+{
+	block_list *tbl;
+	TBL_PC *sd, *tsd;
+	tbl=va_arg(ap,block_list*);
+
+	if (bl == tbl) return 0;
+
+	sd = BL_CAST(BL_PC, bl);
+	tsd = BL_CAST(BL_PC, tbl);
+
+	if (clif_session_isValid(tsd)) { //Tell tsd that bl entered into his view
+		switch(bl->type){
+		case BL_ITEM:
+			clif_getareachar_item( *tsd, *reinterpret_cast<flooritem_data*>( bl ) );
+			break;
+		case BL_SKILL:
+			skill_getareachar_skillunit_visibilty_single((TBL_SKILL*)bl, tsd);
+			break;
+		default:
+			clif_getareachar_unit(tsd,bl);
+			break;
+		}
+	}
+	if (clif_session_isValid(sd)) { //Tell sd that tbl walked into his view
+		clif_getareachar_unit(sd,tbl);
+	}
+	return 0;
+}
+
+
+/// Updates whole skill tree.
+/// 010f <packet len>.W { <skill id>.W <type>.L <level>.W <sp cost>.W <attack range>.W <skill name>.24B <upgradable>.B }* (ZC_SKILLINFO_LIST)
+/// 0b32 <packet len>.W { <skill id>.W <type>.L <level>.W <sp cost>.W <attack range>.W <upgradable>.B <level2>.B }* (ZC_SKILLINFO_LIST3)
+void clif_skillinfoblock( const map_session_data& sd ){
+	int32 i, c, id;
+
+	if (!session_isActive(sd.fd))
+		return;
+
+	PACKET_ZC_SKILLINFO_LIST* p = reinterpret_cast<PACKET_ZC_SKILLINFO_LIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_SKILLINFO_LIST;
+	p->packetLength = sizeof(*p);
+
+	bool haveCallPartnerSkill = false;
+
+	for ( i = 0, c = 0; i < MAX_SKILL; i++)
+	{
+		if( (id = sd.status.skill[i].id) != 0 )
+		{			
+			// skip WE_CALLPARTNER and send it in special way
+			if (id == WE_CALLPARTNER) {
+				haveCallPartnerSkill = true;
+				continue;
+			}
+
+			const s_skill& skill = sd.status.skill[i];
+			SKILLDATA& data = p->skills[c];
+
+			// workaround for bugreport:5348
+			if( ( p->packetLength + sizeof( data ) ) > 8192 ){
+				break;
+			}
+
+			data.id = skill.id;
+			data.inf = skill_get_inf(skill.id);
+			data.level = skill.lv;
+
+#if PACKETVER_RE_NUM >= 20190807 || PACKETVER_ZERO_NUM >= 20190918
+			data.level2 = skill.lv;
+#else
+			safestrncpy(data.name, skill_get_name(skill.id), sizeof(data.name));
+#endif
+
+			data.sp = skill_get_sp(skill.id,skill.lv);
+			data.range2 = skill_get_range2(&sd, skill.id, skill.lv, false);
+
+			if(skill.flag == SKILL_FLAG_PERMANENT && skill.lv < skill_tree_get_max(skill.id, sd.status.class_))
+				data.upFlag = 1;
+			else
+				data.upFlag = 0;
+
+			p->packetLength += static_cast<decltype(p->packetLength)>(sizeof(data));
+			c++;
+		}
+	}
+
+	clif_send(p,p->packetLength,&sd,SELF);
+
+	// adoption fix
+	if (haveCallPartnerSkill) {
+		clif_addskill(sd, WE_CALLPARTNER);
+		clif_skillinfo( sd, WE_CALLPARTNER );
+	}
+
+	// workaround for bugreport:5348; send the remaining skills one by one to bypass packet size limit
+	for ( ; i < MAX_SKILL; i++)
+	{
+		if( (id = sd.status.skill[i].id) != 0 && ( id != WE_CALLPARTNER || !haveCallPartnerSkill ) )
+		{
+			clif_addskill(sd, id);
+			clif_skillinfo( sd, id );
+		}
+	}
+}
+/**
+ * Server tells client 'sd' to add skill of id 'id' to it's skill tree (e.g. with Ice Falcion item)
+ **/
+
+/// Adds new skill to the skill tree.
+/// 0111 <skill id>.W <type>.L <level>.W <sp cost>.W <attack range>.W <skill name>.24B <upgradable>.B (ZC_ADD_SKILL)
+/// 0b31 <skill id>.W <type>.L <level>.W <sp cost>.W <attack range>.W <upgradable>.B <isnew>.B (ZC_ADD_SKILL2)
+void clif_addskill( const map_session_data &sd, uint16 skill_id ){
+
+	uint16 idx = skill_get_index(skill_id);
+
+	if (idx == 0)
+		return;
+
+	if( sd.status.skill[idx].id <= 0 )
+		return;
+
+	PACKET_ZC_ADD_SKILL p{};
+
+	p.packetType = HEADER_ZC_ADD_SKILL;
+	p.skill.id = skill_id;
+	p.skill.inf = skill_get_inf(skill_id);
+	p.skill.level = sd.status.skill[idx].lv;
+	p.skill.sp = static_cast<decltype(p.skill.sp)>( skill_get_sp(skill_id,sd.status.skill[idx].lv) );
+	p.skill.range2 = static_cast<decltype(p.skill.range2)>( skill_get_range2(&sd,skill_id,sd.status.skill[idx].lv,false) );
+#if PACKETVER_RE_NUM >= 20190807 || PACKETVER_ZERO_NUM >= 20190918
+	p.skill.level2 = pc_checkskill(&sd,skill_id);
+#else
+	safestrncpy(p.skill.name, skill_get_name(skill_id), sizeof(p.skill.name));
+#endif
+
+	if( sd.status.skill[idx].flag == SKILL_FLAG_PERMANENT && sd.status.skill[idx].lv < skill_tree_get_max(skill_id, sd.status.class_))
+		p.skill.upFlag = 1;
+	else
+		p.skill.upFlag = 0;
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+}
+
+
+/// Deletes a skill from the skill tree.
+/// 0441 <skill id>.W (ZC_SKILLINFO_DELETE)
+void clif_deleteskill( const map_session_data& sd, uint16 skill_id, bool skip_infoblock ){
+#if PACKETVER >= 20081126
+	uint16 idx = skill_get_index(skill_id);
+
+	if (idx == 0)
+		return;
+
+	PACKET_ZC_SKILLINFO_DELETE p{};
+
+	p.packetType = HEADER_ZC_SKILLINFO_DELETE;
+	p.skillID = skill_id;
+
+	clif_send(&p,sizeof(p),&sd,SELF);
+#endif
+#if PACKETVER_MAIN_NUM >= 20190807 || PACKETVER_RE_NUM >= 20190807 || PACKETVER_ZERO_NUM >= 20190918
+	if (!skip_infoblock)
+#endif
+		clif_skillinfoblock(sd);
+}
+
+/// Updates a skill in the skill tree.
+/// 010e <skill id>.W <level>.W <sp cost>.W <attack range>.W <upgradable>.B (ZC_SKILLINFO_UPDATE)
+void clif_skillup( const map_session_data& sd, uint16 skill_id, uint16 lv, uint16 range, bool upgradable ){
+	uint16 idx = skill_get_index(skill_id);
+
+	if( idx == 0 ){
+		return;
+	}
+	
+	PACKET_ZC_SKILLINFO_UPDATE p{};
+
+	p.packetType = HEADER_ZC_SKILLINFO_UPDATE;
+	p.skillId = skill_id;
+	p.level = lv;
+	p.sp = static_cast<decltype(p.sp)>( skill_get_sp( skill_id, lv ) );
+	p.range2 = range;
+	p.upFlag = upgradable;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Updates a skill in the skill tree
+/// 07e1 <skill id>.W <type>.L <level>.W <sp cost>.W <attack range>.W <upgradable>.B (ZC_SKILLINFO_UPDATE2)
+/// 0b33 <skill id>.W <type>.L <level>.W <sp cost>.W <attack range>.W <upgradable>.B <level2>.W (ZC_SKILLINFO_UPDATE3)
+void clif_skillinfo( const map_session_data& sd, uint16 skill_id, int32 inf ){
+#if PACKETVER >= 20090715
+	uint16 idx = skill_get_index(skill_id);
+
+	if( idx == 0 ){
+		return;
+	}
+
+	PACKET_ZC_SKILLINFO_UPDATE2 p = {};
+
+	p.packetType = HEADER_ZC_SKILLINFO_UPDATE2;	
+	p.id = skill_id;
+	p.level = sd.status.skill[idx].lv;
+	p.sp = static_cast<decltype(p.sp)>( skill_get_sp( skill_id,sd.status.skill[idx].lv ) );
+	p.range2 = static_cast<decltype(p.range2)>( skill_get_range2( &sd,skill_id,sd.status.skill[idx].lv,false ) );
+	if( inf == INF_PASSIVE_SKILL ){
+		p.inf = skill_get_inf( skill_id );
+	}else{
+		p.inf = inf;
+	}
+
+	if( sd.status.skill[idx].flag == SKILL_FLAG_PERMANENT && sd.status.skill[idx].lv < skill_tree_get_max( skill_id, sd.status.class_ ) ){
+		p.upFlag = true;
+	}else{
+		p.upFlag = false;
+	}
+
+#if PACKETVER_RE_NUM >= 20190807 || PACKETVER_ZERO_NUM >= 20190918
+	p.level2 = p.level;
+#endif
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+void clif_skill_scale( const block_list* bl, int32 src_id, int32 x, int32 y, uint16 skill_id, uint16 skill_lv, int32 casttime ){
+#if PACKETVER >= 20151223
+	if( !battle_config.show_skill_scale ){
+		return;
+	}
+
+	PACKET_ZC_SKILL_SCALE p = {};
+
+	p.PacketType = skillscale;
+	p.AID = src_id;
+	p.skill_id = skill_id;
+	p.skill_lv = skill_lv;
+	p.x = x;
+	p.y = y;
+	p.casttime = casttime;
+
+	if( disguised( bl ) ){
+		clif_send( &p, sizeof( p ), bl, AREA_WOS );
+		p.AID = disguised_bl_id( bl->id );
+		clif_send( &p, sizeof( p ), bl, SELF );
+	}else{
+		clif_send( &p, sizeof( p ), bl, AREA );
+	}
+#endif
+}
+
+/// Notifies clients in area, that an object is about to use a skill.
+/// 013e <src id>.L <dst id>.L <x>.W <y>.W <skill id>.W <property>.L <delaytime>.L (ZC_USESKILL_ACK)
+/// 07fb <src id>.L <dst id>.L <x>.W <y>.W <skill id>.W <property>.L <delaytime>.L <is disposable>.B (ZC_USESKILL_ACK2)
+/// 0b1a <src id>.L <dst id>.L <x>.W <y>.W <skill id>.W <property>.L <delaytime>.L <is disposable>.B <attackMT>.L (ZC_USESKILL_ACK3)
+/// property:
+///     0 = Yellow cast aura
+///     1 = Water elemental cast aura
+///     2 = Earth elemental cast aura
+///     3 = Fire elemental cast aura
+///     4 = Wind elemental cast aura
+///     5 = Poison elemental cast aura
+///     6 = Holy elemental cast aura
+///     ? = like 0
+/// is disposable:
+///     0 = yellow chat text "[src name] will use skill [skill name]."
+///     1 = no text
+void clif_skillcasting( const block_list& src, const block_list* dst, uint16 dst_x, uint16 dst_y, uint16 skill_id, uint16 skill_lv, e_element property, int32 casttime ){
+	PACKET_ZC_USESKILL_ACK p = {};
+
+	p.packetType = HEADER_ZC_USESKILL_ACK;
+	p.srcId = src.id;
+	if( dst != nullptr ){
+		p.dstId = dst->id;
+	}else{
+		p.dstId = 0;
+	}
+	p.x = dst_x;
+	p.y = dst_y;
+	p.skillId = skill_id;
+	p.delayTime = casttime;
+	if( property > ELE_NONE && property < ELE_ALL ){
+		p.element = property;
+	}else{
+		p.element = ELE_NEUTRAL;
+	}
+
+#if PACKETVER_MAIN_NUM >= 20091124 || PACKETVER_RE_NUM >= 20091124 || defined(PACKETVER_ZERO)
+	p.disposable = false;
+#endif
+#if PACKETVER_MAIN_NUM >= 20181212 || PACKETVER_RE_NUM >= 20181212 || PACKETVER_ZERO_NUM >= 20190130
+	p.attackMT = 0;
+#endif
+
+	if (disguised(&src)) {
+		clif_send(&p,sizeof(p), &src, AREA_WOS);
+
+		p.srcId = disguised_bl_id( src.id );
+		clif_send(&p,sizeof(p), &src, SELF);
+	} else
+		clif_send(&p,sizeof(p), &src, AREA);
+
+	if( skill_get_inf2( skill_id, INF2_SHOWSCALE ) ){
+		clif_skill_scale( &src, src.id, src.x, src.y, skill_id, skill_lv, casttime );
+	}
+}
+
+
+/// Notifies clients in area, that an object canceled casting.
+/// 01b9 <id>.L (ZC_DISPEL)
+void clif_skillcastcancel( const block_list& bl ){
+	PACKET_ZC_DISPEL packet{};
+
+	packet.packetType = HEADER_ZC_DISPEL;
+	packet.gid = bl.id;
+
+	clif_send( &packet, sizeof(PACKET_ZC_DISPEL), &bl, AREA );
+}
+
+
+/// Notifies the client about the result of a skill use request (ZC_ACK_TOUSESKILL).
+/// 0110 <skill id>.W <num>.L <result>.B <cause>.B
+/// num (only used when skill id = NV_BASIC and cause = 0):
+///     0 = "skill failed" MsgStringTable[159]
+///     1 = "no emotions" MsgStringTable[160]
+///     2 = "no sit" MsgStringTable[161]
+///     3 = "no chat" MsgStringTable[162]
+///     4 = "no party" MsgStringTable[163]
+///     5 = "no shout" MsgStringTable[164]
+///     6 = "no PKing" MsgStringTable[165]
+///     7 = "no alligning" MsgStringTable[383]
+///     ? = ignored
+/// cause:
+///     0 = "not enough skill level" MsgStringTable[214] (AL_WARP)
+///         "steal failed" MsgStringTable[205] (TF_STEAL)
+///         "envenom failed" MsgStringTable[207] (TF_POISON)

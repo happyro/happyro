@@ -1,0 +1,500 @@
+		} else {
+			entity.display.title_name = '';
+		}
+
+		entity.display.party_name = pkt.PName || '';
+		entity.display.guild_name = pkt.GName || '';
+		entity.display.guild_rank = pkt.RName || '';
+
+		entity.display.load = entity.display.TYPE.COMPLETE;
+
+		if (entity.GUID) {
+			Guild.requestGuildEmblem(entity.GUID, entity.GEmblemVer, (image, gif) => {
+				entity.setEntityGuildEmblem(image, gif);
+				if (Session.mapState.isSiege && entity.GUID !== Session.Entity.GUID) {
+					entity.emblem.display = true;
+				}
+			});
+		} else if (pkt.GID) {
+			DB.loadGroupEmblem(pkt.GID, image => {
+				entity.setEntityGuildEmblem(image);
+			});
+		} else if (entity.mobtype) {
+			DB.loadMobEmblem(entity.mobtype, image => {
+				entity.setEntityGuildEmblem(image);
+			});
+		} else if (entity.clanId) {
+			DB.loadClanEmblem(entity.clanId, image => {
+				entity.setEntityGuildEmblem(image);
+			});
+		} else {
+			entity.setEntityGuildEmblem(null, null);
+		}
+
+		// Update display
+		updateEntityStyle(entity);
+
+		if (EntityManager.getOverEntity() === entity) {
+			entity.display.add();
+		}
+	}
+}
+
+function updateEntityStyle(entity) {
+	entity.display.update(
+		entity.objecttype === Entity.TYPE_MOB
+			? entity.display.STYLE.MOB
+			: entity.objecttype === Entity.TYPE_NPC_ABR
+				? entity.display.STYLE.MOB
+				: entity.objecttype === Entity.TYPE_NPC_BIONIC
+					? entity.display.STYLE.MOB
+					: entity.objecttype === Entity.TYPE_DISGUISED
+						? entity.display.STYLE.MOB
+						: entity.objecttype === Entity.TYPE_NPC
+							? entity.display.STYLE.NPC
+							: entity.objecttype === Entity.TYPE_NPC2
+								? entity.display.STYLE.NPC
+								: entity.objecttype === Entity.TYPE_PC && entity.isAdmin
+									? entity.display.STYLE.ADMIN
+									: entity.display.STYLE.DEFAULT
+	);
+}
+
+function onTitleChangeAck(pkt) {
+	if (pkt.result === 0) {
+		const comp = Equipment.getUI();
+		if (comp && typeof comp.setTitle === 'function') {
+			comp.setTitle(pkt.title_id);
+		}
+	}
+}
+
+/**
+ * Update entity's life
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_MONSTER_HP
+ */
+function onEntityLifeUpdate(pkt) {
+	EntityManager.storeLife(pkt.AID, { hp: pkt.hp, hp_max: pkt.maxhp });
+
+	const entity = EntityManager.get(pkt.AID);
+	if (entity) {
+		entity.life.hp = pkt.hp;
+		entity.life.hp_max = pkt.maxhp;
+		entity.life.update();
+		entity.life.display = true;
+	}
+}
+
+/**
+ * Update entity's life (Tiny)
+ *
+ * @param {object} pkt - PACKET.ZC.HP_INFO_TINY
+ */
+function onEntityLifeUpdateTiny(pkt) {
+	const hp = pkt.hp * 5;
+	EntityManager.storeLife(pkt.GID, { hp: hp, hp_max: 100 });
+
+	const entity = EntityManager.get(pkt.GID);
+	if (entity) {
+		entity.life.hp = hp;
+		entity.life.hp_max = 100;
+		entity.life.update();
+		entity.life.display = true;
+	}
+}
+
+/**
+ * Shows notification effect for quests and events
+ *
+ * @param {object} pkt - PACKET.ZC.QUEST_NOTIFY_EFFECT
+ */
+function onEntityQuestNotifyEffect(pkt) {
+	const entity = EntityManager.get(pkt.npcID);
+	let color = 0;
+
+	if (pkt.effect !== 9999) {
+		const emotionId = pkt.effect + 81;
+
+		if (entity && pkt.effect in Emotions.indexes) {
+			entity.attachments.add({
+				frame: Emotions.indexes[emotionId],
+				file: 'emotion',
+				play: true,
+				head: true,
+				repeat: true,
+				depth: 5.0
+			});
+		}
+	}
+
+	switch (pkt.color + 1) {
+		case 1:
+			// yellow
+			color = 0xffff00;
+			break;
+		case 2:
+			// orange
+			color = 0xffa500;
+			break;
+		case 3:
+			// green
+			color = 0x00e16a;
+			break;
+		case 4:
+			// purple
+			color = 0x800080;
+			break;
+		case 0:
+		default:
+			return;
+	}
+
+	MiniMap.getUI().addNpcMark(pkt.npcID, pkt.xPos, pkt.yPos, color, Infinity);
+}
+
+/**
+ * Updating entity direction
+ *
+ * @param {object} pkt - PACKET.ZC.CHANGE_DIRECTION
+ */
+function onEntityDirectionChange(pkt) {
+	const entity = EntityManager.get(pkt.AID);
+	if (entity) {
+		entity.direction = [4, 3, 2, 1, 0, 7, 6, 5][pkt.dir];
+		entity.headDir = pkt.headDir;
+	}
+}
+
+/**
+ * Update Entity's visual look
+ *
+ * @param {object} pkt - PACKET.ZC.SPRITE_CHANGE2
+ */
+function onEntityViewChange(pkt) {
+	const entity = EntityManager.get(pkt.GID);
+
+	if (!entity) {
+		return;
+	}
+
+	switch (pkt.type) {
+		case 0:
+			if (
+				entity.objecttype === Entity.TYPE_EFFECT ||
+				entity.objecttype === Entity.TYPE_UNIT ||
+				entity.objecttype === Entity.TYPE_TRAP
+			) {
+				EffectManager.spamSkillZone(
+					pkt.value,
+					entity.position[0],
+					entity.position[1],
+					pkt.GID,
+					entity.creatorGID
+				);
+			} else {
+				// Don't override job visuals if transformation is active
+				if (entity._job_transform || entity._monster_transform || entity._active_monster_transform) {
+					entity._job = pkt.value;
+				} else {
+					entity.job = pkt.value;
+				}
+				if (entity === Session.Entity) {
+					//Interchange UI depending on Job
+					if (PACKETVER.value >= 20200520) {
+						BasicInfo.getUI().remove();
+						BasicInfo.selectUIVersionWithJob(DB.getJobClass(pkt.value));
+						BasicInfo.getUI().prepare();
+						BasicInfo.getUI().update('blvl', Session.Entity.clevel);
+						BasicInfo.getUI().update('jlvl', Session.Entity.joblevel);
+						BasicInfo.getUI().update('zeny', Session.Entity.money);
+						BasicInfo.getUI().update('name', Session.Entity.display.name);
+						BasicInfo.getUI().update('bexp', BasicInfo.getUI().base_exp, BasicInfo.getUI().base_exp_next);
+						BasicInfo.getUI().append();
+					}
+					// Update UI for all client versions
+					BasicInfo.getUI().update('job', pkt.value);
+				}
+			}
+			break;
+
+		case 1:
+			entity.head = pkt.value;
+			break;
+
+		case 2:
+			// In packet PACKET.ZC.SPRITE_CHANGE2, weapon and shield values are
+			// stored in a long value (uint16 and uint16 in uint32)
+			// source: https://github.com/rathena/rathena/blob/master/src/map/clif.c#L3162
+			if (pkt instanceof PACKET.ZC.SPRITE_CHANGE2) {
+				// don't know why switch from katar to sword, knife server put it on the left hand instead of right hand first.
+				// so we have to swap it. maybe have a better solution.
+				if (pkt.value === 0 && pkt.value2 !== 0 && !DB.isShield(pkt.value2)) {
+					pkt.value = pkt.value2;
+					pkt.value2 = 0;
+				}
+
+				const weaponType = DB.getWeaponType(pkt.value, true);
+				const viewId = DB.getWeaponViewID(pkt.value);
+
+				if (DB.isAssassin(entity.job) && pkt.value2 !== 0 && !DB.isShield(pkt.value2)) {
+					const secondaryWeaponType = DB.getWeaponType(pkt.value2, true);
+					entity.weapon = DB.mountWeapon(weaponType, secondaryWeaponType);
+					entity.shield = 0;
+				} else if (DB.isKatar(weaponType)) {
+					entity.weapon = viewId;
+					entity.shield = viewId;
+				} else {
+					entity.weapon = viewId;
+					entity.shield = pkt.value2;
+				}
+			} else {
+				entity.weapon = pkt.value;
+				entity.shield = pkt.value2;
+			}
+
+			// load self aura
+			entity.aura.load(EffectManager);
+
+			if (entity.falcon) {
+				entity.falcon.set({
+					PosDir: [entity.position[0], entity.position[1], 0],
+					job: entity._job + '_FALCON'
+				});
+			}
+			if (entity.wug) {
+				entity.wug.set({
+					PosDir: [entity.position[0], entity.position[1], 0],
+					job: entity._job + '_WUG'
+				});
+			}
+			break;
+
+		case 3:
+			entity.accessory = pkt.value;
+			break;
+		case 4:
+			entity.accessory2 = pkt.value;
+			break;
+		case 5:
+			entity.accessory3 = pkt.value;
+			break;
+		case 6:
+			entity.headpalette = pkt.value;
+			break;
+		case 7:
+			entity.bodypalette = pkt.value;
+			break;
+		case 8:
+			entity.shield = pkt.value;
+			break;
+		case 9:
+			break; // LOOK_SHOES ??
+		case 10:
+			break; // LOOK_BODY ??
+		case 11:
+			break; // LOOK_RESET_COSTUMES (Makes all headgear sprites on player vanish when activated.)
+		case 12:
+			entity.robe = pkt.value;
+			break;
+		case 13:
+			entity.body = pkt.value;
+			break; // LOOK_BODY2
+		case 14:
+			break; // LOOK_FLOOR ??
+	}
+}
+
+/**
+ * Update NPC's visual look
+ *
+ * @param {object} pkt - PACKET.ZC.NPCSPRITE_CHANGE
+ */
+function onNPCViewChange(pkt) {
+	const entity = EntityManager.get(pkt.GID);
+
+	// Type is fixed 1 and no other values. No need to do anything with it
+	if (entity) {
+		entity.job = pkt.value;
+	}
+}
+
+/**
+ * Entity use skill on another entity (no damage : heal, boost, etc.)
+ *
+ * @param {object} pkt - PACKET.ZC.USE_SKILL
+ */
+function onEntityUseSkill(pkt) {
+	const srcEntity = EntityManager.get(pkt.srcAID);
+	const dstEntity = EntityManager.get(pkt.targetAID);
+
+	// Don't display skill names for mobs and hiding skills
+	if (
+		srcEntity &&
+		(srcEntity.objecttype === Entity.TYPE_PC ||
+			srcEntity.objecttype === Entity.TYPE_DISGUISED ||
+			srcEntity.objecttype === Entity.TYPE_PET ||
+			srcEntity.objecttype === Entity.TYPE_HOM ||
+			srcEntity.objecttype === Entity.TYPE_MERC ||
+			srcEntity.objecttype === Entity.TYPE_ELEM)
+	) {
+		if (!SkillNameDisplayExclude.includes(pkt.SKID)) {
+			srcEntity.dialog.set(
+				((SkillInfo[pkt.SKID] && SkillInfo[pkt.SKID].SkillName) || '未知技能') + '！！',
+				'white'
+			);
+		}
+	}
+
+	//Action handling
+	if (srcEntity) {
+		if (srcEntity.action !== srcEntity.ACTION.DIE && srcEntity.action !== srcEntity.ACTION.SIT) {
+			if (pkt.SKID in SkillActionTable) {
+				const action = SkillActionTable[pkt.SKID];
+				if (action) {
+					srcEntity.setAction(action(srcEntity, Renderer.tick));
+				}
+			} else {
+				if (DB.isDoram(srcEntity.job)) {
+					srcEntity.setAction(SkillActionTable['DEFAULT_DORAM'](srcEntity, Renderer.tick));
+				} else {
+					srcEntity.setAction(SkillActionTable['DEFAULT'](srcEntity, Renderer.tick));
+				}
+			}
+		}
+	}
+
+	if (dstEntity) {
+		if (srcEntity && dstEntity !== srcEntity) {
+			srcEntity.lookTo(dstEntity.position[0], dstEntity.position[1]);
+		}
+
+		// In healing skill, the level parameter stored the healed value
+		if (pkt.SKID === SkillId.AL_HEAL || pkt.SKID === SkillId.AB_HIGHNESSHEAL || pkt.SKID === SkillId.AB_CHEAL) {
+			Damage.add(pkt.level, dstEntity, Renderer.tick, null, Damage.TYPE.HEAL);
+			Sound.playPosition('_heal_effect.wav', dstEntity.position); // healing on neutral targets got another effect than undeads
+		}
+
+		// Steal Coin zeny
+		if (pkt.SKID === SkillId.RG_STEALCOIN) {
+			ChatBox.addText('你获得了 ' + pkt.level + ' Zeny。', ChatBox.TYPE.BLUE, ChatBox.FILTER.ITEM);
+		}
+
+		if (pkt.SKID === SkillId.GC_ROLLINGCUTTER) {
+			if (dstEntity.RollCounter) {
+				const EF_Init_Par = {
+					effectId: EffectConst.EF_ROLLING1 + dstEntity.RollCounter - 1,
+					ownerAID: dstEntity.GID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			}
+		}
+
+		if (pkt.SKID === SkillId.TK_SEVENWIND) {
+			if (pkt.level) {
+				const EF_Init_Par = {
+					effectId: EffectConst.EF_BEGINASURA1 + pkt.level - 1,
+					ownerAID: dstEntity.GID
+				};
+
+				EffectManager.spam(EF_Init_Par);
+			}
+		}
+
+		EffectManager.spamSkill(pkt.SKID, pkt.targetAID, null, null, pkt.srcAID);
+
+		if (pkt.result == 1) {
+			EffectManager.spamSkillSuccess(pkt.SKID, pkt.targetAID, null, pkt.srcAID);
+		}
+	}
+}
+
+/**
+ * Entity just finish casting a skill to position
+ *
+ * @param {object} pkt - PACKET.ZC.SKILL_ENTRY
+ */
+function onSkillAppear(pkt) {
+	EffectManager.spamSkillZone(pkt.job, pkt.xPos, pkt.yPos, pkt.AID, pkt.creatorAID);
+}
+
+/**
+ * Remove a skill from screen
+ *
+ * @param {object} pkt - PACKET.ZC.SKILL_DISAPPEAR
+ */
+function onSkillDisapear(pkt) {
+	EffectManager.remove(null, pkt.AID);
+	const entity = EntityManager.get(pkt.AID);
+	if (entity) {
+		entity.remove();
+	}
+}
+
+/**
+ * Entity use skill on another entity with damage
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_SKILL
+ */
+function onEntityUseSkillToAttack(pkt) {
+	const SkillAction = {}; //Corresponds to e_damage_type in clif.hpp
+	SkillAction.NORMAL = 0; /// damage [ damage: total damage, div: amount of hits, damage2: assassin dual-wield damage ]
+	SkillAction.PICKUP_ITEM = 1; /// pick up item
+	SkillAction.SIT_DOWN = 2; /// sit down
+	SkillAction.STAND_UP = 3; /// stand up
+	SkillAction.ENDURE = 4; /// damage (endure)
+	SkillAction.SPLASH = 5; /// (splash?)
+	SkillAction.SKILL = 6; /// (skill?)
+	SkillAction.REPEAT = 7; /// (repeat damage?)
+	SkillAction.MULTI_HIT = 8; /// multi-hit damage
+	SkillAction.MULTI_HIT_ENDURE = 9; /// multi-hit damage (endure)
+	SkillAction.CRITICAL = 10; /// critical hit
+	SkillAction.LUCY_DODGE = 11; /// lucky dodge
+	SkillAction.TOUCH = 12; /// (touch skill?)
+	SkillAction.MULTI_HIT_CRITICAL = 13; /// multi-hit critical
+
+	const srcEntity = EntityManager.get(pkt.AID);
+	const dstEntity = EntityManager.get(pkt.targetID);
+	let srcWeapon;
+
+	if (srcEntity) {
+		pkt.attackMT = Math.min(9999, pkt.attackMT); // FIXME: cap value ?
+		pkt.attackMT = Math.max(1, pkt.attackMT);
+		srcEntity.attack_speed = pkt.attackMT;
+
+		srcEntity.amotionTick = Renderer.tick + pkt.attackMT * 2; // Add amotion delay
+
+		srcWeapon = 0;
+		if (srcEntity.weapon) {
+			srcWeapon = srcEntity.weapon;
+		}
+
+		// Don't display skill names for
+		//  - hiding skills
+		//  - non-player or player owned entity
+		//  - skill level < 0
+		//  - skill ID < 0
+		if (
+			!SkillNameDisplayExclude.includes(pkt.SKID) &&
+			(srcEntity.objecttype === Entity.TYPE_PC ||
+				srcEntity.objecttype === Entity.TYPE_DISGUISED ||
+				srcEntity.objecttype === Entity.TYPE_PET ||
+				srcEntity.objecttype === Entity.TYPE_HOM ||
+				srcEntity.objecttype === Entity.TYPE_MERC ||
+				srcEntity.objecttype === Entity.TYPE_ELEM) &&
+			!(pkt.level < 0) &&
+			!(pkt.SKID < 0)
+		) {
+			srcEntity.dialog.set(((SkillInfo[pkt.SKID] && SkillInfo[pkt.SKID].SkillName) || '未知技能') + '！！');
+		}
+
+		//Action handling
+		if (srcEntity.action !== srcEntity.ACTION.DIE && srcEntity.action !== srcEntity.ACTION.SIT) {
+			if (pkt.SKID in SkillActionTable) {
+				const action = SkillActionTable[pkt.SKID];
+				if (action) {
+					srcEntity.setAction(action(srcEntity, Renderer.tick));
+				}
+			} else {
+				srcEntity.setAction(SkillActionTable['DEFAULT'](srcEntity, Renderer.tick));

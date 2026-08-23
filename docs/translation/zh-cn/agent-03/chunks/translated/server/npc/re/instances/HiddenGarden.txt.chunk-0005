@@ -1,0 +1,210 @@
+			.@x = 250;
+			.@y = 80;
+		}
+		break;
+	}
+	warp 'map_herbs$,.@x,.@y;
+	end;
+}
+
+1@herbs,174,229,0	duplicate(#wp_1)	#wp_2	WARPNPC,3,3
+1@herbs,254,212,0	duplicate(#wp_1)	#wp_3	WARPNPC,3,3
+1@herbs,297,264,0	duplicate(#wp_1)	#wp_4	WARPNPC,3,3
+
+// (normal mode)
+1@herbs,147,80,0	warp2(DISABLED)	#bs_wp1	3,3,1@herbs,94,79
+// (hard mode)
+1@herbs,240,80,0	warp2(DISABLED)	#bs_wp2	3,3,1@herbs,94,79
+
+
+// (normal mode)
+1@herbs,168,79,3	script(DISABLED)	#kappa_1	MD_REDPEPPER,4,4,{
+	if (!is_party_leader())
+		end;
+	if ('room != 4)
+		end;
+	'room = 5;
+	npctalk "你的队伍毁坏了花园的30%，修复要花很多钱。";
+	sleep 5000;
+	npctalk "我们希望瓦尔蒙特大师还活着，但以人类的寿命来说不太可能。";
+	sleep 5000;
+	npctalk "不过，如果你想阻止研究区关闭，就必须击败我并取得管理权限。";
+	sleep 5000;
+	disablenpc();
+	donpcevent instance_npcname("#172_sec_boss") + "::OnSummon";
+	end;
+}
+
+// (hard mode)
+1@herbs,275,80,3	script(DISABLED)	#ramda_1	MD_REDPEPPER_H,4,4,{
+	if (!is_party_leader())
+		end;
+	if ('room != 4)
+		end;
+	'room = 5;
+	npctalk "我们已经明确检查了花园需要改进的部分。现在只剩下谈判了。";
+	sleep 5000;
+	npctalk "我们希望瓦尔蒙特大师还活着，但以人类的寿命来说不太可能。";
+	sleep 5000;
+	npctalk "不过，如果你想阻止研究区关闭，就必须击败我并取得管理权限。";
+	sleep 5000;
+	disablenpc();
+	donpcevent instance_npcname("#172_sec_boss") + "::OnSummonHard";
+	end;
+OnTouch:	// unknown effect
+	end;
+}
+
+
+1@herbs,85,77,8	script(DISABLED)	#sigma2	MD_REDPEPPER_H,{
+	if (isbegin_quest(12500) > 0)
+		.@qid = 12500;
+	else if (isbegin_quest(12499) > 0)
+		.@qid = 12499;
+
+	if (checkquest(.@qid,HUNTING) == 2) {
+		if (checkweight(1000103,6) == 0) {	// (custom text)
+			mes "^008800等一下！！";
+			mes "你携带的物品太多，无法再领取物品。减轻负重后再试。^000000";
+			close;
+		}
+		mes "[西格玛]";
+		mes "你做得很好，让他们投降了，但我想你还没有获得管理权限。";
+		next;
+		mes "[西格玛]";
+		mes "他们过一段时间就会恢复，所以在瓦尔蒙特大师回来前，你可能还得继续战斗。";
+		next;
+		mes "[西格玛]";
+		mes "哦。";
+		mes "我从过去带来了一些旧物品。也许能帮到你，拿去吧。";
+		close2;
+		erasequest .@qid;
+		getitem 1000103,6;
+		if (.@qid == 12500) {
+			if (rand(1,100) < 95)
+				getitem 1000104,rand(1,5);
+			else
+				getitem 100161,1;
+		}
+		end;
+	}
+	mes "[西格玛]";
+	mes "我来给你指出去的路。你要怎么做？";
+	next;
+	if (select( "我再看看。", "我要离开。" ) == 2)
+		warp "ba_maison",136,309;
+	end;
+}
+
+
+1@herbs,1,1,0	script	#172_sec_boss	HIDDEN_WARP_NPC,{
+	end;
+OnSummon:
+	monster 'map_herbs$,169,79,"Kappa",20620,1, instance_npcname("#172_sec_boss") + "::OnBossKill";
+	'boss_gid = $@mobid[0];
+	donpcevent instance_npcname("#172_sec_boss") + "::OnShield";
+	end;
+OnSummonHard:
+	monster 'map_herbs$,275,80,"Lambda",20621,1, instance_npcname("#172_sec_boss") + "::OnBossKill";
+	'boss_gid = $@mobid[0];
+	donpcevent instance_npcname("#172_sec_boss") + "::OnShield";
+	end;
+
+OnBossKill:
+	stopnpctimer;
+	donpcevent instance_npcname("#172_sec_boss_shield") + "::OnStop";
+	killmonster 'map_herbs$, instance_npcname("#172_sec_boss") + "::OnBossKill";
+	killmonster 'map_herbs$, instance_npcname("#172_sec_boss") + "::OnBreakShield";
+	if ('mode == 0)
+		enablenpc instance_npcname("#bs_wp1");
+	else
+		enablenpc instance_npcname("#bs_wp2");
+	enablenpc instance_npcname("#sigma2");
+	mapannounce 'map_herbs$, "西格玛：我已启动通往我所在位置的传送。过来吧。", bc_map, 0xF6D6B6;
+	end;
+
+OnShield:
+	.@event$ = instance_npcname("#172_sec_boss") + "::OnBreakShield";
+	killmonster 'map_herbs$, .@event$;
+	if ('mode)
+		setarray .@xy[0],299,95,299,64,272,64,272,95;
+	else
+		setarray .@xy[0],171,94,171,65,200,65,200,94;
+
+	for ( .@i = 0; .@i < 8; .@i += 2 )
+		monster 'map_herbs$,.@xy[.@i],.@xy[.@i+1],"守护者部件",20679,1, .@event$;
+	unitskilluseid 'boss_gid,"NPC_RELIEVE_OFF",1;
+	unitskilluseid 'boss_gid,"NPC_RELIEVE_ON",10;
+	mapannounce 'map_herbs$, "系统：管理者召唤了守护者部件，将其回收为能量护盾材料。", bc_map, 0xFFFF00;
+	initnpctimer;
+	end;
+OnTimer40000:
+	stopnpctimer;
+	killmonster 'map_herbs$, instance_npcname("#172_sec_boss") + "::OnBreakShield";
+	mapannounce 'map_herbs$, "系统：默认能量护盾值已恢复。", bc_map, 0xFFFF00;
+	donpcevent instance_npcname("#172_sec_boss_shield") + "::OnStart";
+	end;
+
+OnBreakShield:
+	switch( mobcount('map_herbs$, instance_npcname("#172_sec_boss") + "::OnBreakShield") ) {
+	case 0:
+		stopnpctimer;
+		unitskilluseid 'boss_gid,"NPC_RELIEVE_OFF",1;
+		mapannounce 'map_herbs$, "系统：所有守护者部件都已摧毁，能量护盾未能恢复。", bc_map, 0xFFFF00;
+		donpcevent instance_npcname("#172_sec_boss_shield") + "::OnStart";
+		end;
+	case 1:
+		.@val = 3;
+		break;
+	case 2:
+		.@val = 5;
+		break;
+	case 3:
+		.@val = 7;
+		break;
+	default:
+		end;
+	}
+	unitskilluseid 'boss_gid,"NPC_RELIEVE_OFF",1;
+	unitskilluseid 'boss_gid,"NPC_RELIEVE_ON",.@val;
+	mapannounce 'map_herbs$, "系统：守护者部件受损，能量护盾减弱。", bc_map, 0xFFFF00;
+	end;
+}
+
+1@herbs,1,1,0	script	#172_sec_boss_shield	HIDDEN_WARP_NPC,{
+	end;
+OnStart:
+	initnpctimer;
+	end;
+OnTimer30000:
+	stopnpctimer;
+	getunitdata 'boss_gid, .@data;
+	.@val = .@data[UMOB_MAXHP] / 10;
+	// todo system to trigger NPC_LOCKON_LASER
+	if (.@data[UMOB_HP] <= (.@val * 8) && 'summon[0] == 0) {
+		'summon[0] = 1;
+		donpcevent instance_npcname("#172_sec_boss") + "::OnShield";
+		end;
+	}
+	if (.@data[UMOB_HP] <= (.@val * 6) && 'summon[1] == 0) {
+		'summon[1] = 1;
+		donpcevent instance_npcname("#172_sec_boss") + "::OnShield";
+		end;
+	}
+	if (.@data[UMOB_HP] <= (.@val * 4) && 'summon[2] == 0) {
+		'summon[2] = 1;
+		donpcevent instance_npcname("#172_sec_boss") + "::OnShield";
+		end;
+	}
+	if (.@data[UMOB_HP] <= (.@val * 2) && 'summon[3] == 0) {
+		'summon[3] = 1;
+		donpcevent instance_npcname("#172_sec_boss") + "::OnShield";
+		end;
+	}
+	if ('summon[0] == 0 || 'summon[1] == 0 || 'summon[2] == 0 || 'summon[3] == 0)
+		initnpctimer;
+	end;
+OnStop:
+	stopnpctimer;
+	end;
+}

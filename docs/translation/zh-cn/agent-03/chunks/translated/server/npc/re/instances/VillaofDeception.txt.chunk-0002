@@ -1,0 +1,459 @@
+OnTimer2000:
+	stopnpctimer;
+	.@alive = mobcount('map_advs$, instance_npcname("#advs_step_2") + "::OnMobDead");
+	mapannounce 'map_advs$, "剩余怪物数量：" + .@alive, bc_map, 0xAAAAFF;
+	if ('advs_step == 1 && 'mob_to_respawn == 0 && .@alive == 0)
+		donpcevent instance_npcname("#advs_step_3_A") + "::OnStart";
+	end;
+S_Spawn:
+	.@label$ = instance_npcname("#advs_step_2") + "::OnMobDead";
+	if (rand(2))
+		.@mob_id = 'hunter_id;
+	else
+		.@mob_id = 'sanare_id;
+	.@r = rand(3);
+	if (.@r == 0)
+		areamonster 'map_advs$,76,145,171,139,"--en--",.@mob_id,1, .@label$;
+	else if (.@r == 1)
+		areamonster 'map_advs$,113,205,135,125,"--en--",.@mob_id,1, .@label$;
+	else
+		areamonster 'map_advs$,113,205,135,125,"--en--",.@mob_id,1, .@label$;
+	unitskilluseid $@mobid[0], 771, 'monster_relieve;	// NPC_RELIEVE_ON
+	return;
+}
+//
+
+1@advs,101,159,5	script	#food1	4_EP16_FOOD,1,1,{
+	if ('max_food <= 0) {
+		mapannounce 'map_advs$, "???：你真是一点都不会做饭，活该在我的花园里随便逛逛。", bc_map, 0xAAAAFF;
+		end;
+	}
+	progressbar "",4;
+	'max_food--;
+	
+	.@r = rand(5);
+	if (.@r == 0)
+		sc_start SC_CONFUSION,30000,0,100, SCSTART_NOAVOID|SCSTART_NOTICKDEF|SCSTART_NORATEDEF;
+	else if (.@r == 1)
+		sc_start SC_CURSE,30000,0,100, SCSTART_NOAVOID|SCSTART_NOTICKDEF|SCSTART_NORATEDEF;
+	else if (.@r == 2)
+		sc_start SC_BLIND,30000,0,100, SCSTART_NOAVOID|SCSTART_NOTICKDEF|SCSTART_NORATEDEF;
+	else if (.@r == 3)
+		sc_start SC_POISON,30000,0,100, SCSTART_NOAVOID|SCSTART_NOTICKDEF|SCSTART_NORATEDEF;
+	else
+		sc_start SC_SILENCE,30000,0,100, SCSTART_NOAVOID|SCSTART_NOTICKDEF|SCSTART_NORATEDEF;
+
+	if ('total_reaper > 'min_reaper && ('max_food % 2) == 0)
+		'total_reaper--;
+	end;
+}
+1@advs,101,125,5	duplicate(#food1)	#food2	4_EP16_FOOD,1,1
+1@advs,147,162,5	duplicate(#food1)	#food3	4_EP16_FOOD,1,1
+1@advs,147,122,5	duplicate(#food1)	#food4	4_EP16_FOOD,1,1
+
+
+//---------------------------------------------------------------
+// Step 3
+//---------------------------------------------------------------
+1@advs,1,1,5	script	#advs_step_3_A	-1,{
+	end;
+OnStart:
+	if ('advs_step != 1)
+		end;
+	'advs_step = 2;
+	enablenpc instance_npcname("#wp2");
+	disablenpc instance_npcname("#advs_step_2");
+	donpcevent instance_npcname("#advs_step_3_A") + "::OnEvent";
+	donpcevent instance_npcname("#advs_step_3_B") + "::OnEvent";
+	end;
+OnEvent:
+	.@label$ = instance_npcname("#advs_step_3_A") + "::OnMobDead";
+		
+	copyarray .@x[0], 'x_reaper[0], 'size_reaper;
+	copyarray .@y[0], 'y_reaper[0], 'size_reaper;
+	.@size = 'size_reaper;
+
+	for ( .@i = 0; .@i < 'total_reaper; ++.@i ) {
+		.@r = rand(.@size);
+		
+		monster 'map_advs$,.@x[.@r],.@y[.@r],"--en--",20846,1, .@label$;	// MD_HIDDEN_GROUND01
+		deletearray .@x[.@r],1;
+		deletearray .@y[.@r],1;
+		.@size--;
+	}
+	initnpctimer;
+	end;
+OnTimer10000:
+	killmonster 'map_advs$, instance_npcname("#advs_step_3_A") + "::OnMobDead";
+	donpcevent instance_npcname("#advs_step_3_A") + "::OnEvent";	// this event never stop
+	end;
+OnMobDead:
+	end;
+}
+
+1@advs,1,1,0	script	#advs_step_3_B	-1,{
+	end;
+OnEvent:
+	'mob_to_respawn = 'total_monster_step_3 - 'init_monster_step_3;
+
+	for ( .@i = 0; .@i < 'init_monster_step_3; ++.@i )
+		callsub( S_Spawn );
+	end;
+OnMobDead:
+	if ('mob_to_respawn > 0)
+		'mob_to_respawn--;
+	initnpctimer;
+	sleep 2000;
+	if ('advs_step == 2 && 'mob_to_respawn > 0) {
+		if ('mob_to_respawn > 0)
+			callsub( S_Spawn );
+		if ('mob_to_respawn > 1)
+			callsub( S_Spawn );
+	}
+	end;
+OnTimer2000:
+	stopnpctimer;
+	.@alive = mobcount('map_advs$, instance_npcname("#advs_step_3_B") + "::OnMobDead");
+	mapannounce 'map_advs$, "剩余怪物数量：" + .@alive, bc_map, 0xAAAAFF;
+	if ('advs_step == 2 && 'mob_to_respawn == 0 && .@alive == 0)
+		donpcevent instance_npcname("#boss1_advs") + "::OnStart";
+	end;
+S_Spawn:
+	.@label$ = instance_npcname("#advs_step_3_B") + "::OnMobDead";
+	if (rand(2))
+		.@mob_id = 'hunter_id;
+	else
+		.@mob_id = 'sanare_id;
+	.@r = rand(4);
+	if (.@r == 0)
+		areamonster 'map_advs$,109,238,119,248,"--en--",.@mob_id,1, .@label$;
+	else if (.@r == 1)
+		areamonster 'map_advs$,109,219,119,229,"--en--",.@mob_id,1, .@label$;
+	else if (.@r == 2)
+		areamonster 'map_advs$,128,238,138,248,"--en--",.@mob_id,1, .@label$;
+	else
+		areamonster 'map_advs$,128,219,138,229,"--en--",.@mob_id,1, .@label$;
+	unitskilluseid $@mobid[0], 771, 'monster_relieve;	// NPC_RELIEVE_ON
+	return;
+}
+
+
+//---------------------------------------------------------------
+// Step 4
+//---------------------------------------------------------------
+1@advs,1,1,4	script	#boss1_advs	-1,{
+	end;
+OnStart:
+	if ('advs_step != 2)
+		end;
+	'advs_step = 3;
+	enablenpc instance_npcname("#wp3");
+	disablenpc instance_npcname("#advs_step_3_B");
+	enablenpc instance_npcname("#boss1");
+	end;
+OnMobDead:
+	if ('advs_step != 4)
+		end;
+	'advs_step = 5;
+	enablenpc instance_npcname("#wp4");
+	enablenpc instance_npcname("#boss2_sw");
+	donpcevent instance_npcname("#boss1_advs_skill_1") + "::OnStop";
+	end;
+}
+
+// 1@advs,124,295,4	script	#boss1	EP18_MD_SCHULANG_R,1,1,{
+1@advs,124,295,4	script	#boss1	EP18_MD_SCHULANG_R,{
+	if ('advs_step != 3)
+		end;
+	if (is_party_leader() == false)
+		end;
+	'advs_step = 4;
+	npctalk "人类，就到此为止吧。";
+	unitwalk getnpcid(0), 124,290, instance_npcname("#boss1") + "::OnMove";
+	end;
+
+OnMove:
+	disablenpc instance_npcname("#boss1");
+	monster 'map_advs$,124,290,"--en--",'schulang_id,1, instance_npcname("#boss1_advs") + "::OnMobDead";
+	'schulang_gid = $@mobid[0];
+	unitskilluseid $@mobid[0], 771, 1;	// NPC_RELIEVE_ON
+	unittalk 'schulang_gid, "再靠近一点我就要有麻烦了！！！";
+	monster 'map_advs$,123,285,"--en--",21319,1;	// EP18_MD_HEARTHUNTER_R2
+	unitskilluseid $@mobid[0], 771, 'monster_relieve;	// NPC_RELIEVE_ON
+	donpcevent instance_npcname("#boss1_advs_skill_1") + "::OnStart";
+	end;
+// OnTouch:	// effect ?
+	// end;
+}
+
+
+1@advs,1,1,0	script	#boss1_advs_skill_1	-1,{
+	end;
+OnStart:
+	initnpctimer;
+	getunitdata 'schulang_gid, .@data;
+	'x_sch_event = .@data[UMOB_X];
+	'y_sch_event = .@data[UMOB_Y];
+	'ignore_column = rand(5);	// one column is randomly free
+	end;
+OnTimer1000:
+	callsub( S_Skill,-8 );
+	end;
+OnTimer1500:
+	callsub( S_Skill,-4 );
+	end;
+OnTimer2000:
+	callsub( S_Skill,0 );
+	end;
+OnTimer2500:
+	callsub( S_Skill,4 );
+	end;
+OnTimer3000:
+	callsub( S_Skill,8 );
+	stopnpctimer;
+	donpcevent instance_npcname("#boss1_advs_skill_1") + "::OnStart";
+	end;
+S_Skill:
+	.@dxy = getarg(0);
+	if ('ignore_column != 0)
+		unitskillusepos 'schulang_gid,"MG_THUNDERSTORM",4, ('x_sch_event - 8), ('y_sch_event + .@dxy), -50;
+	if ('ignore_column != 1)
+		unitskillusepos 'schulang_gid,"MG_THUNDERSTORM",4, ('x_sch_event - 4), ('y_sch_event + .@dxy), -50;
+	if ('ignore_column != 2)
+		unitskillusepos 'schulang_gid,"MG_THUNDERSTORM",4, 'x_sch_event, ('y_sch_event + .@dxy), -50;
+	if ('ignore_column != 3)
+		unitskillusepos 'schulang_gid,"MG_THUNDERSTORM",4, ('x_sch_event + 4), ('y_sch_event + .@dxy), -50;
+	if ('ignore_column != 4)
+		unitskillusepos 'schulang_gid,"MG_THUNDERSTORM",4, ('x_sch_event + 8), ('y_sch_event + .@dxy), -50;
+	return;
+OnStop:
+	stopnpctimer;
+	end;
+}
+
+
+//---------------------------------------------------------------
+// Step 5 (final)
+//---------------------------------------------------------------
+// 1@advs,124,358,4	script	#boss2_sw	CLEAR_NPC,1,1,{
+1@advs,124,358,4	script	#boss2_sw	CLEAR_NPC,{
+	if ('advs_step != 5)
+		end;
+	if (is_party_leader() == false)
+		end;
+	'advs_step = 6;
+	cloakonnpc instance_npcname("#boss2_sw");	// cloakonnpc to display effect
+	specialeffect EF_CLOUD4;
+	specialeffect EF_DQ9_CHARGE3;
+	sleep 4000;
+	specialeffect EF_SCREEN_QUAKE;
+	setnpcdisplay( instance_npcname("#boss2"), 'freyja_id );
+	enablenpc instance_npcname("#boss2");
+	specialeffect EF_BEGINSPELL_YB;
+	sleep 2000;
+	npctalk "我……和……一起……来玩吧……", instance_npcname("#boss2");
+	unitwalk getnpcid(0, instance_npcname("#boss2")), 124,346, instance_npcname("#boss2_sw") + "::OnMove";
+	end;
+OnMove:
+	setnpcdisplay( instance_npcname("#boss2"), CLEAR_NPC );
+	disablenpc instance_npcname("#boss2");
+	monster 'map_advs$,124,346,"--en--",'freyja_id,1, instance_npcname("#boss2_sw") + "::OnMobDead";
+	'freyja_gid = $@mobid[0];
+	donpcevent instance_npcname("#advs_boss_relieve") + "::OnStart";
+	sleep 3000;
+	mapannounce 'map_advs$, "提示：扭曲之神芙蕾雅越靠近吊灯，力量越弱。", bc_map, 0xFFCC;
+	if ('advs_difficult == 1)
+		sleep 8000;
+	else
+		sleep 30000;
+
+	// circles
+	if ('advs_difficult == 1) {
+		donpcevent instance_npcname("#b_tr1") + "::OnEnable";
+		donpcevent instance_npcname("#b_tr2") + "::OnEnable";
+	}
+	donpcevent instance_npcname("#b_tr3") + "::OnEnable";
+	donpcevent instance_npcname("#b_tr4") + "::OnEnable";
+
+	// stop the circles from moving
+	enablenpc instance_npcname("#b_sw1");
+	enablenpc instance_npcname("#b_sw2");
+	enablenpc instance_npcname("#b_sw3");
+	enablenpc instance_npcname("#b_sw4");
+	end;
+
+OnMobDead:
+	'freyja_gid = 0;
+	donpcevent instance_npcname("#advs_boss_relieve") + "::OnStop";
+	disablenpc instance_npcname("#boss2_sw");
+	enablenpc instance_npcname("#box_admin");
+	if ('advs_difficult == 1) {
+		donpcevent instance_npcname("#b_tr1") + "::OnStop";
+		donpcevent instance_npcname("#b_tr2") + "::OnStop";
+	}
+	donpcevent instance_npcname("#b_tr3") + "::OnStop";
+	donpcevent instance_npcname("#b_tr4") + "::OnStop";
+	end;
+// OnTouch:	// effect ?
+	// end;
+}
+1@advs,124,356,4	duplicate(dummy_npc)	#boss2	CLEAR_NPC,1,1
+
+1@advs,1,1,4	script	#advs_boss_relieve	-1,{
+	end;
+OnStart:
+	if (unitexists('freyja_gid) == false)
+		end;
+	getunitdata 'freyja_gid, .@data;
+	.@d = distance(124,356,.@data[UMOB_X],.@data[UMOB_Y]);
+	.@lv = (.@d / 2) + 1;	// level 6 on spawn
+	.@lv = min(10,.@lv);
+	.@lv = max(1,.@lv);
+	unitskilluseid 'freyja_gid, 772, 1;	// NPC_RELIEVE_OFF
+	unitskilluseid 'freyja_gid, 771, .@lv;	// NPC_RELIEVE_ON
+	initnpctimer;
+	end;
+OnTimer2000:
+	donpcevent instance_npcname("#advs_boss_relieve") + "::OnStart";
+	end;
+OnStop:
+	stopnpctimer;
+	end;
+}
+
+// circles
+1@advs,124,337,5	script	#b_tr1	MD_HIDDEN_GROUND02,2,2,{
+	end;
+OnTouch:	// note: warp dead player
+	if ('freyja_gid == 0)
+		end;
+	specialeffect2 EF_FIREHIT;
+	specialeffect2 EF_ACIDDEMON;
+	percentheal -10,0;	// deal some damage
+	if (rand(2))
+		warp 'map_advs$,67,182;
+	else
+		warp 'map_advs$,180,182;
+	end;
+
+OnEnable:
+	enablenpc instance_npcname( strnpcinfo(0) );
+OnStart:
+	'circle_move = 1;
+OnMove:
+	if ('freyja_gid == 0)
+		end;
+	if ('circle_move == 0)
+		end;
+	getmapxy( .@map$, .@x, .@y, BL_NPC );
+	do {
+		.@dx = rand(-2,2);
+		.@dy = rand(-2,2);
+		.@new_x = .@x + .@dx;
+		.@new_y = .@y + .@dy;
+	}
+	while ((.@dx == 0 && .@dy == 0) || .@new_x < 108 || .@new_x > 139 || .@new_y < 325 || .@new_y > 351);
+	unitwalk( getnpcid(0),.@new_x,.@new_y, instance_npcname( strnpcinfo(0) ) + "::OnMove" );
+	end;
+
+OnStop:
+	'circle_move = 0;	// double check just because
+	unitstopwalk getnpcid(0);
+	end;
+}
+1@advs,124,337,5	duplicate(#b_tr1)	#b_tr2	MD_HIDDEN_GROUND02,2,2
+1@advs,124,337,5	duplicate(#b_tr1)	#b_tr3	MD_HIDDEN_GROUND02,2,2
+1@advs,124,337,5	duplicate(#b_tr1)	#b_tr4	MD_HIDDEN_GROUND02,2,2
+
+
+// stop the circles from moving
+1@advs,108,358,4	script	#b_sw1	4_ENERGY_YELLOW,2,2,{
+	mes "驱散魔法阵^ff0000需要消耗你的生命和魔力。^000000过程中你将^ff0000无法移动且毫无防御。^000000确定要开始驱散吗？";
+	next;
+	if (select( "Cancel", "Proceed" ) == 1)
+		end;
+	if ('freyja_gid == 0)
+		end;
+	// this part need to be checked when more information are available
+	.@success = callsub( S_Venom );
+	mes "^0000ff吸收了体力和魔力的魔法石产生共鸣，徘徊的魔法阵消失了。^000000";
+	specialeffect EF_BASH3D6;
+	if (.@success == true && 'circle_move == 1) {
+		disablenpc();
+		if ('advs_difficult == 1) {
+			donpcevent instance_npcname("#b_tr1") + "::OnStop";
+			donpcevent instance_npcname("#b_tr2") + "::OnStop";
+		}
+		donpcevent instance_npcname("#b_tr3") + "::OnStop";
+		donpcevent instance_npcname("#b_tr4") + "::OnStop";
+		initnpctimer;
+	}
+	close;
+
+S_Venom:
+	.@percent_hp = max(1, (MaxHp/100));	// deal random damage to the player
+	.@percent_sp = max(1, (MaxSp/100));
+	.@r = rand(2,20);
+
+	for ( .@i = 0; .@i < .@r; ++.@i ) {
+		specialeffect2 EF_INVENOM;
+		heal -.@percent_hp, -.@percent_sp;
+		if (Hp < 1)
+			return 0;
+		sleep2 500;
+	}
+	return (Hp > 0);
+
+OnTimer10000:	// seems to be around 10s to re-enable the circle, 20s the npc
+	if ('freyja_gid == 0)
+		end;
+	if ('advs_difficult == 1) {
+		donpcevent instance_npcname("#b_tr1") + "::OnStart";
+		donpcevent instance_npcname("#b_tr2") + "::OnStart";
+	}
+	donpcevent instance_npcname("#b_tr3") + "::OnStart";
+	donpcevent instance_npcname("#b_tr4") + "::OnStart";
+	end;
+
+OnTimer20000:
+	stopnpctimer;
+	enablenpc();
+	end;
+OnTouch:	// effect ?
+	end;
+}
+1@advs,101,351,4	duplicate(#b_sw1)	#b_sw2	4_ENERGY_YELLOW,2,2
+1@advs,139,358,4	duplicate(#b_sw1)	#b_sw3	4_ENERGY_YELLOW,2,2
+1@advs,145,351,4	duplicate(#b_sw1)	#b_sw4	4_ENERGY_YELLOW,2,2
+
+// exit
+1@advs,123,358,4	script	#box_admin	4_ENERGY_YELLOW,2,2,{
+	.@is_hard = (instance_live_info(ILI_NAME) == "Villa of Deception Advanced");
+	if (isbegin_quest(12520) == 1 && !.@is_hard || isbegin_quest(12521) == 1 && .@is_hard) {
+		if (checkweight(1000405,10, 1000471,1) == 0) {
+			mes "-等一下！！-";
+			mes "-你当前携带的物品-";
+			mes "-太多了。-";
+			mes "-请先丢弃一些物品-";
+			mes "-减轻负重后再试。-";
+			close;
+		}
+		mes "^0000ff在明亮的光环中发现了某种东西。^000000";
+		if (get_reputation_points(3) >= 5000)
+			.@bonus = 2;
+		getitem 1000405,8+.@bonus;	// Ep18_Amethyst_Fragment
+		if (.@is_hard)
+			erasequest 12521;
+		else
+			erasequest 12520;
+		if (rand(100) < 10)
+			getitem 1000471,1;
+		close;
+	}
+	mes "^0000ff我想你现在可以出去了。^000000";
+	next;
+	if (select( "Cancel", "Exit" ) == 1)
+		end;
+	warp "wolfvill",77,258;
+	end;
+}

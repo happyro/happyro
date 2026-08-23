@@ -1,0 +1,500 @@
+	for( i = 0; i < MAX_CHARS && SQL_SUCCESS == stmt.NextRow(); i++ )
+	{
+		sd.found_char[p.slot] = p.char_id;
+		sd.unban_time[p.slot] = p.unban_time;
+		p.sex = char_mmo_gender( &sd, &p, sex[0] );
+		j += char_mmo_char_tobuf( chars[i], p );
+
+		// Addon System
+		// store the required info into the session
+		sd.char_moves[p.slot] = p.character_moves;
+	}
+
+	if( count != nullptr ){
+		*count = i;
+	}
+
+	memset( sd.new_name, 0, sizeof( sd.new_name ) );
+
+	return j;
+}
+
+//=====================================================================================================
+int32 char_mmo_char_fromsql(uint32 char_id, struct mmo_charstatus* p, bool load_everything) {
+	int32 i;
+	SqlStmt stmt{ *sql_handle };
+	struct s_point_str tmp_point;
+	struct s_skill tmp_skill;
+	uint16 skill_count = 0;
+	struct s_friend tmp_friend;
+#ifdef HOTKEY_SAVING
+	struct hotkey tmp_hotkey;
+	int32 hotkey_num;
+#endif
+	StringBuf msg_buf;
+	char sex[2];
+
+	memset(p, 0, sizeof(struct mmo_charstatus));
+
+	if (charserv_config.save_log) ShowInfo("Char load request (%d)\n", char_id);
+
+	// read char data
+	if( SQL_ERROR == stmt.Prepare( "SELECT "
+		"`char_id`,`account_id`,`char_num`,`name`,`class`,`base_level`,`job_level`,`base_exp`,`job_exp`,`zeny`,"
+		"`str`,`agi`,`vit`,`int`,`dex`,`luk`,`max_hp`,`hp`,`max_sp`,`sp`,"
+		"`status_point`,`skill_point`,`option`,`karma`,`manner`,`party_id`,`guild_id`,`pet_id`,`homun_id`,`elemental_id`,`hair`,"
+		"`hair_color`,`clothes_color`,`body`,`weapon`,`shield`,`head_top`,`head_mid`,`head_bottom`,`last_map`,`last_x`,`last_y`,"
+		"`save_map`,`save_x`,`save_y`,`partner_id`,`father`,`mother`,`child`,`fame`,`rename`,`delete_date`,`robe`, `moves`,"
+		"`unban_time`,`font`,`uniqueitem_counter`,`sex`,`hotkey_rowshift`,`clan_id`,`title_id`,`show_equip`,`hotkey_rowshift2`,"
+		"`max_ap`,`ap`,`trait_point`,`pow`,`sta`,`wis`,`spl`,`con`,`crt`,"
+		"`inventory_slots`,`body_direction`,`disable_call`,`last_instanceid`,`disable_partyinvite`,`disable_showcostumes`"
+		" FROM `%s` WHERE `char_id`=? LIMIT 1", schema_config.char_db)
+	||	SQL_ERROR == stmt.BindParam(0, SQLDT_INT32, &char_id, 0)
+	||	SQL_ERROR == stmt.Execute()
+	||	SQL_ERROR == stmt.BindColumn(0, SQLDT_INT32, &p->char_id)
+	||	SQL_ERROR == stmt.BindColumn(1, SQLDT_INT32, &p->account_id)
+	||	SQL_ERROR == stmt.BindColumn(2, SQLDT_UCHAR, &p->slot)
+	||	SQL_ERROR == stmt.BindColumn(3, SQLDT_STRING, &p->name, sizeof(p->name))
+	||	SQL_ERROR == stmt.BindColumn(4, SQLDT_INT16, &p->class_)
+	||	SQL_ERROR == stmt.BindColumn(5, SQLDT_UINT32, &p->base_level)
+	||	SQL_ERROR == stmt.BindColumn(6, SQLDT_UINT32, &p->job_level)
+	||	SQL_ERROR == stmt.BindColumn(7, SQLDT_UINT64, &p->base_exp)
+	||	SQL_ERROR == stmt.BindColumn(8, SQLDT_UINT64, &p->job_exp)
+	||	SQL_ERROR == stmt.BindColumn(9, SQLDT_INT32, &p->zeny)
+	||	SQL_ERROR == stmt.BindColumn(10, SQLDT_INT16, &p->str)
+	||	SQL_ERROR == stmt.BindColumn(11, SQLDT_INT16, &p->agi)
+	||	SQL_ERROR == stmt.BindColumn(12, SQLDT_INT16, &p->vit)
+	||	SQL_ERROR == stmt.BindColumn(13, SQLDT_INT16, &p->int_)
+	||	SQL_ERROR == stmt.BindColumn(14, SQLDT_INT16, &p->dex)
+	||	SQL_ERROR == stmt.BindColumn(15, SQLDT_INT16, &p->luk)
+	||	SQL_ERROR == stmt.BindColumn(16, SQLDT_UINT32, &p->max_hp)
+	||	SQL_ERROR == stmt.BindColumn(17, SQLDT_UINT32, &p->hp)
+	||	SQL_ERROR == stmt.BindColumn(18, SQLDT_UINT32, &p->max_sp)
+	||	SQL_ERROR == stmt.BindColumn(19, SQLDT_UINT32, &p->sp)
+	||	SQL_ERROR == stmt.BindColumn(20, SQLDT_UINT32, &p->status_point)
+	||	SQL_ERROR == stmt.BindColumn(21, SQLDT_UINT32, &p->skill_point)
+	||	SQL_ERROR == stmt.BindColumn(22, SQLDT_UINT32, &p->option)
+	||	SQL_ERROR == stmt.BindColumn(23, SQLDT_UCHAR, &p->karma)
+	||	SQL_ERROR == stmt.BindColumn(24, SQLDT_INT16, &p->manner)
+	||	SQL_ERROR == stmt.BindColumn(25, SQLDT_INT32, &p->party_id)
+	||	SQL_ERROR == stmt.BindColumn(26, SQLDT_INT32, &p->guild_id)
+	||	SQL_ERROR == stmt.BindColumn(27, SQLDT_INT32, &p->pet_id)
+	||	SQL_ERROR == stmt.BindColumn(28, SQLDT_INT32, &p->hom_id)
+	||	SQL_ERROR == stmt.BindColumn(29, SQLDT_INT32, &p->ele_id)
+	||	SQL_ERROR == stmt.BindColumn(30, SQLDT_INT16, &p->hair)
+	||	SQL_ERROR == stmt.BindColumn(31, SQLDT_INT16, &p->hair_color)
+	||	SQL_ERROR == stmt.BindColumn(32, SQLDT_INT16, &p->clothes_color)
+	||	SQL_ERROR == stmt.BindColumn(33, SQLDT_INT16, &p->body)
+	||	SQL_ERROR == stmt.BindColumn(34, SQLDT_INT16, &p->weapon)
+	||	SQL_ERROR == stmt.BindColumn(35, SQLDT_INT16, &p->shield)
+	||	SQL_ERROR == stmt.BindColumn(36, SQLDT_INT16, &p->head_top)
+	||	SQL_ERROR == stmt.BindColumn(37, SQLDT_INT16, &p->head_mid)
+	||	SQL_ERROR == stmt.BindColumn(38, SQLDT_INT16, &p->head_bottom)
+	||	SQL_ERROR == stmt.BindColumn(39, SQLDT_STRING, &p->last_point.map, sizeof(p->last_point.map))
+	||	SQL_ERROR == stmt.BindColumn(40, SQLDT_INT16, &p->last_point.x)
+	||	SQL_ERROR == stmt.BindColumn(41, SQLDT_INT16, &p->last_point.y)
+	||	SQL_ERROR == stmt.BindColumn(42, SQLDT_STRING, &p->save_point.map, sizeof(p->save_point.map))
+	||	SQL_ERROR == stmt.BindColumn(43, SQLDT_INT16, &p->save_point.x)
+	||	SQL_ERROR == stmt.BindColumn(44, SQLDT_INT16, &p->save_point.y)
+	||	SQL_ERROR == stmt.BindColumn(45, SQLDT_UINT32, &p->partner_id)
+	||	SQL_ERROR == stmt.BindColumn(46, SQLDT_UINT32, &p->father)
+	||	SQL_ERROR == stmt.BindColumn(47, SQLDT_UINT32, &p->mother)
+	||	SQL_ERROR == stmt.BindColumn(48, SQLDT_UINT32, &p->child)
+	||	SQL_ERROR == stmt.BindColumn(49, SQLDT_INT32, &p->fame)
+	||	SQL_ERROR == stmt.BindColumn(50, SQLDT_INT16, &p->rename)
+	||	SQL_ERROR == stmt.BindColumn(51, SQLDT_UINT32, &p->delete_date)
+	||	SQL_ERROR == stmt.BindColumn(52, SQLDT_INT16, &p->robe)
+	||	SQL_ERROR == stmt.BindColumn(53, SQLDT_UINT32, &p->character_moves)
+	||	SQL_ERROR == stmt.BindColumn(54, SQLDT_LONG, &p->unban_time)
+	||	SQL_ERROR == stmt.BindColumn(55, SQLDT_UCHAR, &p->font)
+	||	SQL_ERROR == stmt.BindColumn(56, SQLDT_UINT32, &p->uniqueitem_counter)
+	||	SQL_ERROR == stmt.BindColumn(57, SQLDT_ENUM, &sex, sizeof(sex))
+	||	SQL_ERROR == stmt.BindColumn(58, SQLDT_UCHAR, &p->hotkey_rowshift)
+	||	SQL_ERROR == stmt.BindColumn(59, SQLDT_INT32, &p->clan_id)
+	||	SQL_ERROR == stmt.BindColumn(60, SQLDT_ULONG, &p->title_id)
+	||	SQL_ERROR == stmt.BindColumn(61, SQLDT_UINT16, &p->show_equip)
+	||	SQL_ERROR == stmt.BindColumn(62, SQLDT_UCHAR, &p->hotkey_rowshift2)
+	||	SQL_ERROR == stmt.BindColumn(63, SQLDT_UINT32, &p->max_ap)
+	||	SQL_ERROR == stmt.BindColumn(64, SQLDT_UINT32, &p->ap)
+	||	SQL_ERROR == stmt.BindColumn(65, SQLDT_UINT32, &p->trait_point)
+	||	SQL_ERROR == stmt.BindColumn(66, SQLDT_INT16, &p->pow)
+	||	SQL_ERROR == stmt.BindColumn(67, SQLDT_INT16, &p->sta)
+	||	SQL_ERROR == stmt.BindColumn(68, SQLDT_INT16, &p->wis)
+	||	SQL_ERROR == stmt.BindColumn(69, SQLDT_INT16, &p->spl)
+	||	SQL_ERROR == stmt.BindColumn(70, SQLDT_INT16, &p->con)
+	||	SQL_ERROR == stmt.BindColumn(71, SQLDT_INT16, &p->crt)
+	||	SQL_ERROR == stmt.BindColumn(72, SQLDT_UINT16, &p->inventory_slots)
+	||	SQL_ERROR == stmt.BindColumn(73, SQLDT_UINT8, &p->body_direction)
+	||	SQL_ERROR == stmt.BindColumn(74, SQLDT_UINT8, &p->disable_call)
+	||	SQL_ERROR == stmt.BindColumn(75, SQLDT_INT32, &p->last_point_instanceid)
+	||	SQL_ERROR == stmt.BindColumn(76, SQLDT_UINT8, &p->disable_partyinvite)
+	||	SQL_ERROR == stmt.BindColumn(77, SQLDT_UINT8, &p->disable_showcostumes)
+	)
+	{
+		SqlStmt_ShowDebug(stmt);
+		return 0;
+	}
+	if( SQL_ERROR == stmt.NextRow() )
+	{
+		ShowError("Requested non-existant character id: %d!\n", char_id);
+		return 0;
+	}
+	p->sex = char_mmo_gender(nullptr, p, sex[0]);
+
+	StringBuf_Init(&msg_buf);
+	StringBuf_AppendStr(&msg_buf, " status");
+
+	if (!load_everything) // For quick selection of data when displaying the char menu
+	{
+		return 1;
+	}
+
+	//read memo data
+	//`memo` (`memo_id`,`char_id`,`map`,`x`,`y`)
+	if( SQL_ERROR == stmt.Prepare("SELECT `map`,`x`,`y` FROM `%s` WHERE `char_id`=? ORDER by `memo_id` LIMIT %d", schema_config.memo_db, MAX_MEMOPOINTS)
+	||	SQL_ERROR == stmt.BindParam(0, SQLDT_INT32, &char_id, 0)
+	||	SQL_ERROR == stmt.Execute()
+	||	SQL_ERROR == stmt.BindColumn(0, SQLDT_STRING, &tmp_point.map, sizeof(tmp_point.map), nullptr, nullptr)
+	||	SQL_ERROR == stmt.BindColumn(1, SQLDT_INT16,  &tmp_point.x, 0, nullptr, nullptr)
+	||	SQL_ERROR == stmt.BindColumn(2, SQLDT_INT16,  &tmp_point.y, 0, nullptr, nullptr) )
+		SqlStmt_ShowDebug(stmt);
+
+	for( i = 0; i < MAX_MEMOPOINTS && SQL_SUCCESS == stmt.NextRow(); ++i )
+	{
+		memcpy(&p->memo_point[i], &tmp_point, sizeof(tmp_point));
+	}
+	StringBuf_AppendStr(&msg_buf, " memo");
+
+	//read skill
+	//`skill` (`char_id`, `id`, `lv`)
+	if( SQL_ERROR == stmt.Prepare("SELECT `id`, `lv`,`flag` FROM `%s` WHERE `char_id`=? LIMIT %d", schema_config.skill_db, MAX_SKILL)
+		||	SQL_ERROR == stmt.BindParam(0, SQLDT_INT32, &char_id, 0)
+		||	SQL_ERROR == stmt.Execute()
+		||	SQL_ERROR == stmt.BindColumn(0, SQLDT_UINT16, &tmp_skill.id  , 0, nullptr, nullptr)
+		||	SQL_ERROR == stmt.BindColumn(1, SQLDT_UINT8 , &tmp_skill.lv  , 0, nullptr, nullptr)
+		||	SQL_ERROR == stmt.BindColumn(2, SQLDT_UINT8 , &tmp_skill.flag, 0, nullptr, nullptr) )
+		SqlStmt_ShowDebug(stmt);
+
+	if( tmp_skill.flag != SKILL_FLAG_PERM_GRANTED )
+		tmp_skill.flag = SKILL_FLAG_PERMANENT;
+
+	for( i = 0; skill_count < MAX_SKILL && SQL_SUCCESS == stmt.NextRow(); i++ ) {
+		if( tmp_skill.id > 0 ) {
+			memcpy(&p->skill[i], &tmp_skill, sizeof(tmp_skill));
+			skill_count++;
+		}
+		else
+			ShowWarning("mmo_char_fromsql: ignoring invalid skill (id=%u,lv=%u) of character %s (AID=%d,CID=%d)\n", tmp_skill.id, tmp_skill.lv, p->name, p->account_id, p->char_id);
+	}
+	StringBuf_Printf(&msg_buf, " %d skills", skill_count);
+
+	//read friends
+	//`friends` (`char_id`, `friend_id`)
+	if( SQL_ERROR == stmt.Prepare("SELECT c.`account_id`, c.`char_id`, c.`name` FROM `%s` c LEFT JOIN `%s` f ON f.`friend_id` = c.`char_id` WHERE f.`char_id`=? LIMIT %d", schema_config.char_db, schema_config.friend_db, MAX_FRIENDS)
+	||	SQL_ERROR == stmt.BindParam(0, SQLDT_INT32, &char_id, 0)
+	||	SQL_ERROR == stmt.Execute()
+	||	SQL_ERROR == stmt.BindColumn(0, SQLDT_INT32,    &tmp_friend.account_id, 0, nullptr, nullptr)
+	||	SQL_ERROR == stmt.BindColumn(1, SQLDT_INT32,    &tmp_friend.char_id, 0, nullptr, nullptr)
+	||	SQL_ERROR == stmt.BindColumn(2, SQLDT_STRING, &tmp_friend.name, sizeof(tmp_friend.name), nullptr, nullptr) )
+		SqlStmt_ShowDebug(stmt);
+
+	for( i = 0; i < MAX_FRIENDS && SQL_SUCCESS == stmt.NextRow(); ++i )
+		memcpy(&p->friends[i], &tmp_friend, sizeof(tmp_friend));
+	StringBuf_AppendStr(&msg_buf, " friends");
+
+#ifdef HOTKEY_SAVING
+	//read hotkeys
+	//`hotkey` (`char_id`, `hotkey`, `type`, `itemskill_id`, `skill_lvl`
+	if( SQL_ERROR == stmt.Prepare("SELECT `hotkey`, `type`, `itemskill_id`, `skill_lvl` FROM `%s` WHERE `char_id`=?", schema_config.hotkey_db)
+	||	SQL_ERROR == stmt.BindParam(0, SQLDT_INT32, &char_id, 0)
+	||	SQL_ERROR == stmt.Execute()
+	||	SQL_ERROR == stmt.BindColumn(0, SQLDT_INT32,    &hotkey_num, 0, nullptr, nullptr)
+	||	SQL_ERROR == stmt.BindColumn(1, SQLDT_UCHAR,  &tmp_hotkey.type, 0, nullptr, nullptr)
+	||	SQL_ERROR == stmt.BindColumn(2, SQLDT_UINT32,   &tmp_hotkey.id, 0, nullptr, nullptr)
+	||	SQL_ERROR == stmt.BindColumn(3, SQLDT_UINT16, &tmp_hotkey.lv, 0, nullptr, nullptr) )
+		SqlStmt_ShowDebug(stmt);
+
+	while( SQL_SUCCESS == stmt.NextRow() )
+	{
+		if( hotkey_num >= 0 && hotkey_num < MAX_HOTKEYS_DB )
+			memcpy(&p->hotkeys[hotkey_num], &tmp_hotkey, sizeof(tmp_hotkey));
+		else
+			ShowWarning("mmo_char_fromsql: ignoring invalid hotkey (hotkey=%d,type=%u,id=%u,lv=%u) of character %s (AID=%d,CID=%d)\n", hotkey_num, tmp_hotkey.type, tmp_hotkey.id, tmp_hotkey.lv, p->name, p->account_id, p->char_id);
+	}
+	StringBuf_AppendStr(&msg_buf, " hotkeys");
+#endif
+
+	/* Mercenary Owner DataBase */
+	mercenary_owner_fromsql(char_id, p);
+	StringBuf_AppendStr(&msg_buf, " mercenary");
+
+
+	if (charserv_config.save_log)
+		ShowInfo("Loaded char (%d - %s): %s\n", char_id, p->name, StringBuf_Value(&msg_buf)); //ok. all data load successfully!
+
+	std::shared_ptr<struct mmo_charstatus> cp = util::umap_find( char_get_chardb(), char_id );
+
+	if( cp == nullptr ){
+		cp = std::make_shared<struct mmo_charstatus>();
+		cp->char_id = char_id;
+		char_get_chardb()[cp->char_id] = cp;
+	}
+
+	memcpy( cp.get(), p, sizeof( struct mmo_charstatus ) );
+
+	return 1;
+}
+
+//==========================================================================================================
+int32 char_mmo_sql_init(void) {
+	ShowStatus("Characters per Account: '%d'.\n", charserv_config.char_config.char_per_account);
+
+	//the 'set offline' part is now in check_login_conn ...
+	//if the server connects to loginserver
+	//it will dc all off players
+	//and send the loginserver the new state....
+
+	// Force all users offline in sql when starting char-server
+	// (useful when servers crashs and don't clean the database)
+	char_set_all_offline_sql();
+
+	return 0;
+}
+
+//-----------------------------------
+// Function to change chararcter's names
+//-----------------------------------
+int32 char_rename_char_sql(struct char_session_data *sd, uint32 char_id)
+{
+	struct mmo_charstatus char_dat;
+	char esc_name[NAME_LENGTH*2+1];
+
+	if( sd->new_name[0] == 0 ) // Not ready for rename
+		return 2;
+
+	if( !char_mmo_char_fromsql(char_id, &char_dat, false) ) // Only the short data is needed.
+		return 2;
+
+	// If the new name is exactly the same as the old one
+	if( !strcmp( sd->new_name, char_dat.name ) )
+		return 0;
+
+	if( char_dat.rename == 0 )
+		return 1;
+
+	if( !charserv_config.char_config.char_rename_party && char_dat.party_id ){
+		return 6;
+	}
+
+	if( !charserv_config.char_config.char_rename_guild && char_dat.guild_id ){
+		return 5;
+	}
+
+	Sql_EscapeStringLen(sql_handle, esc_name, sd->new_name, strnlen(sd->new_name, NAME_LENGTH));
+
+	switch( char_check_char_name( sd->new_name, esc_name ) ){
+		case 0:
+			break;
+		case -1:
+			// character already exists
+			return 4;
+		default:
+			return 8;
+	}
+
+	if( SQL_ERROR == Sql_Query(sql_handle, "UPDATE `%s` SET `name` = '%s', `rename` = '%d' WHERE `char_id` = '%d'", schema_config.char_db, esc_name, --char_dat.rename, char_id) )
+	{
+		Sql_ShowDebug(sql_handle);
+		return 3;
+	}
+	
+	// Update party and party members with the new player name
+	if( char_dat.party_id )
+		inter_party_charname_changed(char_dat.party_id, char_id, sd->new_name);
+
+	// Change character's name into guild_db.
+	if( char_dat.guild_id )
+		inter_guild_charname_changed(char_dat.guild_id, sd->account_id, char_id, sd->new_name);
+
+	safestrncpy(char_dat.name, sd->new_name, NAME_LENGTH);
+	memset(sd->new_name,0,sizeof(sd->new_name));
+
+	// log change
+	if( charserv_config.log_char )
+	{
+		if( SQL_ERROR == Sql_Query(sql_handle, "INSERT INTO `%s` (`time`, `char_msg`,`account_id`,`char_num`,`name`,`str`,`agi`,`vit`,`int`,`dex`,`luk`,`hair`,`hair_color`)"
+			"VALUES (NOW(), '%s', '%d', '%d', '%s', '0', '0', '0', '0', '0', '0', '0', '0')",
+			schema_config.charlog_db, "change char name", sd->account_id, char_dat.slot, esc_name) )
+			Sql_ShowDebug(sql_handle);
+	}
+
+	return 0;
+}
+
+int32 char_check_char_name(char * name, char * esc_name)
+{
+	int32 i;
+
+	// check length of character name
+	if( name[0] == '\0' )
+		return -2; // empty character name
+	/**
+	 * By default the client does not allow you to create names with less than 4 characters,
+	 * however the use of WPE can bypass this, and this fixes the exploit.
+	 * It can also be changed in the configuration file in conjunction with the
+	 * 'Remove 4/6 letter Character Name Limit' client diff patch.
+	 **/
+	if( strlen( name ) < charserv_config.char_config.char_name_min_length )
+		return -2;
+	// check content of character name
+	if( remove_control_chars(name) )
+		return -2; // control chars in name
+
+	// check for reserved names
+	if( strcmpi(name, charserv_config.wisp_server_name) == 0 )
+		return -1; // nick reserved for internal server messages
+
+	// check for the channel symbol
+	if( name[0] == '#' )
+		return -2;
+
+	// Check Authorised letters/symbols in the name of the character
+	if( charserv_config.char_config.char_name_option == 1 )
+	{ // only letters/symbols in char_name_letters are authorised
+		for( i = 0; i < NAME_LENGTH && name[i]; i++ )
+			if( strchr(charserv_config.char_config.char_name_letters, name[i]) == nullptr )
+				return -2;
+	}
+	else if( charserv_config.char_config.char_name_option == 2 )
+	{ // letters/symbols in char_name_letters are forbidden
+		for( i = 0; i < NAME_LENGTH && name[i]; i++ )
+			if( strchr(charserv_config.char_config.char_name_letters, name[i]) != nullptr )
+				return -2;
+	}
+	if( charserv_config.char_config.name_ignoring_case ) {
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT 1 FROM `%s` WHERE BINARY `name` = '%s' LIMIT 1", schema_config.char_db, esc_name) ) {
+			Sql_ShowDebug(sql_handle);
+			return -2;
+		}
+	} else {
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT 1 FROM `%s` WHERE `name` = '%s' LIMIT 1", schema_config.char_db, esc_name) ) {
+			Sql_ShowDebug(sql_handle);
+			return -2;
+		}
+	}
+	if( Sql_NumRows(sql_handle) > 0 )
+		return -1; // name already exists
+
+	return 0;
+}
+
+//-----------------------------------
+// Function to create a new character
+//-----------------------------------
+int32 char_make_new_char( struct char_session_data* sd, char* name_, int32 str, int32 agi, int32 vit, int32 int_, int32 dex, int32 luk, int32 slot, int32 hair_color, int32 hair_style, int16 start_job, int32 sex ){
+	char name[NAME_LENGTH];
+	char esc_name[NAME_LENGTH*2+1];
+	struct s_point_str tmp_start_point[MAX_STARTPOINT];
+	struct startitem tmp_start_items[MAX_STARTITEM];
+	uint32 char_id;
+	int32 flag, k, start_point_idx = rnd() % charserv_config.start_point_count;
+	int32 status_points;
+
+	safestrncpy(name, name_, NAME_LENGTH);
+	normalize_name(name,TRIM_CHARS);
+	Sql_EscapeStringLen(sql_handle, esc_name, name, strnlen(name, NAME_LENGTH));
+
+	memset( tmp_start_point, 0, sizeof( tmp_start_point ) );
+	memset(tmp_start_items, 0, MAX_STARTITEM * sizeof(struct startitem));
+	memcpy( tmp_start_point, charserv_config.start_point, sizeof( tmp_start_point ) );
+	memcpy(tmp_start_items, charserv_config.start_items, MAX_STARTITEM * sizeof(struct startitem));
+
+	flag = char_check_char_name(name,esc_name);
+	if( flag < 0 )
+		return flag;
+
+	// Check inputs from the client - never trust it!
+
+	// Check the slot
+	if( slot < 0 || slot >= sd->char_slots ){
+		return -4; // invalid slot
+	}
+
+	// Check gender
+	switch( sex ){
+		case SEX_FEMALE:
+			sex = 'F';
+			break;
+		case SEX_MALE:
+			sex = 'M';
+			break;
+		default:
+			ShowWarning( "Received unsupported gender '%d'...\n", sex );
+			return -2; // invalid input
+	}
+
+	// Check status values
+#if PACKETVER < 20120307
+	// All stats together always have to add up to a total of 30 points
+	if( ( str + agi + vit + int_ + dex + luk ) != 30 ){
+		return -2; // invalid input
+	}
+
+	// No status can be below 1
+	if( str < 1 || agi < 1 || vit < 1 || int_ < 1 || dex < 1 || luk < 1 ){
+		return -2; // invalid input
+	}
+
+	// No status can be higher than 9
+	if( str > 9 || agi > 9 || vit > 9 || int_ > 9 || dex > 9 || luk > 9 ){
+		return -2; // invalid input
+	}
+
+	// The status pairs always have to add up to a total of 10 points
+	if( ( str + int_ ) != 10 || ( agi + luk ) != 10 || ( vit + dex ) != 10 ){
+		return -2; // invalid input
+	}
+
+	status_points = 0;
+#else
+	status_points = charserv_config.start_status_points;
+#endif
+
+	// check the number of already existing chars in this account
+	if( SQL_ERROR == Sql_Query(sql_handle, "SELECT 1 FROM `%s` WHERE `account_id` = '%d'", schema_config.char_db, sd->account_id) )
+		Sql_ShowDebug(sql_handle);
+#ifdef VIP_ENABLE
+	if( Sql_NumRows(sql_handle) >= MAX_CHARS )
+		return -2; // character account limit exceeded
+#else
+	if( Sql_NumRows(sql_handle) >= sd->char_slots )
+		return -2; // character account limit exceeded
+#endif
+
+	// check char slot
+	if( SQL_ERROR == Sql_Query(sql_handle, "SELECT 1 FROM `%s` WHERE `account_id` = '%d' AND `char_num` = '%d' LIMIT 1", schema_config.char_db, sd->account_id, slot) )
+		Sql_ShowDebug(sql_handle);
+	if( Sql_NumRows(sql_handle) > 0 )
+		return -2; // slot already in use
+
+	// validation success, log result
+	if (charserv_config.log_char) {
+		if( SQL_ERROR == Sql_Query(sql_handle, "INSERT INTO `%s` (`time`, `char_msg`,`account_id`,`char_num`,`name`,`str`,`agi`,`vit`,`int`,`dex`,`luk`,`hair`,`hair_color`)"
+			"VALUES (NOW(), '%s', '%d', '%d', '%s', '%d', '%d', '%d', '%d', '%d', '%d', '%d', '%d')",
+			schema_config.charlog_db, "make new char", sd->account_id, slot, esc_name, str, agi, vit, int_, dex, luk, hair_style, hair_color) )
+			Sql_ShowDebug(sql_handle);
+	}
+
+#if PACKETVER >= 20151001
+	if(!(start_job == JOB_NOVICE && (charserv_config.allowed_job_flag&1)) && 
+		!(start_job == JOB_SUMMONER && (charserv_config.allowed_job_flag&2)))
+		return -2; // Invalid job
+
+	// Check for Doram based information.
+	if (start_job == JOB_SUMMONER) { // Check for just this job for now.
+		memset( tmp_start_point, 0, sizeof( tmp_start_point ) );
+		memset(tmp_start_items, 0, MAX_STARTITEM * sizeof(struct startitem));
+		memcpy( tmp_start_point, charserv_config.start_point_doram, sizeof( tmp_start_point ) );
+		memcpy(tmp_start_items, charserv_config.start_items_doram, MAX_STARTITEM * sizeof(struct startitem));
+		start_point_idx = rnd() % charserv_config.start_point_count_doram;
+	}

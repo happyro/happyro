@@ -1,0 +1,118 @@
+		
+	default:
+		function module_check;
+		.@s -= 2;
+		.@equip_id = getequipid(.@part);
+		.@refine = getequiprefinerycnt(.@part);
+		for (.@i = 0; .@i < 4; .@i++)
+			.@card[.@i] = getequipcardid(.@part,.@i);
+		copyarray .@check[0],.@card[0],4;
+		if (!.@equip_id || .@id[0] != .@equip_id && .@id[1] != .@equip_id) {
+			mes "[RS26]";
+			mes "需要检查装备。这件物品无法由此设备处理。";
+			close;
+		}
+		.@var$ = module_check(.@module_id[.@s],.@part,.@index);
+		explode(.@s$,.@var$,",");
+		switch (atoi(.@s$[0])) {
+			case 1:
+				mes "[RS26]";
+				mes "需要检查模块。此设备无法检测到它。";
+				close;
+			case 2:
+				mes "[RS26]";
+				mes "你要强化的装备似乎已经达到上限。";
+				close;
+			case 3:
+				mes "[RS26]";
+				mes "你需要拥有与效果匹配的模块才能继续强化。";
+				close;
+			case 4:
+				mes "[RS26]";
+				mes "此模块最多可附魔 " + .@s$[1] + " 次。模块阈值似乎已经达到上限。";
+				close;
+			case 5:
+				.@item_name$ = getitemname(.@module_id[.@s]);
+				.@item_name$ = replacestr(.@item_name$,"Modification Module (","");
+				.@item_name$ = replacestr(.@item_name$,")","");
+				mes "[RS26]";
+				mes "^0000FF你选择了 " + getitemname(.@equip_id) + " " + .@item_name$ + "^000000";
+				mes "------------------";
+				mes "所选模块最多可在装备上附魔 ^0000FF" + .@s$[2] + " 次^000000。该装备当前已用此模块附魔 ^0000FF" + .@s$[1] + " 次。";
+				mes "要继续吗？";
+				next;
+				if (select("我再想想……:继续") == 1) {
+					mes "[RS26]";
+					mes "需要帮助时再来找我~";
+					close;
+				}
+				for (.@i = 1; .@i < 4; .@i++) {
+					if (.@card[.@i] == 0) {
+						.@augment_slot = .@i;
+						break;
+					}
+				}
+				.@card[.@augment_slot] = atoi(.@s$[3]);
+				delitem .@module_id[.@s],1;
+				if (callfunc("F_IsEquipIDHack", .@part, .@equip_id) || callfunc("F_IsEquipRefineHack", .@part, .@refine) || callfunc("F_IsEquipCardHack", .@part, .@check[0], .@check[1], .@check[2], .@check[3]))
+					end;
+				specialeffect2 EF_REPAIRWEAPON;
+				delequip .@part;
+				getitem2 .@equip_id,1,1,.@refine,0,.@card[0],.@card[1],.@card[2],.@card[3];
+				mes "[RS26]";
+				mes "正在尝试升级装备的插槽 ^990000" + .@augment_slot + "^000000。";
+				close;
+		}
+	}
+	
+OnInit:
+	setarray .module$,
+	"25670:29527:3,25671:29528:3,25687:29534:2,25688:29535:2,25689:29536:2,25693:29540:1",
+	"25670:29527:3,25671:29528:3,25690:29537:2,25691:29538:2,25692:29539:2,25695:29542:1",
+	"25672:4742:3,25673:4752:3,25674:4702:3,25675:4732:3,25676:4712:3,25677:4722:3,25678:29529:2,25679:29532:2,25680:4826:1,25681:4881:1,25682:4866:1,25683:4836:1,25696:29543:1,25697:29544:1,25698:29545:1,25699:29546:1",
+	"25670:29527:3,25671:29528:3,25684:29531:2,25685:29530:2,25686:29533:2,25694:29541:1",
+	"25700:29547,25701:29548,25702:29549,25703:29550,25704:29551,25705:29552";
+	end;
+	
+	function	module_check	{
+		if(!countitem(getarg(0)))
+			return "1";
+		for (.@i = 0; .@i < 4; .@i++)
+			.@card[.@i] = getequipcardid(getarg(1),.@i);
+		if(.@card[3]) return "2";
+		explode(.@T$,.module$[getarg(2)],",");
+		if(getarg(0) >= 25700 && getarg(0) <= 25705){
+			explode(.@TT$,.module$[4],",");
+			for (.@i = 0; .@i < getarraysize(.@TT$); .@i++) {
+				explode(.@module$,.@TT$[.@i],":");
+				if(getarg(0) == atoi(.@module$[0]))
+					.@enchant_id = atoi(.@module$[1]);
+				.@module = atoi(.@module$[0]);
+				.@enchant = atoi(.@module$[1]);
+				for (.@j = 1; .@j < 4; .@j++) {
+					if (.@card[.@j] == .@enchant)
+						return "4,1";
+				}
+			}
+			.@max = 1;
+		} else {
+			for (.@i = 0; .@i < getarraysize(.@T$); .@i++) {
+				explode(.@module$,.@T$[.@i],":");
+				if(getarg(0) == atoi(.@module$[0])){
+					.@enchant_id = atoi(.@module$[1]);
+					.@max = atoi(.@module$[2]);
+					break;
+				}
+			}
+		}
+		if(!.@enchant_id)
+			return "3";
+		for (.@j = 1; .@j < 4; .@j++) {
+			if (.@card[.@j] == .@enchant_id)
+				.@count++;
+		}
+		if (.@count == .@max)
+			return "4," + .@max;
+		return "5," + .@count + "," + .@max + "," + .@enchant_id;
+	}
+}

@@ -1,0 +1,500 @@
+/// Checks the type of all arguments passed to a built-in function.
+///
+/// @param st Script state whose stack arguments should be inspected.
+/// @param func Built-in function for which the arguments are intended.
+static void script_check_buildin_argtype(struct script_state* st, int32 func)
+{
+	int32 idx, invalid = 0;
+
+	for( idx = 2; script_hasdata(st, idx); idx++ )
+	{
+		struct script_data* data = script_getdata(st, idx);
+		script_function* sf = &buildin_func[str_data[func].val];
+		char type = sf->arg[idx-2];
+
+		if( type == '?' || type == '*' )
+		{// optional argument or unknown number of optional parameters ( no types are after this )
+			break;
+		}
+		else if( type == 0 )
+		{// more arguments than necessary ( should not happen, as it is checked before )
+			ShowWarning("Found more arguments than necessary. unexpected arg type %s\n",script_op2name(data->type));
+			invalid++;
+			break;
+		}
+		else
+		{
+			const char* name = nullptr;
+
+			if( data_isreference(data) )
+			{// get name for variables to determine the type they refer to
+				name = reference_getname(data);
+			}
+
+			switch( type )
+			{
+				case 'v':
+					if( !data_isstring(data) && !data_isint(data) && !data_isreference(data) )
+					{// variant
+						ShowWarning("Unexpected type for argument %d. Expected string, number or variable.\n", idx-1);
+						script_reportdata(data);
+						invalid++;
+					}
+					break;
+				case 's':
+					if( !data_isstring(data) && !( data_isreference(data) && is_string_variable(name) ) )
+					{// string
+						ShowWarning("Unexpected type for argument %d. Expected string.\n", idx-1);
+						script_reportdata(data);
+						invalid++;
+					}
+					break;
+				case 'i':
+					if( !data_isint(data) && !( data_isreference(data) && ( reference_toparam(data) || reference_toconstant(data) || !is_string_variable(name) ) ) )
+					{// int32 ( params and constants are always int32 )
+						ShowWarning("Unexpected type for argument %d. Expected number.\n", idx-1);
+						script_reportdata(data);
+						invalid++;
+					}
+					break;
+				case 'r':
+					if( !data_isreference(data) )
+					{// variables
+						ShowWarning("Unexpected type for argument %d. Expected variable, got %s.\n", idx-1,script_op2name(data->type));
+						script_reportdata(data);
+						invalid++;
+					}
+					break;
+				case 'l':
+					if( !data_islabel(data) && !data_isfunclabel(data) )
+					{// label
+						ShowWarning("Unexpected type for argument %d. Expected label, got %s\n", idx-1,script_op2name(data->type));
+						script_reportdata(data);
+						invalid++;
+					}
+					break;
+			}
+		}
+	}
+
+	if(invalid)
+	{
+		ShowDebug("Function: %s\n", get_str(func));
+		script_reportsrc(st);
+	}
+}
+
+
+/// Executes a buildin command.
+/// Stack: C_NAME(<command>) C_ARG <arg0> <arg1> ... <argN>
+int32 run_func(struct script_state *st)
+{
+	struct script_data* data;
+	int32 i,start_sp,end_sp,func;
+
+	end_sp = st->stack->sp;// position after the last argument
+	for( i = end_sp-1; i > 0 ; --i )
+		if( st->stack->stack_data[i].type == C_ARG )
+			break;
+	if( i == 0 ) {
+		ShowError("script:run_func: C_ARG not found. please report this!!!\n");
+		st->state = END;
+		script_reportsrc(st);
+		return 1;
+	}
+	start_sp = i-1;// C_NAME of the command
+	st->start = start_sp;
+	st->end = end_sp;
+
+	data = &st->stack->stack_data[st->start];
+	if( data->type == C_NAME && str_data[data->u.num].type == C_FUNC ) {
+		func = (int32)data->u.num;
+		st->funcname = reference_getname(data);
+	} else {
+		ShowError("script:run_func: not a buildin command.\n");
+		script_reportdata(data);
+		script_reportsrc(st);
+		st->state = END;
+		return 1;
+	}
+
+	if( script_config.warn_func_mismatch_argtypes ) {
+		script_check_buildin_argtype(st, func);
+	}
+
+	if(str_data[func].func) {
+#if defined(SCRIPT_COMMAND_DEPRECATION)
+		if( buildin_func[str_data[func].val].deprecated ){
+			ShowWarning( "Usage of deprecated script function '%s'.\n", get_str(func) );
+			ShowWarning( "This function was deprecated on '%s' and could become unavailable anytime soon.\n", buildin_func[str_data[func].val].deprecated );
+			script_reportsrc(st);
+		}
+#endif
+
+		if (str_data[func].func(st) == SCRIPT_CMD_FAILURE) {
+			//Report error
+			ShowWarning("Script command '%s' returned failure.\n", get_str(func));
+			script_reportsrc(st);
+		}
+	} else {
+		ShowError("script:run_func: '%s' (id=%d type=%s) has no C function. please report this!!!\n", get_str(func), func, script_op2name(str_data[func].type));
+		script_reportsrc(st);
+		st->state = END;
+	}
+
+	// Stack's datum are used when re-running functions [Eoe]
+	if( st->state == RERUNLINE )
+		return 0;
+
+	pop_stack(st, st->start, st->end);
+	if( st->state == RETFUNC ) {// return from a user-defined function
+		struct script_retinfo* ri;
+		int32 olddefsp = st->stack->defsp;
+		int32 nargs;
+
+		pop_stack(st, st->stack->defsp, st->start);// pop distractions from the stack
+		if( st->stack->defsp < 1 || st->stack->stack_data[st->stack->defsp-1].type != C_RETINFO )
+		{
+			ShowWarning("script:run_func: return without callfunc or callsub!\n");
+			script_reportsrc(st);
+			st->state = END;
+			return 1;
+		}
+		script_free_vars(st->stack->scope.vars);
+		st->stack->scope.arrays->destroy(st->stack->scope.arrays, script_free_array_db);
+
+		ri = st->stack->stack_data[st->stack->defsp-1].u.ri;
+		nargs = ri->nargs;
+		st->pos = ri->pos;
+		st->script = ri->script;
+		st->stack->scope.vars = ri->scope.vars;
+		st->stack->scope.arrays = ri->scope.arrays;
+		st->stack->defsp = ri->defsp;
+		memset(ri, 0, sizeof(struct script_retinfo));
+
+		pop_stack(st, olddefsp-nargs-1, olddefsp);// pop arguments and retinfo
+
+		st->state = GOTO;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * script execution
+ *------------------------------------------*/
+void run_script(struct script_code *rootscript, int32 pos, int32 rid, int32 oid)
+{
+	struct script_state *st;
+
+	if( rootscript == nullptr || pos < 0 )
+		return;
+
+	// TODO In jAthena, this function can take over the pending script in the player. [FlavioJS]
+	//      It is unclear how that can be triggered, so it needs the be traced/checked in more detail.
+	// NOTE At the time of this change, this function wasn't capable of taking over the script state because st->scriptroot was never set.
+	st = script_alloc_state(rootscript, pos, rid, oid);
+	run_script_main(st);
+}
+
+/**
+ * Free all related script code
+ * @param code: Script code to free
+ */
+void script_stop_scriptinstances(struct script_code *code) {
+	DBIterator *iter;
+	struct script_state* st;
+
+	if( !active_scripts )
+		return; // Don't even bother.
+
+	iter = db_iterator(st_db);
+
+	for( st = static_cast<script_state *>(dbi_first(iter)); dbi_exists(iter); st = static_cast<script_state *>(dbi_next(iter)) ) {
+		if( st->script == code )
+			script_free_state(st);
+	}
+
+	dbi_destroy(iter);
+}
+
+/*==========================================
+ * Timer function for sleep
+ *------------------------------------------*/
+TIMER_FUNC(run_script_timer){
+	struct script_state *st = (struct script_state *)data;
+	struct linkdb_node *node = (struct linkdb_node *)sleep_db;
+
+	// If it was a player before going to sleep and there is still a unit attached to the script
+	if( id != 0 && st->rid ){
+		map_session_data *sd = map_id2sd(st->rid);
+
+		// Attached player is offline(logout) or another unit type(should not happen)
+		if( !sd ){
+			st->rid = 0;
+			st->state = END;
+		// Character mismatch. Cancel execution.
+		}else if( sd->status.char_id != id ){
+			ShowWarning( "Script sleep timer detected a character mismatch CID %d != %d\n", sd->status.char_id, id );
+			script_reportsrc(st);
+			st->rid = 0;
+			st->state = END;
+		}
+	}
+
+	while (node && st->sleep.timer != INVALID_TIMER) {
+		if ((int32)__64BPRTSIZE(node->key) == st->oid && ((struct script_state *)node->data)->sleep.timer == st->sleep.timer) {
+			script_erase_sleepdb(node);
+			st->sleep.timer = INVALID_TIMER;
+			break;
+		}
+		node = node->next;
+	}
+	if(st->state != RERUNLINE)
+		st->sleep.tick = 0;
+	run_script_main(st);
+	return 0;
+}
+
+/**
+ * Remove sleep timers from the NPC
+ * @param id: NPC ID
+ */
+void script_stop_sleeptimers(int32 id) {
+	for (;;) {
+		struct script_state *st = (struct script_state *)linkdb_erase(&sleep_db, (void *)__64BPRTSIZE(id));
+
+		if (!st)
+			break; // No more sleep timers
+
+		if (st->oid == id)
+			script_free_state(st);
+	}
+}
+
+/**
+ * Delete the specified node from sleep_db
+ * @param n: Linked list of sleep timers
+ */
+struct linkdb_node *script_erase_sleepdb(struct linkdb_node *n) {
+	struct linkdb_node *retnode;
+
+	if (!n)
+		return nullptr;
+
+	if (!n->prev)
+		sleep_db = n->next;
+	else
+		n->prev->next = n->next;
+
+	if (n->next)
+		n->next->prev = n->prev;
+
+	retnode = n->next;
+	aFree(n);
+
+	return retnode;
+}
+
+/// Detaches script state from possibly attached character and restores it's previous script if any.
+///
+/// @param st Script state to detach.
+/// @param dequeue_event Whether to schedule any queued events, when there was no previous script.
+static void script_detach_state(struct script_state* st, bool dequeue_event)
+{
+	map_session_data* sd;
+
+	if(st->rid && (sd = map_id2sd(st->rid))!=nullptr) {
+		if( sd->state.using_fake_npc ){
+			clif_clearunit_single( sd->npc_id, CLR_OUTSIGHT, *sd );
+			sd->state.using_fake_npc = 0;
+		}
+
+		sd->st = st->bk_st;
+		sd->npc_id = st->bk_npcid;
+		sd->state.disable_atcommand_on_npc = 0;
+		if(st->bk_st) {
+			//Remove tag for removal.
+			st->bk_st = nullptr;
+			st->bk_npcid = 0;
+		} else if(dequeue_event) {
+
+#ifdef SECURE_NPCTIMEOUT
+			/**
+			 * We're done with this NPC session, so we cancel the timer (if existent) and move on
+			 **/
+			if( sd->npc_idle_timer != INVALID_TIMER ) {
+				delete_timer(sd->npc_idle_timer,npc_secure_timeout_timer);
+				sd->npc_idle_timer = INVALID_TIMER;
+			}
+#endif
+			npc_event_dequeue(sd);
+		}
+	}
+	else if(st->bk_st)
+	{// rid was set to 0, before detaching the script state
+		ShowError("script_detach_state: Found previous script state without attached player (rid=%d, oid=%d, state=%d, bk_npcid=%d)\n", st->bk_st->rid, st->bk_st->oid, st->bk_st->state, st->bk_npcid);
+		script_reportsrc(st->bk_st);
+
+		script_free_state(st->bk_st);
+		st->bk_st = nullptr;
+	}
+}
+
+/// Attaches script state to possibly attached character and backups it's previous script, if any.
+///
+/// @param st Script state to attach.
+void script_attach_state(struct script_state* st){
+	map_session_data* sd;
+
+	if(st->rid && (sd = map_id2sd(st->rid))!=nullptr)
+	{
+		if(st!=sd->st)
+		{
+			if(st->bk_st)
+			{// there is already a backup
+				ShowDebug("script_attach_state: Previous script state lost (rid=%d, oid=%d, state=%d, bk_npcid=%d).\n", st->bk_st->rid, st->bk_st->oid, st->bk_st->state, st->bk_npcid);
+			}
+			st->bk_st = sd->st;
+			st->bk_npcid = sd->npc_id;
+		}
+		sd->st = st;
+		sd->npc_id = st->oid;
+		sd->npc_item_flag = st->npc_item_flag; // load default.
+		sd->state.disable_atcommand_on_npc = battle_config.atcommand_disable_npc && (!pc_has_permission(sd, PC_PERM_ENABLE_COMMAND));
+#ifdef SECURE_NPCTIMEOUT
+		if( sd->npc_idle_timer == INVALID_TIMER && !sd->state.ignoretimeout )
+			sd->npc_idle_timer = add_timer(gettick() + (SECURE_NPCTIMEOUT_INTERVAL*1000),npc_secure_timeout_timer,sd->id,0);
+		sd->npc_idle_tick = gettick();
+#endif
+	}
+}
+
+/*==========================================
+ * The main part of the script execution
+ *------------------------------------------*/
+void run_script_main(struct script_state *st)
+{
+	int32 cmdcount = script_config.check_cmdcount;
+	int32 gotocount = script_config.check_gotocount;
+	TBL_PC *sd;
+	struct script_stack *stack = st->stack;
+
+	script_attach_state(st);
+
+	if(st->state == RERUNLINE) {
+		run_func(st);
+		if(st->state == GOTO)
+			st->state = RUN;
+	} else if(st->state != END)
+		st->state = RUN;
+
+	while(st->state == RUN) {
+		enum c_op c = get_com(st->script->script_buf,&st->pos);
+		switch(c){
+		case C_EOL:
+			if( stack->defsp > stack->sp )
+				ShowError("script:run_script_main: unexpected stack position (defsp=%d sp=%d). please report this!!!\n", stack->defsp, stack->sp);
+			else
+				pop_stack(st, stack->defsp, stack->sp);// pop unused stack data. (unused return value)
+			break;
+		case C_INT:
+			push_val(stack,C_INT,get_num(st->script->script_buf,&st->pos));
+			break;
+		case C_POS:
+		case C_NAME:
+			push_val(stack,c,GETVALUE(st->script->script_buf,st->pos));
+			st->pos+=3;
+			break;
+		case C_ARG:
+			push_val(stack,c,0);
+			break;
+		case C_STR:
+			push_str(stack,C_CONSTSTR,(char*)(st->script->script_buf+st->pos));
+			while(st->script->script_buf[st->pos++]);
+			break;
+		case C_FUNC:
+			run_func(st);
+			if(st->state==GOTO){
+				st->state = RUN;
+				if( !st->freeloop && gotocount>0 && (--gotocount)<=0 ){
+					ShowError("script:run_script_main: infinity loop !\n");
+					script_reportsrc(st);
+					st->state=END;
+				}
+			}
+			break;
+
+		case C_REF:
+			st->op2ref = 1;
+			break;
+
+		case C_NEG:
+		case C_NOT:
+		case C_LNOT:
+			op_1(st ,c);
+			break;
+
+		case C_ADD:
+		case C_SUB:
+		case C_MUL:
+		case C_DIV:
+		case C_MOD:
+		case C_EQ:
+		case C_NE:
+		case C_GT:
+		case C_GE:
+		case C_LT:
+		case C_LE:
+		case C_AND:
+		case C_OR:
+		case C_XOR:
+		case C_LAND:
+		case C_LOR:
+		case C_R_SHIFT:
+		case C_L_SHIFT:
+			op_2(st, c);
+			break;
+
+		case C_OP3:
+			op_3(st, c);
+			break;
+
+		case C_NOP:
+			st->state=END;
+			break;
+
+		default:
+			ShowError("script:run_script_main:unknown command : %d @ %d\n",c,st->pos);
+			st->state=END;
+			break;
+		}
+		if( !st->freeloop && cmdcount>0 && (--cmdcount)<=0 ){
+			ShowError("script:run_script_main: infinity loop !\n");
+			script_reportsrc(st);
+			st->state=END;
+		}
+	}
+
+	if(st->sleep.tick > 0) {
+		//Restore previous script
+		script_detach_state(st, false);
+		//Delay execution
+		sd = map_id2sd(st->rid); // Get sd since script might have attached someone while running. [Inkfish]
+		st->sleep.charid = sd?sd->status.char_id:0;
+		st->sleep.timer = add_timer(gettick() + st->sleep.tick, run_script_timer, st->sleep.charid, (intptr_t)st);
+		linkdb_insert(&sleep_db, (void *)__64BPRTSIZE(st->oid), st);
+	} else if(st->state != END && st->rid) {
+		//Resume later (st is already attached to player).
+		if(st->bk_st) {
+			ShowWarning("Unable to restore stack! Double continuation!\n");
+			//Report BOTH scripts to see if that can help somehow.
+			ShowDebug("Previous script (lost):\n");
+			script_reportsrc(st->bk_st);
+			ShowDebug("Current script:\n");
+			script_reportsrc(st);
+
+			script_free_state(st->bk_st);
+			st->bk_st = nullptr;
+		}
+	} else {

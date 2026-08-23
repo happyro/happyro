@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+//#define DEBUG_DISP
+//#define DEBUG_DISASM
+//#define DEBUG_RUN
+//#define DEBUG_HASH
+//#define DEBUG_DUMP_STACK
+
+#include "script.hpp"
+
+#include <cerrno>
+#include <cmath>
+#include <csetjmp>
+#include <cstdlib> // atoi, strtol, strtoll, exit
+
+#ifdef PCRE_SUPPORT
+#include <pcre.h> // preg_match
+#endif
+
+#include <common/cbasetypes.hpp>
+#include <common/ers.hpp>  // ers_destroy
+#include <common/malloc.hpp>
+#include <common/md5calc.hpp>
+#include <common/nullpo.hpp>
+#include <common/random.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+#include <common/utils.hpp>
+
+#include "achievement.hpp"
+#include "atcommand.hpp"
+#include "battle.hpp"
+#include "battleground.hpp"
+#include "cashshop.hpp"
+#include "channel.hpp"
+#include "chat.hpp"
+#include "chrif.hpp"
+#include "clan.hpp"
+#include "clif.hpp"
+#include "date.hpp" // date type enum, date_get()
+#include "elemental.hpp"
+#include "guild.hpp"
+#include "homunculus.hpp"
+#include "instance.hpp"
+#include "intif.hpp"
+#include "itemdb.hpp"
+#include "log.hpp"
+#include "mail.hpp"
+#include "map.hpp"
+#include "mapreg.hpp"
+#include "mercenary.hpp"
+#include "mob.hpp"
+#include "npc.hpp"
+#include "party.hpp"
+#include "path.hpp"
+#include "pc.hpp"
+#include "pc_groups.hpp"
+#include "pet.hpp"
+#include "quest.hpp"
+#include "storage.hpp"
+
+using namespace rathena;
+
+const int64 SCRIPT_INT_MIN = INT64_MIN;
+const int64 SCRIPT_INT_MAX = INT64_MAX;
+
+struct eri *array_ers;
+DBMap *st_db;
+uint32 active_scripts;
+uint32 next_id;
+struct eri *st_ers;
+struct eri *stack_ers;
+static map_session_data* dummy_sd;
+
+static bool script_rid2sd_( struct script_state *st, map_session_data** sd, const char *func );
+
+/**
+ * Get `sd` from a account id in `loc` param instead of attached rid
+ * @param st Script
+ * @param loc Location to look account id in script parameter
+ * @param sd Variable that will be assigned
+ * @return True if `sd` is assigned, false otherwise
+ **/
+static bool script_accid2sd_(struct script_state *st, uint8 loc, map_session_data **sd, const char *func) {
+	if (script_hasdata(st, loc)) {
+		int32 id_ = script_getnum(st, loc);
+		if (!(*sd = map_id2sd(id_))){
+			ShowError("%s: Player with account id '%d' is not found.\n", func, id_);
+			return false;
+		}else{
+			return true;
+		}
+	}
+	else
+		return script_rid2sd_(st,sd,func);
+}
+
+/**
+ * Get `sd` from a char id in `loc` param instead of attached rid
+ * @param st Script
+ * @param loc Location to look char id in script parameter
+ * @param sd Variable that will be assigned
+ * @return True if `sd` is assigned, false otherwise
+ **/
+static bool script_charid2sd_(struct script_state *st, uint8 loc, map_session_data **sd, const char *func) {
+	if (script_hasdata(st, loc)) {
+		int32 id_ = script_getnum(st, loc);
+		if (!(*sd = map_charid2sd(id_))){
+			ShowError("%s: Player with char id '%d' is not found.\n", func, id_);
+			return false;
+		}else{
+			return true;
+		}
+	}
+	else
+		return script_rid2sd_(st,sd,func);
+}
+
+/**
+ * Get `sd` from a nick in `loc` param instead of attached rid
+ * @param st Script
+ * @param loc Location to look nick in script parameter
+ * @param sd Variable that will be assigned
+ * @return True if `sd` is assigned, false otherwise
+ **/
+static bool script_nick2sd_(struct script_state *st, uint8 loc, map_session_data **sd, const char *func) {
+	if (script_hasdata(st, loc)) {
+		const char *name_ = script_getstr(st, loc);
+		if (!(*sd = map_nick2sd(name_,false))){
+			ShowError("%s: Player with nick '%s' is not found.\n", func, name_);
+			return false;
+		}else{
+			return true;
+		}
+	}
+	else
+		return script_rid2sd_(st,sd,func);
+}
+
+/**
+ * Get `sd` from a mapid in `loc` param instead of attached rid
+ * @param st Script
+ * @param loc Location to look mapid in script parameter
+ * @param sd Variable that will be assigned
+ * @return True if `sd` is assigned, false otherwise
+ **/
+static bool script_mapid2sd_(struct script_state *st, uint8 loc, map_session_data **sd, const char *func) {
+	if (script_hasdata(st, loc)) {
+		int32 id_ = script_getnum(st, loc);
+		if (!(*sd = map_id2sd(id_))){
+			ShowError("%s: Player with map id '%d' is not found.\n", func, id_);
+			return false;
+		}else{
+			return true;
+		}
+	}
+	else
+		return script_rid2sd_(st,sd,func);
+}
+
+/**
+ * Get `bl` from an ID in `loc` param, if ID is 0 will return the `bl` of the script's activator.
+ * @param st Script
+ * @param loc Location to look for ID in script parameter
+ * @param bl Variable that will be assigned
+ * @return True if `bl` is assigned, false otherwise
+ **/
+static bool script_rid2bl_(struct script_state *st, uint8 loc, block_list **bl, const char *func) {
+	int32 unit_id;
+
+	if ( !script_hasdata(st, loc) || ( unit_id = script_getnum(st, loc) ) == 0)
+		unit_id = st->rid;
+		
+	*bl =  map_id2bl(unit_id);
+
+	if ( *bl )
+		return true;
+	else {
+		ShowError("%s: Unit with ID '%d' is not found.\n", func, unit_id);
+		return false;
+	}
+}
+
+#define script_accid2sd(loc,sd) script_accid2sd_(st,(loc),&(sd),__FUNCTION__)
+#define script_charid2sd(loc,sd) script_charid2sd_(st,(loc),&(sd),__FUNCTION__)
+#define script_nick2sd(loc,sd) script_nick2sd_(st,(loc),&(sd),__FUNCTION__)
+#define script_mapid2sd(loc,sd) script_mapid2sd_(st,(loc),&(sd),__FUNCTION__)
+#define script_rid2sd(sd) script_rid2sd_(st,&(sd),__FUNCTION__)
+#define script_rid2bl(loc,bl) script_rid2bl_(st,(loc),&(bl),__FUNCTION__)
+
+/// temporary buffer for passing around compiled bytecode
+/// @see add_scriptb, set_label, parse_script
+static unsigned char* script_buf = nullptr;
+static int32 script_pos = 0, script_size = 0;
+
+static inline int32 GETVALUE(const unsigned char* buf, int32 i)
+{
+	return (int32)MakeDWord(MakeWord(buf[i], buf[i+1]), MakeWord(buf[i+2], 0));
+}
+static inline void SETVALUE(unsigned char* buf, int32 i, int32 n)
+{
+	buf[i]   = GetByte(n, 0);
+	buf[i+1] = GetByte(n, 1);
+	buf[i+2] = GetByte(n, 2);
+}
+
+// String buffer structures.
+// str_data stores string information
+static struct str_data_struct {
+	enum c_op type;
+	int32 str;
+	int32 backpatch;
+	int32 label;
+	int32 (*func)(struct script_state *st);
+	int64 val;
+	int32 next;
+	const char *name;
+	bool deprecated;
+} *str_data = nullptr;
+static int32 str_data_size = 0; // size of the data
+static int32 str_num = LABEL_START; // next id to be assigned
+
+// str_buf holds the strings themselves
+static char *str_buf;
+static int32 str_size = 0; // size of the buffer
+static int32 str_pos = 0; // next position to be assigned
+
+
+// Using a prime number for SCRIPT_HASH_SIZE should give better distributions
+#define SCRIPT_HASH_SIZE 1021
+int32 str_hash[SCRIPT_HASH_SIZE];
+// Specifies which string hashing method to use
+//#define SCRIPT_HASH_DJB2
+//#define SCRIPT_HASH_SDBM
+#define SCRIPT_HASH_ELF
+
+static DBMap* scriptlabel_db = nullptr; // const char* label_name -> int32 script_pos
+static DBMap* userfunc_db = nullptr; // const char* func_name -> struct script_code*
+static int32 parse_options = 0;
+DBMap* script_get_label_db(void) { return scriptlabel_db; }
+DBMap* script_get_userfunc_db(void) { return userfunc_db; }
+
+// important buildin function references for usage in scripts
+static int32 buildin_set_ref = 0;
+static int32 buildin_callsub_ref = 0;
+static int32 buildin_callfunc_ref = 0;
+static int32 buildin_getelementofarray_ref = 0;
+
+// Caches compiled autoscript item code.
+// Note: This is not cleared when reloading itemdb.
+static DBMap* autobonus_db = nullptr; // char* script -> char* bytecode
+
+struct Script_Config script_config = {
+	1, // warn_func_mismatch_argtypes
+	1, 65535, 2048, //warn_func_mismatch_paramnum/check_cmdcount/check_gotocount
+	0, INT_MAX, // input_min_value/input_max_value
+	// NOTE: None of these event labels should be longer than <EVENT_NAME_LENGTH> characters
+	// PC related
+	"OnPCDieEvent", //die_event_name
+	"OnPCKillEvent", //kill_pc_event_name
+	"OnNPCKillEvent", //kill_mob_event_name
+	"OnPCLoginEvent", //login_event_name
+	"OnPCLogoutEvent", //logout_event_name
+	"OnPCLoadMapEvent", //loadmap_event_name
+	"OnPCBaseLvUpEvent", //baselvup_event_name
+	"OnPCJobLvUpEvent", //joblvup_event_name
+	"OnPCIdentifyEvent", //identify_event_name
+	// NPC related
+	"OnTouch_",	//ontouch_event_name (runs on first visible char to enter area, picks another char if the first char leaves)
+	"OnTouch",	//ontouch2_event_name (run whenever a char walks into the OnTouch area)
+	"OnTouchNPC", //ontouchnpc_event_name (run whenever a monster walks into the OnTouch area)
+	"OnWhisperGlobal",	//onwhisper_event_name (is executed when a player sends a whisper message to the NPC)
+	"OnCommand", //oncommand_event_name (is executed by script command cmdothernpc)
+	"OnBuyItem", //onbuy_event_name (is executed when items are bought)
+	"OnSellItem", //onsell_event_name (is executed when items are sold)
+	// Init related
+	"OnInit", //init_event_name (is executed on all npcs when all npcs were loaded)
+	"OnInterIfInit", //inter_init_event_name (is executed on inter server connection)
+	"OnInterIfInitOnce", //inter_init_once_event_name (is only executed on the first inter server connection)
+	// Guild related
+	"OnGuildBreak", //guild_break_event_name (is executed on all castles of the guild that is broken)
+	"OnAgitStart", //agit_start_event_name (is executed when WoE FE is started)
+	"OnAgitInit", //agit_init_event_name (is executed after all castle owning guilds have been loaded)
+	"OnAgitEnd", //agit_end_event_name (is executed when WoE FE has ended)
+	"OnAgitStart2", //agit_start2_event_name (is executed when WoE SE is started)
+	"OnAgitInit2", //agit_init2_event_name (is executed after all castle owning guilds have been loaded)
+	"OnAgitEnd2", //agit_end2_event_name (is executed when WoE SE has ended)
+	"OnAgitStart3", //agit_start3_event_name (is executed when WoE TE is started)
+	"OnAgitInit3", //agit_init3_event_name (is executed after all castle owning guilds have been loaded)
+	"OnAgitEnd3", //agit_end3_event_name (is executed when WoE TE has ended)
+	// Timer related
+	"OnTimer", //timer_event_name (is executed by a timer at the specific second)
+	"OnTimerQuit", //timer_quit_event_name (is executed when a timer is aborted)
+	"OnMinute", //timer_minute_event_name (is executed by a timer at the specific minute)
+	"OnHour", //timer_hour_event_name (is executed by a timer at the specific hour)
+	"OnClock", //timer_clock_event_name (is executed by a timer at the specific hour and minute)
+	"OnDay", //timer_day_event_name (is executed by a timer at the specific month and day)
+	"OnSun", //timer_sunday_event_name (is executed by a timer on sunday at the specific hour and minute)
+	"OnMon", //timer_monday_event_name (is executed by a timer on monday at the specific hour and minute)
+	"OnTue", //timer_tuesday_event_name (is executed by a timer on tuesday at the specific hour and minute)
+	"OnWed", //timer_wednesday_event_name (is executed by a timer on wednesday at the specific hour and minute)
+	"OnThu", //timer_thursday_event_name (is executed by a timer on thursday at the specific hour and minute)
+	"OnFri", //timer_friday_event_name (is executed by a timer on friday at the specific hour and minute)
+	"OnSat", //timer_saturday_event_name (is executed by a timer on saturday at the specific hour and minute)
+	// Instance related
+	"OnInstanceInit", //instance_init_event_name (is executed right after instance creation)
+	"OnInstanceDestroy", //instance_destroy_event_name (is executed right before instance destruction)
+	"OnNaviGenerate", //navi_generate_name (is executed right before navi generation)
+};
+
+static jmp_buf     error_jump;
+static char*       error_msg;
+static const char* error_pos;
+static int32         error_report; // if the error should produce output
+// Used by disp_warning_message
+static const char* parser_current_src;
+static const char* parser_current_file;
+static int32         parser_current_line;
+
+// for advanced scripting support ( nested if, switch, while, for, do-while, function, etc )
+// [Eoe / jA 1080, 1081, 1094, 1164]
+enum curly_type {
+	TYPE_NULL = 0,
+	TYPE_IF,
+	TYPE_SWITCH,
+	TYPE_WHILE,
+	TYPE_FOR,
+	TYPE_DO,
+	TYPE_USERFUNC,
+	TYPE_ARGLIST // function argument list
+};
+
+enum e_arglist
+{
+	ARGLIST_UNDEFINED = 0,
+	ARGLIST_NO_PAREN  = 1,
+	ARGLIST_PAREN     = 2,
+};
+
+static struct {
+	struct {
+		enum curly_type type;
+		int32 index;
+		int32 count;
+		int32 flag;
+		struct linkdb_node *case_label;
+	} curly[256];		// Information right parenthesis
+	int32 curly_count;	// The number of right brackets
+	int32 index;			// Number of the syntax used in the script
+} syntax;
+
+const char* parse_curly_close(const char* p);
+const char* parse_syntax_close(const char* p);
+const char* parse_syntax_close_sub(const char* p,int32* flag);
+const char* parse_syntax(const char* p);
+static int32 parse_syntax_for_flag = 0;
+
+extern int16 current_equip_item_index; //for New CARDS Scripts. It contains Inventory Index of the EQUIP_SCRIPT caller item. [Lupus]
+extern uint32 current_equip_combo_pos;
+
+int32 potion_flag=0; //For use on Alchemist improved potions/Potion Pitcher. [Skotlex]
+int32 potion_hp=0, potion_per_hp=0, potion_sp=0, potion_per_sp=0;
+int32 potion_target = 0;
+uint32 *generic_ui_array = nullptr;
+uint32 generic_ui_array_size = 0;
+
+
+c_op get_com(unsigned char *script,int32 *pos);
+int64 get_num(unsigned char *script,int32 *pos);
+
+typedef struct script_function {
+	int32 (*func)(struct script_state *st);
+	const char *name;
+	const char *arg;
+	const char *deprecated;
+} script_function;
+
+extern script_function buildin_func[];
+
+static struct linkdb_node *sleep_db; // int32 oid -> struct script_state *
+
+/*==========================================
+ * (Only those needed) local declaration prototype
+ *------------------------------------------*/
+const char* parse_subexpr(const char* p,int32 limit);
+int32 run_func(struct script_state *st);
+int32 script_instancegetid(struct script_state *st, e_instance_mode mode = IM_NONE);
+
+const char* script_op2name(int32 op)
+{
+#define RETURN_OP_NAME(type) case type: return #type
+	switch( op )
+	{
+	RETURN_OP_NAME(C_NOP);
+	RETURN_OP_NAME(C_POS);
+	RETURN_OP_NAME(C_INT);
+	RETURN_OP_NAME(C_PARAM);
+	RETURN_OP_NAME(C_FUNC);
+	RETURN_OP_NAME(C_STR);
+	RETURN_OP_NAME(C_CONSTSTR);
+	RETURN_OP_NAME(C_ARG);
+	RETURN_OP_NAME(C_NAME);
+	RETURN_OP_NAME(C_EOL);
+	RETURN_OP_NAME(C_RETINFO);
+	RETURN_OP_NAME(C_USERFUNC);
+	RETURN_OP_NAME(C_USERFUNC_POS);
+
+	RETURN_OP_NAME(C_REF);
+
+	// operators
+	RETURN_OP_NAME(C_OP3);
+	RETURN_OP_NAME(C_LOR);
+	RETURN_OP_NAME(C_LAND);
+	RETURN_OP_NAME(C_LE);
+	RETURN_OP_NAME(C_LT);
+	RETURN_OP_NAME(C_GE);
+	RETURN_OP_NAME(C_GT);
+	RETURN_OP_NAME(C_EQ);
+	RETURN_OP_NAME(C_NE);
+	RETURN_OP_NAME(C_XOR);
+	RETURN_OP_NAME(C_OR);
+	RETURN_OP_NAME(C_AND);
+	RETURN_OP_NAME(C_ADD);
+	RETURN_OP_NAME(C_SUB);
+	RETURN_OP_NAME(C_MUL);
+	RETURN_OP_NAME(C_DIV);
+	RETURN_OP_NAME(C_MOD);
+	RETURN_OP_NAME(C_NEG);
+	RETURN_OP_NAME(C_LNOT);
+	RETURN_OP_NAME(C_NOT);
+	RETURN_OP_NAME(C_R_SHIFT);
+	RETURN_OP_NAME(C_L_SHIFT);
+	RETURN_OP_NAME(C_ADD_POST);
+	RETURN_OP_NAME(C_SUB_POST);
+	RETURN_OP_NAME(C_ADD_PRE);
+	RETURN_OP_NAME(C_SUB_PRE);
+
+	default:
+		ShowDebug("script_op2name: unexpected op=%d\n", op);
+		return "???";
+	}
+#undef RETURN_OP_NAME
+}
+
+#ifdef DEBUG_DUMP_STACK
+static void script_dump_stack(struct script_state* st)
+{
+	int32 i;
+	ShowMessage("\tstart = %d\n", st->start);
+	ShowMessage("\tend   = %d\n", st->end);
+	ShowMessage("\tdefsp = %d\n", st->stack->defsp);
+	ShowMessage("\tsp    = %d\n", st->stack->sp);
+	for( i = 0; i < st->stack->sp; ++i )
+	{
+		struct script_data* data = &st->stack->stack_data[i];
+		ShowMessage("\t[%d] %s", i, script_op2name(data->type));
+		switch( data->type )
+		{
+		case C_INT:
+		case C_POS:
+			ShowMessage(" %d\n", data->u.num);
+			break;
+
+		case C_STR:
+		case C_CONSTSTR:
+			ShowMessage(" \"%s\"\n", data->u.str);
+			break;
+
+		case C_NAME:
+			ShowMessage(" \"%s\" (id=%d ref=%p subtype=%s)\n", reference_getname(data), data->u.num, data->ref, script_op2name(str_data[data->u.num].type));
+			break;
+
+		case C_RETINFO:
+			{
+				struct script_retinfo* ri = data->u.ri;
+				ShowMessage(" %p {scope.vars=%p, scope.arrays=%p, script=%p, pos=%d, nargs=%d, defsp=%d}\n", ri, ri->scope.vars, ri->scope.arrays, ri->script, ri->pos, ri->nargs, ri->defsp);
+			}
+			break;
+		default:
+			ShowMessage("\n");
+			break;
+		}
+	}
+}
+#endif
+
+/// Reports on the console the src of a script error.
+static void script_reportsrc(struct script_state *st)
+{
+	if( st->oid == 0 )
+		return; //Can't report source.
+
+	block_list* bl = map_id2bl(st->oid);
+
+	if (!bl)
+		return;

@@ -1,0 +1,500 @@
+ * @param data : Value of modification
+ * @param len : Size of value
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_change_memberinfo(int32 guild_id,uint32 account_id,uint32 char_id,
+	int32 type,const void *data,int32 len)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, len + 18);
+	WFIFOW(inter_fd, 0)=0x303a;
+	WFIFOW(inter_fd, 2)=len+18;
+	WFIFOL(inter_fd, 4)=guild_id;
+	WFIFOL(inter_fd, 8)=account_id;
+	WFIFOL(inter_fd,12)=char_id;
+	WFIFOW(inter_fd,16)=type;
+	memcpy(WFIFOP(inter_fd,18),data,len);
+	WFIFOSET(inter_fd,len+18);
+	return 1;
+}
+
+/**
+ * Request a change of Guild title
+ * @param guild_id : guild to alter
+ * @param idx : Position Index
+ * @param p : Position data { <mode>.L <ranking>.L <pay rate>.L <name>.24B }
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_position(int32 guild_id,int32 idx,struct guild_position *p)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, sizeof(struct guild_position)+12);
+	WFIFOW(inter_fd,0)=0x303b;
+	WFIFOW(inter_fd,2)=sizeof(struct guild_position)+12;
+	WFIFOL(inter_fd,4)=guild_id;
+	WFIFOL(inter_fd,8)=idx;
+	memcpy(WFIFOP(inter_fd,12),p,sizeof(struct guild_position));
+	WFIFOSET(inter_fd,WFIFOW(inter_fd,2));
+	return 1;
+}
+
+/**
+ * Request an update of Guildskill skill_id
+ * @param guild_id : Guild to alter
+ * @param skill_id : Skill to lvl up
+ * @param account_id : aid requesting update
+ * @param max : skill max level
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_skillup(int32 guild_id, uint16 skill_id, uint32 account_id, int32 max)
+{
+	if( CheckForCharServer() )
+		return 0;
+	WFIFOHEAD(inter_fd, 18);
+	WFIFOW(inter_fd, 0)  = 0x303c;
+	WFIFOL(inter_fd, 2)  = guild_id;
+	WFIFOL(inter_fd, 6)  = skill_id;
+	WFIFOL(inter_fd, 10) = account_id;
+	WFIFOL(inter_fd, 14) = max;
+	WFIFOSET(inter_fd, 18);
+	return 1;
+}
+
+/**
+ * Request a new guild relationship
+ * @param guild_id1 : Guild to associate 1
+ * @param guild_id2 : Guild to associate 2
+ * @param account_id1 : aid of player in guild1 
+ * @param account_id2 : aid of player in guild2
+ * @param flag : (GUILD_ALLIANCE_REMOVE|0|1)
+ * @return  0=error, 1=msg_sent
+ */
+int32 intif_guild_alliance(int32 guild_id1,int32 guild_id2,uint32 account_id1,uint32 account_id2,int32 flag)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,19);
+	WFIFOW(inter_fd, 0)=0x303d;
+	WFIFOL(inter_fd, 2)=guild_id1;
+	WFIFOL(inter_fd, 6)=guild_id2;
+	WFIFOL(inter_fd,10)=account_id1;
+	WFIFOL(inter_fd,14)=account_id2;
+	WFIFOB(inter_fd,18)=flag;
+	WFIFOSET(inter_fd,19);
+	return 1;
+}
+
+/**
+ * Request to change guild notice
+ * @param guild_id : Guild to alter
+ * @param mes1 : Notice title (max 60)
+ * @param mes2 : Notice body (max 120)
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_guild_notice(int32 guild_id,const char *mes1,const char *mes2)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,186);
+	WFIFOW(inter_fd,0)=0x303e;
+	WFIFOL(inter_fd,2)=guild_id;
+	safestrncpy(WFIFOCP(inter_fd,6),mes1,MAX_GUILDMES1);
+	safestrncpy(WFIFOCP(inter_fd,66),mes2,MAX_GUILDMES2);
+	WFIFOSET(inter_fd,186);
+	return 1;
+}
+
+/**
+ * Request to change guild emblem
+ * @param guild_id
+ * @param len
+ * @param data
+ * @return 
+ */
+int32 intif_guild_emblem(int32 guild_id,int32 len,const char *data)
+{
+	if (CheckForCharServer())
+		return 0;
+	if(guild_id<=0 || len<0 || len>2000)
+		return 0;
+	WFIFOHEAD(inter_fd,len + 12);
+	WFIFOW(inter_fd,0)=0x303f;
+	WFIFOW(inter_fd,2)=len+12;
+	WFIFOL(inter_fd,4)=guild_id;
+	WFIFOL(inter_fd,8)=0;
+	memcpy(WFIFOP(inter_fd,12),data,len);
+	WFIFOSET(inter_fd,len+12);
+	return 1;
+}
+
+int32 intif_guild_emblem_version(int32 guild_id, int32 emblem_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	if (guild_id <= 0)
+		return 0;
+	WFIFOHEAD(inter_fd, 10);
+	WFIFOW(inter_fd, 0) = 0x3042;
+	WFIFOL(inter_fd, 2) = guild_id;
+	WFIFOL(inter_fd, 6) = emblem_id;
+	WFIFOSET(inter_fd, 10);
+
+	return 1;
+}
+
+/**
+ * Requests guild castles data from char-server.
+ * @param num Number of castles, size of castle_ids array.
+ * @param castle_ids Pointer to array of castle IDs.
+ */
+bool intif_guild_castle_dataload( const std::vector<int32>& castle_ids ){
+	if( CheckForCharServer() ){
+		return false;
+	}
+
+	uint16 size = (uint16)( 4 + castle_ids.size() * sizeof( int32 ) );
+
+	WFIFOHEAD( inter_fd, size );
+	WFIFOW(inter_fd, 0) = 0x3040;
+	WFIFOW( inter_fd, 2 ) = size;
+	for( size_t i = 0; i < castle_ids.size(); i++ ){
+		WFIFOL( inter_fd, 4 + i * sizeof( int32 ) ) = castle_ids[i];
+	}
+	WFIFOSET( inter_fd, size );
+
+	return true;
+}
+
+/**
+ * Request change castle guild owner and save data
+ * @param castle_id
+ * @param index
+ * @param value
+ * @return 
+ */
+int32 intif_guild_castle_datasave(int32 castle_id,int32 index, int32 value)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd,9);
+	WFIFOW(inter_fd,0)=0x3041;
+	WFIFOW(inter_fd,2)=castle_id;
+	WFIFOB(inter_fd,4)=index;
+	WFIFOL(inter_fd,5)=value;
+	WFIFOSET(inter_fd,9);
+	return 1;
+}
+
+//-----------------------------------------------------------------
+// Homunculus Packets send to Inter server [albator]
+//-----------------------------------------------------------------
+
+/**
+ * Request to create/register homonculus
+ * @param account_id : player requesting
+ * @param sh : TMp homunlus data
+ * @return 0=error, 1=msg_sent
+ */
+int32 intif_homunculus_create( uint32 account_id, const s_homunculus* sh )
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, sizeof(struct s_homunculus)+8);
+	WFIFOW(inter_fd,0) = 0x3090;
+	WFIFOW(inter_fd,2) = sizeof(struct s_homunculus)+8;
+	WFIFOL(inter_fd,4) = account_id;
+	memcpy(WFIFOP(inter_fd,8),sh,sizeof(struct s_homunculus));
+	WFIFOSET(inter_fd, WFIFOW(inter_fd,2));
+	return 1;
+}
+
+/**
+ * Request to load homunculus from char-serv
+ * @param account_id
+ * @param homun_id
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_homunculus_requestload(uint32 account_id, int32 homun_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, 10);
+	WFIFOW(inter_fd,0) = 0x3091;
+	WFIFOL(inter_fd,2) = account_id;
+	WFIFOL(inter_fd,6) = homun_id;
+	WFIFOSET(inter_fd, 10);
+	return 1;
+}
+
+/**
+ * Request to save homunculus
+ * @param account_id : Player asking save
+ * @param sh : homunculus struct
+ * @return : 0=error, 1=msg sent
+ */
+int32 intif_homunculus_requestsave( uint32 account_id, const s_homunculus* sh )
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, sizeof(struct s_homunculus)+8);
+	WFIFOW(inter_fd,0) = 0x3092;
+	WFIFOW(inter_fd,2) = sizeof(struct s_homunculus)+8;
+	WFIFOL(inter_fd,4) = account_id;
+	memcpy(WFIFOP(inter_fd,8),sh,sizeof(struct s_homunculus));
+	WFIFOSET(inter_fd, WFIFOW(inter_fd,2));
+	return 1;
+
+}
+
+/**
+ * request to delete homunculus
+ * @param homun_id
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_homunculus_requestdelete(int32 homun_id)
+{
+	if (CheckForCharServer())
+		return 0;
+	WFIFOHEAD(inter_fd, 6);
+	WFIFOW(inter_fd, 0) = 0x3093;
+	WFIFOL(inter_fd,2) = homun_id;
+	WFIFOSET(inter_fd,6);
+	return 1;
+
+}
+
+
+//-----------------------------------------------------------------
+// Packets receive from inter server
+
+/**
+ * Receive a whisper request from char-serv transmit it to player
+ * @author : rewritten by [Yor]
+ * @param fd : char-serv link
+ * @return 0=not found or ignored, 1=transmited
+ */
+int32 intif_parse_WisMessage(int32 fd)
+{
+	map_session_data* sd;
+	char *wisp_source;
+	char name[NAME_LENGTH];
+	int32 id, i, gmlvl;
+
+	id=RFIFOL(fd,4);
+	gmlvl=RFIFOL(fd,8);
+
+	safestrncpy(name, RFIFOCP(fd,12+NAME_LENGTH), NAME_LENGTH);
+	sd = map_nick2sd(name,false);
+	if(sd == nullptr || strcmp(sd->status.name, name) != 0)
+	{	//Not found
+		intif_wis_reply(id,1);
+		return 0;
+	}
+	if(sd->state.ignoreAll) {
+		intif_wis_reply(id, (pc_has_permission(sd, PC_PERM_HIDE_SESSION))?1:2);
+		return 0;
+	}
+	wisp_source = RFIFOCP(fd,12); // speed up [Yor]
+	for(i=0; i < MAX_IGNORE_LIST &&
+		sd->ignore[i].name[0] != '\0' &&
+		strcmp(sd->ignore[i].name, wisp_source) != 0
+		; i++);
+
+	if (i < MAX_IGNORE_LIST && sd->ignore[i].name[0] != '\0')
+	{	//Ignored
+		intif_wis_reply(id, (pc_has_permission(sd, PC_PERM_HIDE_SESSION))?1:2);
+		return 0;
+	}
+	//Success to send whisper.
+	clif_wis_message(sd, wisp_source, RFIFOCP(fd,12+2*NAME_LENGTH),RFIFOW(fd,2)-(12+2*NAME_LENGTH), gmlvl);
+	intif_wis_reply(id,0);   // success
+	return 1;
+}
+
+/**
+ * Wisp/page transmission result reception
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_WisEnd(int32 fd)
+{
+	if (battle_config.etc_log)
+		ShowInfo("intif_parse_wisend: player: %s, flag: %d\n", RFIFOP(fd,2), RFIFOB(fd,26)); // flag: 0: success to send wisper, 1: target character is not loged in?, 2: ignored by target
+
+	map_session_data* sd = map_nick2sd( RFIFOCP( fd, 2 ), false );
+
+	if (sd != nullptr) {
+		uint8 result = RFIFOB( fd, 26 );
+
+		if ( result >= ACKWHISPER_SUCCESS && result <= ACKWHISPER_ALL_IGNORED )
+			clif_wis_end( *sd, static_cast<e_ack_whisper>(result) );
+	}
+
+	return 1;
+}
+
+/**
+ * Transmit a whisper message to sd
+ * @param sd : Player to transmit the message to
+ * @param va : list of arguments ( wisp_name, message, len)
+ * @return 0=error, 1=msg sent
+ */
+static int32 mapif_parse_WisToGM_sub(map_session_data* sd,va_list va)
+{
+	e_pc_permission permission = static_cast<e_pc_permission>(va_arg(va, uint32));
+	char *wisp_name;
+	char *message;
+	int32 len;
+
+	if (!pc_has_permission(sd, permission))
+		return 0;
+	wisp_name = va_arg(va, char*);
+	message = va_arg(va, char*);
+	len = va_arg(va, int32);
+	clif_wis_message(sd, wisp_name, message, len,0);
+	return 1;
+}
+
+
+/**
+ * Received wisp message from map-server via char-server for ALL gm
+ * 0x3003/0x3803 <packet_len>.w <wispname>.24B <permission>.l <message>.?B
+ * @see mapif_parse_WisToGM_sub, for 1 transmission
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 mapif_parse_WisToGM(int32 fd)
+{
+	int32 permission, mes_len;
+	char Wisp_name[NAME_LENGTH];
+	char *message;
+
+	mes_len =  RFIFOW(fd,2) - (8+NAME_LENGTH);
+	message = (char *) aMalloc(mes_len+1);
+
+	safestrncpy(Wisp_name, RFIFOCP(fd,4), NAME_LENGTH);
+	permission = RFIFOL(fd, 4 + NAME_LENGTH);
+	safestrncpy(message, RFIFOCP(fd,8+NAME_LENGTH), mes_len+1);
+	// information is sent to all online GM
+	map_foreachpc(mapif_parse_WisToGM_sub, permission, Wisp_name, message, mes_len);
+	aFree(message);
+	return 1;
+}
+
+/**
+ * Request player registry
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+void intif_parse_Registers(int32 fd)
+{
+	int32 flag;
+	map_session_data *sd;
+	uint32 account_id = RFIFOL(fd,4), char_id = RFIFOL(fd,8);
+	struct auth_node *node = chrif_auth_check(account_id, char_id, ST_LOGIN);
+	char type = RFIFOB(fd, 13);
+
+	if (node)
+		sd = node->sd;
+	else { //Normally registries should arrive for in log-in chars.
+		sd = map_id2sd(account_id);
+	}
+
+	if (!sd || sd->status.char_id != char_id) {
+		return; //Character registry from another character.
+	}
+
+	flag = ( sd->vars_received&PRL_ACCG && sd->vars_received&PRL_ACCL && sd->vars_received&PRL_CHAR ) ? 0 : 1;
+
+	switch (RFIFOB(fd,12)) {
+		case 3: //Character Registry
+			sd->vars_received |= PRL_CHAR;
+			break;
+		case 2: //Account Registry
+			sd->vars_received |= PRL_ACCL;
+			break;
+		case 1: //Account2 Registry
+			sd->vars_received |= PRL_ACCG;
+			break;
+		case 0:
+			break;
+		default:
+			ShowError("intif_parse_Registers: Unrecognized type %d\n",RFIFOB(fd,12));
+			return;
+	}
+
+	// have it not complain about insertion of vars before loading, and not set those vars as new or modified
+	pc_set_reg_load(true);
+	
+	if( RFIFOW(fd, 14) ) {
+		char key[32];
+		uint32 index;
+		int32 max = RFIFOW(fd, 14), cursor = 16, i;
+
+		/**
+		 * Vessel!char_reg_num_db
+		 *
+		 * str type
+		 * { keyLength(B), key(<keyLength>), index(L), valLength(B), val(<valLength>) }
+		 **/
+		if (type) {
+			for(i = 0; i < max; i++) {
+				char sval[254];
+				safestrncpy(key, RFIFOCP(fd, cursor + 1), RFIFOB(fd, cursor));
+				cursor += RFIFOB(fd, cursor) + 1;
+
+				index = RFIFOL(fd, cursor);
+				cursor += 4;
+
+				safestrncpy(sval, RFIFOCP(fd, cursor + 1), RFIFOB(fd, cursor));
+				cursor += RFIFOB(fd, cursor) + 1;
+
+				set_reg_str( nullptr, sd, reference_uid( add_str( key ), index ), key, sval, nullptr );
+			}
+		/**
+		 * Vessel!
+		 *
+		 * int32 type
+		 * { keyLength(B), key(<keyLength>), index(L), value(L) }
+		 **/
+		} else {
+			for(i = 0; i < max; i++) {
+				int64 ival;
+				safestrncpy(key, RFIFOCP(fd, cursor + 1), RFIFOB(fd, cursor));
+				cursor += RFIFOB(fd, cursor) + 1;
+
+				index = RFIFOL(fd, cursor);
+				cursor += 4;
+
+				ival = RFIFOQ(fd, cursor);
+				cursor += 8;
+
+				set_reg_num( nullptr, sd, reference_uid( add_str( key ), index ), key, ival, nullptr );
+			}
+		}
+	}
+
+	pc_set_reg_load(false);
+
+	if (flag && sd->vars_received&PRL_ACCG && sd->vars_received&PRL_ACCL && sd->vars_received&PRL_CHAR)
+		pc_reg_received(sd); //Received all registry values, execute init scripts and what-not. [Skotlex]
+}
+
+/**
+ * Received a guild storage
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_LoadGuildStorage(int32 fd)
+{
+	struct s_storage *gstor;
+	map_session_data *sd;
+	int32 guild_id, flag;
+
+	guild_id = RFIFOL(fd,8);
+	flag = RFIFOL(fd,12);
+	if (guild_id <= 0)
+		return 0;
+

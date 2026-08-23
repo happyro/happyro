@@ -1,0 +1,500 @@
+		add_timer(ud->canmove_tick+1, unit_walktobl_sub, bl->id, ud->target_to);
+		return 1;
+	}
+
+	if(!unit_can_move(bl))
+		return 0;
+
+	if (unit_walktoxy_sub(bl))
+		return 1;
+
+	return 0;
+}
+
+/**
+ * Called by unit_run when an object is hit.
+ * @param sd Required only when using SC_WUGDASH
+ */
+void unit_run_hit(block_list *bl, status_change *sc, map_session_data *sd, enum sc_type type)
+{
+	int32 lv = sc->getSCE(type)->val1;
+
+	// If you can't run forward, you must be next to a wall, so bounce back. [Skotlex]
+	if (type == SC_RUN)
+		clif_status_change(bl, EFST_TING, 1, 0, 0, 0, 0);
+
+	// Set running to 0 beforehand so status_change_end knows not to enable spurt [Kevin]
+	unit_bl2ud(bl)->state.running = 0;
+	status_change_end(bl, type);
+
+	if (type == SC_RUN) {
+		skill_blown(bl, bl, skill_get_blewcount(TK_RUN, lv), unit_getdir(bl), BLOWN_NONE);
+		clif_status_change(bl, EFST_TING, 0, 0, 0, 0, 0);
+	} else if (sd) {
+		clif_fixpos( *bl );
+		skill_castend_damage_id(bl, sd, RA_WUGDASH, lv, gettick(), SD_LEVEL);
+	}
+	return;
+}
+
+/**
+ * Set a unit to run, checking for obstacles
+ * @param bl: Object that is running
+ * @param sd: Required only when using SC_WUGDASH
+ * @return true: Success (Finished running) false: Fail (Hit an object/Couldn't run)
+ */
+bool unit_run(block_list *bl, map_session_data *sd, enum sc_type type)
+{
+	status_change *sc;
+	int16 to_x, to_y, dir_x, dir_y;
+	int32 i;
+
+	nullpo_retr(false, bl);
+
+	sc = status_get_sc(bl);
+
+	if (!(sc && sc->getSCE(type)))
+		return false;
+
+	if (!unit_can_move(bl)) {
+		status_change_end(bl, type);
+		return false;
+	}
+
+	dir_x = dirx[sc->getSCE(type)->val2];
+	dir_y = diry[sc->getSCE(type)->val2];
+
+	// Determine destination cell
+	to_x = bl->x;
+	to_y = bl->y;
+
+	// Search for available path
+	for(i = 0; i < AREA_SIZE; i++) {
+		if(!map_getcell(bl->m, to_x + dir_x, to_y + dir_y, CELL_CHKPASS))
+			break;
+
+		// If sprinting and there's a PC/Mob/NPC, block the path [Kevin]
+		if(map_count_oncell(bl->m, to_x + dir_x, to_y + dir_y, BL_PC|BL_MOB|BL_NPC, 0))
+			break;
+
+		to_x += dir_x;
+		to_y += dir_y;
+	}
+
+	// Can't run forward.
+	if( (to_x == bl->x && to_y == bl->y) || (to_x == (bl->x + 1) || to_y == (bl->y + 1)) || (to_x == (bl->x - 1) || to_y == (bl->y - 1))) {
+		unit_run_hit(bl, sc, sd, type);
+		return false;
+	}
+
+	if (unit_walktoxy(bl, to_x, to_y, 1))
+		return true;
+
+	// There must be an obstacle nearby. Attempt walking one cell at a time.
+	do {
+		to_x -= dir_x;
+		to_y -= dir_y;
+	} while (--i > 0 && !unit_walktoxy(bl, to_x, to_y, 1));
+
+	if (i == 0) {
+		unit_run_hit(bl, sc, sd, type);
+		return false;
+	}
+
+	return true;
+}
+
+/**
+ * Returns duration of an object's current walkpath
+ * @param bl: Object that is moving
+ * @return Duration of the walkpath
+ */
+t_tick unit_get_walkpath_time(block_list& bl)
+{
+	t_tick time = 0;
+	uint16 speed = status_get_speed(&bl);
+	struct unit_data* ud = unit_bl2ud(&bl);
+
+	// The next walk start time is calculated.
+	for (uint8 i = 0; i < ud->walkpath.path_len; i++) {
+		if (direction_diagonal(ud->walkpath.path[i]))
+			time += speed * MOVE_DIAGONAL_COST / MOVE_COST;
+		else
+			time += speed;
+	}
+
+	return time;
+}
+
+/**
+ * Makes unit attempt to run away from target in a straight line or using hard paths
+ * @param bl: Object that is running away from target
+ * @param target: Target
+ * @param dist: How far bl should run
+ * @param flag: unit_walktoxy flag (&1 = straight line escape)
+ * @return The duration the unit will run (0 on fail)
+ */
+t_tick unit_escape(block_list *bl, block_list *target, int16 dist, uint8 flag)
+{
+	uint8 dir = map_calc_dir(target, bl->x, bl->y);
+
+	if (flag&1) {
+		// Straight line escape
+		// Keep moving until we hit an unreachable cell
+		for (int16 i = 1; i <= dist; i++) {
+			if (map_getcell(bl->m, bl->x + i*dirx[dir], bl->y + i*diry[dir], CELL_CHKNOREACH))
+				dist = i - 1;
+		}
+	} else {
+		// Find the furthest reachable cell (then find a walkpath to it)
+		while( dist > 0 && map_getcell(bl->m, bl->x + dist*dirx[dir], bl->y + dist*diry[dir], CELL_CHKNOREACH) )
+			dist--;
+	}
+
+	if (dist > 0 && unit_walktoxy(bl, bl->x + dist * dirx[dir], bl->y + dist * diry[dir], flag))
+		return unit_get_walkpath_time(*bl);
+
+	return 0;
+}
+
+/**
+ * Instant warps a unit to x,y coordinate
+ * @param bl: Object to instant warp
+ * @param dst_x: X coordinate to warp to
+ * @param dst_y: Y coordinate to warp to
+ * @param easy: 
+ *		0: Hard path check (attempt to go around obstacle)
+ *		1: Easy path check (no obstacle on movement path)
+ *		2: Long path check (no obstacle on line from start to destination)
+ * @param checkpath: Whether or not to do a cell and path check for NOPASS and NOREACH
+ * @return True: Success False: Fail
+ */
+bool unit_movepos(block_list *bl, int16 dst_x, int16 dst_y, int32 easy, bool checkpath)
+{
+	int16 dx,dy;
+	struct unit_data        *ud = nullptr;
+	map_session_data *sd = nullptr;
+
+	nullpo_retr(false,bl);
+
+	sd = BL_CAST(BL_PC, bl);
+	ud = unit_bl2ud(bl);
+
+	if(ud == nullptr)
+		return false;
+
+	unit_stop_walking( bl, USW_FIXPOS );
+	unit_stop_attack(bl);
+
+	if( checkpath && (map_getcell(bl->m,dst_x,dst_y,CELL_CHKNOPASS) || !path_search(nullptr,bl->m,bl->x,bl->y,dst_x,dst_y,easy,CELL_CHKNOREACH)) )
+		return false; // Unreachable
+
+	ud->to_x = dst_x;
+	ud->to_y = dst_y;
+
+	unit_setdir(bl, map_calc_dir(bl, dst_x, dst_y), false);
+
+	dx = dst_x - bl->x;
+	dy = dst_y - bl->y;
+
+	map_foreachinmovearea(clif_outsight, bl, AREA_SIZE, dx, dy, (sd ? BL_ALL : BL_PC), bl);
+
+	map_moveblock(bl, dst_x, dst_y, gettick());
+
+	ud->walktimer = CLIF_WALK_TIMER; // Arbitrary non-INVALID_TIMER value to make the clif code send walking packets
+	map_foreachinmovearea(clif_insight, bl, AREA_SIZE, -dx, -dy, (sd ? BL_ALL : BL_PC), bl);
+	ud->walktimer = INVALID_TIMER;
+
+	if(sd) {
+		if( !sd->npc_ontouch_.empty() )
+			npc_touchnext_areanpc(sd,false);
+
+		if(map_getcell(bl->m,bl->x,bl->y,CELL_CHKNPC)) {
+			npc_touch_area_allnpc(sd, bl->m, bl->x, bl->y);
+
+			if (bl->prev == nullptr) // Script could have warped char, abort remaining of the function.
+				return false;
+		} else
+			sd->areanpc.clear();
+
+		if( sd->status.pet_id > 0 && sd->pd && sd->pd->pet.intimate > PET_INTIMATE_NONE ) {
+			// Check if pet needs to be teleported. [Skotlex]
+			int32 flag = 0;
+			block_list* pbl = sd->pd;
+
+			if( !checkpath && !path_search(nullptr,pbl->m,pbl->x,pbl->y,dst_x,dst_y,0,CELL_CHKNOPASS) )
+				flag = 1;
+			else if (!check_distance_bl(sd, pbl, AREA_SIZE)) // Too far, teleport.
+				flag = 2;
+
+			if( flag ) {
+				unit_movepos(pbl,sd->x,sd->y, 0, 0);
+				clif_slide(*pbl,pbl->x,pbl->y);
+			}
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Sets direction of a unit
+ * @param bl: Object to set direction
+ * @param dir: Direction (0-7)
+ * @param send_update: Update the client area of direction (default: true)
+ * @return True on success or False on failure
+ */
+bool unit_setdir(block_list *bl, uint8 dir, bool send_update)
+{
+	nullpo_ret(bl);
+
+	unit_data *ud = unit_bl2ud(bl);
+
+	if (ud == nullptr)
+		return false;
+
+	ud->dir = dir;
+
+	if (bl->type == BL_PC) {
+		map_session_data *sd = BL_CAST(BL_PC, bl);
+
+		sd->head_dir = DIR_NORTH;
+		sd->status.body_direction = ud->dir;
+	}
+
+	if (send_update)
+		clif_changed_dir(*bl, AREA);
+
+	return true;
+}
+
+/**
+ * Gets direction of a unit
+ * @param bl: Object to get direction
+ * @return direction (0-7)
+ */
+uint8 unit_getdir(const block_list* bl)
+{
+	const struct unit_data *ud;
+
+	nullpo_ret(bl);
+
+	ud = unit_bl2ud(bl);
+
+	if (!ud)
+		return 0;
+
+	return ud->dir;
+}
+
+/**
+ * Pushes a unit in a direction by a given amount of cells
+ * There is no path check, only map cell restrictions are respected
+ * @param bl: Object to push
+ * @param dx: Destination cell X
+ * @param dy: Destination cell Y
+ * @param count: How many cells to push bl
+ * @param flag: See skill.hpp::e_skill_blown
+ * @return count (can be modified due to map cell restrictions)
+ */
+int32 unit_blown(block_list* bl, int32 dx, int32 dy, int32 count, enum e_skill_blown flag)
+{
+	if(count) {
+		map_session_data* sd;
+		skill_unit* su = nullptr;
+		int32 nx, ny, result;
+
+		sd = BL_CAST(BL_PC, bl);
+		su = BL_CAST(BL_SKILL, bl);
+
+		result = path_blownpos(bl->m, bl->x, bl->y, dx, dy, count);
+
+		nx = result>>16;
+		ny = result&0xffff;
+
+		if(!su)
+			unit_stop_walking( bl, USW_NONE );
+
+		if( sd ) {
+			unit_stop_stepaction(bl); //Stop stepaction when knocked back
+			sd->ud.to_x = nx;
+			sd->ud.to_y = ny;
+		}
+
+		dx = nx-bl->x;
+		dy = ny-bl->y;
+
+		if(dx || dy) {
+			map_foreachinmovearea(clif_outsight, bl, AREA_SIZE, dx, dy, bl->type == BL_PC ? BL_ALL : BL_PC, bl);
+
+			if(su) {
+				if (su->group && skill_get_unit_flag(su->group->skill_id, UF_KNOCKBACKGROUP))
+					skill_unit_move_unit_group(su->group, bl->m, dx, dy);
+				else
+					skill_unit_move_unit(bl, nx, ny);
+			} else
+				map_moveblock(bl, nx, ny, gettick());
+
+			map_foreachinmovearea(clif_insight, bl, AREA_SIZE, -dx, -dy, bl->type == BL_PC ? BL_ALL : BL_PC, bl);
+
+			if(!(flag&BLOWN_DONT_SEND_PACKET))
+				clif_blown(bl);
+
+			if(sd) {
+				if(!sd->npc_ontouch_.empty())
+					npc_touchnext_areanpc(sd, false);
+
+				if(map_getcell(bl->m, bl->x, bl->y, CELL_CHKNPC))
+					npc_touch_area_allnpc(sd, bl->m, bl->x, bl->y);
+				else
+					sd->areanpc.clear();
+			}
+		}
+
+		count = distance(dx, dy);
+	}
+
+	return count;  // Return amount of knocked back cells
+}
+
+/**
+ * Checks if unit can be knocked back / stopped by skills.
+ * @param bl: Object to check
+ * @param flag
+ *		0x1 - Offensive (not set: self skill, e.g. Backslide)
+ *		0x2 - Knockback type (not set: Stop type, e.g. Ankle Snare)
+ *		0x4 - Boss attack
+ *		0x8 - Ignore target player 'special_state.no_knockback'
+ * @return reason for immunity
+ *		UB_KNOCKABLE - can be knocked back / stopped
+ *		UB_NO_KNOCKBACK_MAP - at WOE/BG map
+ *		UB_MD_KNOCKBACK_IMMUNE - target is MD_KNOCKBACK_IMMUNE
+ *		UB_TARGET_BASILICA - target is in Basilica area (Pre-Renewal)
+ *		UB_TARGET_NO_KNOCKBACK - target has 'special_state.no_knockback'
+ *		UB_TARGET_TRAP - target is trap that cannot be knocked back
+ */
+enum e_unit_blown unit_blown_immune(const block_list* bl, uint8 flag)
+{
+	if ((flag&0x1)
+		&& (map_flag_gvg2(bl->m) || map_getmapflag(bl->m, MF_BATTLEGROUND))
+		&& ((flag&0x2) || !(battle_config.skill_trap_type&0x1)))
+		return UB_NO_KNOCKBACK_MAP; // No knocking back in WoE / BG
+
+	switch (bl->type) {
+		case BL_MOB:
+			// Immune can't be knocked back
+			if (((flag&0x1) && status_bl_has_mode(bl,MD_KNOCKBACKIMMUNE))
+				&& ((flag&0x2) || !(battle_config.skill_trap_type&0x2)))
+				return UB_MD_KNOCKBACK_IMMUNE;
+			break;
+		case BL_PC: {
+				const map_session_data* sd = static_cast<const map_session_data*>(bl);
+
+#ifndef RENEWAL
+				// Basilica caster can't be knocked-back by normal monsters.
+				if( !(flag&0x4) && sd->sc.getSCE(SC_BASILICA) && sd->sc.getSCE(SC_BASILICA)->val4 == sd->id)
+					return UB_TARGET_BASILICA;
+#endif
+				// Target has special_state.no_knockback (equip)
+				if( (flag&(0x1|0x2)) && !(flag&0x8) && sd->special_state.no_knockback )
+					return UB_TARGET_NO_KNOCKBACK;
+			}
+			break;
+		case BL_SKILL: {
+				const skill_unit* su = static_cast<const skill_unit*>(bl);
+				// Trap cannot be knocked back
+				if (su && su->group && skill_get_unit_flag(su->group->skill_id, UF_NOKNOCKBACK))
+					return UB_TARGET_TRAP;
+			}
+			break;
+	}
+
+	//Object can be knocked back / stopped
+	return UB_KNOCKABLE;
+}
+
+/**
+ * Warps a unit to a map/position
+ * pc_setpos is used for player warping
+ * This function checks for "no warp" map flags, so it's safe to call without doing nowarpto/nowarp checks
+ * @param bl: Object to warp
+ * @param m: Map ID from bl structure (NOT index)
+ * @param x: Destination cell X
+ * @param y: Destination cell Y
+ * @param type: Clear type used in clif_clearunit_area()
+ * @return Success(0); Failed(1); Error(2); unit_remove_map() Failed(3); map_addblock Failed(4)
+ */
+int32 unit_warp(block_list *bl,int16 m,int16 x,int16 y,clr_type type)
+{
+	struct unit_data *ud;
+
+	nullpo_ret(bl);
+
+	ud = unit_bl2ud(bl);
+
+	if(bl->prev==nullptr || !ud)
+		return 1;
+
+	if (type == CLR_DEAD)
+		// Type 1 is invalid, since you shouldn't warp a bl with the "death"
+		// animation, it messes up with unit_remove_map! [Skotlex]
+		return 1;
+
+	if( m < 0 )
+		m = bl->m;
+
+	switch (bl->type) {
+		case BL_MOB:
+			if (map_getmapflag(bl->m, MF_MONSTER_NOTELEPORT) && ((TBL_MOB*)bl)->master_id == 0)
+				return 1;
+
+			if (m != bl->m && map_getmapflag(m, MF_NOBRANCH) && battle_config.mob_warp&4 && !(((TBL_MOB *)bl)->master_id))
+				return 1;
+			break;
+		case BL_PC:
+			if (map_getmapflag(bl->m, MF_NOTELEPORT))
+				return 1;
+			break;
+	}
+
+	if (x < 0 || y < 0) { // Random map position.
+		if (!map_search_freecell(nullptr, m, &x, &y, -1, -1, 1)) {
+			ShowWarning("unit_warp failed. Unit Id:%d/Type:%d, target position map %d (%s) at [%d,%d]\n", bl->id, bl->type, m, map[m].name, x, y);
+			return 2;
+
+		}
+	} else if ( bl->type != BL_NPC && map_getcell(m,x,y,CELL_CHKNOREACH)) { // Invalid target cell
+		ShowWarning("unit_warp: Specified non-walkable target cell: %d (%s) at [%d,%d]\n", m, map[m].name, x,y);
+
+		if (!map_search_freecell(nullptr, m, &x, &y, 4, 4, 1)) { // Can't find a nearby cell
+			ShowWarning("unit_warp failed. Unit Id:%d/Type:%d, target position map %d (%s) at [%d,%d]\n", bl->id, bl->type, m, map[m].name, x, y);
+			return 2;
+		}
+	}
+
+	if (bl->type == BL_PC) // Use pc_setpos
+		return pc_setpos((TBL_PC*)bl, map_id2index(m), x, y, type);
+
+	if (!unit_remove_map(bl, type))
+		return 3;
+
+	if (bl->m != m && battle_config.clear_unit_onwarp &&
+		battle_config.clear_unit_onwarp&bl->type)
+		skill_clear_unitgroup(bl);
+
+	bl->x = ud->to_x = x;
+	bl->y = ud->to_y = y;
+	bl->m = m;
+
+	switch (bl->type) {
+		case BL_NPC:
+		{
+			TBL_NPC* nd = reinterpret_cast<npc_data*>(bl);
+			map_addnpc(m, nd);
+			npc_setcells(nd);
+			break;
+		}
+		case BL_MOB:
+		{
+			TBL_MOB* md = reinterpret_cast<mob_data*>(bl);
+			// If slaves are set to stick with their master they should drop target if recalled at range

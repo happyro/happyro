@@ -1,0 +1,500 @@
+						continue;
+				}
+
+				struct item item = {};
+				item.nameid=entry->nameid;
+				item.identify= itemdb_isidentified(item.nameid);
+				clif_mvp_item(mvp_sd,item.nameid);
+				log_mvp_nameid = item.nameid;
+
+				//A Rare MVP Drop Global Announce by Lupus
+				if(temp<=battle_config.rare_drop_announce) {
+					char message[128];
+					sprintf (message, msg_txt(nullptr,541), mvp_sd->status.name, md->name, i_data->ename.c_str(), temp/100.);
+					//MSG: "'%s' won %s's %s (chance: %0.02f%%)"
+					intif_broadcast(message,strlen(message)+1,BC_DEFAULT);
+				}
+
+				mob_setdropitem_option( item, entry );
+
+				if((temp = pc_additem(mvp_sd,&item,1,LOG_TYPE_PICKDROP_PLAYER)) != 0) {
+					clif_additem(mvp_sd,0,0,temp);
+					map_addflooritem(&item,1,mvp_sd->m,mvp_sd->x,mvp_sd->y,mvp_sd->status.char_id,(second_sd?second_sd->status.char_id:0),(third_sd?third_sd->status.char_id:0),1,0,true,DIR_CENTER);
+				}
+
+				if (i_data->flag.broadcast)
+					intif_broadcast_obtain_special_item(mvp_sd, item.nameid, md->mob_id, ITEMOBTAIN_TYPE_MONSTER_ITEM);
+
+				//Logs items, MVP prizes [Lupus]
+				log_pick_mob(md, LOG_TYPE_MVP, -1, &item);
+				//If item_drop_mvp_mode is not 2, then only one item should be granted
+				if(battle_config.item_drop_mvp_mode != 2) {
+					break;
+				}
+			}
+		}
+
+		log_mvpdrop(mvp_sd, md->mob_id, log_mvp_nameid, log_mvp_exp);
+	}
+
+	if (type&2 && !sd && md->mob_id == MOBID_EMPERIUM)
+		// Emperium destroyed by script. Discard top damage dealer.
+		first_sd = nullptr;
+
+	rebirth =  ( md->sc.getSCE(SC_KAIZEL) || md->sc.getSCE(SC_ULTIMATE_S) || (md->sc.getSCE(SC_REBIRTH) && !md->state.rebirth) );
+	if( !rebirth ) { // Only trigger event on final kill
+		if( src ) {
+			switch( src->type ) { //allowed type
+				case BL_PET:
+				case BL_HOM:
+				case BL_MER:
+				case BL_ELEM:
+				case BL_MOB:
+				    sd = BL_CAST(BL_PC,battle_get_master(src));
+			}
+		}
+
+		if (sd) {
+			std::shared_ptr<s_mob_db> mission_mdb = mob_db.find(sd->mission_mobid), mob = mob_db.find(md->mob_id);
+
+			if ((sd->mission_mobid == md->mob_id) || (mission_mdb != nullptr &&
+				((battle_config.taekwon_mission_mobname == 1 && util::vector_exists(status_get_race2(md), RC2_GOBLIN) && util::vector_exists(mission_mdb->race2, RC2_GOBLIN)) ||
+				(battle_config.taekwon_mission_mobname == 2 && mob->jname.compare(mission_mdb->jname) == 0))))
+			{ //TK_MISSION [Skotlex]
+				if (++(sd->mission_count) >= 100 && (temp = mob_get_random_id(MOBG_BRANCH_OF_DEAD_TREE, static_cast<e_random_monster_flags>(RMF_CHECK_MOB_LV|RMF_MOB_NOT_BOSS|RMF_MOB_NOT_SPAWN), sd->status.base_level)))
+				{
+					pc_addfame(*sd, battle_config.fame_taekwon_mission);
+					sd->mission_mobid = temp;
+					pc_setglobalreg(sd, add_str(TKMISSIONID_VAR), temp);
+					sd->mission_count = 0;
+					clif_mission_info(sd, temp, 0);
+				}
+				pc_setglobalreg(sd, add_str(TKMISSIONCOUNT_VAR), sd->mission_count);
+			}
+
+			if (sd->status.party_id)
+				map_foreachinallrange(quest_update_objective_sub, md, AREA_SIZE, BL_PC, sd->status.party_id, md);
+			else if (sd->avail_quests)
+				quest_update_objective(sd, md);
+
+			if (achievement_db.mobexists(md->mob_id)) {
+				if (battle_config.achievement_mob_share > 0 && sd->status.party_id > 0)
+					map_foreachinallrange(achievement_update_objective_sub, md, AREA_SIZE, BL_PC, sd->status.party_id, md->mob_id);
+				else
+					achievement_update_objective(sd, AG_BATTLE, 1, md->mob_id);
+			}
+
+			// The master or Mercenary can increase the kill count, if the monster level is greater or equal than half the baselevel of the master
+			if (sd->md && src && (src->type == BL_PC || src->type == BL_MER) && mob->lv >= sd->status.base_level / 2)
+				mercenary_kills(sd->md);
+		}
+
+		if( md->npc_event[0] && !md->state.npc_killmonster ) {
+			if( sd && battle_config.mob_npc_event_type ) {
+				pc_setparam(sd, SP_KILLEDGID, md->id);
+				pc_setparam(sd, SP_KILLEDRID, md->mob_id);
+				pc_setparam(sd, SP_KILLERRID, sd->id);
+				npc_event(sd,md->npc_event,0);
+			} else if( first_sd != nullptr ) {
+				pc_setparam(first_sd, SP_KILLEDGID, md->id);
+				pc_setparam(first_sd, SP_KILLEDRID, md->mob_id);
+				pc_setparam(first_sd, SP_KILLERRID, sd?sd->id:0);
+				npc_event(first_sd,md->npc_event,0);
+			} else
+				npc_event_do(md->npc_event);
+		} else if( first_sd != nullptr && !md->state.npc_killmonster ) {
+			pc_setparam(first_sd, SP_KILLEDGID, md->id);
+			pc_setparam(first_sd, SP_KILLEDRID, md->mob_id);
+			npc_script_event( *first_sd, NPCE_KILLNPC );
+		}
+	}
+
+	if(md->deletetimer != INVALID_TIMER) {
+		delete_timer(md->deletetimer,mob_timer_delete);
+		md->deletetimer = INVALID_TIMER;
+	}
+	/**
+	 * Only loops if necessary (e.g. a poring would never need to loop)
+	 **/
+	if( md->can_summon )
+		mob_deleteslave(md);
+
+	// TODO: Check if this is called to early. md is still used below.
+	freeLock.unlock();
+
+	if( !rebirth ) {
+
+		if( pcdb_checkid(md->vd->look[LOOK_BASE])) {//Player mobs are not removed automatically by the client.
+			/* first we set them dead, then we delay the outsight effect */
+			clif_clearunit_area( *md, CLR_DEAD );
+			clif_clearunit_delayed(md, CLR_OUTSIGHT,tick+3000);
+		} else
+			/**
+			 * We give the client some time to breath and this allows it to display anything it'd like with the dead corpose
+			 * For example, this delay allows it to display soul drain effect
+			 **/
+			clif_clearunit_delayed(md, CLR_DEAD, tick+250);
+
+	}
+
+	if(!md->spawn){ //Tell status_damage to remove it from memory.
+		struct unit_data *ud = unit_bl2ud(md);
+
+		// If the unit is currently in a walk script, it will be removed there
+		return ud->state.walk_script ? 3 : 5; // Note: Actually, it's 4. Oh well...
+	}
+
+	// MvP tomb [GreenBox]
+	if (battle_config.mvp_tomb_enabled && md->spawn->state.boss && map_getmapflag(md->m, MF_NOTOMB) != 1)
+		mvptomb_create(md, mvp_sd != nullptr ? mvp_sd->status.name : (first_sd != nullptr ? first_sd->status.name : nullptr), time(nullptr));
+
+	if( !rebirth )
+		mob_setdelayspawn(md); //Set respawning.
+	return 3; //Remove from map.
+}
+
+/**
+ * Resurrects a mob (reset values and respawn on map)
+ * @param md : mob pointer
+ * @param hp : hp to resurrect it with (only used for exp calculation)
+ */
+void mob_revive(mob_data *md, uint32 hp)
+{
+	t_tick tick = gettick();
+	mob_setstate(*md, MSS_IDLE);
+	md->next_walktime = tick+rnd()%1000+MIN_RANDOMWALKTIME;
+	md->last_linktime = tick;
+	md->last_pcneartime = 0;
+	//We reset the damage log and then set the already lost damage as self damage so players don't get exp for it [Playtester]
+	md->dmglog.clear();
+	mob_log_damage(md, md, static_cast<int64>(md->status.max_hp - hp));
+	if (!md->prev){
+		if(map_addblock(md))
+			return;
+	}
+	clif_spawn(md);
+	skill_unit_move(md,tick,1);
+	mobskill_use(md, tick, MSC_SPAWN);
+	if (battle_config.show_mob_info&3)
+		clif_name_area(md);
+}
+
+int32 mob_guardian_guildchange(mob_data *md)
+{
+	nullpo_ret(md);
+
+	if (!md->guardian_data)
+		return 0;
+
+	if (md->guardian_data->castle->guild_id == 0)
+	{	//Castle with no owner? Delete the guardians.
+		if (md->mob_id == MOBID_EMPERIUM)
+		{	//But don't delete the emperium, just clear it's guild-data
+			md->guardian_data->guild_id = 0;
+			md->guardian_data->emblem_id = 0;
+			md->guardian_data->guild_name[0] = '\0';
+		} else {
+			if (md->guardian_data->number >= 0 && md->guardian_data->number < MAX_GUARDIANS && md->guardian_data->castle->guardian[md->guardian_data->number].visible)
+				guild_castledatasave(md->guardian_data->castle->castle_id, CD_ENABLED_GUARDIAN00 + md->guardian_data->number, 0);
+			unit_free(md,CLR_OUTSIGHT); //Remove guardian.
+		}
+		return 0;
+	}
+
+	auto g = guild_search(md->guardian_data->castle->guild_id);
+	if (g == nullptr)
+	{	//Properly remove guardian info from Castle data.
+		ShowError("mob_guardian_guildchange: New Guild (id %d) does not exists!\n", md->guardian_data->guild_id);
+		if (md->guardian_data->number >= 0 && md->guardian_data->number < MAX_GUARDIANS)
+			guild_castledatasave(md->guardian_data->castle->castle_id, CD_ENABLED_GUARDIAN00 + md->guardian_data->number, 0);
+		unit_free(md,CLR_OUTSIGHT);
+		return 0;
+	}
+
+	md->guardian_data->guild_id = g->guild.guild_id;
+	md->guardian_data->emblem_id = g->guild.emblem_id;
+	md->guardian_data->guardup_lv = guild_checkskill(g->guild, GD_GUARDUP);
+	memcpy(md->guardian_data->guild_name, g->guild.name, NAME_LENGTH);
+
+	return 1;
+}
+
+/*==========================================
+ * Pick a random class for the mob
+ *------------------------------------------*/
+int32 mob_random_class( const int32 *value, size_t count )
+{
+	nullpo_ret(value);
+
+	// no count specified, look into the array manually, but take only max 5 elements
+	if (count < 1) {
+		count = 0;
+		while(count < 5 && mobdb_checkid(value[count])) count++;
+		if(count < 1)	// nothing found
+			return 0;
+	} else {
+		// check if at least the first value is valid
+		if(mobdb_checkid(value[0]) == 0)
+			return 0;
+	}
+	//Pick a random value, hoping it exists. [Skotlex]
+	return mobdb_checkid(value[rnd()%count]);
+}
+
+/**
+* Returns the SpawnInfos of the mob_db entry (mob_spawn_data[mobid])
+* if mobid is not in mob_spawn_data returns empty spawn_info vector
+* @param mob_id - Looking for spawns of this Monster ID
+*/
+const std::vector<spawn_info> mob_get_spawns(uint16 mob_id)
+{
+	auto mob_spawn_it = mob_spawn_data.find(mob_id);
+	if ( mob_spawn_it != mob_spawn_data.end() )
+		return mob_spawn_it->second;
+	return std::vector<spawn_info>();
+}
+
+/**
+ * Checks if a monster is spawned. Returns true if yes, false otherwise.
+ * @param mob_id - Monster ID which is checked
+*/
+bool mob_has_spawn(uint16 mob_id)
+{
+	// It's enough to check if the monster is in mob_spawn_data, because
+	// none or empty spawns are ignored. Thus the monster is spawned.
+	return mob_spawn_data.find(mob_id) != mob_spawn_data.end();
+}
+
+/**
+ * Adds a spawn info to the specific mob. (To mob_spawn_data)
+ * @param mob_id - Monster ID spawned
+ * @param new_spawn - spawn_info holding the map and quantity of the spawn
+*/
+void mob_add_spawn(uint16 mob_id, const struct spawn_info& new_spawn)
+{
+	uint16 m = new_spawn.mapindex;
+
+	if( new_spawn.qty <= 0 )
+		return; //ignore empty spawns
+
+	std::vector<spawn_info>& spawns = mob_spawn_data[mob_id];
+	// Search if the map is already in spawns
+	auto itSameMap = std::find_if(spawns.begin(), spawns.end(), 
+		[&m] (const spawn_info &s) { return (s.mapindex == m); });
+	
+	if( itSameMap != spawns.end() )
+		itSameMap->qty += new_spawn.qty; // add quantity, if map is found
+	else
+		spawns.push_back(new_spawn); // else, add the whole spawn info
+	
+	// sort spawns by spawn quantity
+	std::sort(spawns.begin(), spawns.end(),
+		[](const spawn_info & a, const spawn_info & b) -> bool
+		{ return a.qty > b.qty; });
+/** Note
+	Spawns are sorted after every addition. This makes reloadscript slower, but
+	some spawns may be added directly by loadscript or something similar.
+*/
+}
+
+/*==========================================
+ * Change mob base class
+ *------------------------------------------*/
+int32 mob_class_change (mob_data *md, int32 mob_id)
+{
+	t_tick tick = gettick();
+	int32 i, hp_rate;
+
+	nullpo_ret(md);
+
+	if( md->prev == nullptr )
+		return 0;
+
+	if (!mob_id || !mobdb_checkid(mob_id))
+		return 0;
+
+	//Disable class changing for some targets...
+	if (md->guardian_data)
+		return 0; //Guardians/Emperium
+
+	if (util::vector_exists(status_get_race2(md), RC2_TREASURE))
+		return 0; //Treasure Boxes
+
+	if( md->special_state.ai > AI_ATTACK )
+		return 0; //Marine Spheres and Floras.
+
+	if( mob_is_clone(md->mob_id) )
+		return 0; //Clones
+
+	if( md->mob_id == mob_id )
+		return 0; //Nothing to change.
+
+	hp_rate = get_percentage(md->status.hp, md->status.max_hp);
+	md->mob_id = mob_id;
+	md->db = mob_db.find(mob_id);
+	if (battle_config.override_mob_names==1)
+		memcpy(md->name,md->db->name.c_str(),NAME_LENGTH);
+	else
+		memcpy(md->name,md->db->jname.c_str(),NAME_LENGTH);
+
+	status_change_end(md,SC_KEEPING); // End before calling status_calc_mob().
+	status_change_end(md,SC_BARRIER);
+	unit_stop_attack( md );
+	unit_stop_walking( md, USW_NONE );
+	unit_skillcastcancel(md, 0);
+	status_set_viewdata(md, mob_id);
+	clif_class_change( *md, md->vd->look[LOOK_BASE] );
+	status_calc_mob(md,SCO_FIRST);
+
+	if (battle_config.monster_class_change_recover) {
+		md->dmglog.clear();
+	} else {
+		md->status.hp = md->status.max_hp*hp_rate/100;
+		if(md->status.hp < 1) md->status.hp = 1;
+	}
+
+	for(i=0;i<MAX_MOBSKILL;i++)
+		md->skilldelay[i] = 0;
+
+	if (md->lootitems == nullptr && status_has_mode(&md->db->status,MD_LOOTER))
+		md->lootitems = (struct s_mob_lootitem *)aCalloc(LOOTITEM_SIZE,sizeof(struct s_mob_lootitem));
+
+	//Targets should be cleared no morph
+	md->target_id = md->attacked_id = md->norm_attacked_id = 0;
+
+	//Need to update name display.
+	clif_name_area(md);
+	return 0;
+}
+
+/*==========================================
+ * mob heal, update display hp info of mob for players
+ *------------------------------------------*/
+void mob_heal(mob_data *md,uint32 heal)
+{
+	if (battle_config.show_mob_info&3)
+		clif_name_area(md);
+#if PACKETVER >= 20120404
+	if (battle_config.monster_hp_bars_info && !map_getmapflag(md->m, MF_HIDEMOBHPBAR)) {
+		if (md->special_state.ai == AI_ABR || md->special_state.ai == AI_BIONIC) {
+			clif_summon_hp_bar(*md);
+		}
+
+		// Must show hp bar to all char who already hit the mob.
+		for( const auto& entry : md->dmglog ){
+			map_session_data* sd = map_charid2sd( entry.id );
+
+			// Check if in range
+			if( sd != nullptr && check_distance_bl( md, sd, AREA_SIZE ) ){
+				clif_monster_hp_bar(md, sd->fd);
+			}
+		}
+	}
+#endif
+}
+
+/*==========================================
+ * Added by RoVeRT
+ *------------------------------------------*/
+int32 mob_warpslave_sub(block_list *bl,va_list ap)
+{
+	mob_data *md=(mob_data *)bl;
+	block_list *master;
+	int16 x,y,range=0;
+	master = va_arg(ap, block_list*);
+	range = va_arg(ap, int32);
+
+	if(md->master_id!=master->id)
+		return 0;
+
+	map_search_freecell(master, 0, &x, &y, range, range, 0);
+	unit_warp(md, master->m, x, y,CLR_TELEPORT);
+	return 1;
+}
+
+/*==========================================
+ * Added by RoVeRT
+ * Warps slaves. Range is the area around the master that they can
+ * appear in randomly.
+ *------------------------------------------*/
+int32 mob_warpslave(block_list *bl, int32 range)
+{
+	if (range < 1)
+		range = 1; //Min range needed to avoid crashes and stuff. [Skotlex]
+
+	return map_foreachinmap(mob_warpslave_sub, bl->m, BL_MOB, bl, range);
+}
+
+/*==========================================
+ *  Counts slave sub, curently checking if mob master is the given ID.
+ *------------------------------------------*/
+int32 mob_countslave_sub(block_list *bl,va_list ap)
+{
+	int32 id;
+	mob_data *md;
+	id=va_arg(ap,int32);
+
+	md = (mob_data *)bl;
+	if( md->master_id==id )
+		return 1;
+	return 0;
+}
+
+/*==========================================
+ * Counts the number of slaves a mob has on the map.
+ *------------------------------------------*/
+int32 mob_countslave(block_list *bl)
+{
+	return map_foreachinmap(mob_countslave_sub, bl->m, BL_MOB,bl->id);
+}
+
+/**
+ * Remove slaves if master logs off.
+ * @param bl: Mob data
+ * @param ap: List of arguments
+ * @return 1 on removal, otherwise 0
+ */
+int32 mob_removeslaves_sub(block_list *bl, va_list ap) {
+	int32 id = va_arg(ap, int32);
+	mob_data *md = (mob_data *)bl;
+
+	if (md != nullptr && md->master_id == id) {
+		unit_free(bl, CLR_OUTSIGHT);
+		return 1;
+	}
+
+	return 0;
+}
+
+/**
+ * Remove slaves on a map.
+ * @param bl: Player data
+ * @return 1 on removal, otherwise 0
+ */
+int32 mob_removeslaves(block_list *bl) {
+	return map_foreachinmap(mob_removeslaves_sub, bl->m, BL_MOB, bl->id);
+}
+
+/*==========================================
+ * Summons amount slaves contained in the value[5] array using round-robin. [adapted by Skotlex]
+ *------------------------------------------*/
+int32 mob_summonslave(mob_data *md2,int32 *value,int32 amount,uint16 skill_id)
+{
+	mob_data *md;
+	struct spawn_data data;
+	int32 count = 0,k=0,hp_rate=0;
+
+	nullpo_ret(md2);
+	nullpo_ret(value);
+
+	memset(&data, 0, sizeof(struct spawn_data));
+	data.m = md2->m;
+	data.x = md2->x;
+	data.y = md2->y;
+	data.num = 1;
+	data.state.size = md2->special_state.size;
+	data.state.ai = md2->special_state.ai;
+
+	if(mobdb_checkid(value[0]) == 0)
+		return 0;
+	/**

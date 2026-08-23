@@ -1,0 +1,500 @@
+								font-family: 'SCDream';  
+								src: url('${fontUrl6}') format('opentype');  
+								font-weight: 100; /* Thin */  
+								font-style: normal;  
+							}  
+							
+							@font-face {  
+								font-family: 'SCDream';  
+								src: url('${fontUrl6}') format('opentype');  
+								font-weight: 200; /* Extra Light */  
+								font-style: normal;  
+							}  
+							
+							@font-face {  
+								font-family: 'SCDream';  
+								src: url('${fontUrl6}') format('opentype');  
+								font-weight: 300; /* Light */  
+								font-style: normal;  
+							}  											
+							@font-face {  
+								font-family: 'SCDream';  
+								src: url('${fontUrl6}') format('opentype');  
+								font-weight: 400; /* Normal */  
+								font-style: normal;  
+							}  
+							
+							@font-face {  
+								font-family: 'SCDream';  
+								src: url('${fontUrl4}') format('opentype');  
+								font-weight: 700; /* Bold */  
+								font-style: normal;  
+							}
+								
+							@font-face {  
+								font-family: 'SCDream';  
+								src: url('${fontUrl4}') format('opentype');  
+								font-weight: 900; /* Black/Bolder */  
+								font-style: normal;  
+							}  								
+						`;
+					document.head.appendChild(style);
+				},
+				function () {
+					console.warn('[loadFontFromClient] - Failed to load client font:', fontPath);
+				}
+			);
+		},
+		function () {
+			console.warn('[loadFontFromClient] - Failed to load client font:', fontPath);
+		}
+	);
+}
+
+// Helper function to convert ArrayBuffer to base64
+function arrayBufferToBase64(buffer) {
+	let binary = '';
+	const bytes = new Uint8Array(buffer);
+	const len = bytes.byteLength;
+	for (let i = 0; i < len; i++) {
+		binary += String.fromCharCode(bytes[i]);
+	}
+	return btoa(binary);
+}
+
+/**
+ * get System folder variants
+ */
+function getSystemAliases(basePath) {
+	basePath = basePath.replace(/\.(lub|lua)$/i, ''); // Prevents extension been passed
+
+	const suffixes = ['', '_true', '_sak', '_Sakray']; // Priority order
+	const extensions = ['.lub', '.lua'];
+	const fileList = [];
+
+	for (let s = 0; s < suffixes.length; s++) {
+		for (let e = 0; e < extensions.length; e++) {
+			fileList.push(basePath + suffixes[s] + extensions[e]);
+		}
+	}
+	return fileList;
+}
+
+/**
+ * Load TXT table
+ *
+ * @param {string} filename to load
+ * @param {string} item separator character
+ * @param {number} size of each group
+ * @param {function} callback to call for each group
+ * @param {function} onEnd to run once the file is loaded
+ */
+function loadTable(filename, separator, size, callback, onEnd, useCharPage = false) {
+	Client.loadFile(
+		filename,
+		function (buffer) {
+			console.log('Loading file "' + filename + '"...');
+
+			let data = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
+			data = TextEncoding.decode(data, useCharPage ? userCharpage : null);
+
+			// Remove commented lines
+			const content = ('\n' + data).replace(/\n(\/\/[^\n]+)/g, '');
+			const elements = content.split(separator);
+			const count = elements.length;
+			const args = new Array(size + 1);
+
+			for (let i = 0; i < count; i++) {
+				if (i % size === 0) {
+					if (i) {
+						callback.apply(null, args);
+					}
+					args[i % size] = i;
+				}
+
+				args[(i % size) + 1] = elements[i].replace(/^\s+|\s+$/g, ''); // trim
+			}
+
+			onEnd();
+		},
+		onEnd
+	);
+}
+
+/**
+ * Load CSV table with Base64-encoded columns
+ * Can pick which columns to use for key/value
+ * @param {string} filename - path to CSV
+ * @param {object} targetTable - object to populate
+ * @param {number} keyIndex - 0-based index of column to use as key
+ * @param {number} valueIndex - 0-based index of column to use as value
+ * @param {function} onEnd - callback when done
+ */
+function loadCSV(filename, targetTable, keyIndex, valueIndex, onEnd) {
+	Client.loadFile(
+		filename,
+		function (data) {
+			console.log('Loading file "' + filename + '"...');
+
+			const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+			let text = '';
+			let isBase64 = true;
+
+			// Convert buffer to a raw "binary string".
+			// This prevents atob() from throwing "outside latin1 range" errors.
+			for (let i = 0, count = bytes.length; i < count; i++) {
+				text += String.fromCharCode(bytes[i]);
+			}
+
+			// Check if the file is Base64 encoded
+			if (!text.trimEnd().endsWith('=')) {
+				text = TextEncoding.decode(bytes, 'utf-8');
+				isBase64 = false;
+			}
+
+			// Split lines
+			const lines = text.split(/\r?\n/);
+			let index = 0;
+			for (let i = 0; i < lines.length; i++) {
+				const line = lines[i].trim();
+				if (!line || line.startsWith('//')) {
+					continue;
+				}
+
+				const parts = isBase64 ? line.split(',') : line.split('\t');
+				if (parts.length <= Math.max(keyIndex, valueIndex)) {
+					continue;
+				}
+
+				try {
+					// Decode columns from Base64
+					const value = isBase64 ? base64DecodeUtf8(parts[valueIndex].trim()) : parts[valueIndex].trim();
+					targetTable[index] = value;
+					index++;
+				} catch (e) {
+					console.error('Base64 decode failed on line', i + 1, ':', line, e);
+				}
+			}
+			if (typeof onEnd === 'function') {
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ * Decode a Base64 string as UTF-8
+ * @param {string} str - Base64 encoded string
+ * @returns {string} decoded UTF-8 string
+ */
+function base64DecodeUtf8(str) {
+	try {
+		const bytes = Uint8Array.from(atob(str), c => c.charCodeAt(0));
+		return TextEncoding.decode(bytes, 'utf-8');
+	} catch (e) {
+		console.warn('Base64 UTF-8 decode failed:', str, e);
+		return str;
+	}
+}
+
+/**
+ * Load ItemMoveInfoV5.txt and attach move info to ItemTable
+ *
+ * @param {function} onEnd
+ */
+function loadMoveInfoTable(onEnd) {
+	Client.loadFile(
+		'data/ItemMoveInfoV5.txt',
+		function (file) {
+			console.log('Loading file "ItemMoveInfoV5.txt"...');
+
+			let data = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+			data = TextEncoding.decode(data, userCharpage);
+			const lines = data.split(/\r?\n/);
+
+			for (let line of lines) {
+				line = line.trim();
+				if (!line || line.startsWith('//')) {
+					continue;
+				}
+
+				// Remove inline comments
+				const commentIndex = line.indexOf('//');
+				if (commentIndex !== -1) {
+					line = line.slice(0, commentIndex).trim();
+				}
+
+				const cols = line.split(/\s+/);
+				if (cols.length < 9) {
+					console.warn('Invalid ItemMoveInfo line:', line);
+					continue;
+				}
+
+				const [key, drop, exchange, storage, cart, npcSale, mail, auction, guildStorage] = cols;
+
+				const item = ItemTable[key] || (ItemTable[key] = {});
+
+				item.moveInfo = {
+					Drop: drop === '1',
+					Exchange: exchange === '1',
+					Storage: storage === '1',
+					Cart: cart === '1',
+					NPCSale: npcSale === '1',
+					Mail: mail === '1',
+					Auction: auction === '1',
+					GuildStorage: guildStorage === '1'
+				};
+			}
+			onEnd();
+		},
+		onEnd
+	);
+}
+
+/**
+ * LoadXML to json object
+ *
+ * @param {string} filename to load
+ * @param {function} onEnd to run once the file is loaded
+ *
+ * @author MrUnzO
+ */
+function loadXMLFile(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			console.log('Loading file "' + filename + '"...');
+			let xml = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+			xml = TextEncoding.decode(xml, userCharpage);
+			xml = xml.replace(/^.*<\?xml/, '<?xml');
+			const parser = new DOMParser();
+			const parsedXML = parser.parseFromString(xml, 'application/xml');
+			const json = XmlParse.xml2json(parsedXML);
+			callback.call(null, json);
+			onEnd();
+		},
+		onEnd
+	);
+}
+
+/**
+ * Load BSON to JS object / table
+ *
+ * @param {string} filename  File to load
+ * @param {object|array} targetTable
+ * @param {function} onEnd    Called when finished (success or error)
+ *
+ */
+function loadBSONFile(filename, targetTable, onEnd) {
+	Client.loadFile(
+		filename,
+		function (arrayBuffer) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+
+				const bytes = new Uint8Array(arrayBuffer);
+				let offset = 0;
+
+				const docs = [];
+
+				while (offset < bytes.length) {
+					const size =
+						bytes[offset] |
+						(bytes[offset + 1] << 8) |
+						(bytes[offset + 2] << 16) |
+						(bytes[offset + 3] << 24);
+
+					const slice = bytes.slice(offset, offset + size);
+					docs.push(BSON.deserialize(slice));
+
+					offset += size;
+				}
+
+				// ---- AS-IS TABLE HANDLING ----
+
+				let data;
+				if (docs.length === 1) {
+					data = docs[0]; // single root document
+				} else {
+					data = docs; // true multi-doc BSON
+				}
+
+				// Clear target table
+				for (const k in targetTable) {
+					delete targetTable[k];
+				}
+
+				// If root has exactly ONE key, unwrap it
+				if (typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length === 1) {
+					const rootKey = Object.keys(data)[0];
+					data = data[rootKey];
+				}
+
+				// Copy AS-IS
+				Object.assign(targetTable, data);
+			} catch (e) {
+				console.error('BSON parse error:', e);
+			} finally {
+				if (onEnd) {
+					onEnd();
+				}
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ * Mapping of effect name suffixes to SkillEffect field names.
+ * Default is 'effectId'.
+ */
+const SUFFIX_TO_FIELD = {
+	hit: 'hitEffectId',
+	hitsub: 'hitEffectId',
+	target: 'hitEffectId',
+	cast: 'effectId',
+	cast_bottom: 'effectId',
+	single: 'effectId',
+	bottom: 'effectId',
+	begin: 'effectId',
+	start: 'effectId',
+	end: 'effectId',
+	loop: 'effectId',
+	buff: 'effectId',
+	aura: 'effectId',
+	main: 'effectId',
+	sync: 'effectId'
+};
+
+/**
+ * Hardcoded mapping for specific effect names that override suffix logic.
+ */
+const HARDCODED_FIELD_MAPPING = {
+	broken_limit_buff: 'effectId',
+	abyss_flame_target: 'hitEffectId'
+};
+
+/**
+ * Merge Ez2STREffect from BSON into EffectTable and SkillEffect
+ */
+function mergeEz2Effects(EffectTable, SkillEffect) {
+	let count = 0;
+	let skillCount = 0;
+	const skillBaseToId = {};
+	const effectNameToId = {};
+	const effectMetadata = {};
+
+	// Pre-calculate SKID lookup maps for O(1) matching
+	const skidFuzzy = {};
+	for (const key in SKID) {
+		const upperKey = key.toUpperCase();
+		const val = SKID[key];
+		skidFuzzy[upperKey] = val;
+
+		let lastUnderscore = -1;
+		while ((lastUnderscore = upperKey.indexOf('_', lastUnderscore + 1)) !== -1) {
+			const suffix = upperKey.substring(lastUnderscore + 1);
+			if (suffix && !skidFuzzy[suffix]) {
+				skidFuzzy[suffix] = val;
+			}
+		}
+	}
+
+	// Optimized helper to find skill by name
+	function findFuzzySkillId(name) {
+		return skidFuzzy[name.toUpperCase()] || null;
+	}
+
+	// Phase 1: Pre-Analysis and Anchoring
+	for (const effectName in Ez2streffect) {
+		const entry = Ez2streffect[effectName];
+		let baseName = effectName;
+		let isSuffixed = false;
+
+		let targetField = entry.IsToGround || entry.IsFloor ? 'groundEffectId' : 'effectId';
+
+		for (const suffix in SUFFIX_TO_FIELD) {
+			if (effectName.endsWith('_' + suffix)) {
+				baseName = effectName.slice(0, -(suffix.length + 1));
+				isSuffixed = true;
+				targetField = SUFFIX_TO_FIELD[suffix];
+				break;
+			}
+		}
+
+		if (HARDCODED_FIELD_MAPPING[effectName]) {
+			targetField = HARDCODED_FIELD_MAPPING[effectName];
+		}
+
+		const filePath = entry.FilePath || '';
+		const soundPath = entry.SoundPath || '';
+		const pathParts = filePath ? filePath.split('\\') : [];
+		const lastSlashSound = soundPath.lastIndexOf('\\');
+		const soundFile = lastSlashSound !== -1 ? soundPath.substring(lastSlashSound + 1) : soundPath;
+		const soundBase = soundFile.replace(/\.wav$/i, '');
+
+		effectMetadata[effectName] = {
+			baseName: baseName,
+			isSuffixed: isSuffixed,
+			pathParts: pathParts,
+			soundBase: soundBase,
+			field: targetField
+		};
+
+		// Pass 1: Exact Name Match for Base
+		const skillId1 = findFuzzySkillId(baseName);
+		if (skillId1) {
+			effectNameToId[effectName] = skillId1;
+			continue;
+		}
+
+		// Pass 2: Base Anchoring from Path (Non-suffixed only)
+		if (!isSuffixed) {
+			for (let i = 0, len = pathParts.length; i < len; i++) {
+				const segment = pathParts[i];
+				if (segment) {
+					const skillId2 = skillBaseToId[segment] || findFuzzySkillId(segment);
+					if (skillId2) {
+						skillBaseToId[segment] = skillId2;
+						effectNameToId[effectName] = skillId2;
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	// Phase 2: Inheritance and Assignments
+	for (const effectName in Ez2streffect) {
+		const entry = Ez2streffect[effectName];
+		const meta = effectMetadata[effectName];
+		let skillId = effectNameToId[effectName];
+
+		// Pass 3: Path Fallback for unmapped
+		if (!skillId) {
+			for (let i = 0; i < meta.pathParts.length; i++) {
+				const segment = meta.pathParts[i] || '';
+				if (segment) {
+					skillId = skillBaseToId[segment] || findFuzzySkillId(segment);
+					if (skillId) {
+						break;
+					}
+				}
+			}
+		}
+
+		// Pass 4: Sound Fallback
+		if (!skillId && meta.soundBase) {
+			skillId = findFuzzySkillId(meta.soundBase);
+		}
+
+		if (skillId) {
+			effectNameToId[effectName] = skillId;
+		}
+
+		// Pass 5: Suffix Inheritance
+		// Run this after all anchoring passes to ensure variants inherit from anchored bases
+		if (!skillId && meta.isSuffixed && effectNameToId[meta.baseName]) {
+			skillId = effectNameToId[meta.baseName];
+			effectNameToId[effectName] = skillId;

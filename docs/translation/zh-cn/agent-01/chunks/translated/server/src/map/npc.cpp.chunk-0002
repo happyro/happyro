@@ -1,0 +1,500 @@
+			return 0;
+		}
+
+		if( constant < DIR_NORTH || constant >= DIR_MAX ){
+			this->invalidWarning( node["Direction"], "barter_parseBodyNode: Invalid direction %s, defaulting to North.\n", direction_name.c_str() );
+			constant = DIR_NORTH;
+		}
+
+		barter->dir = (uint8)constant;
+	}else{
+		if( !exists ){
+			barter->dir = (uint8)DIR_NORTH;
+		}
+	}
+
+	if( this->nodeExists( node, "Sprite" ) ){
+		std::string sprite_name;
+
+		if( !this->asString( node, "Sprite", sprite_name ) ){
+			return 0;
+		}
+
+		int64 constant;
+
+		if( !script_get_constant( sprite_name.c_str(), &constant ) ){
+			this->invalidWarning( node["Sprite"], "barter_parseBodyNode: Unknown sprite name %s, skipping.\n", sprite_name.c_str());
+			return 0;
+		}
+
+		if( constant != JT_FAKENPC && !npcdb_checkid( constant ) ){
+			this->invalidWarning( node["Sprite"], "barter_parseBodyNode: Invalid sprite name %s, skipping.\n", sprite_name.c_str());
+			return 0;
+		}
+
+		barter->sprite = (int16)constant;
+	}else{
+		if( !exists ){
+			barter->sprite = JT_FAKENPC;
+		}
+	}
+
+	if( this->nodeExists( node, "Items" ) ){
+		for( const ryml::NodeRef& itemNode : node["Items"] ){
+			uint16 index;
+
+			if( !this->asUInt16( itemNode, "Index", index ) ){
+				return 0;
+			}
+
+			std::shared_ptr<s_npc_barter_item> item = util::map_find( barter->items, index );
+			bool item_exists = item != nullptr;
+
+			if( !item_exists ){
+				if( !this->nodesExist( itemNode, { "Item" } ) ){
+					return 0;
+				}
+
+				item = std::make_shared<s_npc_barter_item>();
+				item->index = index;
+			}
+
+			if( this->nodeExists( itemNode, "Item" ) ){
+				std::string aegis_name;
+
+				if( !this->asString( itemNode, "Item", aegis_name ) ){
+					return 0;
+				}
+
+				std::shared_ptr<item_data> id = item_db.search_aegisname( aegis_name.c_str() );
+
+				if( id == nullptr ){
+					this->invalidWarning( itemNode["Item"], "barter_parseBodyNode: Unknown item %s.\n", aegis_name.c_str() );
+					return 0;
+				}
+
+				item->nameid = id->nameid;
+			}
+
+			if( this->nodeExists( itemNode, "Stock" ) ){
+				uint32 stock;
+
+				if( !this->asUInt32( itemNode, "Stock", stock ) ){
+					return 0;
+				}
+
+				item->stock = stock;
+				item->stockLimited = ( stock > 0 );
+			}else{
+				if( !item_exists ){
+					item->stock = 0;
+					item->stockLimited = false;
+				}
+			}
+
+			if( this->nodeExists( itemNode, "Zeny" ) ){
+				uint32 zeny;
+
+				if( !this->asUInt32( itemNode, "Zeny", zeny ) ){
+					return 0;
+				}
+
+				if( zeny > MAX_ZENY ){
+					this->invalidWarning( itemNode["Zeny"], "barter_parseBodyNode: Zeny price %u is above MAX_ZENY (%u), capping...\n", zeny, MAX_ZENY );
+					zeny = MAX_ZENY;
+				}
+
+				item->price = zeny;
+			}else{
+				if( !item_exists ){
+					item->price = 0;
+				}
+			}
+
+			if( this->nodeExists( itemNode, "Refine" ) ){
+				std::shared_ptr<item_data> data = item_db.find( item->nameid );
+
+				if( data->flag.no_refine ){
+					this->invalidWarning( itemNode["Refine"], "barter_parseBodyNode: Item %s is not refineable.\n", data->name.c_str() );
+					return 0;
+				}
+
+				int16 refine;
+
+				if( !this->asInt16( itemNode, "Refine", refine ) ){
+					return 0;
+				}
+
+				if( refine > MAX_REFINE ){
+					this->invalidWarning( itemNode["Refine"], "barter_parseBodyNode: Refine %hd is too high, capping to %d.\n", refine, MAX_REFINE );
+					refine = MAX_REFINE;
+				}
+
+				item->refine = (int8)refine;
+			}else{
+				if( !item_exists ){
+					item->refine = 0;
+				}
+			}
+
+			if( this->nodeExists( itemNode, "RequiredItems" ) ){
+				for( const ryml::NodeRef& requiredItemNode : itemNode["RequiredItems"] ){
+					uint16 requirement_index;
+
+					if( !this->asUInt16( requiredItemNode, "Index", requirement_index ) ){
+						return 0;
+					}
+
+					if( item->requirements.size() >= MAX_BARTER_REQUIREMENTS ){
+						this->invalidWarning( requiredItemNode["Index"], "barter_parseBodyNode: Failed at Index %hu. Too many requirements, Barters support up to %d.\n", requirement_index, MAX_BARTER_REQUIREMENTS );
+						return 0;
+					}
+
+					std::shared_ptr<s_npc_barter_requirement> requirement = util::map_find( item->requirements, requirement_index );
+					bool requirement_exists = requirement != nullptr;
+
+					if( !requirement_exists ){
+						if( !this->nodesExist( requiredItemNode, { "Item" } ) ){
+							return 0;
+						}
+
+						requirement = std::make_shared<s_npc_barter_requirement>();
+						requirement->index = requirement_index;
+					}
+
+					if( this->nodeExists( requiredItemNode, "Item" ) ){
+						std::string aegis_name;
+
+						if( !this->asString( requiredItemNode, "Item", aegis_name ) ){
+							return 0;
+						}
+
+						std::shared_ptr<item_data> data = item_db.search_aegisname( aegis_name.c_str() );
+
+						if( data == nullptr ){
+							this->invalidWarning( requiredItemNode["Item"], "barter_parseBodyNode: Unknown required item %s.\n", aegis_name.c_str() );
+							return 0;
+						}
+
+						requirement->nameid = data->nameid;
+					}
+
+					if( this->nodeExists( requiredItemNode, "Amount" ) ){
+						uint16 amount;
+
+						if( !this->asUInt16( requiredItemNode, "Amount", amount ) ){
+							return 0;
+						}
+
+						if( amount > MAX_AMOUNT ){
+							this->invalidWarning( requiredItemNode["Amount"], "barter_parseBodyNode: Amount %hu is too high, capping to %hu...\n", amount, MAX_AMOUNT );
+							amount = MAX_AMOUNT;
+						}
+
+						requirement->amount = amount;
+					}else{
+						if( !requirement_exists ){
+							requirement->amount = 1;
+						}
+					}
+
+					if( this->nodeExists( requiredItemNode, "Refine" ) ){
+						std::shared_ptr<item_data> data = item_db.find( requirement->nameid );
+
+						if( data->flag.no_refine ){
+							this->invalidWarning( requiredItemNode["Refine"], "barter_parseBodyNode: Item %s is not refineable.\n", data->name.c_str() );
+							return 0;
+						}
+
+						int16 refine;
+
+						if( !this->asInt16( requiredItemNode, "Refine", refine ) ){
+							return 0;
+						}
+
+						if( refine > MAX_REFINE ){
+							this->invalidWarning( requiredItemNode["Refine"], "barter_parseBodyNode: Refine %hd is too high, capping to %d.\n", refine, MAX_REFINE );
+							refine = MAX_REFINE;
+						}
+
+						requirement->refine = (int8)refine;
+					}else{
+						if( !requirement_exists ){
+							requirement->refine = -1;
+						}
+					}
+
+					if( !requirement_exists ){
+						item->requirements[requirement->index] = requirement;
+					}
+				}
+			}
+
+			if( !item_exists ){
+				barter->items[index] = item;
+			}
+		}
+	}
+
+	if( !exists ){
+		this->put( npcname, barter );
+	}
+
+	return 1;
+}
+
+void BarterDatabase::loadingFinished(){
+	for( const auto& pair : *this ){
+		if( !battle_config.feature_barter && !battle_config.feature_barter_extended ){
+#ifndef BUILDBOT
+			ShowError( "Barter system is not enabled.\n" );
+#endif
+			return;
+		}
+
+		std::shared_ptr<s_npc_barter> barter = pair.second;
+
+		bool extended = false;
+
+		// Check if it has to use the extended barter feature or not
+		for( const auto& itemPair : barter->items ){
+			// Normal barter cannot have zeny requirements
+			if( itemPair.second->price > 0 ){
+				extended = true;
+				break;
+			}
+
+			// Normal barter cannot have refined items
+			if( itemPair.second->refine > 0 ){
+				extended = true;
+				break;
+			}
+
+			// Normal barter needs to have exchange items defined
+			if( itemPair.second->requirements.empty() ){
+				extended = true;
+				break;
+			}
+
+			// Normal barter can only exchange 1:1
+			if( itemPair.second->requirements.size() > 1 ){
+				extended = true;
+				break;
+			}
+
+			// Normal barter cannot handle refine
+			for( const auto& requirement : itemPair.second->requirements ){
+				if( requirement.second->refine >= 0 ){
+					extended = true;
+					break;
+				}
+			}
+
+			// Check if a refine requirement has been set in the loop above
+			if( extended ){
+				break;
+			}
+		}
+
+		if( extended && !battle_config.feature_barter_extended ){
+#ifndef BUILDBOT
+			ShowError( "Barter %s uses extended mechanics but this is not enabled.\n", barter->name.c_str() );
+#endif
+			continue;
+		}
+
+		npc_data* nd = npc_create_npc( barter->m, barter->x, barter->y );
+
+		// Store the npcid for the destructor
+		barter->npcid = nd->id;
+
+		npc_parsename( nd, barter->name.c_str(), nullptr, nullptr, __FILE__ ":" QUOTE(__LINE__) );
+
+		nd->class_ = barter->sprite;
+		nd->speed = DEFAULT_NPC_WALK_SPEED;
+
+		nd->type = BL_NPC;
+		nd->subtype = NPCTYPE_BARTER;
+
+		nd->u.barter.extended = extended;
+
+		if( nd->m >= 0 ){
+			map_addnpc( nd->m, nd );
+			npc_setcells( nd );
+			// Couldn't add on map
+			if( map_addblock( nd ) ){
+				continue;
+			}
+
+			unit_dataset( nd );
+			nd->ud.dir = barter->dir;
+
+			if( nd->class_ != JT_FAKENPC ){
+				status_set_viewdata( nd, nd->class_ );
+
+				if( map_getmapdata( nd->m )->users ){
+					clif_spawn( nd );
+				}
+			}
+		}else{
+			map_addiddb( nd );
+		}
+
+		strdb_put( npcname_db, nd->exname, nd );
+
+		for( const auto& itemPair : barter->items ){
+			if( itemPair.second->stockLimited ){
+				if( Sql_Query( mmysql_handle, "SELECT `amount` FROM `%s` WHERE `name` = '%s' AND `index` = '%hu'", barter_table, barter->name.c_str(), itemPair.first ) != SQL_SUCCESS ){
+					Sql_ShowDebug( mmysql_handle );
+					continue;
+				}
+
+				// Previous amount found
+				if( SQL_SUCCESS == Sql_NextRow( mmysql_handle ) ){
+					char* data;
+
+					Sql_GetData( mmysql_handle, 0, &data, nullptr );
+
+					itemPair.second->stock = strtoul( data, nullptr, 10 );
+				}
+
+				Sql_FreeResult( mmysql_handle );
+
+				// Save or refresh the amount
+				if( Sql_Query( mmysql_handle, "REPLACE INTO `%s` (`name`,`index`,`amount`) VALUES ( '%s', '%hu', '%hu' )", barter_table, barter->name.c_str(), itemPair.first, itemPair.second->stock ) != SQL_SUCCESS ){
+					Sql_ShowDebug( mmysql_handle );
+				}
+			}else{
+				if( Sql_Query( mmysql_handle, "DELETE FROM `%s` WHERE `name` = '%s' AND `index` = '%hu'", barter_table, barter->name.c_str(), itemPair.first ) != SQL_SUCCESS ){
+					Sql_ShowDebug( mmysql_handle );
+				}
+			}
+		}
+	}
+
+	TypesafeYamlDatabase::loadingFinished();
+}
+
+s_npc_barter::~s_npc_barter(){
+	if( this->npcid != 0 ){
+		npc_data* nd = map_id2nd( this->npcid );
+
+		// Check if the NPC still exists or has been removed already
+		if( nd != nullptr ){
+			// Delete the NPC
+			npc_unload( nd, true );
+			// Update NPC event database
+			npc_read_event_script();
+		}
+	}
+}
+
+BarterDatabase barter_db;
+
+/**
+ * Returns the viewdata for normal NPC classes.
+ * @param class_: NPC class ID
+ * @return viewdata or nullptr if the ID is invalid
+ */
+struct view_data* npc_get_viewdata(int32 class_) {
+	if( class_ == JT_INVISIBLE )
+		return &npc_viewdb[0];
+	if (npcdb_checkid(class_)){
+		if( class_ > MAX_NPC_CLASS2_START ){
+			return &npc_viewdb2[class_-MAX_NPC_CLASS2_START];
+		}else{
+			return &npc_viewdb[class_];
+		}
+	}
+	return nullptr;
+}
+
+int32 npc_isnear_sub(block_list* bl, va_list args) {
+    npc_data *nd = (npc_data*)bl;
+
+    if (nd->sc.option&OPTION_HIDE)
+        return 0;
+
+	if( nd->dynamicnpc.owner_char_id != 0 ){
+		return 0;
+	}
+
+	int32 skill_id = va_arg(args, int32);
+
+	if (skill_id > 0) { //If skill_id > 0 that means is used for INF2_DISABLENEARNPC [Cydh]
+		std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+
+		if (skill && skill->unit_nonearnpc_type) {
+			if (skill->unit_nonearnpc_type&SKILL_NONEAR_WARPPORTAL && nd->subtype == NPCTYPE_WARP)
+				return 1;
+			if (skill->unit_nonearnpc_type&SKILL_NONEAR_SHOP && nd->subtype == NPCTYPE_SHOP)
+				return 1;
+			if (skill->unit_nonearnpc_type&SKILL_NONEAR_NPC && nd->subtype == NPCTYPE_SCRIPT)
+				return 1;
+			if (skill->unit_nonearnpc_type&SKILL_NONEAR_TOMB && nd->subtype == NPCTYPE_TOMB)
+				return 1;
+		}
+		return 0;
+	}
+
+	return 1;
+}
+
+bool npc_isnear(block_list * bl) {
+
+    if( battle_config.min_npc_vendchat_distance > 0 &&
+            map_foreachinallrange(npc_isnear_sub,bl, battle_config.min_npc_vendchat_distance, BL_NPC, 0) )
+        return true;
+
+    return false;
+}
+
+int32 npc_ontouch_event(map_session_data *sd, npc_data *nd)
+{
+	char name[EVENT_NAME_LENGTH];
+
+	if (pc_isdead(sd))	// Dead player don't trigger 'OnTouch_'
+		return 0;
+
+	if( nd->touching_id )
+		return 0; // Attached a player already. Can't trigger on anyone else.
+
+	// pc_ishiding moved in npc_event for now.
+	// If OnTouch_ event exists hiding player doesn't click the npc.
+	// if( pc_ishiding(sd) )
+		// return 1; // Can't trigger 'OnTouch_'.
+
+	if (util::vector_exists(sd->npc_ontouch_, nd->id))
+		return 0;
+
+	safesnprintf(name, ARRAYLENGTH(name), "%s::%s", nd->exname, script_config.ontouch_event_name);
+	return npc_event(sd,name,1);
+}
+
+int32 npc_ontouch2_event(map_session_data *sd, npc_data *nd)
+{
+	char name[EVENT_NAME_LENGTH];
+
+	if (util::vector_exists(sd->areanpc, nd->id))
+		return 0;
+
+	safesnprintf(name, ARRAYLENGTH(name), "%s::%s", nd->exname, script_config.ontouch2_event_name);
+	return npc_event(sd,name,2);
+}
+
+int32 npc_touch_areanpc(map_session_data* sd, int16 m, int16 x, int16 y, npc_data *nd);
+
+/*==========================================
+ * Sub-function of npc_enable, runs OnTouch event when enabled
+ *------------------------------------------*/
+int32 npc_enable_sub(block_list *bl, va_list ap)
+{
+	npc_data *nd;
+
+	nullpo_ret(bl);
+	nullpo_ret(nd=va_arg(ap,npc_data *));
+	if(bl->type == BL_PC)
+	{
+		TBL_PC *sd = (TBL_PC*)bl;
+		npc_touch_areanpc(sd, bl->m, bl->x, bl->y, nd);
+	}

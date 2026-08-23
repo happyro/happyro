@@ -1,0 +1,437 @@
+		mes "["+@name$+"]";
+		mes "好的，你要登记为新娘吗？";
+		next;
+		if (select("是","我改变主意了。")==1)
+			set @submenu, 2;
+		else
+			set @submenu, 3;
+	}
+	switch (@submenu) {
+	case 1: //Groom
+		SF_TryRegister(0);
+		set $wed_progress,1;
+		mes "["+@name$+"]";
+		mes "你现在登记为新郎。";
+		mes "请尽快让新娘登记。";
+		emotion ET_SCRATCH;
+		initnpctimer;
+		close;
+	case 2: //Bride
+		SF_TryRegister(1);
+		set $wed_progress,1;
+		mes "["+@name$+"]";
+		mes "你现在登记为新娘。";
+		mes "请尽快让新郎登记。";
+		emotion ET_SCRATCH;
+		initnpctimer;
+		close;
+	default: //Cancel
+		mes "["+@name$+"]";
+		mes "准备好后再回来。";
+		close;
+	}
+}
+	
+function SF_WedProgress {
+	if (strcharinfo(0) == $wed_groom$) {
+		mes "["+@name$+"]";
+		if ($wed_bride_progress > 0)
+			mes "剩下的仪式由牧师负责。";
+		else
+			mes "让你的新娘登记，怎么这么久？时间快到了。";
+		close;
+	}
+	if (strcharinfo(0) == $wed_bride$) {
+		mes "["+@name$+"]";
+		if ($wed_groom_progress > 0) 
+			mes "剩下的仪式由牧师负责。";
+		else
+			mes "让你的新郎登记，怎么这么久？时间快到了。";
+		close;
+	}
+	if (($wed_groom_progress == 0) && (Sex == SEX_MALE || $@wed_allow == 1)) {
+		mes "["+@name$+"]";
+		mes $wed_bride$+" 正在等新郎登记。你是来登记为新郎的人吗？";
+		next;
+		if (select("是的。","抱歉，你认错人了。") == 1) {
+			SF_TryRegister(0);
+			stopnpctimer;
+			set $wed_groom_progress,1;
+			mes "["+@name$+"]";
+			mes "很好，现在去找牧师重申誓言，仪式就会开始。"; 
+			emotion ET_BEST;
+			close2;
+			npctalk @name$ +"：登记完成。"+$wed_groom$+"和"+$wed_bride$+"，请与牧师再次确认誓言。";
+			emotion ET_BEST;
+			end;
+		} else {
+			mes "["+@name$+"]";
+			mes "原来如此。抱歉打扰你了。";
+			close;
+		}
+
+	}
+	if (($wed_bride_progress == 0) && (Sex == SEX_FEMALE || $@wed_allow == 1)) {
+		mes "["+@name$+"]";
+		mes $wed_groom$+" 正在等新娘登记。你是来登记为新娘的人吗？";
+		next;
+		if(select("是的。","抱歉，你认错人了。") == 1) {
+			SF_TryRegister(1);
+			stopnpctimer;
+			mes "["+@name$+"]";
+			mes "很好，现在去找牧师重申誓言，仪式就会开始。"; 
+			emotion ET_BEST;
+			close2;
+			npctalk @name$ +"：登记完成。"+$wed_groom$+"和"+$wed_bride$+"，请与牧师再次确认誓言。";
+			emotion ET_BEST;
+			end;
+		} else {
+			mes "["+@name$+"]";
+			mes "原来如此。抱歉打扰你了。";
+			close;
+		}
+	}
+	mes "["+@name$+"]";
+	mes "婚礼正在进行。";
+	mes "你想了解婚礼进度吗？";
+	next;
+	if (select("是","否") != 1) {
+		mes "["+@name$+"]";
+		mes "祝你享受婚礼。";
+		close;
+	}
+	//Display Progress
+	mes "["+@name$+"]";
+	switch ($wed_groom_progress) {
+	case 0:
+		mes "新郎尚未登记。";
+		break;
+	case 1:
+		mes "新郎 "+$wed_groom$+" 尚未接受新娘。";
+		break;
+	case 2:
+		mes "新郎 "+$wed_groom$+" 正在等待新娘接受。";
+		break;
+	case 3:
+		mes "新郎 "+$wed_groom$+" 尚未领取戒指。";
+		break;
+	case 4:
+		mes "新郎 "+$wed_groom$+" 正在等待新娘领取戒指。";
+		break;
+	}
+	switch ($wed_bride_progress) {
+	case 0:
+		mes "新娘尚未登记。";
+		break;
+	case 1:
+		mes "新娘 "+$wed_bride$+" 尚未确认新郎。";
+		break;
+	case 2:
+		mes "新娘 "+$wed_bride$+" 正在等待新郎接受。";
+		break;
+	case 3:
+		mes "新娘 "+$wed_bride$+" 尚未领取戒指。";
+		break;
+	case 4:
+		mes "新娘 "+$wed_bride$+" 正在等待新郎领取戒指。";
+		break;
+	case 5:
+		mes "我们只需等 "+$wed_groom$+" 和 "+$wed_bride$+" 到齐，就能为他们举行婚礼。";
+		break;
+	case 6:
+		mes $wed_groom$+" 和 "+$wed_bride$+" 的婚礼仪式已经开始。";
+		break;
+	}
+	mes "请享受接下来的婚礼。";
+	close;
+}
+
+OnInit:
+	if ($wed_groom_progress + $wed_bride_progress == 1)
+		initnpctimer;
+	end;
+
+OnTimer60000:
+	//Registration failed.
+	if ($wed_bride_progress == 1)
+		set $@msg$, $wed_bride$;
+	else
+		set $@msg$, $wed_groom$;
+
+	npctalk @name$ +"：登记超时。难道没有人想和"+$@msg$+"结婚吗……？";
+	emotion ET_SCRATCH;
+	
+	set $wed_groom$,"";
+	set $wed_groom_sex, 0;
+	set $wed_bride$,"";
+	set $wed_bride_sex, 0;
+	set $wed_groom_progress,0;
+	set $wed_bride_progress,0;
+	set $wed_progress,0;
+	stopnpctimer;
+	end;
+
+//Subfunction SF_TryRegister (int bride)
+function SF_TryRegister {
+	set @bride, getarg(0);
+	set @type$, "新郎";
+	if (@bride)
+		set @type$, "新娘";
+		
+	mes "["+@name$+"]";
+	mes "登记为"+@type$+"之前，先确认你满足所有条件……";
+	next;
+	if (Upper == 2) {
+		mes "["+@name$+"]";
+		mes "哎呀，你还太年轻，不能考虑结婚！";
+		emotion ET_SURPRISE;
+		close;
+	}
+	if (Sex == SEX_MALE)
+		set @item, 7170;
+	else
+		set @item, 2338;
+	
+	if (getequipid(EQI_ARMOR) != @item) {
+		mes "["+@name$+"]";
+		mes "想结婚就必须穿着"+getitemname(@item)+"。";
+		close;
+	}
+	if (Sex == SEX_FEMALE && $@wed_veil && getequipid(EQI_HEAD_TOP) != 2206) {
+		mes "["+@name$+"]";
+		mes "你的"+getitemname(2206)+"在哪里？这是礼服的必要搭配。";
+		close;
+	}
+	if ($@wed_ring && countitem($@wed_ring) < 1) {
+		mes "["+@name$+"]";
+		mes "戒指呢？交换婚戒需要一个"+getitemname($@wed_ring)+"，亲爱的。";
+		close;
+	}
+	if (@bride)
+		set @cost, $@wed_bride_reg;
+	else 
+		set @cost, $@wed_groom_reg;
+
+	if (Zeny < @cost) {
+		mes "["+@name$+"]";
+		mes "抱歉，你没有足够的钱支付登记费。";
+		mes "收集到"+@cost+" Zeny 后再回来。"; 
+		close;
+	}
+	set Zeny,Zeny-@cost;
+	sc_start SC_Wedding,3600000,1; //Start Wedding Effect (SC_WEDDING)
+	if (@bride) {
+		set $wed_bride_progress,1;
+		set $wed_bride$,strcharinfo(0);
+		set $wed_bride_sex, Sex;
+		if ($@wedding_effect == 1) //Store account id for effect.
+			set $wedding_effect_id, getcharid(3);
+	} else {
+		set $wed_groom_progress,1;
+		set $wed_groom$,strcharinfo(0);
+		set $wed_groom_sex, Sex;
+		if ($@wedding_effect == 2) //Store account id for effect.
+			set $wedding_effect_id, getcharid(3);
+	}
+}
+
+//Explain wedding principles...
+function SF_Principles {
+	mes "["+@name$+"]";
+	mes "婚礼由本地牧师主持，旨在促进伴侣之间的爱与和平。";
+	next;
+	mes "["+@name$+"]";
+	mes "求婚必须谨慎而有礼。一旦结为夫妻，就无法解除。";
+	next;
+	mes "["+@name$+"]";
+	mes "结为夫妻的两人必须永远在一起，直到死亡将他们分离。";
+	next;
+	mes "["+@name$+"]";
+	if ($@wed_allow == 1)
+		mes "通常男性只能与女性结婚（反之亦然），但本地牧师思想开放，允许任何性别组合。";
+	else
+		mes "男性只能与女性结婚，女性只能与男性结婚，教堂不允许其他伴侣关系。";
+	next;
+	mes "["+@name$+"]";
+	mes "如果有想共度余生的对象，就不要害羞，大胆求婚吧。";
+	next;
+	mes "["+@name$+"]";
+   mes "愿希望幸福生活的伴侣得到许多祝福……";
+	next;
+}
+
+//Explain the wedding procedure...
+function SF_Procedure {
+	mes "["+@name$+"]";
+	mes "首先，新郎和新娘都必须向我登记。";
+	next;
+	if ($@wed_allow == 1) {
+		mes "["+@name$+"]";
+		mes "登记要求如下：";
+		mes "- 男性必须穿着"+getitemname(7170)+"。";
+		mes "- 女性必须穿着"+getitemname(2338)+"。";
+		if ($@wed_veil) mes "- 女性还必须佩戴"+getitemname(2206)+"。";
+		if ($@wed_ring) mes "- 双方各自都必须拥有一枚"+getitemname($@wed_ring)+"。";
+		if ($@wed_groom_reg > 0) mes "- 新郎登记费为"+$@wed_groom_reg+" Zeny。";
+		if ($@wed_bride_reg > 0) mes "- 新娘登记费为"+$@wed_bride_reg+" Zeny。";
+	} else {
+		mes "["+@name$+"]";
+		mes "新郎的登记要求如下：";
+		mes "- 穿着"+getitemname(7170)+"。";
+		if ($@wed_ring) mes "- 拥有一枚"+getitemname($@wed_ring)+"。";
+		if ($@wed_groom_reg > 0) mes "- 支付"+$@wed_groom_reg+" Zeny 的登记费。";
+		next;
+		mes "["+@name$+"]";
+		mes "新娘的登记要求如下：";
+		mes "- 穿着"+getitemname(2338)+"。";
+		if ($@wed_veil) mes "- 穿戴"+getitemname(2206)+"。";
+		if ($@wed_ring) mes "- 拥有一枚"+getitemname($@wed_ring)+"。";
+		if ($@wed_bride_reg > 0) mes "- 支付"+$@wed_bride_reg+" Zeny 的登记费。";
+	}
+	next;
+	mes "["+@name$+"]";
+	mes "我本不必提醒，但收养的孩子年纪太小，不能结婚。";
+	mes "新郎和新娘必须在一分钟内完成登记，否则婚礼会取消。请提前准备并满足登记要求。";
+	next;
+	mes "["+@name$+"]";
+	mes "你们登记后，必须去向牧师宣誓并接受登记的伴侣。如果拒绝伴侣，婚礼会取消……";
+	next;
+	mes "["+@name$+"]";
+	mes "如果你们彼此接受，婚礼就确定了，仪式会开始。";
+	if ($@wed_ring) {
+		mes "不过首先要准备好戒指。";
+		next;
+		mes "["+@name$+"]";
+		mes "再和牧师谈一次，他会把你的"+getitemname($@wed_ring)+"换成婚戒。你们都领取戒指后，仪式就会开始。";
+	}
+	next;
+	mes "["+@name$+"]";
+	mes "如果有多对伴侣想结婚，请按顺序等待，因为牧师一次只能主持一场婚礼。";
+	next;
+}
+}
+
+prt_church,94,99,4	script	Sister Lisa	79,{
+	set @name$,"丽莎";
+
+	function SF_DivorceEnd;
+	function SF_InProgress;
+	
+	if ($@divorce_progress==1) {
+		goto SF_InProgress;
+		end;
+	}
+	
+	do {
+		mes "["+@name$+"]";
+		mes "离婚真是令人悲伤的事……";
+		if (getpartnerid() == 0) {
+			mes "人不该对别人许下轻率的誓言，你说对吗？";
+			close;
+		}
+		mes "你不会想离婚吧？";
+		next;
+		set @menu, select(
+			"我现在很幸福，谢谢。",
+			"说明离婚。",
+			"说明要求。",
+			"我想离婚。"
+		);
+		switch (@menu) {
+		case 1:
+			mes "["+@name$+"]";
+			mes "听你这么说真好。";
+			close;
+		case 2: //Explanation
+			mes "["+@name$+"]";
+			mes "虽然据说结婚后无法解除婚姻，但有时必须纠正过去的错误……";
+			next;
+			mes "["+@name$+"]";
+			mes "这很悲伤，但确实如此。如果你和错误的人结婚，可以选择离婚，而不是和错误的人共度余生。";
+			next;
+			break;
+		case 3: //Requirement
+			mes "["+@name$+"]";
+			mes "申请离婚需要双方同意。";
+			mes "提出申请后，你的配偶有一分钟同意，之后你们就会离婚。";
+			if ($@wed_divorce_fee > 0) mes "费用为"+$@wed_divorce_fee+" Zeny，由确认离婚的人支付，请提前商量如何分担。";
+			next;
+			break;
+		case 4: //Divorce
+			mes "["+@name$+"]";
+			mes "不应该后悔人生中的选择。";
+			mes "你真的确定要离婚吗？";
+			next;
+			if (select("等等……我需要考虑。","我确定") != 2) {
+				mes "["+@name$+"]";
+				mes "你应该仔细考虑。";
+				close;
+			} 
+			mes "["+@name$+"]";
+			set $@divorcee,getpartnerid();
+			set $@divorcer$,strcharinfo(0);
+			set $@divorce_progress,1;
+			initnpctimer;
+			mes "好的，让你的伴侣确认，之后我会收取离婚申请费。";
+			close;
+		}
+	} while (@menu > 1);
+end;
+
+function SF_InProgress {
+	if (strcharinfo(0) == $@divorcer$) { 
+		mes "["+@name$+"]";
+		mes "……我还在等你的伴侣确认离婚手续。";
+		close;
+	}
+	if (getcharid(0) != $@divorcee) {
+		mes "["+@name$+"]";
+		mes "我正在和"+$@divorcer$+"办理离婚。";
+		mes "你知道配偶是谁吗？";
+		close;
+	}
+	//Confirm...
+	mes "["+@name$+"]";
+	mes $@divorcer$+" 请求与你离婚。如果你同意，并准备好"+$@wed_divorce_fee+" Zeny 的费用，我就会为你们办理离婚。";
+	mes "那么，我可以继续办理离婚吗？";
+	next;
+	if (select("我不想离婚……","是的，我们同意了。")!=2) {
+		mes "["+@name$+"]";
+		mes "希望你们能解决问题。";
+		emotion ET_GOODBOY;
+		goto SF_DivorceEnd;
+		close;
+	}
+	if (Zeny < $@wed_divorce_fee) {
+		mes "["+@name$+"]";
+		mes "你没有足够费用，我无法申请离婚。让你的伴侣借你一些？";
+		close;
+	}
+	if (!(divorce())) {
+		mes "["+@name$+"]";
+		mes $@divorcer$+" 去哪里了？你们都在场我才能办理离婚……";
+		emotion ET_PROFUSELY_SWEAT;
+		close;
+	}
+	set Zeny,Zeny-$@wed_divorce_fee;
+	announce $@divorcer$+"刚刚与"+strcharinfo(0)+"离婚……", 8;
+	mes "["+@name$+"]";
+	mes "离婚申请已提交。你们不再是夫妻。";
+	emotion ET_CRY;
+	goto SF_DivorceEnd;
+	close;
+}
+
+function SF_DivorceEnd {
+	stopnpctimer;
+	set $@divorce_progress,0;
+	set $@divorcee,0;
+	set $@divorcer$,"";
+}
+
+OnTimer60000:
+	npctalk @name$ +"：离婚确认时间到了。"+$@divorcer$+"的配偶去哪儿了……";
+	emotion ET_QUESTION;
+	SF_DivorceEnd();
+	end;
+}

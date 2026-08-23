@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#ifndef CLIF_HPP
+#define CLIF_HPP
+
+#include <cstdarg>
+#include <vector>
+
+#include <common/cbasetypes.hpp>
+#include <common/db.hpp> //dbmap
+#include <common/mmo.hpp>
+#include <common/timer.hpp> // t_tick
+
+#include "packets.hpp"
+#include "script.hpp"
+#include "skill.hpp"
+#include "trade.hpp"
+
+struct Channel;
+struct clan;
+struct item;
+struct s_storage;
+//#include "map.hpp"
+struct block_list;
+struct unit_data;
+class map_session_data;
+struct homun_data;
+struct pet_data;
+struct mob_data;
+struct npc_data;
+struct chat_data;
+struct flooritem_data;
+struct skill_unit;
+struct s_vending;
+struct party;
+struct party_data;
+struct mmo_guild;
+struct s_battleground_data;
+struct quest;
+struct party_booking_ad_info;
+struct sale_item_data;
+struct mail_message;
+struct achievement;
+struct guild_log_entry;
+enum e_guild_storage_log : uint16;
+enum e_bg_queue_apply_ack : uint16;
+enum e_instance_notify : uint8;
+struct s_laphine_synthesis;
+struct s_laphine_upgrade;
+struct s_captcha_data;
+enum e_macro_detect_status : uint8;
+enum e_macro_report_status : uint8;
+enum e_hom_state2 : uint8;
+enum _sp;
+enum e_searchstore_failure : uint16;
+
+#define DMGVAL_IGNORE -30000
+
+enum e_PacketDBVersion { // packet DB
+	MIN_PACKET_DB  = 0x064,
+	MAX_PACKET_DB  = 0xCFF,
+#if !defined(MAX_PACKET_POS)
+	MAX_PACKET_POS = 20,
+#endif
+};
+
+struct s_packet_db {
+	int16 len;
+	void (*func)(int32, map_session_data *);
+	int16 pos[MAX_PACKET_POS];
+};
+
+#ifdef PACKET_OBFUSCATION
+/// Keys based on packet versions
+struct s_packet_keys {
+	uint32 keys[3]; ///< 3-Keys
+};
+#endif
+
+enum e_CASHSHOP_ACK : uint8_t{
+	ERROR_TYPE_NONE             = 0, ///< The deal has successfully completed.
+	ERROR_TYPE_NPC              = 1, ///< The Purchase has failed because the NPC does not exist.
+	ERROR_TYPE_SYSTEM           = 2, ///< The Purchase has failed because the Kafra Shop System is not working correctly.
+	ERROR_TYPE_INVENTORY_WEIGHT = 3, ///< You are over your Weight Limit.
+	ERROR_TYPE_EXCHANGE         = 4, ///< You cannot purchase items while you are in a trade.
+	ERROR_TYPE_ITEM_ID          = 5, ///< The Purchase has failed because the Item Information was incorrect.
+	ERROR_TYPE_MONEY            = 6, ///< You do not have enough Kafra Credit Points.
+	ERROR_TYPE_AMOUNT           = 7, ///< You can purchase up to 10 items.
+	ERROR_TYPE_PURCHASE_FAIL    = 8, ///< Some items could not be purchased.
+};
+
+enum e_BANKING_DEPOSIT_ACK : uint8_t {
+	BDA_SUCCESS  = 0x0,
+	BDA_ERROR    = 0x1,
+	BDA_NO_MONEY = 0x2,
+	BDA_OVERFLOW = 0x3,
+};
+
+enum e_BANKING_WITHDRAW_ACK : uint8_t {
+	BWA_SUCCESS       = 0x0,
+	BWA_NO_MONEY      = 0x1,
+	BWA_UNKNOWN_ERROR = 0x2,
+};
+
+enum RECV_ROULETTE_ITEM_REQ : uint8_t {
+	RECV_ITEM_SUCCESS    = 0x0,
+	RECV_ITEM_FAILED     = 0x1,
+	RECV_ITEM_OVERCOUNT  = 0x2,
+	RECV_ITEM_OVERWEIGHT = 0x3,
+};
+
+enum RECV_ROULETTE_ITEM_ACK : uint8_t {
+	RECV_ITEM_NORMAL =  0x0,
+	RECV_ITEM_LOSING =  0x1,
+};
+
+enum GENERATE_ROULETTE_ACK : uint8_t {
+	GENERATE_ROULETTE_SUCCESS         = 0x0,
+	GENERATE_ROULETTE_FAILED          = 0x1,
+	GENERATE_ROULETTE_NO_ENOUGH_POINT = 0x2,
+	GENERATE_ROULETTE_LOSING          = 0x3,
+};
+
+enum OPEN_ROULETTE_ACK : uint8_t {
+	OPEN_ROULETTE_SUCCESS = 0x0,
+	OPEN_ROULETTE_FAILED  = 0x1,
+};
+
+enum CLOSE_ROULETTE_ACK : uint8_t {
+	CLOSE_ROULETTE_SUCCESS = 0x0,
+	CLOSE_ROULETTE_FAILED  = 0x1,
+};
+
+enum MERGE_ITEM_ACK : uint8_t {
+	MERGE_ITEM_SUCCESS = 0x0,
+	MERGE_ITEM_FAILED_NOT_MERGE = 0x1,
+	MERGE_ITEM_FAILED_MAX_COUNT = 0x2,
+};
+
+enum BROADCASTING_SPECIAL_ITEM_OBTAIN : uint8_t {
+	ITEMOBTAIN_TYPE_BOXITEM =  0x0,
+	ITEMOBTAIN_TYPE_MONSTER_ITEM =  0x1,
+	ITEMOBTAIN_TYPE_NPC =  0x2,
+};
+
+enum e_adopt_reply : uint8_t {
+	ADOPT_REPLY_MORE_CHILDREN = 0,
+	ADOPT_REPLY_LEVEL_70,
+	ADOPT_REPLY_MARRIED,
+};
+
+enum e_wip_block : uint8_t {
+	WIP_DISABLE_NONE = 0x0,
+	WIP_DISABLE_SKILLITEM = 0x1,
+	WIP_DISABLE_NPC = 0x2,
+	WIP_DISABLE_ALL = 0x3,
+};
+
+enum e_party_invite_reply {
+	PARTY_REPLY_JOIN_OTHER_PARTY = 0,   ///< result=0 : "The Character already joined another party." -> MsgStringTable[80]
+	PARTY_REPLY_REJECTED,			    ///< result=1 : "Request for party rejected." -> MsgStringTable[81]
+	PARTY_REPLY_ACCEPTED,			    ///< result=2 : "Request for party accepted." -> MsgStringTable[82]
+	PARTY_REPLY_FULL,				    ///< result=3 : "Party Capacity exceeded." -> MsgStringTable[83]
+	PARTY_REPLY_DUAL,				    ///< result=4 : "Character in the same account already joined." -> MsgStringTable[608]
+	PARTY_REPLY_JOINMSG_REFUSE,		    ///< result=5 : "The character blocked the party invitation." -> MsgStringTable[1324] (since 20070904)
+	PARTY_REPLY_UNKNOWN_ERROR,		    ///< result=6 : ??
+	PARTY_REPLY_OFFLINE,			    ///< result=7 : "The Character is not currently online or does not exist." -> MsgStringTable[71] (since 20070904)
+	PARTY_REPLY_INVALID_MAPPROPERTY,    ///< result=8 : !TODO "Unable to organize a party in this map" -> MsgStringTable[1388] (since 20080527)
+	PARTY_REPLY_INVALID_MAPPROPERTY_ME, ///< return=9 : !TODO "Cannot join a party in this map" -> MsgStringTable[1871] (since 20110205)
+	PARTY_REPLY_MEMORIALDUNGEON,	    ///< return=10: "You cannot invite or withdraw while in memorial dungeon" -> MsgStringTable[3027] (since 20161130)
+};
+
+/// Enum for Convex Mirror (SC_BOSSMAPINFO)
+enum e_bossmap_info {
+	BOSS_INFO_NOT = 0,
+	BOSS_INFO_ALIVE,
+	BOSS_INFO_ALIVE_WITHMSG,
+	BOSS_INFO_DEAD,
+};
+
+enum class e_purchase_result : uint8{
+	PURCHASE_SUCCEED = 0x0,
+	PURCHASE_FAIL_MONEY,
+	PURCHASE_FAIL_WEIGHT,
+	PURCHASE_FAIL_COUNT,
+	PURCHASE_FAIL_STOCK,
+	PURCHASE_FAIL_ITEM_EXCHANGING,
+	PURCHASE_FAIL_INVALID_MCSTORE,
+	PURCHASE_FAIL_OPEN_MCSTORE_ITEMLIST,
+	PURCHASE_FAIL_GIVE_MONEY,
+	PURCHASE_FAIL_EACHITEM_COUNT,
+	// Unknown names
+	PURCHASE_FAIL_RODEX,
+	PURCHASE_FAIL_EXCHANGE_FAILED,
+	PURCHASE_FAIL_EXCHANGE_DONE,
+	PURCHASE_FAIL_STOCK_EMPTY,
+	PURCHASE_FAIL_GOODS,
+	// End unknown names
+	PURCHASE_FAIL_ADD = 0xff,
+};
+
+#define packet_len(cmd) packet_db[cmd].len
+extern struct s_packet_db packet_db[MAX_PACKET_DB+1];
+
+// local define
+enum send_target : uint8_t {
+	ALL_CLIENT = 0,
+	ALL_SAMEMAP,
+	AREA,				// area
+	AREA_WOS,			// area, without self
+	AREA_WOC,			// area, without chatrooms
+	AREA_WOSC,			// area, without own chatroom
+	AREA_CHAT_WOC,		// hearable area, without chatrooms
+	CHAT,				// current chatroom
+	CHAT_WOS,			// current chatroom, without self
+	PARTY,
+	PARTY_WOS,
+	PARTY_SAMEMAP,
+	PARTY_SAMEMAP_WOS,
+	PARTY_AREA,
+	PARTY_AREA_WOS,
+	GUILD,
+	GUILD_WOS,
+	GUILD_SAMEMAP,
+	GUILD_SAMEMAP_WOS,
+	GUILD_AREA,
+	GUILD_AREA_WOS,
+	GUILD_NOBG,
+	DUEL,
+	DUEL_WOS,
+	SELF,
+
+	BG,					// BattleGround System
+	BG_WOS,
+	BG_SAMEMAP,
+	BG_SAMEMAP_WOS,
+	BG_AREA,
+	BG_AREA_WOS,
+
+	CLAN,				// Clan System
+};
+
+enum broadcast_flags : uint8_t {
+	BC_ALL			= 0,
+	BC_MAP			= 1,
+	BC_AREA			= 2,
+	BC_SELF			= 3,
+	BC_TARGET_MASK	= 0x07,
+
+	BC_PC			= 0x00,
+	BC_NPC			= 0x08,
+	BC_SOURCE_MASK	= 0x08, // BC_PC|BC_NPC
+
+	BC_YELLOW		= 0x00,
+	BC_BLUE			= 0x10,
+	BC_WOE			= 0x20,
+	BC_COLOR_MASK	= 0x30, // BC_YELLOW|BC_BLUE|BC_WOE
+
+	BC_DEFAULT		= BC_ALL|BC_PC|BC_YELLOW
+};
+
+enum emotion_type {
+	ET_SURPRISE = 0,	// /!
+	ET_QUESTION,		// /?
+	ET_DELIGHT,
+	ET_THROB,
+	ET_SWEAT,
+	ET_AHA,
+	ET_FRET,
+	ET_ANGER,
+	ET_MONEY,			// /$
+	ET_THINK,			// /...
+	ET_SCISSOR,     	// /gawi --- 10
+	ET_ROCK,        	// /bawi
+	ET_WRAP,       		// /bo
+	ET_FLAG,
+	ET_BIGTHROB,
+	ET_THANKS,
+	ET_KEK,
+	ET_SORRY,
+	ET_SMILE,
+	ET_PROFUSELY_SWEAT,
+	ET_SCRATCH,			// --- 20
+	ET_BEST,
+	ET_STARE_ABOUT,		// /??
+	ET_HUK,
+	ET_O,
+	ET_X,
+	ET_HELP,
+	ET_GO,
+	ET_CRY,
+	ET_KIK,
+	ET_CHUP,			// --- 30
+	ET_CHUPCHUP,
+	ET_HNG,
+	ET_OK,
+	ET_CHAT_PROHIBIT,	// red /... used for muted characters
+	ET_INDONESIA_FLAG,
+	ET_STARE,			// /bzz, /stare
+	ET_HUNGRY,
+	ET_COOL,			// /awsm, /cool
+	ET_MERONG,
+	ET_SHY,				// --- 40
+	ET_GOODBOY,			// /pat, /goodboy
+	ET_SPTIME,			// /mp, /sptime
+	ET_SEXY,
+	ET_COMEON,			// /com, /comeon
+	ET_SLEEPY,			// /yawn, /sleepy
+	ET_CONGRATULATION,	// /grat, /congrats
+	ET_HPTIME,			// /hp, /hptime
+	ET_PH_FLAG,
+	ET_MY_FLAG,
+	ET_SI_FLAG,			// --- 50
+	ET_BR_FLAG,
+	ET_SPARK,			// /fsh
+	ET_CONFUSE,			// /spin
+	ET_OHNO,
+	ET_HUM,				// /dum
+	ET_BLABLA,			// /crwd
+	ET_OTL,				// /otl, /desp
+	ET_DICE1,
+	ET_DICE2,
+	ET_DICE3,			// --- 60
+	ET_DICE4,
+	ET_DICE5,
+	ET_DICE6,
+	ET_INDIA_FLAG,
+	ET_LUV,				// /love
+	ET_FLAG8,
+	ET_FLAG9,
+	ET_MOBILE,
+	ET_MAIL,
+	ET_ANTENNA0,		// --- 70
+	ET_ANTENNA1,
+	ET_ANTENNA2,
+	ET_ANTENNA3,
+	ET_HUM2,
+	ET_ABS,
+	ET_OOPS,
+	ET_SPIT,
+	ET_ENE,
+	ET_PANIC,
+	ET_WHISP,			// --- 80
+	ET_YUT1,
+	ET_YUT2,
+	ET_YUT3,
+	ET_YUT4,
+	ET_YUT5,
+	ET_YUT6,
+	ET_YUT7,
+	//
+	ET_MAX
+};
+
+enum clr_type : uint8_t 
+{
+	CLR_OUTSIGHT = 0,
+	CLR_DEAD,
+	CLR_RESPAWN,
+	CLR_TELEPORT,
+	CLR_TRICKDEAD,
+};
+
+enum map_property : uint8_t 
+{// clif_map_property
+	MAPPROPERTY_NOTHING       = 0,
+	MAPPROPERTY_FREEPVPZONE   = 1,
+	MAPPROPERTY_EVENTPVPZONE  = 2,
+	MAPPROPERTY_AGITZONE      = 3,
+	MAPPROPERTY_PKSERVERZONE  = 4, // message "You are in a PK area. Please beware of sudden attacks." in color 0x9B9BFF (light red)
+	MAPPROPERTY_PVPSERVERZONE = 5,
+	MAPPROPERTY_DENYSKILLZONE = 6,
+};
+
+enum e_map_type : uint8_t 
+{// clif_map_type
+	MAPTYPE_VILLAGE              = 0,
+	MAPTYPE_VILLAGE_IN           = 1,
+	MAPTYPE_FIELD                = 2,
+	MAPTYPE_DUNGEON              = 3,
+	MAPTYPE_ARENA                = 4,
+	MAPTYPE_PENALTY_FREEPKZONE   = 5,
+	MAPTYPE_NOPENALTY_FREEPKZONE = 6,
+	MAPTYPE_EVENT_GUILDWAR       = 7,
+	MAPTYPE_AGIT                 = 8,
+	MAPTYPE_DUNGEON2             = 9,
+	MAPTYPE_DUNGEON3             = 10,
+	MAPTYPE_PKSERVER             = 11,
+	MAPTYPE_PVPSERVER            = 12,
+	MAPTYPE_DENYSKILL            = 13,
+	MAPTYPE_TURBOTRACK           = 14,
+	MAPTYPE_JAIL                 = 15,
+	MAPTYPE_MONSTERTRACK         = 16,
+	MAPTYPE_PORINGBATTLE         = 17,
+	MAPTYPE_AGIT_SIEGEV15        = 18,
+	MAPTYPE_BATTLEFIELD          = 19,
+	MAPTYPE_PVP_TOURNAMENT       = 20,
+	//Map types 21 - 24 not used.
+	MAPTYPE_SIEGE_LOWLEVEL       = 25,
+	//Map types 26 - 28 remains opens for future types.
+	MAPTYPE_UNUSED               = 29,
+};
+
+enum useskill_fail_cause : uint8_t 
+{// clif_skill_fail
+	USESKILL_FAIL_LEVEL = 0,
+	USESKILL_FAIL_SP_INSUFFICIENT = 1,
+	USESKILL_FAIL_HP_INSUFFICIENT = 2,
+	USESKILL_FAIL_STUFF_INSUFFICIENT = 3,
+	USESKILL_FAIL_SKILLINTERVAL = 4,
+	USESKILL_FAIL_MONEY = 5,
+	USESKILL_FAIL_THIS_WEAPON = 6,
+	USESKILL_FAIL_REDJAMSTONE = 7,
+	USESKILL_FAIL_BLUEJAMSTONE = 8,
+	USESKILL_FAIL_WEIGHTOVER = 9,
+	USESKILL_FAIL = 10,
+	USESKILL_FAIL_TOTARGET = 11,
+	USESKILL_FAIL_ANCILLA_NUMOVER = 12,
+	USESKILL_FAIL_HOLYWATER = 13,
+	USESKILL_FAIL_ANCILLA = 14,
+	USESKILL_FAIL_DUPLICATE_RANGEIN = 15,
+	USESKILL_FAIL_NEED_OTHER_SKILL = 16,
+	USESKILL_FAIL_NEED_HELPER = 17,
+	USESKILL_FAIL_INVALID_DIR = 18,
+	USESKILL_FAIL_SUMMON = 19,
+	USESKILL_FAIL_SUMMON_NONE = 20,
+	USESKILL_FAIL_IMITATION_SKILL_NONE = 21,
+	USESKILL_FAIL_DUPLICATE = 22,
+	USESKILL_FAIL_CONDITION = 23,
+	USESKILL_FAIL_PAINTBRUSH = 24,
+	USESKILL_FAIL_DRAGON = 25,
+	USESKILL_FAIL_POS = 26,
+	USESKILL_FAIL_HELPER_SP_INSUFFICIENT = 27,
+	USESKILL_FAIL_NEER_WALL = 28,
+	USESKILL_FAIL_NEED_EXP_1PERCENT = 29,
+	USESKILL_FAIL_CHORUS_SP_INSUFFICIENT = 30,
+	USESKILL_FAIL_GC_WEAPONBLOCKING = 31,
+	USESKILL_FAIL_GC_POISONINGWEAPON = 32,
+	USESKILL_FAIL_MADOGEAR = 33,
+	USESKILL_FAIL_NEED_EQUIPMENT_KUNAI = 34,
+	USESKILL_FAIL_TOTARGET_PLAYER = 35,
+	USESKILL_FAIL_SIZE = 36,
+	USESKILL_FAIL_CANONBALL = 37,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_ACCELERATION = 38,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_HOVERING_BOOSTER = 39,
+	USESKILL_FAIL_MADOGEAR_HOVERING = 40,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_SELFDESTRUCTION_DEVICE = 41,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_SHAPESHIFTER = 42,
+	USESKILL_FAIL_GUILLONTINE_POISON = 43,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_COOLING_DEVICE = 44,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_MAGNETICFIELD_GENERATOR = 45,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_BARRIER_GENERATOR = 46,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_OPTICALCAMOUFLAGE_GENERATOR = 47,
+	//XXX_USESKILL_FAIL_II_MADOGEAR_REPAIRKIT = 48,
+	//XXX_USESKILL_FAIL_II_MONKEY_SPANNER = 49,
+	USESKILL_FAIL_MADOGEAR_RIDE = 50,
+	USESKILL_FAIL_SPELLBOOK = 51,
+	USESKILL_FAIL_SPELLBOOK_DIFFICULT_SLEEP = 52,
+	USESKILL_FAIL_SPELLBOOK_PRESERVATION_POINT = 53,
+	USESKILL_FAIL_SPELLBOOK_READING = 54,
+	//XXX_USESKILL_FAIL_II_FACE_PAINTS = 55,
+	//XXX_USESKILL_FAIL_II_MAKEUP_BRUSH = 56,
+	USESKILL_FAIL_CART = 57,
+	//XXX_USESKILL_FAIL_II_THORNS_SEED = 58,
+	//XXX_USESKILL_FAIL_II_BLOOD_SUCKER_SEED = 59,
+	USESKILL_FAIL_NO_MORE_SPELL = 60,
+	//XXX_USESKILL_FAIL_II_BOMB_MUSHROOM_SPORE = 61,
+	//XXX_USESKILL_FAIL_II_GASOLINE_BOOMB = 62,
+	//XXX_USESKILL_FAIL_II_OIL_BOTTLE = 63,
+	//XXX_USESKILL_FAIL_II_EXPLOSION_POWDER = 64,
+	//XXX_USESKILL_FAIL_II_SMOKE_POWDER = 65,
+	//XXX_USESKILL_FAIL_II_TEAR_GAS = 66,
+	//XXX_USESKILL_FAIL_II_HYDROCHLORIC_ACID_BOTTLE = 67,
+	//XXX_USESKILL_FAIL_II_HELLS_PLANT_BOTTLE = 68,
+	//XXX_USESKILL_FAIL_II_MANDRAGORA_FLOWERPOT = 69,
+	USESKILL_FAIL_MANUAL_NOTIFY = 70,
+	// CAUTION: client uses unidentified display name for displaying the required item. Still broken on 2017-05-31 [Lemongrass]
+	USESKILL_FAIL_NEED_ITEM = 71,
+	USESKILL_FAIL_NEED_EQUIPMENT = 72,
+	USESKILL_FAIL_COMBOSKILL = 73,
+	USESKILL_FAIL_SPIRITS = 74,
+	USESKILL_FAIL_EXPLOSIONSPIRITS = 75,
+	USESKILL_FAIL_HP_TOOMANY = 76,
+	USESKILL_FAIL_NEED_ROYAL_GUARD_BANDING = 77,
+	USESKILL_FAIL_NEED_EQUIPPED_WEAPON_CLASS = 78,
+	USESKILL_FAIL_EL_SUMMON = 79,
+	USESKILL_FAIL_RELATIONGRADE = 80,
+	USESKILL_FAIL_STYLE_CHANGE_FIGHTER = 81,
+	USESKILL_FAIL_STYLE_CHANGE_GRAPPLER = 82,
+	USESKILL_FAIL_THERE_ARE_NPC_AROUND = 83,
+	USESKILL_FAIL_NEED_MORE_BULLET = 84,
+	USESKILL_FAIL_COINS = 85,
+	USESKILL_FAIL_SH_TEMPORARY_COMMUNION,
+	USESKILL_FAIL_MAP,
+	USESKILL_FAIL_NEED_SUMMON_SP,
+	USESKILL_FAIL_SAME_VEND,
+	USESKILL_FAIL_NEED_BULLETS,
+	USESKILL_FAIL_NEED_ARROWS,
+	USESKILL_FAIL_NEED_PARTY,
