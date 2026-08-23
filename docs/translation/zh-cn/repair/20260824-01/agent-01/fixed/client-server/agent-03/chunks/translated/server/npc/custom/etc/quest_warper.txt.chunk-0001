@@ -1,0 +1,500 @@
+//===== rAthena Script ============================================
+//= Quest Warper Script
+//===== By: =======================================================
+//= DZeroX, Darkchild, Neouni
+//===== Current Version: ==========================================
+//= 2.3
+//===== Compatible With: ==========================================
+//= rAthena Project
+//===== Description: ==============================================
+//= Warper that works only after locations are unlocked.
+//===== Additional Comments: ======================================
+//= 1.0 - NPCs created
+//= 1.1 - Add Dungeons by sturm
+//= 1.2 - Add All char in account unlocked by ace_killer
+//= 1.3 - Add new 7 towns and 7 dungeons by escoteiro
+// - Correct bug jawaii town by escoteiro
+// - Remove some excessive warpras by escoteiro
+//= 1.4 - Rewrite of the Warpa system [Neouni]
+// - Corrected some bugs caused by autoconverting the old script
+//= 1.4a - Rewrite of menu to be custom for each player [Neouni]
+// - Dungeon listing rewrite
+// - Town listing rewrite
+// - GameMaster can Customise Main menu
+//= 1.4b - Pricing round [Neouni]
+// - GM menu added for pricing
+// - Town Warp pricing tags added
+// - Dungeon Warp pricing tags added
+//= 1.5 - storage functions pricing [Neouni]
+// - storage pricing added
+// - kafra points setting added
+// - kafra storage code security added
+// - Healing scripts pricing added
+// - Heal Part script added
+//= 1.6 - Dungeon warp [Neouni] (beta only)
+// - added option to add a extra fee for going down deeper into dungeon
+// partly by rebuilding the dungeon warping into variable menu's
+//= 1.6a - a lot of fixes for beta release [Neouni] (public release)
+// - fixed syntax problems
+// - fixed missing pyramid gats in @DGat$ array
+// - removed the culver level 5 that didn't exist
+//= 1.7 - Readability of Dungeon menu building increased [Neouni]
+// - Thanatos Tower & Luoyang Dungeon added
+//= 1.8 - changed around unlock variables [Neouni]
+// - Moved warp variables to mark what you have unlocked to an binary array in login based permanent variable
+// (warp variables are saved in login database, so all charservers have these unlocked)
+// - Town Warp unlock array max 21/(unknown max) items used instead of max account #variables 32 !
+// - Dungeon Warp unlock array 28/(unknown max) items used instead of max account #variables 32 !
+// - (max login ##variables = 16, i used 3)
+// - old variables are cleared on next save
+// - Extra Variable clear added for every character, just in case (request by Terces)
+//= 1.8a - Show amount of users on map [Neouni]
+//= 1.8b - Small typo fixed in stampcard script [Neouni]
+//= 1.9 - Making it more edit friendly [Neouni]
+// - Made Dungeon warp arrays more readable & editable (QWS_Darray)
+// - Made town warp arrays more readable & editable (QWS_Tarray)
+//= 2.0 - Special Warp menu added [Neouni]
+// - when all towns and dungeons are collected a new option on the main menu will show
+// - it will only show when you setup the mapname of the warp !
+//= 2.0a - Dungeon Level Limit & Split dungeon fees
+// - Limits dungeon based on Depth, access special setup menu thru GM-Menu
+// - Dungeon fees split up based on  Basic , Advanced & Overseas
+// - Old Dungeon fee system removed, all dungeon fees now set to 0
+//= 2.0b - Special warpname menu option name bug fixed
+//= 2.1 - Updated names to fall within retrictions. [L0ne_W0lf]
+//= 2.2 - #kafra_code is now stored as is. [brianluau]
+//= 2.3 - Added new town maps, cleanup, and removed pre-1.8 backwards fix. [Euphy]
+//=================================================================
+
+//========================Function=&=Script========================
+
+function	script	Q_Warpra	{
+	mes "[沃普拉]";
+	mes "你好，";
+	mes "我可以把你传送到任何城镇或地下城，但你必须先拜访我们解锁它们。";
+	mes "你需要什么？";
+	
+	if(getarg(0) == 0) callfunc "QWS_MMarray",0;
+	if(getarg(0) == 1) callfunc "QWS_MMarray",1;
+	
+	set @MMenu,select(@Mmenulist$[0],@Mmenulist$[1],@Mmenulist$[2],@Mmenulist$[3],@Mmenulist$[4],@Mmenulist$[5],@Mmenulist$[6],@Mmenulist$[7],@Mmenulist$[8],@Mmenulist$[9],@Mmenulist$[10],@Mmenulist$[11]);
+
+	switch(@Mmenuref[@MMenu-1]+1){
+	case 1: goto GM_Menu;
+	case 2:
+		warp $QW_SP_WarpMap$, $QW_SP_WarpX, $QW_SP_WarpY;
+		close2;
+		debugmes "请检查沃普拉的特殊传送菜单设置。";
+		end;
+	case 3: goto L_town;
+	case 4: goto L_dungeon;
+	case 5: goto L_FewWarps;
+	case 6: goto L_NoUnlock;
+	case 7: goto L_heal_Full;
+	case 8: goto L_heal_Part;
+	case 9: goto L_Storage;
+	case 10: goto L_GStorage;
+	case 11:
+	default:
+		goto L_end;
+	}
+
+//=====================GM-Menu=Functions===========================
+
+GM_Menu:
+	next;
+	mes "城镇传送 = "+(($QW_TW_OFF)?"^FF0000 关":"^00FF00 开")+"^000000";
+	mes "地下城传送 = "+(($QW_DW_OFF)?"^FF0000 关":"^00FF00 开")+"^000000";
+	mes "地下城深度限制 = "+(($QW_DL)?"^00FF00 开":"^FF0000 关")+"^000000";
+	mes "开启时深度限制为 ^0000FF"+$QW_DDL+"^000000";
+	mes "显示地图用户 = "+(($QW_MapUserShow)?"^00FF00 开":"^FF0000 关")+"^000000";
+
+	if ($QW_HF) mes "完全治疗 = ^00FF00 开 ^000000";
+	if ($QW_HP) mes "部分治疗 = ^00FF00 开 ^000000";
+	if (!$QW_HF && !$QW_HP) mes "治疗 = ^FF0000 关 ^000000";
+
+	mes "仓库 = "+(($QW_Stor)?"^00FF00 开":"^FF0000 关")+"^000000";
+	mes "公会仓库 = "+(($QW_GStor)?"^00FF00 开":"^FF0000 关")+"^000000";
+	mes "收集卡普拉点数 = "+(($QW_KPoint)?"^00FF00 开":"^FF0000 关")+"^000000";
+
+	switch(select("城镇传送","地下城传送","地下城等级限制","显示地图用户","完全治疗","部分治疗","仓库","公会仓库","收集卡普拉点数","设置价格","特殊传送","退出")) {
+	case 1: set $QW_TW_OFF,($QW_TW_OFF)?0:1; goto GM_Menu;
+	case 2: set $QW_DW_OFF,($QW_DW_OFF)?0:1; goto GM_Menu;
+	case 3: goto DungeonLevelLimit;
+	case 4: set $QW_MapUserShow,($QW_MapUserShow)?0:1; goto GM_Menu;
+	case 5:
+		if ($QW_HF == 0) {
+			set $QW_HF,1;
+			set $QW_HP,0;
+		}
+		else set $QW_HF,0;
+		goto GM_Menu;
+	case 6:
+		if ($QW_HP == 0) {
+			set $QW_HP,1;
+			set $QW_HF,0;
+		}
+		else set $QW_HP,0;
+		goto GM_Menu;
+	case 7: set $QW_Stor,($QW_Stor)?0:1; goto GM_Menu;
+	case 8: set $QW_GStor,($QW_GStor)?0:1; goto GM_Menu;
+	case 9: set $QW_KPoint,($QW_KPoint)?0:1; goto GM_Menu;
+	case 10: goto Setprice;
+	case 11: goto SpecialWarpMenu;
+	default:
+		close;
+		end;
+	}
+
+//======================GM-Menu=Pricing============================
+
+Setprice:
+	if ($QW_DW_FEE != 0) set $QW_DW_FEE,0;
+	next;
+	mes "滚动列表查看所有选项。";
+
+	mes "基础传送价格 = "+(($QW_BW_PRICE)?"^00FF00"+$QW_BW_PRICE:"^FF0000免费")+"^000000";
+	mes "高级传送价格 = "+(($QW_AW_PRICE)?"^00FF00"+$QW_AW_PRICE:"^FF0000免费")+"^000000";
+	mes "海外传送价格 = "+(($QW_OW_PRICE)?"^00FF00"+$QW_OW_PRICE:"^FF0000免费")+"^000000";
+
+	mes "基础地下城每级传送费 = "+(($QW_BW_FEE)?"^00FF00"+$QW_BW_FEE:"^FF0000无")+"^000000 Zeny";
+	mes "高级地下城每级传送费 = "+(($QW_AW_FEE)?"^00FF00"+$QW_AW_FEE:"^FF0000无")+"^000000 Zeny";
+	mes "海外地下城每级传送费 = "+(($QW_OW_FEE)?"^00FF00"+$QW_OW_FEE:"^FF0000无")+"^000000 Zeny";
+
+	mes "完全治疗 = "+(($QW_HF_PRICE)?"^00FF00"+$QW_HF_PRICE:"^FF0000免费")+"^000000";
+	mes "^FF0000HP ^000000Part Healing = "+(($QW_HP_H_PRICE)?"^00FF00"+$QW_HP_H_PRICE+"^000000 a point":"^FF0000Free^000000");
+	mes "^FF0000SP ^000000Part Healing = "+(($QW_HP_S_PRICE)?"^00FF00"+$QW_HP_S_PRICE+"^000000 a point":"^FF0000Free^000000");
+
+	if ($QW_S_PRICE && $QW_S_PRICE != 60) mes "仓库 = ^00FF00 "+$QW_S_PRICE+" ^000000";
+	if (!$QW_S_PRICE) mes "仓库 = ^FF0000 免费 ^000000";
+	if ($QW_S_PRICE == 60) mes "仓库 = ^0000FF 卡普拉模式 ^000000";
+	mes "公会仓库 = "+(($QW_GS_PRICE)?"^00FF00"+$QW_GS_PRICE:"^FF0000免费")+"^000000";
+	
+	switch(select("基础传送","高级传送","海外传送","基础地下城传送费","高级地下城传送费","海外地下城传送费","完全治疗","部分治疗","仓库","公会仓库","返回","退出")) {
+	case 1:
+		next;
+		mes "基础传送价格 = "+(($QW_BW_PRICE)?"^00FF00"+$QW_BW_PRICE:"^FF0000免费")+"^000000";
+		mes "基础传送包括新手城镇及相关地下城。";
+		input $QW_BW_PRICE;
+		goto Setprice;
+	case 2:
+		next;
+		mes "高级传送价格 = "+(($QW_AW_PRICE)?"^00FF00"+$QW_AW_PRICE:"^FF0000免费")+"^000000";
+		mes "高级传送包括同岛上但远离新手城镇的城镇和地下城。";
+		input $QW_AW_PRICE;
+		goto Setprice;
+	case 3:
+		next;
+		mes "海外传送价格 = "+(($QW_OW_PRICE)?"^00FF00"+$QW_OW_PRICE:"^FF0000免费")+"^000000";
+		mes "海外传送包括从艾尔贝塔乘船可达的海外城镇和地下城。";
+		input $QW_OW_PRICE;
+		goto Setprice;
+	case 4:
+		next;
+		mes "基础地下城每级传送费 = "+(($QW_BW_FEE)?"^00FF00"+$QW_BW_FEE:"^FF0000无")+"^000000 Zeny";
+		mes "基础传送包括新手城镇相关地下城。";
+		mes "地下城传送费按距离入口的地图数乘以地下城传送费计算。";
+		mes "这些费用会叠加在普通传送费之上。";
+		input $QW_BW_FEE;
+		goto Setprice;
+	case 5:
+		next;
+		mes "高级地下城每级传送费 = "+(($QW_AW_FEE)?"^00FF00"+$QW_AW_FEE:"^FF0000无")+"^000000 Zeny";
+		mes "高级传送包括远离新手城镇的地下城。";
+		mes "地下城传送费按距离入口的地图数乘以地下城传送费计算。";
+		mes "这些费用会叠加在普通传送费之上。";
+		input $QW_AW_FEE;
+		goto Setprice;
+	case 6:
+		next;
+		mes "海外地下城每级传送费 = "+(($QW_OW_FEE)?"^00FF00"+$QW_OW_FEE:"^FF0000无")+"^000000 Zeny";
+		mes "海外传送包括从艾尔贝塔乘船可达的海外城镇相关地下城。";
+		mes "地下城传送费按距离入口的地图数乘以地下城传送费计算。";
+		mes "这些费用会叠加在普通传送费之上。";
+		input $QW_OW_FEE;
+		goto Setprice;
+	case 7:
+		next;
+		mes "完全治疗 = "+(($QW_HF_PRICE)?"^00FF00"+$QW_HF_PRICE:"^FF0000免费")+"^000000";
+		mes "瞬间完全治疗的价格。";
+		input $QW_HF_PRICE;
+		goto Setprice;
+	case 8:
+		next;
+		mes "^FF0000HP ^000000Part Healing = "+(($QW_HP_H_PRICE)?"^00FF00"+$QW_HP_H_PRICE+"^000000 a point":"^FF0000Free^000000");
+		mes "^FF0000SP ^000000Part Healing = "+(($QW_HP_S_PRICE)?"^00FF00"+$QW_HP_S_PRICE+"^000000 a point":"^FF0000Free^000000");
+		mes "每 1 HP 的治疗价格。";
+		mes "每 1 SP 的治疗价格。";
+		mes "输入两项，先 HP 后 SP。";
+		input $QW_HP_H_PRICE;
+		input $QW_HP_S_PRICE;
+		goto Setprice;
+	case 9:
+		next;
+		if ($QW_S_PRICE && $QW_S_PRICE != 60) mes "仓库 = ^00FF00 "+$QW_S_PRICE+" ^000000";
+		if (!$QW_S_PRICE) mes "仓库 = ^FF0000 免费 ^000000";
+		if ($QW_S_PRICE == 60) mes "仓库 = ^0000FF 卡普拉模式 ^000000";
+		mes "仓库费用；设置为 60 时使用卡普拉价格。";
+		input $QW_S_PRICE;
+		goto Setprice;
+	case 10:
+		next;
+		mes "公会仓库 = "+(($QW_GS_PRICE)?"^00FF00"+$QW_GS_PRICE:"^FF0000免费")+"^000000";
+		mes "公会卡普拉处的公会仓库免费。";
+		input $QW_GS_PRICE;
+		goto Setprice;
+	case 11:
+		goto GM_Menu;
+	default:
+		close;
+		end;
+	}
+
+//======================Special=Warp=Menu==========================
+
+SpecialWarpMenu:
+	if ($QW_SP_Warpname$ == "") set $QW_SP_Warpname$,"Special Warp";
+	next;
+	mes "向下滚动查看全部信息。";
+	mes "解锁所有城镇和地下城后，特殊传送选项会显示在主菜单。";
+	mes "并且必须设置特殊传送地图。";
+	mes "菜单选项名称为 ^0000FF"+$QW_SP_Warpname$+"^000000";
+	if ($QW_SP_WarpMap$ == "") mes "当前^FF0000未^000000设置地图，特殊传送菜单关闭。";
+	if ($QW_SP_WarpMap$ != "") mes "当前地图为 ^0000FF"+$QW_SP_WarpMap$+"^000000，特殊传送菜单开启。";
+	mes "坐标为 ^0000FF"+$QW_SP_WarpX+","+$QW_SP_WarpY+"^000000";
+	switch(select("设置菜单中的特殊传送名称", "设置传送地图","设置坐标","返回 GM 菜单","退出")){
+	case 1:
+		next;
+		mes "设置菜单中显示的选项名称。";
+		input $QW_SP_Warpname$;
+		goto SpecialWarpMenu;
+	case 2:
+		next;
+		mes "请使用 ^0000FF地图名^000000 格式设置地图。";
+		mes "设置传送地图后，玩家满足条件时会看到该选项。";
+		mes "要禁用特殊传送菜单，请清除此项！";
+		input $QW_SP_WarpMap$;
+		goto SpecialWarpMenu;
+	case 3:
+		next;
+		mes "第一个输入 = X 坐标";
+		mes "第二个输入 = Y 坐标";
+		input $QW_SP_WarpX;
+		input $QW_SP_WarpY;
+		goto SpecialWarpMenu;
+	case 4:
+		goto GM_Menu;
+	default:
+		close;
+		end;
+	}
+
+//======================Dungeon=Level=Limit========================
+
+DungeonLevelLimit:
+	next;
+	mes "地下城深度限制 = "+(($QW_DL)?"^00FF00开":"^FF0000关")+"^000000";
+	mes "如果^00FF00开启^000000，地下城深度限制为 ^0000FF"+$QW_DDL+"^000000";
+
+	switch(select("切换地下城深度限制","设置地下城深度限制","返回 GM 菜单","退出")){
+	case 1: set $QW_DL,($QW_DL)?0:1; goto DungeonLevelLimit;
+	case 2:
+		next;
+		mes "设置地下城深度上限，0 = 入口。";
+		mes "深度 1 是与 0 相连的地图，以此类推。";
+		mes "到地图的最短路线计为深度。";
+		input $QW_DDL;
+		goto DungeonLevelLimit;
+	case 3: goto GM_Menu;
+	default:
+		close;
+		end;
+	}
+
+//===========================Towns=================================
+
+L_town:
+	callfunc "QWS_Tarray";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<35; set .@i,.@i+1)	// Expected maximum is 35
+		set .@menu$,.@menu$+@Tmenulist$[.@i]+":";
+	freeloop(0);
+	set @TWMenu,select(.@menu$);
+
+	if (@Tmenuref[@TWMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+
+	if(Zeny<@pTprice[@Tmenuref[@TWMenu-1]]) callsub L_Short_on_zeny,0;
+	set Zeny, Zeny-@pTprice[@Tmenuref[@TWMenu-1]];
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@pTprice[@Tmenuref[@TWMenu-1]]/16);
+	warp @pTmap$[@Tmenuref[@TWMenu-1]],@pTXcoords[@Tmenuref[@TWMenu-1]],@pTYcoords[@Tmenuref[@TWMenu-1]];
+	close2;
+	set Zeny, Zeny+@pTprice[@Tmenuref[@TWMenu-1]];
+	end;
+
+//=========================Dungeons================================
+
+L_dungeon:
+	callfunc "QWS_Darray";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<35; set .@i,.@i+1)	// Expected maximum is 35
+		set .@menu$,.@menu$+@Dmenulist$[.@i]+":";
+	freeloop(0);
+	set @DWMenu,select(.@menu$);
+
+	if (@Dmenuref[@DWMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+	set @DwarpMenu, (@Dmenuref[@DWMenu-1]);
+	callfunc "QWS_DLarray";
+
+	next;
+	mes "[沃普拉]";
+	mes "请选择目的地：";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<18; set .@i,.@i+1)	// Expected maximum is 18
+		set .@menu$,.@menu$+@DWLmenulist$[.@i]+":";
+	freeloop(0);
+	set @DWLMenu,select(.@menu$);
+
+	if (@DWLmenuref[@DWLMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+
+	set @Darrayref, @DWLmenuref[@DWLMenu-1];
+	set @warpprice, @pDprice[@Dmenuref[@DWMenu-1]]+(getd(@pDfee$[@Dmenuref[@DWMenu-1]])*(@DDepth[@Darrayref]));
+
+	if(Zeny<@warpprice) callsub L_Short_on_zeny,1;
+	set Zeny, Zeny-(@warpprice);
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@warpprice/16);
+	warp @DGat$[@Darrayref],@DXcoords[@Darrayref],@DYcoords[@Darrayref];
+	close2;
+	set Zeny, Zeny+@pTprice[@Tmenuref[@DWMenu-1]];
+	end;
+
+//=============================Healing=============================
+
+L_heal_Full:
+	set @healfee, $QW_HF_PRICE;
+	if(Zeny<@healfee) callsub L_Short_on_zeny,4;
+	set Zeny, Zeny-@healfee;
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@healfee/500);
+	next;
+	mes "[沃普拉]";
+	mes "关闭窗口后我会为你治疗。";
+	close2;
+	percentheal 100,100;
+	end;
+
+L_heal_Part:
+	set @healchoice,select("完全治疗","仅生命值","仅技能点","退出");
+	if (@healchoice == 1) callsub PHeal,1,1;
+	if (@healchoice == 2) callsub PHeal,1,0;
+	if (@healchoice == 3) callsub PHeal,0,1;
+	goto L_end;
+	
+PHeal:
+	next;
+	set @Hp, MaxHp-Hp;
+	set @Sp, MaxSp-Sp;
+	set @HpPrice, @hp*$QW_HP_H_PRICE;
+	set @SpPrice, @sp*$QW_HP_S_PRICE;
+	mes "[Warpra]";
+	if(getarg(0) == 1) mes ""+@HpPrice+" Zeny for "+@Hp+" health points";
+	if(getarg(1) == 1) mes ""+@SpPrice+" Zeny for "+@Sp+" skill points";
+	set @total, @HpPrice+@SpPrice;
+	mes "总计 "+@total+" Zeny";
+    	if (select("治疗我","让我重新查看选项")==2) goto L_heal_Part;
+    	
+    	if(getarg(0) == 1)set @HpPrice, (MaxHp-Hp)*$QW_HP_H_PRICE;
+	if(getarg(1) == 1)set @SpPrice, (MaxSp-Sp)*$QW_HP_S_PRICE;
+	set @healfee, @HpPrice+@SpPrice;
+	if (getarg(0) == 1)&&(getarg(1) == 1)&&(Zeny<@healfee) goto Zeny_Short_Both;
+	if (getarg(0) == 1)&&(Zeny<@healfee) goto Zeny_short_HP;
+	if (getarg(1) == 1)&&(Zeny<@healfee) goto Zeny_short_SP;
+	set Zeny, Zeny-@healfee;
+	if (getarg(0) == 1)&&(getarg(1) == 1) percentheal 100,100;
+	if (getarg(0) == 1) percentheal 100,0;
+	if (getarg(1) == 1) percentheal 0,100;
+	close;
+	end;
+
+Zeny_Short_Both:
+	mes "[沃普拉]";
+	mes "选择另一个选项，你两种都付得起。";
+	mes "我也可以治疗到你能负担的程度。";
+	if (select("确定","退出") == 2) goto L_end;
+	goto PHeal;
+
+Zeny_short_HP:
+	mes "[沃普拉]";
+	mes "要我部分治疗你的生命值吗？";
+	if (select("是","否") == 2) goto L_end;
+	set @Hp, Zeny/$QW_HP_H_PRICE;
+    	set @HpPrice, @Hp*$QW_HP_H_PRICE;
+    	if (@Hp == 1) mes "你不值得花费这份力气。";
+    	if (@Hp == 1) goto L_end;
+    	set Zeny, Zeny-@HpPrice;
+	heal @Hp,0;
+	close;
+	end;
+
+Zeny_short_SP:
+	mes "[沃普拉]";
+	mes "要我部分治疗你的技能点吗？";
+	if (select("是","否") == 2) goto L_end;
+	set @Sp, Zeny/$QW_HP_S_PRICE;
+    	set @SpPrice, @Sp*$QW_HP_S_PRICE;
+    	if (@Sp == 1) mes "你不值得花费这份力气。";
+    	if (@Sp == 1) goto L_end;
+    	set Zeny, Zeny-@SpPrice;
+	heal 0,@Sp;
+	close;
+	end;
+
+//=============================Storage=============================
+
+L_Storage:
+	next;
+	if(!callfunc("F_CanOpenStorage")) goto L_StorageJBlow;
+	set @fee, $QW_S_PRICE;
+	if ($QW_S_PRICE == 60)&&(BaseJob == Job_Novice) set @fee, 30;
+	if ($QW_S_PRICE == 60)&&(BaseJob != Job_Novice) set @fee, 60;
+	if(Zeny<@fee) callsub L_Short_on_zeny,2;
+	set Zeny, Zeny-@fee;
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@fee/5);
+
+	mes "[Warpra]";
+	if(#kafra_code) {
+		mes "请输入仓库密码：";
+		set @code_,0;
+		input @code_;
+		if(@code_ != #kafra_code) {
+			dispbottom "仓库密码错误。";
+			close;
+		}
+		set @kafcode_try,0;
+		set @code_,0;
+	}
+	mes "关闭窗口后我会打开仓库。";
+	close2;
+	openstorage;
+	end;
+
+L_StorageJBlow:
+	mes "[Warpra]";
+	mes "抱歉，至少达到初心者 6 级才能使用仓库。";
+	return;
+
+L_GStorage:
+	if (!@GID) {
+		next;
+		mes "[Warpra]";
+		mes "你不属于任何公会，我无法帮助你。";
+		close;
+		end;
+	}
+	if (Zeny<$QW_GS_PRICE) callsub L_Short_on_zeny,3;
+	set Zeny, Zeny-$QW_GS_PRICE;
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + ($QW_GS_PRICE/5);
+	next;
+	mes "[Warpra]";
+	mes "关闭窗口后我会打开 ^5533FF" + GetGuildName(@GID) + "^000000 公会仓库。";
