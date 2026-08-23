@@ -2,7 +2,7 @@
 
 ## 目的
 
-使用 Playwright 在浏览器中运行项目自己的 Lua 5.1 WASM 运行时，重新提取五个已验证的 LUB 文件，并与 `workspace/lub/source/` 中的基准 JSON 比较。官方 `.lub` 文件只读，不修改、不回编译。
+使用 Playwright 在浏览器中运行项目自己的 Lua 5.1 WASM 运行时，提取当前工具清单中的 19 个 LUB 目标，并与 `workspace/lub/source/` 中的基准 JSON 比较。官方 `.lub` 文件只读，不修改、不回编译。Lua 5.0 兼容读取结果单独登记，不混入 Playwright 5.1 运行时。
 
 长期工具：[`tools/extract-lub-playwright.mjs`](../../../tools/extract-lub-playwright.mjs)
 
@@ -39,7 +39,6 @@ node tools/extract-lub-playwright.mjs
 - `System/OngoingQuestInfoList.lub` → `OngoingQuestInfoList.json`，注入 `AddQuestInfo`、`AddQuestDescription` 和 `AddQuestRewardItem`；
 - `System/itemInfo_true.lub` → `itemInfo_true.json`，注入全部 `AddItem*` 回调并执行 `main_item()`；
 - `System/RecommendedQuestInfoList_True.lub` → `RecommendedQuestInfoList_True.json`；
-- `System/tipbox.lub` → `tipbox.json`，保留提示框字段和 0-based `Page` 索引表现。
 - `System/OngoingQuestInfoList_True.lub` → `OngoingQuestInfoList_True.json`，复用任务回调；
 - `System/RecommendedQuestInfoList.lub` → `RecommendedQuestInfoList.json`，读取 `RecommendedQuestInfoList`。
 - `System/LuaFiles514/MsgString.lub` → `MsgString.json`，读取客户端消息字符串表；
@@ -50,8 +49,13 @@ node tools/extract-lub-playwright.mjs
 - `System/PrivateAirplane_true.lub` → `PrivateAirplane_true.json`，读取 `StartableMap`；
 - `System/PetEvolutionCln.lub` → `PetEvolutionCln.json`；
 - `System/PetEvolutionCln_true.lub` → `PetEvolutionCln_true.json`；两者通过 `InsertEvolutionRecipeLGU` 和 `InsertPetAutoFeeding` 回调提取。
+- `System/CheckAttendance.lub` → `CheckAttendance.json`，通过签到回调提取奖励记录；不含可翻译文本。
+- `System/ShadowTable.lub` → `ShadowTable.json`，读取 `jobtbl`；仅内部渲染数据。
+- `System/monster_size_effect.lub` → `monster_size_effect.json`，读取 `EFFECT`；仅内部效果数据。
+- `System/monster_size_effect_new.lub` → `monster_size_effect_new.json`，读取 `EFFECT`；仅内部效果数据。
+- `System/tipbox.lub` → `tipbox.json`，读取 `tbl` 并保留提示框字段和 0-based `Page` 索引表现。
 
-结果写入 `work/lub-reextract/`。该目录属于生成工作区，不是正式源文件。
+结果写入 `work/lub-reextract/`，核验后的基准复制到 `workspace/lub/source/`。该目录属于生成工作区，不是正式源文件。每次提取后应同步更新 `status/extracted-files.tsv`，再决定是否生成翻译切片。
 
 ## 比较规则
 
@@ -66,4 +70,4 @@ node tools/extract-lub-playwright.mjs
 - `System/MsgString.lub` → `System_MsgString_lua50.json`；
 - `PatchClient/Lua Files/ServerInfoz/ServerInfo_KR.lub` → `ServerInfo_KR.json`。
 
-这两个文件使用 kRO 的 Lua 5.0 头部（其中 `size_t` 和 `Instruction` 采用 4 字节布局）。不能用系统默认 Lua 5.0 直接读取；兼容读取器需要使用 4 字节 `Instruction`，按 4 字节读取 `size_t`，执行后再将 CP949 输出转换为 UTF-8。生成结果仍只放在 `work/lub-reextract/`，不覆盖官方资源。
+这两个文件使用 kRO 的 Lua 5.0 头部（其中 `size_t` 和 `Instruction` 采用 4 字节布局）。不能用系统默认 Lua 5.0 直接读取；兼容读取器需要使用 4 字节 `Instruction`，按 4 字节读取 `size_t`，执行后再将 CP949 输出转换为 UTF-8。兼容读取结果作为审阅基准保存在 `workspace/lub/source/`，原始生成副本保存在 `work/lub-reextract/`，不覆盖官方资源，也不代表已完成中文回编译。

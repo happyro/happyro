@@ -1,11 +1,12 @@
-# LUB 翻译断点
+# kRO 翻译断点
 
-状态：已重置（2026-08-23）
+状态：已重新切片并迁移到专用工作区（2026-08-23）
 
-- 翻译基准：`workspace/lub/source/` 中的最新提取 JSON。
-- 直接文本基准：`workspace/text/source/`。
-- 旧译文、旧 LUB 切片和旧翻译进度：已删除。
-- 当前工作单元：无。
-- 下一步：按 `manifest.tsv` 重新分配；先重新切分并登记新增提取表。
+- 清单：`docs/zh-cn/kro-20211105/manifest.tsv`
+- 总工作单元：77
+- 分配：agent-01 20、agent-02 19、agent-03 19、agent-04 19
+- 当前工作单元：无
+- 所有工作单元状态：待处理
+- 源切片：`docs/zh-cn/kro-20211105/agent-xx/chunks/source/`
+- 译文：`docs/zh-cn/kro-20211105/agent-xx/chunks/translated/`
 - 官方 kRO 源文件：未修改。
-- 未提交、未推送。
