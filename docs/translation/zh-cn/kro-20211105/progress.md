@@ -1,6 +1,6 @@
 # kRO 2021-11-05 并行翻译进度
 
-本目录是 kRO 专用翻译工作区，不写入 `docs/translation/zh-cn/agent-xx/`。工作单元基于最新提取 JSON 和直接文本源，全部重新切片并分配给八个 agent。
+本目录是 kRO 专用翻译工作区，不写入 `docs/translation/zh-cn/kro-20211105/agents/agent-xx/`。工作单元基于最新提取 JSON 和直接文本源，全部重新切片并分配给八个 agent。
 
 - 工作单元总数：177
 - 已处理：0
@@ -22,4 +22,4 @@
 - `start_line`、`end_line` 表示规范化切片中的连续记录序号；各片不重叠、不遗漏。
 - 源切片位于本目录各 agent 的 `chunks/source/`，译文写入对应的 `chunks/translated/`。
 
-最新基准位于 `workspace/lub/source/` 和 `workspace/text/source/`；官方输入和提取说明仍保留在本目录。
+最新基准位于 `baseline/lub/source/` 和 `baseline/text/source/`；官方输入和提取说明仍保留在本目录。

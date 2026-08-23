@@ -1,0 +1,500 @@
+			};
+
+			// create and execute a wrapper lua code
+			// this way we let webassembly handle the code and still can get the table data
+			lua.doStringSync(`
+						function main_table()
+							for key, value in pairs(${table_name}) do
+								if type(value) == "table" then
+									for k, v in pairs(value) do
+										result, msg = addKeyAndMoreValuesToTable(key, v)
+									end
+								else
+									result, msg = addKeyAndValueToTable(key, value)
+								end
+								if not result then
+									return false, msg
+								end
+							end
+							return true, "good"
+						end
+						main_table()
+					`);
+
+			if (typeof contextFunc === 'function') {
+				contextFunc();
+			}
+
+			// unmount files
+			lua.unmountFile(value_table_filename);
+			lua.unmountFile(id_filename);
+
+			// return table
+			callback.call(null, table);
+		}
+	} catch (e) {
+		console.error('error: ', e);
+	} finally {
+		onEnd.call();
+	}
+}
+
+/**
+ * Extracts a variable from a Lua file and converts it to a JavaScript value
+ * @param {String} file_path - Path to the Lua file
+ * @param {String} variable_name - Name of the variable to extract
+ * @param {function} callback - Function to run with the extracted value
+ * @param {function} onEnd - Function to run once the process is complete
+ *
+ * @author guicaulada
+ */
+function loadLuaValue(file_path, variable_name, callback, onEnd) {
+	try {
+		console.log('Loading file "' + file_path + '"...');
+		Client.loadFile(file_path, async function (file) {
+			try {
+				// Check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// Mount file
+				lua.mountFile(file_path, buffer);
+
+				// Execute file
+				await lua.doFile(file_path);
+
+				// Get context
+				const ctx = lua.ctx;
+
+				// Initialize result variable
+				let result = null;
+
+				// Add key-value pairs to objects at any nesting level
+				ctx.extractValue = value => {
+					result = JSON.parse(userStringDecoder.decode(value));
+				};
+
+				// Create and execute a wrapper Lua code to extract the variable
+				lua.doStringSync(
+					String.raw`
+							local function escape_str(str)
+								return str:gsub("\\", "\\\\"):gsub("\"", "\\\"")
+							end
+
+							local function to_json(value)
+								if type(value) == "boolean" then
+									return tostring(value)
+								elseif type(value) == "number" then
+									return value
+								elseif type(value) == "string" then
+									return "\"" .. escape_str(value) .. "\""
+								elseif type(value) == "table" then
+									local is_array = true
+									local index = 1
+									for k, _ in pairs(value) do
+										if type(k) ~= "number" or k ~= index then
+											is_array = false
+											break
+										end
+										index = index + 1
+									end
+
+									local result = {}
+									if is_array then
+										for _, v in ipairs(value) do
+											table.insert(result, to_json(v))
+										end
+										return "[" .. table.concat(result, ",") .. "]"
+									else
+										for k, v in pairs(value) do
+											if type(k) == "string" then
+												table.insert(result, "\"" .. escape_str(k) .. "\":" .. to_json(v))
+											elseif type(k) == "number" then
+												table.insert(result, "\"" .. tostring(k) .. "\":" .. to_json(v))
+											end
+										end
+										return "{" .. table.concat(result, ",") .. "}"
+									end
+								else
+									return "null"
+								end
+							end
+						` +
+						`
+							extractValue(to_json(${variable_name}))
+						`
+				);
+
+				// Unmount file
+				lua.unmountFile(file_path);
+
+				// Return the extracted value
+				callback.call(null, result);
+			} catch (hException) {
+				console.error(`(${file_path}) error: `, hException);
+				callback.call(null, null);
+			} finally {
+				if (onEnd) {
+					onEnd.call();
+				}
+			}
+		});
+	} catch (e) {
+		console.error('error: ', e);
+		if (onEnd) {
+			onEnd.call();
+		}
+	}
+}
+
+/**
+ * Loads System/mapInfo.lub
+ *
+ * @param {string} filename - The name of the file to load.
+ * @param {function} callback - The function to invoke with the parsed data.
+ * @param {function} onEnd - The function to invoke when loading is complete.
+ */
+function loadMapTbl(filename, callback, onEnd) {
+	const loadPromise = new Promise((resolve, reject) => {
+		Client.loadFile(filename, resolve, reject);
+	});
+
+	loadPromise
+		.then(async file => {
+			try {
+				console.log('Loading file "' + filename + '"...');
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// get context, a proxy. It will be used to interact with lua conveniently
+				const ctx = lua.ctx;
+
+				// create mapInfo required functions in context
+				ctx.AddMapDisplayName = (name, displayName, notify_enter) => {
+					const decoded_name = userStringDecoder.decode(name);
+					MapInfo[decoded_name] = {
+						displayName: userStringDecoder.decode(displayName, userCharpage),
+						notifyEnter: notify_enter,
+						signName: {
+							subTitle: null,
+							mainTitle: null
+						},
+						backgroundBmp: null
+					};
+
+					return 1;
+				};
+
+				ctx.AddMapSignName = (name, subTitle, mainTitle) => {
+					const decoded_name = userStringDecoder.decode(name);
+					const decoded_subTitle =
+						subTitle && subTitle.length > 1 ? userStringDecoder.decode(subTitle, userCharpage) : null;
+					const decoded_mainTitle =
+						mainTitle && mainTitle.length > 1 ? userStringDecoder.decode(mainTitle, userCharpage) : null;
+					MapInfo[decoded_name].signName = {
+						subTitle: decoded_subTitle,
+						mainTitle: decoded_mainTitle
+					};
+					return 1;
+				};
+
+				ctx.AddMapBackgroundBmp = (name, backgroundBmp) => {
+					const decoded_name = userStringDecoder.decode(name);
+					MapInfo[decoded_name].backgroundBmp = backgroundBmp
+						? userStringDecoder.decode(backgroundBmp)
+						: 'field';
+					return 1;
+				};
+
+				// mount file
+				lua.mountFile(filename, buffer);
+
+				// execute file
+				await lua.doFile(filename);
+
+				// execute main function
+				lua.doStringSync('main()');
+			} catch (error) {
+				console.error('[loadMapTbl] Error: ', error);
+			} finally {
+				// release file from memmory
+				lua.unmountFile(filename);
+				// call onEnd
+				onEnd(true);
+			}
+		})
+		.catch(error => {
+			onEnd(false);
+		});
+}
+
+/**
+ * Loads datainfo/petInfo.lub and populate PetDBTable
+ *
+ * @param {string} filename - The name of the file to load.
+ * @param {function} callback - The function to invoke with the loaded data.
+ * @param {function} onEnd - The function to invoke when loading is complete.
+ * @return {void}
+ */
+function loadPetInfo(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				lua.mountFile(filename, buffer);
+				await lua.doFile(filename);
+
+				// Read Lua table
+				const readLuaTable = tableName => {
+					const result = {};
+					const ctx = lua.ctx;
+
+					ctx.__push_kv = (k, v) => {
+						const key = k instanceof Uint8Array ? userStringDecoder.decode(k) : k;
+						const val = v instanceof Uint8Array ? userStringDecoder.decode(v) : v;
+						result[key] = val;
+						return 1;
+					};
+
+					lua.doStringSync(`
+							for k, v in pairs(${tableName}) do
+								__push_kv(k, v)
+							end
+						`);
+
+					return result;
+				};
+
+				// Read all pet tables
+				const eggMap = readLuaTable('PetEggItemID_PetJobID');
+				const petNames = readLuaTable('PetNameTable');
+				const petStrings = readLuaTable('PetStringTable');
+				const petIllusts = readLuaTable('PetIllustNameTable_Eng');
+				const petAccIDs = readLuaTable('PetAccIDs');
+				const petAccNames = readLuaTable('PetAccActNameTable');
+
+				PetDBTable = {};
+
+				for (const eggId in eggMap) {
+					const jobId = Number(eggMap[eggId]);
+					const petName = petNames[jobId] || null;
+					const accKey = petName ? `ACC_${petName.toUpperCase()}` : null;
+					const accId = accKey ? petAccIDs[accKey] || null : null;
+
+					PetDBTable[jobId] = {
+						PetJobID: jobId,
+						PetEggID: Number(eggId),
+						PetName: petName,
+						PetString: petStrings[jobId] || null,
+						PetIllust: petIllusts[jobId] || null,
+						PetAcc_ID: accId,
+						PetAcc_Name: accId ? petAccNames[accId] || null : null
+					};
+				}
+
+				EggIDToJobID = {};
+
+				for (const jobID in PetDBTable) {
+					const pet = PetDBTable[jobID];
+					EggIDToJobID[pet.PetEggID] = Number(jobID);
+				}
+			} catch (error) {
+				console.error('[loadPetInfo] Error: ', error);
+			} finally {
+				// release file from memmory
+				lua.unmountFile(filename);
+				// call onEnd
+				onEnd();
+			}
+		},
+		onEnd
+	);
+}
+
+/**
+ * Loads System/PetEvolutionCLN_true.lub and attach to PetDBTable
+ *
+ * @param {string} filename - The name of the file to load.
+ * @param {function} callback - The function to invoke with the loaded data.
+ * @param {function} onEnd - The function to invoke when loading is complete.
+ * @return {void}
+ */
+function loadPetEvolution(filename, callback, onEnd) {
+	const loadPromise = new Promise((resolve, reject) => {
+		Client.loadFile(filename, resolve, reject);
+	});
+
+	loadPromise
+		.then(async file => {
+			let wasSuccessful = false;
+			try {
+				console.log('Loading file "' + filename + '"...');
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+				lua.mountFile(filename, buffer);
+
+				const ctx = lua.ctx;
+
+				// InsertEvolutionRecipeLGU(BaseEggID, TargetEggID, MaterialID, Amount)
+				ctx.InsertEvolutionRecipeLGU = (baseEggID, targetEggID, matID, amt) => {
+					const baseJobID = EggIDToJobID[baseEggID];
+					if (!baseJobID || !PetDBTable[baseJobID]) {
+						console.warn(`[PetEvolution] Unknown base EggID ${baseEggID}`);
+						return 1;
+					}
+
+					const pet = PetDBTable[baseJobID];
+
+					if (!pet.Evolution) {
+						pet.Evolution = {};
+					}
+					if (!pet.Evolution[targetEggID]) {
+						pet.Evolution[targetEggID] = [];
+					}
+
+					pet.Evolution[targetEggID].push({
+						MaterialID: Number(matID),
+						Amount: Number(amt)
+					});
+
+					return 1;
+				};
+
+				// InsertPetAutoFeeding(PetID)
+				ctx.InsertPetAutoFeeding = eggID => {
+					const jobID = EggIDToJobID[eggID];
+
+					if (!jobID || !PetDBTable[jobID]) {
+						console.warn(`[PetAutoFeeding] Unknown EggID ${eggID}`);
+						return 1;
+					}
+
+					PetDBTable[jobID].AutoFeeding = true;
+					return 1;
+				};
+
+				// Execute Lua
+				await lua.doFile(filename);
+				lua.doStringSync('main()');
+				wasSuccessful = true;
+			} catch (error) {
+				console.error('[loadPetEvolutionFile] Error: ', error);
+			} finally {
+				// release file from memmory
+				lua.unmountFile(filename);
+				// call onEnd
+				onEnd(wasSuccessful);
+			}
+		})
+		.catch(error => {
+			if (typeof onEnd === 'function') {
+				onEnd(false);
+			}
+		});
+}
+/**
+ * Fog entry parser
+ *
+ * @param {number} index
+ * @param {mixed} key
+ * @param {string} near
+ * @param {string} far
+ * @param {string} color
+ * @param {string} factor
+ */
+function parseFogEntry(index, key, near, far, color, factor) {
+	const int_color = parseInt(color, 16);
+	const map = MapTable[key] || (MapTable[key] = {});
+
+	map.fog = {
+		near: parseFloat(near),
+		far: parseFloat(far),
+		color: [(255 & (int_color >> 16)) / 255.0, (255 & (int_color >> 8)) / 255.0, (255 & (int_color >> 0)) / 255.0],
+		factor: parseFloat(factor)
+	};
+}
+
+/**
+ * Indoor entry parser
+ *
+ * @param {number} index
+ * @param {mixed} key
+ */
+function parseIndoorEntry(index, key) {
+	key = key.replace('.gat', '.rsw');
+	const map = MapTable[key] || (MapTable[key] = {});
+	map.indoor = true;
+}
+
+/**
+ * Quest entry parser
+ *
+ * @param {number} index
+ * @param {string} title
+ * @param {string} group
+ * @param {string} image
+ * @param {string} description
+ * @param {string} summary
+ */
+function parseQuestEntry(index, key, title, group, image, description, summary) {
+	const quest = QuestInfo[key] || (QuestInfo[key] = {});
+
+	quest.Title = title;
+	quest.Group = group;
+	quest.Image = image;
+	quest.Description = description;
+	quest.Summary = summary;
+}
+
+/**
+ * Load CashShopBanner file
+ *
+ * @param {string} filename to load
+ * @param {function} callback - (Unused)
+ * @param {function} onEnd to run once the file is loaded
+ */
+function loadCashShopBanner(filename, callback, onEnd) {
+	Client.loadFile(
+		filename,
+		async function (file) {
+			try {
+				console.log('Loading file "' + filename + '"...');
+
+				// check if file is ArrayBuffer and convert to Uint8Array if necessary
+				const buffer = file instanceof ArrayBuffer ? new Uint8Array(file) : file;
+
+				// get context
+				const ctx = lua.ctx;
+
+				// Define the function that Lua will call
+				// add_cashshop_banner( bitmap_name, url )
+				ctx.add_cashshop_banner = function (bitmap_name, url) {
+					const decoded_bmp = userStringDecoder.decode(bitmap_name);
+					const decoded_url = userStringDecoder.decode(url);
+
+					CashShopBannerTable.push({
+						bmp: decoded_bmp,
+						url: decoded_url
+					});
+					return 1;
+				};
+
+				// mount file
+				lua.mountFile(filename, buffer);
+
+				// execute file to load the table and function definition
+				await lua.doFile(filename);
+
+				// execute the main function: set_cashshop_banner()
+				lua.doStringSync(`
+						if set_cashshop_banner then
+							set_cashshop_banner()
+						end
+					`);
+			} catch (error) {
+				console.error('[loadCashShopBanner] Error: ', error);
+			} finally {
+				lua.unmountFile(filename);

@@ -1,0 +1,500 @@
+/**
+ * UI/Components/PartyFriends/PartyFriendsCommon.js
+ *
+ * Shared factory for the Party & Friends windows.
+ *
+ * Collapses the PartyFriends version siblings (V0, V1) into a single
+ * createPartyFriends(config) factory. Each version file passes its own
+ * htmlText/cssText plus capability flags describing its real differences:
+ *   - V0 : classic party layout (simple name/map/HP node), jQuery-proxy
+ *          visibility, ChatBox-based mail helper, no detachable member windows.
+ *   - V1 : renewal party layout (job icons, level, crown, HP bar, status
+ *          icons, member cap footer), host-style visibility, Rodex mail,
+ *          detachable member mini-windows, tooltips and member sorting.
+ *
+ * The single `renewalParty` flag selects the V1 implementation; everything
+ * else (friend list handling, window chrome, resize, tab switching, lock,
+ * option/invite/create windows) is shared verbatim between both versions.
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import DB from 'DB/DBManager.js';
+import Camera from 'Renderer/Camera.js';
+import MiniMap from 'UI/Components/MiniMap/MiniMap.js';
+import Preferences from 'Core/Preferences.js';
+import MonsterTable from 'DB/Monsters/MonsterTable.js';
+import Client from 'Core/Client.js';
+import Renderer from 'Renderer/Renderer.js';
+import Session from 'Engine/SessionStorage.js';
+import Mouse from 'Controls/MouseEventHandler.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import PartyHelper from './PartyHelper/PartyHelper.js';
+import PartyMemberExternal from './PartyMemberExternal/PartyMemberExternal.js';
+import ContextMenu from 'UI/Components/ContextMenu/ContextMenu.js';
+import Mail from 'UI/Components/Mail/Mail.js';
+import Rodex from 'UI/Components/Rodex/Rodex.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import WhisperBox from 'UI/Components/WhisperBox/WhisperBox.js';
+import SkillTargetSelection from 'UI/Components/SkillTargetSelection/SkillTargetSelection.js';
+
+export function createPartyFriends(config) {
+	const { name: componentName, htmlText, cssText, renewalParty = false } = config;
+
+	/**
+	 * Create Component
+	 */
+	const Component = new GUIComponent(componentName, cssText);
+
+	/**
+	 * @var {number} index of selection
+	 */
+	let _index = -1;
+
+	/**
+	 * @var {Array} friends list
+	 */
+	const _friends = [];
+
+	/**
+	 * @var {Array} party list
+	 */
+	const _party = [];
+
+	/**
+	 * @var {Object} party setup
+	 */
+	const _options = {
+		exp_share: 0,
+		item_share: 0,
+		item_sharing_type: 0
+	};
+
+	/**
+	 * Renewal-only detached member state (unused in classic layout).
+	 */
+	let _detachedMembers = {}; // Map of AID -> Component
+	let _savedPositions = null; // Local cache for restored positions
+	let _skipSaveOnRemove = false; // Set by clean() so onRemove skips saving
+
+	/**
+	 * @var {Preferences} structure
+	 */
+	const _prefsDefault = {
+		x: 200,
+		y: 200,
+		width: 12,
+		height: 6,
+		show: false,
+		friend: true,
+		lock: false
+	};
+	if (renewalParty) {
+		_prefsDefault.detachedMembers = {}; // Map of AID -> { x, y }
+	}
+	const _preferences = Preferences.get(componentName, _prefsDefault, 1.0);
+
+	/**
+	 * Helper: query inside shadow root
+	 */
+	function _root() {
+		return Component.getRoot();
+	}
+
+	/**
+	 * Helper: escape HTML
+	 */
+	function _escapeHTML(text) {
+		const div = document.createElement('div');
+		div.textContent = text;
+		return div.innerHTML;
+	}
+
+	/**
+	 * Visibility helpers — V0 drives the jQuery-compat proxy, V1 the host node.
+	 */
+	function _isVisible() {
+		return renewalParty ? Component._host.style.display !== 'none' : Component.ui.is(':visible');
+	}
+	function _showWindow() {
+		if (renewalParty) {
+			Component._host.style.display = 'block';
+		} else {
+			Component.ui.show();
+		}
+	}
+	function _toggleWindow() {
+		if (renewalParty) {
+			Component._host.style.display = _isVisible() ? 'none' : 'block';
+		} else {
+			Component.ui.toggle();
+		}
+	}
+
+	/**
+	 * Render HTML
+	 */
+	Component.render = () => htmlText;
+
+	/**
+	 * Initialize the component (event listener, etc.)
+	 */
+	Component.init = function init() {
+		const root = _root();
+
+		// Start loading the helper
+		PartyHelper.prepare();
+
+		// Avoid drag drop problems
+		const baseBtn = root.querySelector('.base');
+		if (baseBtn) {
+			baseBtn.addEventListener('mousedown', event => {
+				event.stopImmediatePropagation();
+				event.preventDefault();
+			});
+		}
+
+		// Bind buttons
+		const closeBtn = root.querySelector('.close');
+		if (closeBtn) {
+			closeBtn.addEventListener('click', onClose);
+		}
+
+		root.querySelectorAll('.lock').forEach(el => {
+			el.addEventListener('mousedown', onToggleLock);
+		});
+
+		root.querySelectorAll('.switchtab.off').forEach(el => {
+			el.addEventListener('mousedown', onChangeTab);
+		});
+
+		const removeBtn = root.querySelector('.remove');
+		if (removeBtn) removeBtn.addEventListener('mousedown', onRequestRemoveSelection);
+
+		const pmBtn = root.querySelector('.privatemessage');
+		if (pmBtn) pmBtn.addEventListener('mousedown', onRequestPrivateMessage);
+
+		const leaveBtn = root.querySelector('.leave');
+		if (leaveBtn) leaveBtn.addEventListener('mousedown', onRequestLeaveParty);
+
+		const resizeBtn = root.querySelector('.resize');
+		if (resizeBtn) resizeBtn.addEventListener('mousedown', onResize);
+
+		const mailBtn = root.querySelector('.mail');
+		if (mailBtn) mailBtn.addEventListener('mousedown', onOpenMailCreationWindow);
+
+		const createBtn = root.querySelector('.party.create');
+		if (createBtn) createBtn.addEventListener('mousedown', onOpenPartyCreationWindow);
+
+		const addBtn = root.querySelector('.party.add');
+		if (addBtn) addBtn.addEventListener('mousedown', onOpenPartyInviteWindow);
+
+		const infoBtn = root.querySelector('.info');
+		if (infoBtn) infoBtn.addEventListener('mousedown', onOpenPartyOptionWindow);
+
+		if (renewalParty) {
+			const sortBtn = root.querySelector('.party.sort');
+			if (sortBtn) sortBtn.addEventListener('mousedown', sortDetachedMembers);
+		}
+
+		// Context menu and selection on nodes
+		const content = root.querySelector('.content');
+		if (content) {
+			if (renewalParty) {
+				content.addEventListener('contextmenu', event => {
+					const node = event.target.closest('.node');
+					if (node) {
+						onRightClickInfoRenewal.call(node, event);
+					}
+				});
+
+				content.addEventListener('mousedown', event => {
+					const node = event.target.closest('.node');
+					if (node) {
+						onMemberMouseDown.call(node, event);
+					}
+				});
+
+				content.addEventListener('mouseover', event => {
+					const el = event.target.closest('[data-tooltip]');
+					if (el) onTooltipShow.call(el, event);
+				});
+
+				content.addEventListener('mousemove', event => {
+					const el = event.target.closest('[data-tooltip]');
+					if (el) onTooltipMove.call(el, event);
+				});
+
+				content.addEventListener('mouseout', event => {
+					const el = event.target.closest('[data-tooltip]');
+					if (el) onTooltipHide.call(el, event);
+				});
+			} else {
+				content.addEventListener('contextmenu', e => {
+					const node = e.target.closest('.node');
+					if (node) {
+						e.preventDefault();
+						e.stopImmediatePropagation();
+						onRightClickInfoClassic();
+					}
+				});
+				content.addEventListener('mousedown', e => {
+					const node = e.target.closest('.node');
+					if (node) {
+						onSelectionChangeClassic(node);
+					}
+				});
+			}
+		}
+
+		this.draggable('.titlebar');
+
+		if (renewalParty) {
+			// Save external window position when dragging ends
+			PartyMemberExternal.onDragEnd = function (movedComponent) {
+				const pos = {
+					left: movedComponent._host.offsetLeft,
+					top: movedComponent._host.offsetTop
+				};
+				const oldPos = movedComponent._lastPos;
+
+				if (oldPos) {
+					for (const aid in _detachedMembers) {
+						const other = _detachedMembers[aid];
+						if (other && other !== movedComponent && other._host) {
+							const otherPos = {
+								left: other._host.offsetLeft,
+								top: other._host.offsetTop
+							};
+							if (Math.abs(otherPos.left - pos.left) < 5 && Math.abs(otherPos.top - pos.top) < 5) {
+								other._host.style.left = `${oldPos.left}px`;
+								other._host.style.top = `${oldPos.top}px`;
+								Component.saveDetachedMembers();
+								return;
+							}
+						}
+					}
+				}
+
+				Component.saveDetachedMembers();
+			};
+		}
+	};
+
+	/**
+	 * Once append to the DOM, start to position the UI
+	 */
+	Component.onAppend = function onAppend() {
+		const root = _root();
+
+		// Initialize the tab
+		_preferences.friend = !_preferences.friend;
+		onChangeTab();
+
+		// Lock features
+		const lockOn = root.querySelector('.lock.on');
+		const lockOff = root.querySelector('.lock.off');
+
+		if (_preferences.lock) {
+			if (lockOn) lockOn.style.display = 'inline-block';
+			if (lockOff) lockOff.style.display = 'none';
+		} else {
+			if (lockOn) lockOn.style.display = 'none';
+			if (lockOff) lockOff.style.display = 'inline-block';
+		}
+
+		this.resize(_preferences.width, _preferences.height);
+
+		this._host.style.top = `${Math.min(Math.max(0, _preferences.y), Renderer.height - (this._host.offsetHeight || 0))}px`;
+		this._host.style.left = `${Math.min(Math.max(0, _preferences.x), Renderer.width - (this._host.offsetWidth || 0))}px`;
+
+		if (renewalParty) {
+			// Load footer background
+			Client.loadFile(DB.INTERFACE_PATH + 'renewalparty/bg_partymember.bmp', function (url) {
+				const countBox = root.querySelector('.count-box');
+				if (countBox) countBox.style.backgroundImage = `url(${url})`;
+			});
+		}
+
+		if (!_preferences.show) {
+			this._host.style.display = 'none';
+		}
+
+		if (renewalParty) {
+			// Restore detached members for same-map teleports
+			for (let i = 0; i < _party.length; i++) {
+				restoreDetachedMember(_party[i]);
+			}
+		}
+	};
+
+	/**
+	 * Clean up UI
+	 */
+	Component.clean = function clean() {
+		const root = _root();
+
+		_party.length = 0;
+		_friends.length = 0;
+
+		if (renewalParty) {
+			_skipSaveOnRemove = true;
+			for (const aid in _detachedMembers) {
+				if (_detachedMembers[aid]) {
+					_detachedMembers[aid].remove();
+				}
+			}
+			_detachedMembers = {};
+			_savedPositions = null;
+		}
+
+		_options.exp_share = 0;
+		_options.item_share = 0;
+		_options.item_sharing_type = 0;
+
+		const partyName = root.querySelector('.partyname');
+		if (partyName) partyName.textContent = '';
+
+		const friendCount = root.querySelector('.friendcount');
+		if (friendCount) friendCount.textContent = '0';
+
+		const partyContent = root.querySelector('.content .party');
+		if (partyContent) partyContent.innerHTML = '';
+
+		const friendContent = root.querySelector('.content .friend');
+		if (friendContent) friendContent.innerHTML = '';
+
+		if (renewalParty) {
+			const innerCount = root.querySelector('.count-box .inner-count');
+			if (innerCount) innerCount.textContent = '0/12';
+		}
+
+		// Reset buttons
+		_preferences.friend = !_preferences.friend;
+		onChangeTab();
+	};
+
+	/**
+	 * Removing the UI from window, save preferences
+	 */
+	Component.onRemove = function onRemove() {
+		_preferences.show = _isVisible();
+		if (renewalParty) {
+			_preferences.y = parseInt(this._host.style.top, 10) || 0;
+			_preferences.x = parseInt(this._host.style.left, 10) || 0;
+		} else {
+			_preferences.y = parseInt(this._host.style.top, 10);
+			_preferences.x = parseInt(this._host.style.left, 10);
+		}
+		_preferences.save();
+
+		if (renewalParty) {
+			if (!_skipSaveOnRemove && Object.keys(_detachedMembers).length > 0) {
+				this.saveDetachedMembers();
+			}
+			_skipSaveOnRemove = false;
+
+			_savedPositions = null;
+
+			const tooltip = document.getElementById('ro-tooltip-party');
+			if (tooltip) tooltip.style.display = 'none';
+		}
+	};
+
+	/**
+	 * Window Shortcuts
+	 */
+	Component.onShortCut = function onShortCut(key) {
+		switch (key.cmd) {
+			case 'FRIEND':
+				if (_preferences.friend) {
+					_toggleWindow();
+				} else {
+					_preferences.friend = false;
+					onChangeTab();
+					_showWindow();
+				}
+
+				if (_isVisible()) {
+					this.focus();
+				}
+				break;
+
+			case 'PARTY':
+				if (!_preferences.friend) {
+					_toggleWindow();
+				} else {
+					_preferences.friend = true;
+					onChangeTab();
+					_showWindow();
+				}
+
+				if (_isVisible()) {
+					this.focus();
+				}
+				break;
+		}
+	};
+
+	/**
+	 * Show/Hide UI
+	 */
+	Component.toggle = function toggle() {
+		_toggleWindow();
+		PartyHelper.remove();
+		if (_isVisible()) {
+			this.focus();
+		}
+	};
+
+	Component.onKeyDown = function onKeyDown(event) {
+		if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && _isVisible()) {
+			this.toggle();
+		}
+	};
+
+	/**
+	 * Set friends to UI
+	 *
+	 * @param {Array} friends list
+	 */
+	Component.setFriends = function setFriends(friends) {
+		const root = _root();
+		const count = friends.length;
+		const friendContainer = root.querySelector('.content .friend');
+
+		_friends.length = friends.length;
+		if (friendContainer) friendContainer.innerHTML = '';
+
+		for (let i = 0; i < count; i++) {
+			_friends[i] = friends[i];
+			if (friendContainer) {
+				friendContainer.insertAdjacentHTML(
+					'beforeend',
+					`<div class="node${friends[i].State === 0 ? ' online' : ''}">` +
+						`<span class="name">${_escapeHTML(friends[i].Name)}</span>` +
+						`</div>`
+				);
+			}
+		}
+
+		const friendCount = root.querySelector('.friendcount');
+		if (friendCount) friendCount.textContent = String(count);
+		_index = -1;
+	};
+
+	/**
+	 * Update friend (online/offline) state
+	 *
+	 * @param {number} index
+	 * @param {boolean} state
+	 */
+	Component.updateFriendState = function updateFriendState(index, state) {
+		const root = _root();
+		const nodes = root.querySelectorAll('.content .friend .node');

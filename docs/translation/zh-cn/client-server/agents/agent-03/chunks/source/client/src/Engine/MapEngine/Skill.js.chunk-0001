@@ -1,0 +1,500 @@
+/**
+ * Engine/MapEngine/Skill.js
+ *
+ * Manage skills
+ *
+ * @author Vincent Thibault
+ */
+
+/**
+ * Load dependencies
+ */
+import DB from 'DB/DBManager.js';
+import UIManager from 'UI/UIManager.js';
+import SkillId from 'DB/Skills/SkillConst.js';
+import SkillInfo from 'DB/Skills/SkillInfo.js';
+import EffectConst from 'DB/Effects/EffectConst.js';
+import PathFinding from 'Utils/PathFinding.js';
+import Session from 'Engine/SessionStorage.js';
+import Network from 'Network/NetworkManager.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import EntityManager from 'Renderer/EntityManager.js';
+import EffectManager from 'Renderer/EffectManager.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import ShortCut from 'UI/Components/ShortCut/ShortCut.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import SkillTargetSelection from 'UI/Components/SkillTargetSelection/SkillTargetSelection.js';
+import Guild from 'UI/Components/Guild/Guild.js';
+import SkillListMH from 'UI/Components/SkillListMH/SkillListMH.js';
+import ItemSelection from 'UI/Components/ItemSelection/ItemSelection.js';
+import MakeArrowSelection from 'UI/Components/MakeArrowSelection/MakeArrowSelection.js';
+import RefineWeaponSelection from 'UI/Components/RefineWeaponSelection/RefineWeaponSelection.js';
+import Inventory from 'UI/Components/Inventory/Inventory.js';
+import NpcMenu from 'UI/Components/NpcMenu/NpcMenu.js';
+import Sense from 'UI/Components/Sense/Sense.js';
+import Announce from 'UI/Components/Announce/Announce.js';
+import Renderer from 'Renderer/Renderer.js';
+import SkillWindow from 'UI/Components/SkillList/SkillList.js';
+import CartDecoration from 'UI/Components/CartDecoration/CartDecoration.js';
+
+import SnowWeatherEffect from 'Renderer/Effects/SnowWeather.js';
+import RainWeatherEffect from 'Renderer/Effects/RainWeather.js';
+import PokJukWeatherEffect from 'Renderer/Effects/PokJukWeatherEffect.js';
+import SakuraWeatherEffect from 'Renderer/Effects/SakuraWeatherEffect.js';
+import CloudWeatherEffect from 'Renderer/Effects/CloudWeatherEffect.js';
+
+/**
+ * Spam an effect
+ *
+ * 0 = base level up
+ * 1 = job level up
+ * 2 = refine failure
+ * 3 = refine success
+ * 4 = game over
+ * 5 = pharmacy success
+ * 6 = pharmacy failure
+ * 7 = base level up (super novice)
+ * 8 = job level up (super novice)
+ * 9 = base level up (taekwon)
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_EFFECT
+ */
+function onSpecialEffect(pkt) {
+	const EnumEffect = [
+		EffectConst.EF_ANGEL,
+		EffectConst.EF_JOBLVUP,
+		EffectConst.EF_REFINEFAIL,
+		EffectConst.EF_REFINEOK,
+		EffectConst.NONE, // game over
+		EffectConst.EF_PHARMACY_OK,
+		EffectConst.EF_PHARMACY_FAIL,
+		EffectConst.EF_ANGEL2,
+		EffectConst.EF_JOBLVUP2,
+		EffectConst.EF_ANGEL3
+	];
+
+	if (EnumEffect[pkt.effectID] > -1) {
+		const EF_Init_Par = {
+			effectId: EnumEffect[pkt.effectID],
+			ownerAID: pkt.AID
+		};
+
+		EffectManager.spam(EF_Init_Par);
+	}
+}
+
+/**
+ * Spam an effect
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_EFFECT2
+ */
+function onEffect(pkt) {
+	// Weather toggles: some servers use NOTIFY_EFFECT3 with numdata=0 to stop. rAthena don't send it as default.
+	if (typeof pkt.numdata !== 'undefined') {
+		if (pkt.effectID === EffectConst.EF_SNOW) {
+			if (pkt.numdata <= 0) {
+				SnowWeatherEffect.stop(pkt.AID, Renderer.tick);
+				return;
+			}
+		} else if (pkt.effectID === EffectConst.EF_RAIN) {
+			if (pkt.numdata <= 0) {
+				RainWeatherEffect.stop(pkt.AID, Renderer.tick);
+				return;
+			}
+		} else if (pkt.effectID === EffectConst.EF_POKJUK) {
+			if (pkt.numdata <= 0) {
+				PokJukWeatherEffect.stop(pkt.AID, Renderer.tick);
+				return;
+			}
+		} else if (pkt.effectID === EffectConst.EF_MAPLE || pkt.effectID === EffectConst.EF_SAKURA) {
+			if (pkt.numdata <= 0) {
+				SakuraWeatherEffect.stop(pkt.AID, Renderer.tick);
+				return;
+			}
+		} else if (pkt.effectID === EffectConst.EF_CLOUD || pkt.effectID === EffectConst.EF_CLOUD2) {
+			if (pkt.numdata <= 0) {
+				CloudWeatherEffect.stop(pkt.AID, Renderer.tick);
+				return;
+			}
+		}
+	}
+
+	const EF_Init_Par = {
+		effectId: pkt.effectID,
+		ownerAID: pkt.AID
+	};
+
+	EffectManager.spam(EF_Init_Par);
+}
+
+/**
+ * Display an effect to the scene
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_GROUNDSKILL
+ */
+function onSkillToGround(pkt) {
+	const position = new Array(3);
+	position[0] = pkt.xPos;
+	position[1] = pkt.yPos;
+	position[2] = Altitude.getCellHeight(pkt.xPos, pkt.yPos);
+
+	EffectManager.spamSkill(pkt.SKID, pkt.AID, position, null, pkt.AID);
+}
+
+/**
+ * Failed to cast a skill
+ *
+ * @param {object} pkt - PACKET.ZC.ACK_TOUSESKILL
+ */
+function onSkillResult(pkt) {
+	// Yeah success !
+	if (pkt.result) {
+		return;
+	}
+
+	let error = 0;
+	/*var entity = Session.Entity;
+		let srcEntity = EntityManager.get(entity.GID);*/
+	if (pkt.NUM) {
+		switch (pkt.SKID) {
+			default:
+				error = 204;
+				break;
+
+			case SkillId.NV_BASIC:
+				error = pkt.NUM < 7 ? 159 + pkt.NUM : pkt.NUM == 7 ? 383 : 0;
+				break;
+
+			case SkillId.AL_WARP:
+				error = 214;
+				break;
+
+			case SkillId.TF_STEAL:
+				error = 205;
+				break;
+
+			case SkillId.TF_POISON:
+				error = 207;
+				break;
+		}
+	}
+
+	if (pkt.SKID == SkillId.CG_TAROTCARD) {
+		error = 204;
+	} else {
+		switch (pkt.cause) {
+			case 1:
+				error = 202;
+				break;
+			case 2:
+				error = 203;
+				break;
+			case 3:
+				error = 808;
+				break;
+			case 4:
+				error = 219;
+				break;
+			case 5:
+				error = 233;
+				break;
+			case 6:
+				error = 239;
+				break;
+			case 7:
+				error = 246;
+				break;
+			case 8:
+				error = 247;
+				break;
+			case 9:
+				error = 580;
+				break;
+			case 10:
+				error = 285;
+				break;
+			case 13:
+				error = 1398;
+				break;
+			case 83:
+				error = 661;
+				break;
+		}
+	}
+
+	if (error) {
+		ChatBox.addText(DB.getMessage(error), ChatBox.TYPE.ERROR, ChatBox.FILTER.SKILL_FAIL);
+		// all skills fails that i tested not executed skill action
+		// maybe there is some edge case that i missed
+		// so i'm commenting out for now
+		//if (pkt.SKID in SkillActionTable) {
+		//	var action = SkillActionTable[pkt.SKID];
+		//	if (action) {
+		//		srcEntity.setAction(action(srcEntity, Renderer.tick));
+		//	}
+		//} else {
+		//	if(DB.isDoram(srcEntity.job)){
+		//		srcEntity.setAction(SkillActionTable['DEFAULT_DORAM'](srcEntity, Renderer.tick));
+		//	} else {
+		//		srcEntity.setAction(SkillActionTable['DEFAULT'](srcEntity, Renderer.tick));
+		//	}
+		//}
+	}
+}
+
+/**
+ * List of skills
+ *
+ * @param {object} pkt - PACKET_ZC_SKILLINFO_LIST
+ */
+function onSkillList(pkt) {
+	SkillWindow.getUI().setSkills(pkt.skillList);
+}
+
+/**
+ * Update a specified skill
+ *
+ * @param {object} pkt - PACKET.ZC.SKILLINFO_UPDATE
+ */
+function onSkillUpdate(pkt) {
+	SkillWindow.getUI().updateSkill(pkt);
+}
+
+/**
+ * List of skills/items in hotkey
+ *
+ * @param {object} pkt - PACKET_ZC_SHORTCUT_KEY_LIST_V2
+ */
+function onShortCutList(pkt) {
+	if (pkt.tab && pkt.tab > 0) {
+		return;
+	} // not available yet
+	ShortCut.setList(pkt.ShortCutKey);
+}
+
+/**
+ * Add new skill to the list
+ *
+ * @param {object} pkt - PACKET.ZC.ADD_SKILL
+ */
+function onSkillAdded(pkt) {
+	SkillWindow.getUI().addSkill(pkt.data);
+}
+
+/**
+ * Server notify use that we need to cast a skill
+ *
+ * @param {object} pkt - PACKET.ZC.AUTORUN_SKILL
+ */
+function onAutoCastSkill(pkt) {
+	SkillWindow.getUI().useSkill(pkt.data);
+}
+
+/**
+ * Get a list of item to identify
+ *
+ * @param {object} pkt - PACKET.ZC.ITEMIDENTIFY_LIST
+ */
+function onIdentifyList(pkt) {
+	if (!pkt.ITIDList.length) {
+		return;
+	}
+
+	ItemSelection.append();
+	ItemSelection.setList(pkt.ITIDList);
+	ItemSelection.setTitle(DB.getMessage(521));
+	ItemSelection.onIndexSelected = function (index) {
+		if (index >= -1) {
+			const _pkt = new PACKET.CZ.REQ_ITEMIDENTIFY();
+			_pkt.index = index;
+			Network.sendPacket(_pkt);
+		}
+	};
+}
+
+/**
+ * Get the result once item identified
+ *
+ * @param {object} pkt - PACKET.ZC.ACK_ITEMIDENTIFY
+ */
+function onIdentifyResult(pkt) {
+	// Self closed, no message.
+	if (pkt.index < 0) {
+		return;
+	}
+
+	switch (pkt.result) {
+		case 0: {
+			// success
+			ChatBox.addText(DB.getMessage(491), ChatBox.TYPE.BLUE, ChatBox.FILTER.ITEM);
+
+			// Remove old item
+			const item = Inventory.getUI().removeItem(pkt.index, 1);
+
+			// Add new item updated
+			if (item) {
+				item.IsIdentified = true;
+				Inventory.getUI().addItem(item);
+			}
+			break;
+		}
+		case 1: // Fail
+			ChatBox.addText(DB.getMessage(492), ChatBox.TYPE.ERROR, ChatBox.FILTER.ITEM);
+			break;
+	}
+}
+
+/**
+ * Get a list of skills to use for auto-spell
+ *
+ * @param {object} pkt - PACKET.ZC.AUTOSPELLLIST
+ */
+function onAutoSpellList(pkt) {
+	if (!pkt.SKID.length) {
+		return;
+	}
+
+	ItemSelection.append();
+	ItemSelection.setList(pkt.SKID, true);
+	ItemSelection.setTitle(DB.getMessage(697));
+	ItemSelection.onIndexSelected = function (index) {
+		if (index >= -1) {
+			const _pkt = new PACKET.CZ.SELECTAUTOSPELL();
+			_pkt.SKID = index;
+			Network.sendPacket(_pkt);
+		}
+	};
+}
+
+/**
+ * Get a list of players under the effect of devotion
+ *
+ * @param {object} pkt - PACKET.ZC.DEVOTIONLIST
+ */
+function onDevotionList(pkt) {
+	EffectManager.remove(null, pkt.myAID, EffectConst.EF_LINELINK);
+
+	pkt.AID.forEach(tgtAID => {
+		if (tgtAID > 0) {
+			const EF_Init_Par = {
+				effectId: EffectConst.EF_LINELINK,
+				ownerAID: pkt.myAID,
+				otherAID: tgtAID,
+				persistent: true
+			};
+
+			EffectManager.spam(EF_Init_Par);
+		}
+	});
+}
+
+/**
+ * Get a list of skills to use for auto-spell
+ *
+ * @param {object} pkt - PACKET.ZC.SKILL_SELECT_REQUEST
+ */
+function onSelectSkillList(pkt) {
+	if (!pkt.SKID.length) {
+		return;
+	}
+
+	ItemSelection.append();
+	ItemSelection.setList(pkt.SKID, true);
+	ItemSelection.setTitle(DB.getMessage(697));
+	ItemSelection.onIndexSelected = index => {
+		if (index >= -1) {
+			const _pkt = new PACKET.CZ.SKILL_SELECT_RESPONSE();
+			_pkt.SKID = index;
+			_pkt.why = 0; // Currently unused on server side (clif_parse_SkillSelectMenu)
+			Network.sendPacket(_pkt);
+		}
+	};
+}
+
+/**
+ * Manage menu to select zone to warp on
+ *
+ * @param {object} pkt - PACKET.ZC.WARPLIST
+ */
+function onTeleportList(pkt) {
+	// Once selected
+	NpcMenu.onSelectMenu = (skillid, index) => {
+		NpcMenu.remove();
+
+		const _pkt = new PACKET.CZ.SELECT_WARPPOINT();
+		_pkt.SKID = skillid;
+		_pkt.mapName = pkt.mapName[index - 1] || 'cancel';
+		Network.sendPacket(_pkt);
+	};
+
+	NpcMenu.onAppend = () => {
+		const mapNames = [];
+
+		for (let i = 0, count = pkt.mapName.length; i < count; ++i) {
+			mapNames[i] = DB.getMapName(pkt.mapName[i], pkt.mapName[i]);
+		}
+
+		NpcMenu.setMenu(mapNames.join(':') + ':Cancel', pkt.SKID);
+		NpcMenu.ui.find('.title').text(DB.getMessage(213));
+	};
+
+	NpcMenu.append();
+}
+
+/**
+ * Get error message from teleportation skill
+ *
+ * @param {object} pkt - PACKET.ZC.NOTIFY_MAPINFO
+ */
+function onTeleportResult(pkt) {
+	switch (pkt.type) {
+		case 0: //Unable to Teleport in this area
+			ChatBox.addText(DB.getMessage(500), ChatBox.TYPE.ERROR, ChatBox.FILTER.SKILL_FAIL);
+			break;
+
+		case 1: //Saved point cannot be memorized.
+			ChatBox.addText(DB.getMessage(501), ChatBox.TYPE.ERROR, ChatBox.FILTER.SKILL_FAIL);
+			break;
+	}
+}
+
+/**
+ * Result of /memo command
+ *
+ * @param {object} pkt - PACKET.ZC.ACK_REMEMBER_WARPPOINT
+ */
+function onMemoResult(pkt) {
+	switch (pkt.errorCode) {
+		case 0: // Saved location as a Memo Point for Warp skill.
+			ChatBox.addText(DB.getMessage(217), ChatBox.TYPE.BLUE, ChatBox.FILTER.PUBLIC_LOG);
+			break;
+
+		case 1: // Skill Level is not high enough.
+			ChatBox.addText(DB.getMessage(214), ChatBox.TYPE.ERROR, ChatBox.FILTER.SKILL_FAIL);
+			break;
+
+		case 2: // You haven't learned Warp.
+			ChatBox.addText(DB.getMessage(216), ChatBox.TYPE.ERROR, ChatBox.FILTER.SKILL_FAIL);
+			break;
+	}
+}
+
+/**
+ * Get a list of arrows to create
+ *
+ * @param {object} pkt - PACKET.ZC.MAKINGARROW_LIST
+ */
+function onMakingarrowList(pkt) {
+	if (!pkt.arrowList.length) {
+		return;
+	}
+
+	MakeArrowSelection.append();
+	MakeArrowSelection.setList(pkt.arrowList);
+	//MakeArrowSelection.setTitle(DB.getMessage(658));
+	MakeArrowSelection.setTitle('LIST');
+	MakeArrowSelection.onIndexSelected = function (index) {
+		if (index >= -1) {
+			const _pkt = new PACKET.CZ.REQ_MAKINGARROW();
+			_pkt.id = index;

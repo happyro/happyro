@@ -1,0 +1,418 @@
+
+			element.classList.remove('active', 'passive', 'disabled');
+			element.classList.add(!skill.level ? 'disabled' : skill.type ? 'active' : 'passive');
+
+			const levelupEl = element.querySelector('.levelup');
+			if (levelupEl) {
+				levelupEl.style.display = skill.upgradable && _points ? '' : 'none';
+			}
+		});
+
+		this.onUpdateSkill(skill.SKID, skill.level);
+	};
+
+	Component.useSkillID = function useSkillID(id, level) {
+		const skill = getSkillById(id);
+		if (!skill || !skill.level || !skill.type) {
+			return;
+		}
+		Component.useSkill(skill, level ? level : skill.selectedLevel);
+	};
+
+	Component.useSkill = function useSkill(skill, level) {
+		if (skill.type & SkillTargetSelection.TYPE.SELF) {
+			this.onUseSkill(skill.SKID, level ? level : skill.level);
+		}
+
+		skill.useLevel = level;
+
+		if (skill.type & SkillTargetSelection.TYPE.TARGET) {
+			SkillTargetSelection.append();
+			SkillTargetSelection.set(skill, skill.type);
+		}
+	};
+
+	Component.setPoints = function setPoints(amount) {
+		const root = this.getRoot();
+		const el = root.querySelector('.skpoints_count');
+		if (el) {
+			el.textContent = amount;
+		}
+
+		if (!_points === !amount) {
+			_points = amount;
+			return;
+		}
+
+		_points = amount;
+		const count = _list.length;
+
+		for (let i = 0; i < count; ++i) {
+			const levelups = root.querySelectorAll(`.skill.id${_list[i].SKID} .levelup`);
+			levelups.forEach(lu => {
+				lu.style.display = _list[i].upgradable && amount ? '' : 'none';
+			});
+		}
+	};
+
+	Component.onLevelUp = function onLevelUp() {
+		if (_btnLevelUp) {
+			document.body.appendChild(_btnLevelUp);
+		}
+	};
+
+	function getSkillById(id) {
+		const count = _list.length;
+		for (let i = 0; i < count; ++i) {
+			if (_list[i].SKID === id) {
+				return _list[i];
+			}
+		}
+		return null;
+	}
+
+	function onResize(e, comp) {
+		e.stopImmediatePropagation();
+		const top = parseInt(comp._host.style.top, 10) || 0;
+		const left = parseInt(comp._host.style.left, 10) || 0;
+		let lastWidth = 0;
+		let lastHeight = 0;
+
+		const resizing = () => {
+			const extraX = -6;
+			const extraY = 32;
+
+			let w = Math.floor((Mouse.screen.x - left - extraX) / 32);
+			let h = Math.floor((Mouse.screen.y - top - extraY) / 32);
+
+			w = Math.min(Math.max(w, 8), 8);
+			h = Math.min(Math.max(h, 4), 10);
+
+			if (w === lastWidth && h === lastHeight) {
+				return;
+			}
+
+			resize(comp, w, h);
+			lastWidth = w;
+			lastHeight = h;
+		};
+
+		const interval = setInterval(resizing, 30);
+
+		const onMouseUp = event => {
+			if (event.which === 1) {
+				clearInterval(interval);
+				window.removeEventListener('mouseup', onMouseUp);
+			}
+		};
+		window.addEventListener('mouseup', onMouseUp);
+	}
+
+	function resize(comp, width, height) {
+		const root = comp.getRoot();
+
+		if (listOnly) {
+			width = Math.min(Math.max(width, 8), 8);
+			height = Math.min(Math.max(height, 4), 10);
+			const content = root.querySelector('.content');
+			if (content) {
+				content.style.width = `${width * 32}px`;
+				content.style.height = `${height * 32}px`;
+			}
+			return;
+		}
+
+		if (_preferences.mini) {
+			width = Math.min(Math.max(width, 8), 8);
+			height = Math.min(Math.max(height, 4), 10);
+			const extend = root.querySelector('.extend');
+			if (extend) {
+				extend.style.display = '';
+			}
+			const content = root.querySelector('.content');
+			if (content) {
+				content.style.display = '';
+			}
+
+			if (hasTabs) {
+				const checkedBig = root.querySelector('.tab-switch:checked');
+				if (checkedBig) {
+					const tabId = checkedBig.id;
+					const i = parseInt(tabId.split('-')[1], 10);
+					const miniRadio = root.querySelector(`#tab-${i}-mini`);
+					if (miniRadio) {
+						miniRadio.checked = true;
+					}
+				}
+			}
+
+			const contentbig = root.querySelector('.contentbig');
+			if (contentbig) {
+				contentbig.style.display = 'none';
+			}
+			root.querySelectorAll('.footer .btn').forEach(el => {
+				el.style.display = 'none';
+			});
+
+			if (content) {
+				content.style.width = `${width * 32}px`;
+				content.style.height = `${height * 32}px`;
+			}
+			if (hasTabs) {
+				root.querySelectorAll('.tab-content-mini').forEach(el => {
+					el.style.width = `${width * 32}px`;
+					el.style.height = `${height * 32}px`;
+				});
+			}
+		} else {
+			width = 17;
+			height = 12;
+			const extend = root.querySelector('.extend');
+			if (extend) {
+				extend.style.display = 'none';
+			}
+			const content = root.querySelector('.content');
+			if (content) {
+				content.style.display = 'none';
+			}
+
+			if (hasTabs) {
+				const checkedMini = root.querySelector('.tab-switch-mini:checked');
+				if (checkedMini) {
+					const tabId = checkedMini.id;
+					const i = parseInt(tabId.split('-')[1], 10);
+					const bigRadio = root.querySelector(`#tab-${i}`);
+					if (bigRadio) {
+						bigRadio.checked = true;
+					}
+				}
+			}
+
+			const contentbig = root.querySelector('.contentbig');
+			if (contentbig) {
+				contentbig.style.display = '';
+				contentbig.style.width = `${width * 32}px`;
+				contentbig.style.height = `${height * 32}px`;
+			}
+			root.querySelectorAll('.footer .btn').forEach(el => {
+				el.style.display = 'block';
+			});
+		}
+	}
+
+	function onMini(comp) {
+		_preferences.mini = !_preferences.mini;
+		_preferences.save();
+		resize(comp, _preferences.width, _preferences.height);
+	}
+
+	function onApplyChoice(comp) {
+		const applyArr = [];
+		rememberChoice.forEach((item, skillId) => {
+			applyArr[skillId] = 0;
+			const level = hasSkills?.[skillId]?.level ?? 0;
+
+			if (item.count > level) {
+				applyArr[skillId] = item.count - level;
+			} else {
+				applyArr[skillId] = item.count;
+			}
+		});
+
+		applyArr.forEach((c, k) => {
+			for (let i = 0; i < c; i++) {
+				Component.onIncreaseSkill(parseInt(k, 10));
+			}
+		});
+
+		totalCounter = 0;
+		const root = comp.getRoot();
+		const skpointsEl = root.querySelector('.skpoints_count');
+		if (skpointsEl) {
+			skpointsEl.textContent = `${_points - totalCounter}`;
+		}
+		rememberChoice = [];
+	}
+
+	function onResetChoice(comp) {
+		const root = comp.getRoot();
+		rememberChoice.forEach((_count, skillId) => {
+			if (!skillDependencyTree[skillId]) {
+				return;
+			}
+			const skillbox = root.querySelector(`.skillCol.s${skillDependencyTree[skillId].position}`);
+			if (skillbox) {
+				if (!hasSkills?.[skillId]?.level) {
+					skillbox.querySelectorAll('.skill').forEach(el => el.classList.add('disabled'));
+				}
+				const selectable = skillbox.querySelector('.selectable');
+				if (selectable) {
+					selectable.style.display = '';
+				}
+				skillbox.querySelectorAll('.current').forEach(el => {
+					el.textContent = hasSkills?.[skillId]?.level ?? 0;
+				});
+				skillbox.querySelectorAll('.max').forEach(el => {
+					el.textContent = hasSkills?.[skillId]?.level ?? 0;
+				});
+			}
+		});
+		totalCounter = 0;
+		const skpointsEl = root.querySelector('.skpoints_count');
+		if (skpointsEl) {
+			skpointsEl.textContent = _points;
+		}
+		rememberChoice = [];
+	}
+
+	function onNecessarySkills(target, root) {
+		let main = target.parentElement;
+		if (!main.classList.contains('skill')) {
+			main = main.parentElement;
+		}
+		const skillId = parseInt(main.getAttribute('data-index'), 10);
+		specifyRequirements(skillId, null, root);
+	}
+
+	function _resolveSkillID(el) {
+		let main = el.parentElement;
+		if (!main.classList.contains('skill')) {
+			main = main.parentElement;
+		}
+		const id = parseInt(main.getAttribute('data-index'), 10);
+		const skill = getSkillById(id);
+		return skill?.SKID ?? id;
+	}
+
+	function onSkillTouchStart(event, iconEl) {
+		const touch = event.touches[0];
+		const skillDiv = iconEl.closest('.skill');
+		const index = parseInt(skillDiv.getAttribute('data-index'), 10);
+		const skill = getSkillById(index);
+
+		if (!skill || !skill.level || !skill.type) {
+			return;
+		}
+
+		_touchDrag.startX = touch.pageX;
+		_touchDrag.startY = touch.pageY;
+		_touchDrag.ghost = null;
+		_touchDrag.dragging = false;
+
+		_touchDrag.timer = setTimeout(() => {
+			_touchDrag.dragging = true;
+
+			const ghost = iconEl.cloneNode(true);
+			ghost.classList.add('drag-ghost');
+			ghost.style.position = 'absolute';
+			ghost.style.zIndex = '10000';
+			ghost.style.left = `${touch.pageX - 12}px`;
+			ghost.style.top = `${touch.pageY - 12}px`;
+			ghost.style.opacity = '0.8';
+			ghost.style.pointerEvents = 'none';
+			document.body.appendChild(ghost);
+			_touchDrag.ghost = ghost;
+
+			window._OBJ_DRAG_ = {
+				type: 'skill',
+				from: _dragFrom,
+				data: skill
+			};
+		}, 300);
+	}
+
+	function onSkillTouchMove(event) {
+		if (!_touchDrag.timer && !_touchDrag.dragging) {
+			return;
+		}
+
+		const touch = event.touches[0];
+
+		if (_touchDrag.dragging) {
+			event.preventDefault();
+			if (_touchDrag.ghost) {
+				_touchDrag.ghost.style.left = `${touch.pageX - 12}px`;
+				_touchDrag.ghost.style.top = `${touch.pageY - 12}px`;
+			}
+		} else {
+			const dx = touch.pageX - _touchDrag.startX;
+			const dy = touch.pageY - _touchDrag.startY;
+			if (dx * dx + dy * dy > 100) {
+				clearTimeout(_touchDrag.timer);
+				_touchDrag.timer = null;
+			}
+		}
+	}
+
+	function onSkillTouchEnd(event) {
+		if (_touchDrag.timer) {
+			clearTimeout(_touchDrag.timer);
+			_touchDrag.timer = null;
+		}
+
+		if (_touchDrag.dragging) {
+			_touchDrag.dragging = false;
+
+			if (_touchDrag.ghost) {
+				_touchDrag.ghost.remove();
+				_touchDrag.ghost = null;
+			}
+
+			const touch = event.changedTouches[0];
+			const target = document.elementFromPoint(touch.clientX, touch.clientY);
+
+			if (target) {
+				const dropTarget = target.closest('.container');
+				if (dropTarget) {
+					const dropEvent = new Event('drop', { bubbles: true });
+					dropEvent.dataTransfer = {
+						getData(type) {
+							if (type === 'Text') {
+								return JSON.stringify(window._OBJ_DRAG_);
+							}
+							return '';
+						}
+					};
+					dropTarget.dispatchEvent(dropEvent);
+				}
+			}
+
+			delete window._OBJ_DRAG_;
+		}
+	}
+
+	function skillLevelSelectUp(skill, root) {
+		const level = skill.selectedLevel ? skill.selectedLevel : skill.level;
+		if (level < skill.level) {
+			skill.selectedLevel = level + 1;
+			const elements = root.querySelectorAll(`.skill.id${skill.SKID}`);
+			elements.forEach(element => {
+				const current = element.querySelector('.level .current');
+				if (current) {
+					current.textContent = skill.selectedLevel;
+				}
+			});
+		}
+	}
+
+	function skillLevelSelectDown(skill, root) {
+		const level = skill.selectedLevel ? skill.selectedLevel : skill.level;
+		if (level > 1) {
+			skill.selectedLevel = level - 1;
+			const elements = root.querySelectorAll(`.skill.id${skill.SKID}`);
+			elements.forEach(element => {
+				const current = element.querySelector('.level .current');
+				if (current) {
+					current.textContent = skill.selectedLevel;
+				}
+			});
+		}
+	}
+
+	Component.onUseSkill = function onUseItem() {};
+	Component.onIncreaseSkill = function onIncreaseSkill() {};
+	Component.onUpdateSkill = function onUpdateSkill() {};
+	Component.getSkillById = getSkillById;
+
+	return UIManager.addComponent(Component);
+}

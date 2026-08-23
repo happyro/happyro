@@ -1,0 +1,500 @@
+		return {
+			vao: vao,
+			vbo: vbo,
+			ibo: ibo,
+			count: mesh.indices.length,
+			tex: type.textures.byFile[mesh.texFile] || type.textures.byFile.__grey,
+			emblem: mesh.emblem // the emblem submesh (Plane01) binds the live per-instance guild emblem
+		};
+	});
+	// Whether this type carries an emblem submesh (guild flag) — gates the per-instance emblem
+	// rebuild in render() so non-flag types skip it.
+	type.hasEmblem = type.submeshes.some(function (sm) {
+		return sm.emblem;
+	});
+	type.glReady = true;
+}
+
+function mat3MulVec3(m, v, out) {
+	out[0] = m[0] * v[0] + m[4] * v[1] + m[8] * v[2];
+	out[1] = m[1] * v[0] + m[5] * v[1] + m[9] * v[2];
+	out[2] = m[2] * v[0] + m[6] * v[1] + m[10] * v[2];
+}
+
+/**
+ * computeLocalAABB(meshes) -> the model's local bind-pose axis-aligned bounds { min, max }, or
+ * null if empty. Used to project a screen-space pick box (see computeScreenRect) — the GR2 path
+ * suppresses the 2D sprite body, which is what normally fills entity.boundingRect.
+ */
+function computeLocalAABB(meshes) {
+	let minX = Infinity,
+		minY = Infinity,
+		minZ = Infinity;
+	let maxX = -Infinity,
+		maxY = -Infinity,
+		maxZ = -Infinity;
+	for (let k = 0; k < meshes.length; k++) {
+		const bind = meshes[k].bind;
+		const vc = meshes[k].vcount;
+		for (let i = 0; i < vc; i++) {
+			const x = bind[i * 3];
+			const y = bind[i * 3 + 1];
+			const z = bind[i * 3 + 2];
+			if (x < minX) minX = x;
+			if (x > maxX) maxX = x;
+			if (y < minY) minY = y;
+			if (y > maxY) maxY = y;
+			if (z < minZ) minZ = z;
+			if (z > maxZ) maxZ = z;
+		}
+	}
+	if (minX === Infinity) {
+		return null;
+	}
+	return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] };
+}
+
+/**
+ * computeScreenRect(aabb, mvp, out) -> project the 8 AABB corners through mvp to a screen-space
+ * rect (window pixels, y-down: x1/y1 = min, x2/y2 = max), written into `out`. Returns false when
+ * every corner is behind the camera. Mirrors EntityRender.calculateBoundingRect's NDC->pixel map
+ * so the projected box lines up with EntityManager's mouse-space pick test.
+ *
+ * Intentionally kept even though the shipped default calls computeBaseSphereRect: it is the
+ * "tout le drapeau" mode (A) at the pick site, activated by commenting there. See render().
+ */
+// eslint-disable-next-line no-unused-vars
+function computeScreenRect(aabb, mvp, out) {
+	const min = aabb.min;
+	const max = aabb.max;
+	const halfW = window.innerWidth * 0.5;
+	const halfH = window.innerHeight * 0.5;
+	let minX = Infinity,
+		minY = Infinity,
+		maxX = -Infinity,
+		maxY = -Infinity;
+	let any = false;
+	for (let i = 0; i < 8; i++) {
+		const x = i & 1 ? max[0] : min[0];
+		const y = i & 2 ? max[1] : min[1];
+		const z = i & 4 ? max[2] : min[2];
+		const cw = mvp[3] * x + mvp[7] * y + mvp[11] * z + mvp[15];
+		if (cw <= CLIP_W_EPS) {
+			continue;
+		}
+		const inv = 1 / cw;
+		const sx = halfW * (1 + (mvp[0] * x + mvp[4] * y + mvp[8] * z + mvp[12]) * inv);
+		const sy = halfH * (1 - (mvp[1] * x + mvp[5] * y + mvp[9] * z + mvp[13]) * inv);
+		if (sx < minX) minX = sx;
+		if (sx > maxX) maxX = sx;
+		if (sy < minY) minY = sy;
+		if (sy > maxY) maxY = sy;
+		any = true;
+	}
+	if (!any) {
+		return false;
+	}
+	out.x1 = minX;
+	out.y1 = minY;
+	out.x2 = maxX;
+	out.y2 = maxY;
+	return true;
+}
+
+/**
+ * computeBaseSphereRect(mvp, projection, out) -> the client's GR2 pick box: the screen rect of a
+ * base bounding-sphere (fcn.006852e0), written into `out` (same {x1,y1,x2,y2} shape and
+ * window-pixel/y-down convention computeScreenRect produces, so EntityRender consumes it
+ * unchanged). Returns false when the base is behind the camera.
+ *
+ * Centre = the model origin (0,0,0) projected through the FULL model→clip matrix = the mvp
+ * translation column (mvp[12], mvp[13], w = mvp[15]). This is the model's base exactly as drawn —
+ * it carries the cell-centre +0.5, the groundOffset and the ipRow — matching fcn.006852e0.c:50-57,
+ * which transforms the stored centre (sub+0x394 = (0,0,0)) by the model's own matrices. Do NOT use
+ * the raw cell anchor (worldAnchorToClip): it misses the +0.5/ground and lands half a cell off.
+ *
+ * Half-extent = √(r²·0.5) world-u (BASE_SPHERE_HALF_EXTENT), projected `·focal·(1/w)` symmetrically
+ * around the centre (fcn.006852e0.c:70-71,75-81), where roBrowser's `focal` is `halfW·projection[0]`
+ * / `halfH·projection[5]` (the viewport scales). The radius is a world/view extent, independent of
+ * the model's own geometry scale — same as the client, which adds the raw radius in view space.
+ */
+function computeBaseSphereRect(mvp, projection, out) {
+	const cw = mvp[15];
+	if (cw <= CLIP_W_EPS) {
+		return false;
+	}
+	const inv = 1 / cw;
+	const halfW = window.innerWidth * 0.5;
+	const halfH = window.innerHeight * 0.5;
+	const cx = halfW * (1 + mvp[12] * inv);
+	const cy = halfH * (1 - mvp[13] * inv);
+	const ex = halfW * projection[0] * BASE_SPHERE_HALF_EXTENT * inv;
+	const ey = halfH * projection[5] * BASE_SPHERE_HALF_EXTENT * inv;
+	out.x1 = cx - ex;
+	out.x2 = cx + ex;
+	out.y1 = cy - ey;
+	out.y2 = cy + ey;
+	return true;
+}
+
+function normalize3(v) {
+	const len = Math.hypot(v[0], v[1], v[2]) || 1;
+	v[0] /= len;
+	v[1] /= len;
+	v[2] /= len;
+}
+
+/**
+ * Render every live GR2 instance. Signature mirrors AnimatedModels.render (the seam it
+ * sits next to): (gl, modelView, projection, normalMat, fog, light, tick). modelView is
+ * Camera.modelView (the view matrix); the per-instance world is composed on top.
+ */
+function render(gl, modelView, projection, normalMat, fog, light, tick) {
+	_gl = gl;
+	if (_instances.length === 0 || !light) {
+		return;
+	}
+	if (!_program) {
+		init(gl);
+	}
+
+	// Build GL resources for any type whose CPU decode has finished.
+	for (const path in _types) {
+		const type = _types[path];
+		if (type.cpuReady && !type.glReady) {
+			buildTypeGL(gl, type);
+		}
+	}
+
+	const uniform = _program.uniform;
+	gl.useProgram(_program);
+
+	// Per-frame constant uniforms.
+	gl.uniformMatrix4fv(uniform.uProjectionMat, false, projection);
+	// Opacity and env tint come from the map's own light (parity with Models.js / AnimatedModels.js
+	// — the GR2 .fs math is byte-identical). uLightDiffuse / uLightAmbient are byte-decided per model
+	// and set inside the instance loop below. Falls back to the Phase-0 baked grays if a map omits a
+	// field (dev spawn always has light; the render early-returns without it).
+	gl.uniform1f(uniform.uLightOpacity, light.opacity != null ? light.opacity : 1.0);
+	gl.uniform3fv(uniform.uLightEnv, light.env || _phaseEnv);
+	gl.uniform1f(uniform.uAlphaRef, ALPHA_REF);
+	gl.uniform1i(uniform.uFogUse, fog.use && fog.exist);
+	gl.uniform1f(uniform.uFogNear, fog.near);
+	gl.uniform1f(uniform.uFogFar, fog.far);
+	gl.uniform3fv(uniform.uFogColor, fog.color);
+	gl.activeTexture(gl.TEXTURE0);
+	gl.uniform1i(uniform.uDiffuse, 0);
+
+	// Opaque device state — no blend (client draws the GR2 opaque with a hard alpha-test). Saved
+	// and restored so the later transparent passes (entity shadow, water, effects) keep their blend.
+	const blendWasEnabled = gl.isEnabled(gl.BLEND);
+	gl.disable(gl.BLEND);
+
+	// Scene light direction (world) -> view space, so N.L shares the normal's frame.
+	mat3MulVec3(modelView, light.direction, _lightView);
+	normalize3(_lightView);
+	gl.uniform3fv(uniform.uLightDirection, _lightView);
+
+	const seen = {};
+	SpriteRenderer.runWithDepth(true, true, true, function () {
+		for (let i = 0; i < _instances.length; i++) {
+			const inst = _instances[i];
+			const type = _types[inst.path];
+			if (!type || !type.glReady) {
+				continue;
+			}
+
+			// Entity-backed instance: pull pos/dir/action from the live entity (1-frame lag —
+			// this pass runs before EntityManager.render) and prioritise its bank load.
+			if (inst.entity) {
+				syncFromEntity(inst, type, tick);
+
+				// Live guild emblem: bind the entity's fetched emblem image (Guild.requestGuildEmblem,
+				// triggered on spawn for any GUID) as a per-instance POT texture. Per-instance, not
+				// per-type — two flags of different guilds must show different emblems. Rebuild only when
+				// the image reference changes (new guild / GEmblemVer → new image object), so the identity
+				// compare is the whole per-frame cost.
+				if (type.hasEmblem) {
+					const emblemImg = inst.entity.emblem && inst.entity.emblem.emblem;
+					if (emblemImg !== inst._emblemImg) {
+						inst._emblemImg = emblemImg;
+						if (emblemImg) {
+							inst.emblemTex = buildEmblemTexture(gl, emblemImg, inst.emblemTex);
+						} else if (inst.emblemTex) {
+							gl.deleteTexture(inst.emblemTex);
+							inst.emblemTex = null;
+						}
+					}
+				}
+			}
+
+			// Frustum cull BEFORE posing — a culled instance neither poses nor draws. The anchor
+			// negates the height to match buildWorld's world-Y (-position[2]).
+			worldAnchorToClip(inst.pos, modelView, projection, _clip);
+			if (frustumCullClip(_clip[0], _clip[1], _clip[3], CULL_MARGIN)) {
+				// Off-screen: drop the stale pick box so the hover test can't match it (the entity
+				// falls back to EntityRender's default box, which is off-screen anyway).
+				inst.screenRect = null;
+				continue;
+			}
+
+			// Build the instance world matrix once the type (its ipRow) is known. Entity
+			// positions are [cellX, cellY, position[2]] where position[2] = getCellHeight (a
+			// NEGATED terrain height). roBrowser's world-Y (up) is -position[2] (see the 2D sprite
+			// Project(): `y = -pos.z`), so negate p[2] into buildWorld's up axis — else the
+			// placement error is proportional to the terrain height (flat OK, hills sink/vanish).
+			if (!inst.worldBuilt) {
+				const p = inst.pos;
+				inst.world = buildWorld(inst.dir * DIR_STEP_DEG, [p[0], -p[2], p[1]], type.ipRow, {
+					heightOffset: type.groundOffset
+				});
+				inst.worldBuilt = true;
+			}
+
+			// Advance the action clock, then resolve/cache the pose at 40 Hz.
+			const pose = actorPose(inst.actor, type, tick, inst.standbyIdx, null);
+			const animIndex = pose.animIndex;
+			const t = pose.t;
+			inst.animIndex = animIndex;
+			inst.t = t;
+
+			const key = poseCacheKey(inst.path, animIndex, quantizePoseTime(t));
+			let bones = seen[key] || _poseCache[key];
+			if (!bones) {
+				const idx = animIndex < 0 ? -1 : animIndex;
+				const sampleT = animIndex < 0 ? 0 : t;
+				bones = flattenPose(poseAt(type.parsed, idx, sampleT), type.boneCount);
+			}
+			seen[key] = bones;
+
+			// Per-instance matrices: modelView = view * world, normalMat = inv-transpose of its 3x3.
+			mat4.multiply(_mv, modelView, inst.world);
+			mat4.toInverseMat3(_mv, _nmat);
+			mat3.transpose(_nmat, _nmat);
+			gl.uniformMatrix4fv(uniform.uModelViewMat, false, _mv);
+			gl.uniformMatrix3fv(uniform.uNormalMat, false, _nmat);
+			gl.uniformMatrix4fv(uniform.uBones, false, bones);
+
+			// Per-model lighting constants (gr2-lighting-shadow-mars26.md §6): the client shades each
+			// GR2 by a byte-decided grayscale diffuse/ambient, not the map light. Re-issued every
+			// iteration because GL uniforms are stateful — a fixed-constant model must not leak its
+			// diffuse/ambient onto the next instance.
+			const profile = GR2_ROSTER[gr2Basename(inst.path)];
+			if (profile === 'flag') {
+				gl.uniform3fv(uniform.uLightDiffuse, _gr2FlagDiffuse);
+				gl.uniform3fv(uniform.uLightAmbient, grayBroadcast(light.ambient || _phaseAmbient, _gr2FlagAmbient));
+			} else if (profile === 'emp') {
+				gl.uniform3fv(uniform.uLightDiffuse, _gr2EmpDiffuse);
+				gl.uniform3fv(uniform.uLightAmbient, _gr2EmpAmbient);
+			} else {
+				gl.uniform3fv(uniform.uLightDiffuse, light.diffuse || _phaseDiffuse);
+				gl.uniform3fv(uniform.uLightAmbient, light.ambient || _phaseAmbient);
+			}
+
+			// Project a screen-space pick box for EntityManager's hover/click test. Stashed on the
+			// instance (not entity.boundingRect) because Entity.render() resets that rect after this
+			// map pass; EntityRender.calculateBoundingRect copies it.
+			//
+			// TWO faithful-to-different-things modes — switch by commenting (no runtime flag):
+			//  (A) "tout le drapeau": the full model AABB projected. The WHOLE model is hoverable —
+			//      more generous (better UX) than the client, but a divergence.
+			//  (B) DEFAULT — "sphere", client-faithful (fcn.006852e0): a coarse square at the model
+			//      base only (computeBaseSphereRect). On the tall flag just the lower ~46% is
+			//      clickable. To use (A) instead, comment (B) and uncomment (A).
+			if (inst.entity && type.aabb) {
+				const box = inst.screenRect || (inst.screenRect = { x1: 0, y1: 0, x2: 0, y2: 0 });
+				mat4.multiply(_mvp, projection, _mv);
+				// const ok = computeScreenRect(type.aabb, _mvp, box); // (A) full model AABB
+				const ok = computeBaseSphereRect(_mvp, projection, box); // (B) client base sphere
+				if (!ok) {
+					inst.screenRect = null;
+				}
+			}
+
+			// Removal fade: honour the entity's current alpha — effectColor[3] scaled by the
+			// remove_tick ramp, the SAME fade a 2D body applies (EntityRender.renderLayer) — so a
+			// GR2 mob/NPC fades out on death/vanish instead of hard-popping. Opaque instances
+			// (alpha 1) stay on the no-blend fast path; only a fading instance flips blend on and
+			// back off. The outer save/restore guards the BLEND enable bit; the blend func it may
+			// switch is reset to the resting default at pass end (see below).
+			let alpha = 1.0;
+			const e = inst.entity;
+			if (e) {
+				alpha = e.effectColor[3];
+				if (e.remove_tick && e.remove_delay) {
+					const isDeath = e.action === e.ACTION.DIE;
+					if (isDeath ? FADE.death : FADE.vanish) {
+						alpha *= 1 - (Date.now() - e.remove_tick) / e.remove_delay;
+					}
+				}
+				alpha = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+			}
+			gl.uniform1f(uniform.uAlpha, alpha);
+			const fading = alpha < 1;
+			if (fading) {
+				gl.enable(gl.BLEND);
+				gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+			}
+
+			const submeshes = type.submeshes;
+			for (let s = 0; s < submeshes.length; s++) {
+				const sm = submeshes[s];
+				// The emblem submesh (Plane01) stays empty until the live guild emblem loads
+				// (Guild.requestGuildEmblem): skip it when there is no per-instance emblem texture —
+				// a dev spawn with no entity, or a flag whose emblem hasn't arrived. Every other
+				// submesh uses its baked texture.
+				if (sm.emblem) {
+					if (!inst.emblemTex) {
+						continue;
+					}
+					gl.bindTexture(gl.TEXTURE_2D, inst.emblemTex);
+				} else {
+					gl.bindTexture(gl.TEXTURE_2D, sm.tex);
+				}
+				gl.bindVertexArray(sm.vao);
+				gl.drawElements(gl.TRIANGLES, sm.count, gl.UNSIGNED_SHORT, 0);
+			}
+
+			if (fading) {
+				gl.disable(gl.BLEND);
+			}
+		}
+	});
+	gl.bindVertexArray(null);
+	if (blendWasEnabled) {
+		gl.enable(gl.BLEND);
+	}
+	// House convention: leave the blend func at roBrowser's resting default (every effect
+	// restores this on exit) — a fading instance above may have switched it.
+	gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+	_poseCache = seen;
+
+	// Debug: paint the anchor cell of every instance (see _debugCell above).
+	if (_debugCell && _instances.length) {
+		if (!_dbgCellInited) {
+			_dbgCellTile.init(gl);
+			_dbgCellInited = true;
+		}
+		const dbgBlendWasEnabled = gl.isEnabled(gl.BLEND);
+		gl.enable(gl.BLEND);
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+		_dbgCellTile.beforeRender(gl, modelView, projection, fog, tick);
+		for (let i = 0; i < _instances.length; i++) {
+			const inst = _instances[i];
+			const type = _types[inst.path];
+			if (!type || !type.glReady) {
+				continue;
+			}
+			_dbgTileInst.position = inst.pos;
+			_dbgTileInst.render(gl, tick);
+		}
+		_dbgCellTile.afterRender(gl);
+		if (!dbgBlendWasEnabled) {
+			gl.disable(gl.BLEND);
+		}
+	}
+}
+
+// worldAnchorToClip(pos, modelView, projection, out4): project the instance ground anchor to
+// clip space for the frustum cull. Mirrors buildWorld's frame: world-X = cellX, world-Y (up) =
+// -position[2] (the negated terrain height), world-Z = cellY.
+function worldAnchorToClip(pos, modelView, projection, out) {
+	const x = pos[0];
+	const y = -pos[2];
+	const z = pos[1];
+	const vx = modelView[0] * x + modelView[4] * y + modelView[8] * z + modelView[12];
+	const vy = modelView[1] * x + modelView[5] * y + modelView[9] * z + modelView[13];
+	const vz = modelView[2] * x + modelView[6] * y + modelView[10] * z + modelView[14];
+	const vw = modelView[3] * x + modelView[7] * y + modelView[11] * z + modelView[15];
+	out[0] = projection[0] * vx + projection[4] * vy + projection[8] * vz + projection[12] * vw;
+	out[1] = projection[1] * vx + projection[5] * vy + projection[9] * vz + projection[13] * vw;
+	out[2] = projection[2] * vx + projection[6] * vy + projection[10] * vz + projection[14] * vw;
+	out[3] = projection[3] * vx + projection[7] * vy + projection[11] * vz + projection[15] * vw;
+}
+
+/**
+ * pumpBanks(type, priorityName): per-type sequential loader for the external animation
+ * banks. The current action's bank (priorityName) jumps to the front of the queue; one bank
+ * is fetched at a time and grafted into the shared type.parsed.animations at its action slot
+ * (loaded once for every instance of that type). A 404 drops the name (stays bind pose).
+ */
+function pumpBanks(type, priorityName) {
+	const queue = type.bankQueue;
+
+	// Re-prioritise: the current action's bank jumps the queue ("change la priorité au besoin").
+	if (priorityName) {
+		const at = queue.indexOf(priorityName);
+		if (at > 0) {
+			queue.splice(at, 1);
+			queue.unshift(priorityName);
+		}
+	}
+
+	if (type.bankLoading || queue.length === 0) {
+		return;
+	}
+
+	const name = queue.shift();
+	const entry = type.declaredBanks.find(b => b.name === name);
+	if (!entry) {
+		return;
+	}
+	type.bankLoading = true;
+	type.bankState[name] = 'loading';
+	Client.getFile(
+		entry.path,
+		function (buffer) {
+			type.bankLoading = false;
+			// The type may have been freed during the async fetch.
+			if (_types[type.path] === type && type.parsed) {
+				const bank = parseAnimated(new Uint8Array(buffer));
+				type.parsed.animations[ACTION[name].idx] = bank.animations[0];
+				type.bankState[name] = 'loaded';
+			}
+			pumpBanks(type);
+		},
+		function () {
+			type.bankLoading = false;
+			delete type.bankState[name];
+			pumpBanks(type);
+		}
+	);
+}
+
+// syncFromEntity(inst, type, tick): pull the live entity's pos/dir/action onto the instance
+// each frame. NPC instances (standbyIdx < 0) are never action-driven (static bind pose); MOB
+// instances map their action enum to a GR2 action and priority-load that bank.
+function syncFromEntity(inst, type, tick) {
+	const e = inst.entity;
+	const p = e.position;
+	const dir = e.direction;
+	// Rebuild the world matrix on any pose change. p[2] IS the terrain cell height
+	// (position[2] = Altitude.getCellHeight, see attach), so a terrain-height change is
+	// already covered here -- it's part of the position tuple, not a missing trigger.
+	if (inst.pos[0] !== p[0] || inst.pos[1] !== p[1] || inst.pos[2] !== p[2] || inst.dir !== dir) {
+		inst.pos[0] = p[0];
+		inst.pos[1] = p[1];
+		inst.pos[2] = p[2];
+		inst.dir = dir;
+		inst.worldBuilt = false;
+	}
+
+	if (inst.standbyIdx < 0) {
+		return;
+	}
+
+	const name = gr2ActionFor(e);
+	pumpBanks(type, name);
+	// Re-cut on a name change OR a re-issued action with the same name. The client restarts the
+	// clip on every ZC_NOTIFY_ACT (SetAction = hard clock reset, no same-action dedup); a name-only
+	// guard latched one-shot actions — an immobile plant re-hit stays entity.action=HURT, so the
+	// hurt clip plays once and never replays. The entity bumps animation.tick on every setAction()
+	// (EntityAction), so a changed tick is the faithful "re-issued this frame" signal.
+	const animTick = e.animation.tick;
+	if (name !== inst._lastAction || animTick !== inst._lastTick) {
+		setAction(inst.actor, name, tick);
+		inst.actor.loop = name === 'move';
+		inst._lastAction = name;
+		inst._lastTick = animTick;
+	}
+}

@@ -1,0 +1,500 @@
+/**
+ * UI/Components/Mail/Mail.js
+ *
+ * Chararacter Mail
+ *
+ * @author Francisco Wallison
+ *
+ */
+
+import DB from 'DB/DBManager.js';
+import ItemType from 'DB/Items/ItemType.js';
+import Preferences from 'Core/Preferences.js';
+import Client from 'Core/Client.js';
+import Session from 'Engine/SessionStorage.js';
+import Renderer from 'Renderer/Renderer.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import InputBox from 'UI/Components/InputBox/InputBox.js';
+import ItemInfo from 'UI/Components/ItemInfo/ItemInfo.js';
+import Inventory from 'UI/Components/Inventory/Inventory.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import htmlText from './Mail.html?raw';
+import cssText from './Mail.css?raw';
+
+/**
+ * Create Component
+ */
+const Mail = new GUIComponent('Mail', cssText);
+
+/**
+ * Store Mail items
+ */
+Mail.list = [];
+/**
+ * Determine data page size
+ */
+Mail.pageSize = 7;
+/**
+ * know which page is current
+ */
+Mail.page = 0;
+
+/**
+ * @var {number} used to remember the window height
+ */
+const _realSize = 0;
+
+/**
+ * @var {Preferences} structure
+ */
+const _preferences = Preferences.get(
+	'Mail',
+	{
+		x: 0,
+		y: 172,
+		width: 7,
+		height: 4,
+		show: false,
+		reduce: false,
+		magnet_top: false,
+		magnet_bottom: false,
+		magnet_left: true,
+		magnet_right: false,
+		item_add_email: {}
+	},
+	2.0
+);
+
+/**
+ * Helper: query inside shadow root
+ */
+function _root() {
+	return Mail._shadow || Mail._host;
+}
+
+/**
+ * Render HTML
+ */
+Mail.render = () => htmlText;
+
+/**
+ * Has input fields, protect key events
+ */
+Mail.captureKeyEvents = true;
+
+/**
+ * Apply preferences once append to body
+ */
+Mail.onAppend = function OnAppend() {
+	const root = _root();
+
+	const closeBtn = root.querySelector('.close');
+	if (closeBtn) closeBtn.addEventListener('click', this.onClosePressed.bind(this));
+
+	const inboxBtn = root.querySelector('#inbox');
+	if (inboxBtn) inboxBtn.addEventListener('click', offCreateMessagesOnWindowMailbox);
+
+	const writeBtn = root.querySelector('#write');
+	if (writeBtn) writeBtn.addEventListener('click', openWindowCreateMessages);
+
+	const cancelBtn = root.querySelector('#create_mail_cancel');
+	if (cancelBtn) cancelBtn.addEventListener('click', offCreateMessagesOnWindowMailbox);
+
+	const sendBtn = root.querySelector('#create_mail_send');
+	if (sendBtn) sendBtn.addEventListener('click', sendCreateMessagesMail);
+
+	updatePageMailItems();
+
+	const containerItem = root.querySelector('.container_item');
+	if (containerItem) {
+		containerItem.addEventListener('drop', onDrop);
+		containerItem.addEventListener('dragover', stopPropagation);
+
+		containerItem.addEventListener('mouseover', event => {
+			const item = event.target.closest('.item');
+			if (item) onItemOver.call(item, event);
+		});
+		containerItem.addEventListener('mouseout', event => {
+			const item = event.target.closest('.item');
+			if (item) onItemOut.call(item, event);
+		});
+		containerItem.addEventListener('dragstart', event => {
+			const item = event.target.closest('.item');
+			if (item) onItemDragStart.call(item, event);
+		});
+		containerItem.addEventListener('dragend', event => {
+			const item = event.target.closest('.item');
+			if (item) onItemDragEnd.call(item, event);
+		});
+		containerItem.addEventListener('contextmenu', event => {
+			const item = event.target.closest('.item');
+			if (item) onItemInfo.call(item, event);
+		});
+	}
+
+	// Validate information dragged into text field
+	root.querySelectorAll('input[type=text]').forEach(input => {
+		input.addEventListener('drop', onDropText);
+		input.addEventListener('dragover', stopPropagation);
+	});
+
+	const textarea = root.querySelector('textarea');
+	if (textarea) {
+		textarea.addEventListener('drop', onDropText);
+		textarea.addEventListener('dragover', stopPropagation);
+	}
+
+	const zenyAmtBtn = root.querySelector('#zeny_amt');
+	if (zenyAmtBtn) zenyAmtBtn.addEventListener('click', onAddZenyInput);
+
+	const zenyOkBtn = root.querySelector('#zeny_ok');
+	if (zenyOkBtn) zenyOkBtn.addEventListener('click', onValidZenyInput);
+
+	onWindowMailbox();
+
+	// Apply preferences
+	const hostHeight = this._host.offsetHeight || 0;
+	const hostWidth = this._host.offsetWidth || 0;
+	this._host.style.top = `${Math.min(Math.max(0, _preferences.y), Renderer.height - hostHeight)}px`;
+	this._host.style.left = `${Math.min(Math.max(0, _preferences.x), Renderer.width - hostWidth)}px`;
+
+	this.draggable('.titlebar');
+};
+
+/**
+ * Add item to inventory
+ */
+Mail.addItemSub = function AddItemSub(Index) {
+	const root = _root();
+	const item = _preferences.item_add_email;
+	if (item.index !== Index) {
+		return false;
+	}
+	if (item.WearState && item.type !== ItemType.AMMO && item.type !== ItemType.CARD) {
+		return false;
+	}
+
+	const it = DB.getItemInfo(item.ITID);
+	const content = root.querySelector('.container_item');
+
+	const oldItem = root.querySelector('.item');
+	if (oldItem) oldItem.remove();
+
+	if (content) {
+		content.insertAdjacentHTML(
+			'beforeend',
+			`<div class="item" data-index="${item.index}" draggable="true">` +
+				`<div class="icon"></div>` +
+				`<div class="amount"><span class="count">${item.count || 1}</span></div>` +
+				`</div>`
+		);
+	}
+
+	const hideEl = root.querySelector('.hide');
+	if (hideEl) hideEl.style.display = 'block';
+
+	Client.loadFile(
+		`${DB.INTERFACE_PATH}item/${item.IsIdentified ? it.identifiedResourceName : it.unidentifiedResourceName}.bmp`,
+		data => {
+			const icon = content ? content.querySelector(`.item[data-index="${item.index}"] .icon`) : null;
+			if (icon) icon.style.backgroundImage = `url(${data})`;
+		}
+	);
+	return true;
+};
+
+/**
+ * Send from mail to inventory - Remove item
+ */
+Mail.removeItem = function removeItem() {
+	const root = _root();
+	const item = root.querySelector('.item');
+	if (item) item.remove();
+};
+
+/**
+ * Send from mail to inventory - Remove zenys
+ */
+Mail.removeZeny = function removeZeny() {
+	const root = _root();
+	const input = root.querySelector('.input_zeny_amt');
+	if (input) input.value = '0';
+};
+
+/**
+ * Remove Mail from window (and so clean up items)
+ */
+Mail.onRemove = function OnRemove() {
+	this.list.length = 0;
+	_preferences.show = this._host.style.display !== 'none';
+	_preferences.reduce = !!_realSize;
+	_preferences.y = parseInt(this._host.style.top, 10) || 0;
+	_preferences.x = parseInt(this._host.style.left, 10) || 0;
+	_preferences.magnet_top = this.magnet.TOP;
+	_preferences.magnet_bottom = this.magnet.BOTTOM;
+	_preferences.magnet_left = this.magnet.LEFT;
+	_preferences.magnet_right = this.magnet.RIGHT;
+	_preferences.save();
+};
+
+/**
+ * Extend Mail window size
+ */
+Mail.resize = function Resize(width, height) {
+	const root = _root();
+	width = Math.min(Math.max(width, 6), 9);
+	height = Math.min(Math.max(height, 2), 6);
+
+	const mailEl = root.querySelector('#Mail');
+	if (mailEl) {
+		mailEl.style.width = `${23 + 16 + 16 + width * 32}px`;
+		mailEl.style.height = `${31 + 19 + height * 32}px`;
+	}
+};
+
+/**
+ * Extend Mail window size
+ */
+Mail.mailList = function mailList(read) {
+	Mail.list = read;
+	updatePageMailItems();
+};
+
+/**
+ * Mail receive
+ */
+Mail.mailReceiveUpdate = function mailReceiveUpdate(newMail) {
+	if (Mail.list.mailList === undefined) {
+		return;
+	}
+	Mail.list.MailNumber = Mail.MailNumber + 1;
+	let validIsOpen = 0;
+	Mail.list.mailList = Mail.list.mailList.map(el => {
+		let newElement = {};
+
+		if (el.MailID == newMail.MailID) {
+			newElement = {
+				DeleteTime: el.DeleteTime,
+				FromName: el.FromName,
+				HEADER: el.HEADER,
+				MailID: el.MailID,
+				isOpen: 1
+			};
+			validIsOpen = 1;
+		} else {
+			newElement = el;
+		}
+
+		return newElement;
+	});
+	if (!validIsOpen) {
+		Mail.list.mailList.push(newMail);
+	}
+	Mail.parseMailrefreshinbox();
+};
+
+/**
+ * Search in a list for an item by its index
+ */
+Mail.getItemByIndex = function getItemByIndex(index) {
+	const list = _preferences.item_add_email;
+
+	if (list.index == index) {
+		return list;
+	}
+
+	return null;
+};
+
+/**
+ * Responder to a mail.
+ */
+Mail.replyNewMail = function replyNewMail(fromName) {
+	const root = _root();
+	onWindowCreateMessages();
+	const textTo = root.querySelector('.text_to');
+	if (textTo) textTo.value = fromName.replace(/^(\$|\%)/, '').replace(/\t/g, '');
+};
+
+/**
+ * Responder to a mail from friends.
+ */
+Mail.replyNewMailFriends = async function replyNewMailFriends(fromName) {
+	const root = _root();
+	Mail.append();
+	sleep(1).then(() => {
+		onWindowCreateMessages();
+		offWindowListMail();
+		const textTo = root.querySelector('.text_to');
+		if (textTo) textTo.value = fromName.replace(/^(\$|\%)/, '').replace(/\t/g, '');
+
+		const inboxBtn = root.querySelector('#inbox');
+		if (inboxBtn) {
+			inboxBtn.replaceWith(inboxBtn.cloneNode(true));
+			const newInbox = root.querySelector('#inbox');
+			if (newInbox) {
+				newInbox.disabled = false;
+				newInbox.addEventListener('click', () => {});
+			}
+		}
+
+		const cancelBtn = root.querySelector('#create_mail_cancel');
+		if (cancelBtn) {
+			cancelBtn.replaceWith(cancelBtn.cloneNode(true));
+			const newCancel = root.querySelector('#create_mail_cancel');
+			if (newCancel) newCancel.addEventListener('click', this.onClosePressed.bind(this));
+		}
+	});
+};
+
+Mail.clearFieldsItemZeny = function clearFieldsItemZeny() {
+	const root = _root();
+	const item = root.querySelector('.item');
+	if (item) item.remove();
+
+	const zenyInput = root.querySelector('.input_zeny_amt');
+	if (zenyInput) zenyInput.value = '0';
+
+	const sendBtn = root.querySelector('#create_mail_send');
+	if (sendBtn) sendBtn.disabled = false;
+};
+
+Mail.onKeyDown = function onKeyDown(event) {
+	const shadow = this._shadow || this._host;
+	const focused = shadow ? shadow.activeElement : null;
+
+	if (focused && focused.tagName && focused.tagName.match(/input|select|textarea/i)) {
+		if (event.which === KEYS.ESCAPE || event.key === 'Escape') {
+			this.remove();
+			event.stopImmediatePropagation();
+			return false;
+		}
+		event.stopImmediatePropagation();
+		return true;
+	}
+
+	if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && this._host.style.display !== 'none') {
+		this.remove();
+		event.stopImmediatePropagation();
+		return false;
+	}
+
+	return true;
+};
+
+/*
+ * Update item pagination
+ */
+function updatePageMailItems() {
+	const root = _root();
+
+	const nextBtn = root.querySelector('.next');
+	if (nextBtn) {
+		nextBtn.addEventListener('click', e => {
+			e.stopImmediatePropagation();
+			if (Mail.page < Mail.list.mailList.length / Mail.pageSize - 1) {
+				Mail.page++;
+				createMailList();
+				adjustButtons();
+			}
+		});
+	}
+
+	const prevBtn = root.querySelector('.prev');
+	if (prevBtn) {
+		prevBtn.addEventListener('click', e => {
+			e.stopImmediatePropagation();
+			if (Mail.page > 0) {
+				Mail.page--;
+				createMailList();
+				adjustButtons();
+			}
+		});
+	}
+
+	createMailList();
+}
+
+/**
+ * Create messages window size
+ */
+function onWindowMailbox() {
+	const root = _root();
+
+	Mail.parseMailrefreshinbox();
+
+	const sendBtn = root.querySelector('#create_mail_send');
+	if (sendBtn) sendBtn.disabled = false;
+
+	const createMail = root.querySelector('.block_create_mail');
+	if (createMail) createMail.style.display = 'none';
+
+	const textTo = root.querySelector('.text_to');
+	if (textTo) textTo.value = '';
+
+	const inputTitle = root.querySelector('.input_title');
+	if (inputTitle) inputTitle.value = '';
+
+	const textareaMail = root.querySelector('.textarea_mail');
+	if (textareaMail) textareaMail.value = '';
+
+	const zenyInput = root.querySelector('.input_zeny_amt');
+	if (zenyInput) zenyInput.value = '0';
+
+	const addItemInput = root.querySelector('.input_add_item');
+	if (addItemInput) addItemInput.value = '';
+
+	const prevNext = root.querySelector('.prev_next');
+	if (prevNext) prevNext.style.display = 'flex';
+
+	const blockMail = root.querySelector('.block_mail');
+	if (blockMail) blockMail.style.display = 'block';
+
+	Client.loadFile(DB.INTERFACE_PATH + 'basic_interface/maillist1_bg.bmp', url => {
+		const body = root.querySelector('.body');
+		if (body) body.style.backgroundImage = `url(${url})`;
+	});
+
+	const title = root.querySelector('#title');
+	if (title) title.textContent = DB.getMessage(1025);
+}
+
+function createMailList() {
+	const root = _root();
+	const content = root.querySelector('.list_item_mail');
+
+	root.querySelectorAll('.item_mail').forEach(el => el.remove());
+
+	if (Mail.list.length == 0) {
+		return;
+	}
+
+	for (let i = Mail.page * Mail.pageSize; i < Mail.list.mailList.length && i < (Mail.page + 1) * Mail.pageSize; i++) {
+		const from_name =
+			Mail.list.mailList[i].FromName.length > 15
+				? Mail.list.mailList[i].FromName.substring(0, 15) + '...'
+				: Mail.list.mailList[i].FromName;
+		const header =
+			Mail.list.mailList[i].HEADER.length > 23
+				? Mail.list.mailList[i].HEADER.substring(0, 23) + '...'
+				: Mail.list.mailList[i].HEADER;
+		const mailId = Mail.list.mailList[i].MailID;
+		const isOpen = Mail.list.mailList[i].isOpen;
+
+		if (content) {
+			content.insertAdjacentHTML(
+				'beforeend',
+				`<div class="item_mail">
+					<div class="envelop" style="flex: 1;">
+						<div class="btn_envelop" id="envelop_${mailId}"></div>
+					</div>
+					<div class="to_title" style="flex: 3;">
+						<div class="flex">
+							<div style="flex: 3;">
+								<span id="from_name_${mailId}" class="event_add_cursor tooltip name_data"> ${from_name}
+									<span class="tooltiptext to">${Mail.list.mailList[i].FromName}</span>
+								</span>
+							</div>

@@ -1,0 +1,500 @@
+		refiningMaterials = pkt.MaterialInfo;
+		blacksmithBlessing = pkt.blacksmithBlessing;
+
+		if (!Refine.hammer) {
+			onPopulateMaterials();
+
+			clearTimeout(Refine.imageLoopTimeout);
+			const isbsbenabled = blacksmithBlessing ? 'a' : 'b';
+			controlPhase(`ready${isbsbenabled}`, false, 250);
+		}
+
+		const it = DB.getItemInfo(item.ITID);
+		const content = root.querySelector('.item_to_refine');
+
+		content.insertAdjacentHTML(
+			'beforeend',
+			`<div class="item" data-index="${item.index}" draggable="true">` +
+				'<div class="icon"></div>' +
+				'<div class="grade"></div>' +
+				'</div>'
+		);
+
+		Client.loadFile(
+			DB.INTERFACE_PATH +
+				'item/' +
+				(item.IsIdentified ? it.identifiedResourceName : it.unidentifiedResourceName) +
+				'.bmp',
+			function (data) {
+				const icon = content.querySelector(`.item[data-index="${item.index}"] .icon`);
+				if (icon) {
+					icon.style.backgroundImage = `url(${data})`;
+				}
+			}
+		);
+
+		if (item.enchantgrade) {
+			Client.loadFile(DB.INTERFACE_PATH + `grade_enchant/grade_icon${item.enchantgrade}.bmp`, function (data) {
+				const grade = content.querySelector(`.item[data-index="${item.index}"] .grade`);
+				if (grade) {
+					grade.style.backgroundImage = `url(${data})`;
+				}
+			});
+		}
+
+		const itemname = root.querySelector('.item_to_refine_name');
+		if (itemname) {
+			itemname.textContent = DB.getItemName(item);
+		}
+
+		// Select previously selected material if available
+		if (Refine.hammer >= 1 && refine_item_mat) {
+			let materialFound = false;
+			let foundItem, foundMaterial;
+
+			for (let i = 0; i < refiningMaterials.length; i++) {
+				foundMaterial = refiningMaterials[i];
+				if (foundMaterial.itemId === refine_item_mat) {
+					foundItem = Inventory.getUI().getItemById(foundMaterial.itemId);
+					materialFound = true;
+					refine_new_mats = 0;
+					break;
+				}
+			}
+
+			if (!materialFound) {
+				refine_new_mats = 1;
+				showMessage(3242, 3, 'error');
+			}
+
+			if (refine_bsb) {
+				if (blacksmithBlessing === 0) {
+					refine_new_mats = 1;
+					showMessage(3242, 3, 'error');
+				}
+				refine_bsb = blacksmithBlessing;
+			}
+
+			selectMaterial(foundMaterial, foundItem);
+		}
+	} else {
+		showMessage(2970, 3, 'error');
+		return false;
+	}
+}
+
+/**
+ * Handles populating materials needed for refining
+ */
+function onPopulateMaterials() {
+	const root = _root();
+
+	// Clear any existing materials
+	root.querySelectorAll(
+		'.materials .mat_overlay .material_0, .materials .mat_overlay .material_1, .materials .mat_overlay .material_2, .materials .mat_overlay .material_3'
+	).forEach(el => {
+		el.innerHTML = '';
+	});
+	const bsbContainer = root.querySelector('.bsb_overlay .bsb');
+	if (bsbContainer) {
+		bsbContainer.innerHTML = '';
+	}
+
+	// Update materials
+	for (let i = 0; i < refiningMaterials.length; i++) {
+		(function (idx) {
+			const material = refiningMaterials[idx];
+			const it = DB.getItemInfo(material.itemId);
+			const item = Inventory.getUI().getItemById(material.itemId);
+			const materialDiv = root.querySelector(`.material_${idx}`);
+
+			if (!materialDiv) {
+				return;
+			}
+
+			materialDiv.innerHTML = '';
+
+			materialDiv.insertAdjacentHTML(
+				'beforeend',
+				`<div class="item" data-index="${material.itemId}" draggable="false">` +
+					'<div class="icon"></div>' +
+					'<div class="mat_count"></div>' +
+					'</div>'
+			);
+
+			Client.loadFile(
+				DB.INTERFACE_PATH +
+					'item/' +
+					(it.IsIdentified ? it.identifiedResourceName : it.unidentifiedResourceName) +
+					'.bmp',
+				function (data) {
+					const icon = materialDiv.querySelector(`.item[data-index="${material.itemId}"] .icon`);
+					if (icon) {
+						icon.style.backgroundImage = `url(${data})`;
+					}
+				}
+			);
+
+			const count = item ? item.count : 0;
+			const countmsg = materialDiv.querySelector(`.item[data-index="${material.itemId}"] .mat_count`);
+			if (countmsg) {
+				if (count === 0) {
+					countmsg.innerHTML = `<span style="color: #ce1029;">${count}</span>/1`;
+				} else {
+					countmsg.textContent = `${count}/1`;
+				}
+			}
+
+			// Material Selection upon clicking
+			const iconEl = materialDiv.querySelector('.icon');
+			if (iconEl) {
+				iconEl.addEventListener('click', () => {
+					const clickedItemId = material.itemId;
+					const clickedItem = Inventory.getUI().getItemById(clickedItemId);
+					const clickedCount = clickedItem ? clickedItem.count : 0;
+
+					if (clickedCount === 0) {
+						return;
+					}
+
+					// Check if item ID exists in the mapping and show corresponding message
+					for (const messageID in itemMessageMapping) {
+						if (itemMessageMapping[messageID].includes(clickedItemId)) {
+							showMessage(messageID, 0, 'info');
+							break;
+						}
+					}
+
+					root.querySelectorAll('.mat_overlay').forEach(el => el.classList.remove('selected'));
+					materialDiv.closest('.mat_overlay').classList.add('selected');
+
+					// Clone the material and append it to the selected_mat
+					const originalItem = materialDiv.querySelector('.item');
+					const clonedMaterial = originalItem.cloneNode(true);
+					const matCount = clonedMaterial.querySelector('.mat_count');
+					if (matCount) {
+						matCount.remove();
+					}
+
+					const selectedMat = root.querySelector('.selected_mat');
+					selectedMat.innerHTML = '';
+					selectedMat.appendChild(clonedMaterial);
+
+					// Enable refine button
+					const refineEnabled = root.querySelector('.refine_enabled');
+					if (refineEnabled) {
+						refineEnabled.style.display = 'block';
+					}
+
+					// Update success and refining_zeny
+					const numberEl = root.querySelector('.success .number');
+					if (numberEl) {
+						numberEl.textContent = material.chance;
+					}
+					const chanceRate = root.querySelector('.chance_rate');
+					if (chanceRate) {
+						chanceRate.textContent = DB.getMessage(3285).replace('%d%', material.chance);
+					}
+					const refineZeny = root.querySelector('.refine_zeny');
+					if (refineZeny) {
+						refineZeny.textContent = material.zeny;
+					}
+					const refineZenyCont = root.querySelector('.refine_zeny_cont');
+					if (refineZenyCont) {
+						refineZenyCont.textContent = material.zeny;
+					}
+
+					// Store fresh chance/zeny for re-apply after the result animation
+					refine_current_chance = material.chance;
+					refine_current_zeny = material.zeny;
+
+					// Set the refine_item_mat value to the selected material itemId
+					refine_item_mat = material.itemId;
+					refine_fee = material.zeny;
+
+					const refineCont = root.querySelector('.refine_cont');
+					if (refineCont) {
+						refineCont.classList.add('item');
+						refineCont.setAttribute('data-index', material.itemId);
+					}
+				});
+			}
+		})(i);
+	}
+
+	// Update blacksmith blessing if applicable
+	if (blacksmithBlessing) {
+		const bsbDiv = root.querySelector('.bsb_overlay .bsb');
+		const bsbItem = DB.getItemInfo(BSB_ITID);
+		const item = Inventory.getUI().getItemById(BSB_ITID);
+		bsbDiv.insertAdjacentHTML(
+			'beforeend',
+			`<div class="item" data-index="${BSB_ITID}" draggable="false">` +
+				'<div class="icon"></div>' +
+				'<div class="mat_count"></div>' +
+				'</div>'
+		);
+
+		Client.loadFile(
+			DB.INTERFACE_PATH +
+				'item/' +
+				(bsbItem.IsIdentified ? bsbItem.identifiedResourceName : bsbItem.unidentifiedResourceName) +
+				'.bmp',
+			function (data) {
+				const icon = bsbDiv.querySelector(`.item[data-index="${BSB_ITID}"] .icon`);
+				if (icon) {
+					icon.style.backgroundImage = `url(${data})`;
+				}
+			}
+		);
+
+		const bsbCountOuter = item ? item.count : 0;
+		const bsbcountmsg = bsbDiv.querySelector(`.item[data-index="${BSB_ITID}"] .mat_count`);
+		if (bsbcountmsg) {
+			if (bsbCountOuter === 0) {
+				bsbcountmsg.innerHTML = `<span style="color: #ce1029;">${bsbCountOuter}</span>/${blacksmithBlessing}`;
+			} else {
+				bsbcountmsg.textContent = `${bsbCountOuter}/${blacksmithBlessing}`;
+			}
+		}
+
+		// Add select functionality
+		const bsbIcon = bsbDiv.querySelector('.icon');
+		if (bsbIcon) {
+			bsbIcon.addEventListener('click', () => {
+				const bsbInventoryItem = Inventory.getUI().getItemById(BSB_ITID);
+				const currentBsbCount = bsbInventoryItem ? bsbInventoryItem.count : 0;
+
+				if (currentBsbCount >= blacksmithBlessing) {
+					const bsbOverlay = bsbDiv.closest('.bsb_overlay');
+
+					if (bsbOverlay.classList.contains('selected')) {
+						bsbOverlay.classList.remove('selected');
+						const bsbSelected = root.querySelector('.bsb_selected');
+						if (bsbSelected) {
+							bsbSelected.innerHTML = '';
+						}
+						const someNotifs = root.querySelector('.some_notifs');
+						if (someNotifs) {
+							someNotifs.style.display = 'none';
+						}
+					} else {
+						root.querySelectorAll('.bsb_overlay').forEach(el => el.classList.remove('selected'));
+						bsbOverlay.classList.add('selected');
+
+						// Clone the blacksmith blessing and append it to the selected_mat
+						const originalItem = bsbDiv.querySelector('.item');
+						const clonedBSB = originalItem.cloneNode(true);
+						const matCount = clonedBSB.querySelector('.mat_count');
+						if (matCount) {
+							matCount.remove();
+						}
+
+						const bsbSelected = root.querySelector('.bsb_selected');
+						if (bsbSelected) {
+							bsbSelected.innerHTML = '';
+							bsbSelected.appendChild(clonedBSB);
+						}
+
+						// BSB will be used
+						refine_bsb = blacksmithBlessing;
+
+						// Show Info
+						showMessage(2967, 0, 'info');
+					}
+				} else {
+					showMessage(2969, 3, 'error');
+				}
+			});
+		}
+	}
+}
+
+/**
+ * Handles update of variables for UI changes based on Refine result
+ */
+function selectMaterial(material, item) {
+	const root = _root();
+	const count = item ? item.count || 0 : 0;
+
+	refine_can_cont = 1;
+
+	if (count) {
+		refine_no_mats = 0;
+	} else {
+		refine_no_mats = 1;
+		refine_can_cont = 0;
+	}
+
+	if (refine_bsb) {
+		const bsbinInventory = Inventory.getUI().getItemById(BSB_ITID);
+		const bsbCount = bsbinInventory ? bsbinInventory.count || 0 : 0;
+
+		if (!bsbinInventory || bsbCount < refine_bsb) {
+			refine_no_bsb = 1;
+			refine_can_cont = 0;
+		} else {
+			refine_no_bsb = 0;
+		}
+	}
+
+	refine_fee = material.zeny;
+	if (Session.zeny < material.zeny) {
+		refine_no_zeny = 1;
+		refine_can_cont = 0;
+	}
+
+	if (onCheckItemBroken()) {
+		refine_can_cont = 0;
+	}
+
+	refine_current_chance = material.chance;
+	refine_current_zeny = material.zeny;
+
+	const chanceRate = root.querySelector('.chance_rate');
+	if (chanceRate) {
+		chanceRate.textContent = DB.getMessage(3285).replace('%d%', material.chance);
+	}
+	const refineZenyCont = root.querySelector('.refine_zeny_cont');
+	if (refineZenyCont) {
+		refineZenyCont.textContent = material.zeny;
+	}
+
+	if (refine_can_cont && !refine_new_mats && !refine_item_broken) {
+		refine_result_div = refine_result ? 'fail_refine_cont_enabled' : 'success_refine_cont_enabled';
+	} else {
+		refine_result_div = refine_result ? 'fail_refine_cont_disabled' : 'success_refine_cont_disabled';
+		const refineCont = root.querySelector('.refine_cont');
+		if (refineCont) {
+			refineCont.classList.remove('item');
+			refineCont.removeAttribute('data-index');
+		}
+	}
+}
+
+/**
+ * Show item name when mouse is over
+ */
+function onItemOver(event) {
+	const root = _root();
+	const idx = parseInt(this.getAttribute('data-index'), 10);
+	const it = DB.getItemInfo(idx);
+
+	if (!idx) {
+		return;
+	}
+
+	const itemRect = this.getBoundingClientRect();
+	const overlay = root.querySelector('.overlay');
+	if (!overlay) {
+		return;
+	}
+
+	const parentContainer = this.closest('.materials') || this.closest('.refine_cont');
+	if (!parentContainer) {
+		return;
+	}
+	const containerRect = parentContainer.getBoundingClientRect();
+
+	let top, left;
+	if (parentContainer.classList.contains('materials')) {
+		top = itemRect.top - containerRect.top + 30;
+		left = itemRect.left - containerRect.left + this.offsetWidth - 39;
+	} else if (parentContainer.classList.contains('refine_cont')) {
+		top = itemRect.top - containerRect.top + 242;
+		left = itemRect.left - containerRect.left + this.offsetWidth + 41;
+	}
+
+	overlay.style.display = 'block';
+	overlay.style.top = `${top}px`;
+	overlay.style.left = `${left}px`;
+	overlay.textContent = it.identifiedDisplayName;
+
+	if (it.IsIdentified) {
+		overlay.classList.remove('grey');
+	} else {
+		overlay.classList.add('grey');
+	}
+}
+
+/**
+ * Hide the item name
+ */
+function onItemOut() {
+	const root = _root();
+	const overlay = root.querySelector('.overlay');
+	if (overlay) {
+		overlay.style.display = 'none';
+	}
+}
+
+/**
+ * Handles clearance of variables and UI components when changing Item
+ */
+function onRemoveItem(backtowait) {
+	const root = _root();
+
+	refiningMaterials = [];
+	blacksmithBlessing = 0;
+
+	const itemToRefine = root.querySelector('.item_to_refine');
+	if (itemToRefine) {
+		itemToRefine.innerHTML = '';
+	}
+	const itemToRefineName = root.querySelector('.item_to_refine_name');
+	if (itemToRefineName) {
+		itemToRefineName.textContent = '';
+	}
+
+	const successNumber = root.querySelector('.success .number');
+	if (successNumber) {
+		successNumber.textContent = '0';
+	}
+	const refineZeny = root.querySelector('.refine_zeny');
+	if (refineZeny) {
+		refineZeny.innerHTML = '';
+	}
+
+	const selectedMat = root.querySelector('.selected_mat');
+	if (selectedMat) {
+		selectedMat.innerHTML = '';
+	}
+	const bsbSelected = root.querySelector('.bsb_selected');
+	if (bsbSelected) {
+		bsbSelected.innerHTML = '';
+	}
+	root.querySelectorAll('.materials .item').forEach(el => {
+		el.innerHTML = '';
+	});
+	root.querySelectorAll('.bsb .item').forEach(el => {
+		el.innerHTML = '';
+	});
+	root.querySelectorAll('.mat_overlay').forEach(el => el.classList.remove('selected'));
+	root.querySelectorAll('.bsb_overlay').forEach(el => el.classList.remove('selected'));
+
+	if (backtowait === true) {
+		if (currentLoopHandle) {
+			clearTimeout(currentLoopHandle);
+			currentLoopHandle = null;
+		}
+		if (Refine.imageLoopTimeout) {
+			clearTimeout(Refine.imageLoopTimeout);
+			Refine.imageLoopTimeout = null;
+		}
+
+		controlPhase('waiting', true, 250);
+
+		const someNotifs = root.querySelector('.some_notifs');
+		if (someNotifs) {
+			someNotifs.style.display = 'none';
+		}
+		const refineButton = root.querySelector('.refine_button');
+		if (refineButton) {
+			refineButton.style.display = 'block';
+		}
+		const successEl = root.querySelector('.success');
+		if (successEl) {
+			successEl.innerHTML = initialsuccess;
+			successEl.style.display = 'block';
+		}
+

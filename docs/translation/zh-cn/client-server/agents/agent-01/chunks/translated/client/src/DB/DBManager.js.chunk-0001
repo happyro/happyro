@@ -1,0 +1,500 @@
+/**
+ * DB/DBManager.js
+ *
+ * Manage and load DB files
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import Client from 'Core/Client.js';
+import Configs from 'Core/Configs.js';
+import TextEncoding from 'Utils/CodepageManager.js';
+import JobId from './Jobs/JobConst.js';
+import ClassTable from './Jobs/JobNameTable.js';
+import PaletteTable from './Jobs/PalNameTable.js';
+import WeaponAction from './Jobs/WeaponAction.js';
+import WeaponJobTable from './Jobs/WeaponJobTable.js';
+import BabyTable from './Jobs/BabyTable.js';
+import HairIndexTable from './Jobs/HairIndexTable.js';
+import MonsterTable from './Monsters/MonsterTable.js';
+import MonsterNameTable from './Monsters/MonsterNameTable.js';
+import PetIllustration from './Pets/PetIllustration.js';
+import PetAction from './Pets/PetAction.js';
+import ItemTable from './Items/ItemTable.js';
+import HatTable from './Items/HatTable.js';
+import ShieldTable from './Items/ShieldTable.js';
+import WeaponTable from './Items/WeaponTable.js';
+import WeaponType from './Items/WeaponType.js';
+import WeaponTypeExpansion from './Items/WeaponTypeExpansion.js';
+import WeaponSoundTable from './Items/WeaponSoundTable.js';
+import WeaponHitSoundTable from './Items/WeaponHitSoundTable.js';
+import RobeTable from './Items/RobeTable.js';
+import RandomOption from 'DB/Items/ItemRandomOptionTable.js';
+import WorldMap from './Map/WorldMap.js';
+import SKID from './Skills/SkillConst.js';
+import SkillInfo from './Skills/SkillInfo.js';
+import SkillTreeView from './Skills/SkillTreeView.js';
+import JobHitSoundTable from './Jobs/JobHitSoundTable.js';
+import WeaponTrailTable from './Items/WeaponTrailTable.js';
+import TownInfo from './TownInfo.js';
+import StatusInfo from './Status/StatusInfo.js';
+import SC from './Status/StatusConst.js';
+import XmlParse from 'Vendors/xmlparse.js';
+import Base62 from 'Utils/Base62.js';
+import { BSON } from 'bson';
+import PetEmotionTable from './Pets/PetEmotionTable.js';
+import PetHungryState from './Pets/PetHungryState.js';
+import PetFriendlyState from './Pets/PetFriendlyState.js';
+import PetMessageConst from './Pets/PetMessageConst.js';
+import MapInfo from './Map/MapTable.js';
+import Network from 'Network/NetworkManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import MemoryManager from 'Core/MemoryManager.js';
+
+//Pet
+//MapName
+
+/**
+ * @type {Object} lua instance
+ */
+let lua;
+let HO_AI;
+let MER_AI;
+let default_HO_AI;
+let default_MER_AI;
+
+/**
+ * @const {Array} message string
+ */
+const MsgStringTable = [];
+
+/**
+ * @const {Array} message string
+ */
+const JokeTable = [];
+
+/**
+ * @const {Array} message string
+ */
+const ScreamTable = [];
+
+/**
+ * @const {Array} map table
+ * struct { string name; string mp3; object fog }
+ */
+const MapTable = {};
+
+/**
+ * @type {Object} SkillDescription Table
+ */
+let SkillDescription = {};
+
+/**
+ * @const {Array} ASCII sex
+ */
+const SexTable = ['\xbf\xa9', '\xb3\xb2'];
+
+/**
+ * @type {Object} Pet Talk json object
+ */
+let PetTalkTable = {};
+
+/**
+ * @const {Object} CheckAttendanceTable Attendance config
+ */
+const CheckAttendanceTable = { Config: {}, Rewards: [] };
+
+/**
+ * @const {Array} buyingStoreItemList Table
+ */
+const buyingStoreItemList = new Array();
+
+/**
+ * @const {Array} LaphineSysTable Table
+ */
+const LaphineSysTable = [];
+
+/**
+ * @const {Array} LaphineUpgTable Table
+ */
+const LaphineUpgTable = [];
+
+/**
+ * @const {Object} ItemDBName Table
+ * json object
+ */
+const ItemDBNameTbl = {};
+
+/**
+ * @const {Object} ItemReform Table
+ * json object
+ */
+const ItemReformTable = { ReformInfo: {}, ReformItemList: {} };
+
+/**
+ * @type {Object} EnchantList Table json object
+ */
+let EnchantListTable = {};
+
+/**
+ * @const {Object} SignBoardTranslated Table
+ */
+const SignBoardTranslatedTable = {};
+
+/**
+ * @type {Object} SignBoard Table
+ */
+let SignBoardTable = {};
+
+/**
+ * @const {Object} NaviMap Table
+ */
+const NaviMapTable = {};
+
+/**
+ * @const {Object} NaviMob Table
+ */
+const NaviMobTable = {};
+
+/**
+ * @const {Object} NaviNpc Table
+ */
+const NaviNpcTable = {};
+
+/**
+ * @const {Object} NaviLink Table
+ */
+const NaviLinkTable = {};
+
+/**
+ * @const {Object} NaviLinkDistance Table
+ */
+const NaviLinkDistanceTable = {};
+
+/**
+ * @const {Object} NaviNpcDistance Table
+ */
+const NaviNpcDistanceTable = {};
+
+/**
+ * @const {Object} QuestInfo Table
+ */
+const QuestInfo = {};
+
+/**
+ * @const {Object} Title Table
+ */
+const TitleTable = {};
+
+/**
+ * @type {Object} PetDBTable
+ */
+let PetDBTable = {};
+let EggIDToJobID = {};
+
+/**
+ * @const {Object} Reputation Table
+ */
+const ReputeGroup = {};
+const ReputeInfo = {};
+
+/**
+ * @const {Object} Achievement Table
+ */
+const AchievementTable = {};
+
+/**
+ * @const {Object} CSV Tables
+ */
+const MsgEmotionCSV = {};
+
+/**
+ * @const {Object} Hat Effect Tables
+ */
+const HatEffectID = {};
+const HatEffectInfo = {};
+const FootPrintEffectInfo = {};
+
+/**
+ * @const {Array} CashShopBanner Table
+ */
+const CashShopBannerTable = [];
+
+/**
+ * @const {Object} Ez2streffect Table
+ */
+const Ez2streffect = {};
+
+const unknownItem = {
+	unidentifiedDisplayName: '未知物品',
+	unidentifiedResourceName: '\xbb\xe7\xb0\xfa',
+	unidentifiedDescriptionName: ['...'],
+	identifiedDisplayName: '未知物品',
+	identifiedResourceName: '\xbb\xe7\xb0\xfa',
+	identifiedDescriptionName: ['...'],
+	slotCount: 0,
+	ClassNum: 0
+};
+
+/**
+ * @const {Array} User charpage init
+ */
+const servers = Configs.get('servers', []);
+const langType = servers[0] && servers[0].langtype ? parseInt(servers[0].langtype, 0) : 0;
+
+// setup default encoding
+const userCharpage = TextEncoding.detectEncodingByLangtype(langType, Configs.get('disableKorean'));
+const grfCharpage = 'windows-1252';
+TextEncoding.setCharset(grfCharpage);
+
+// create decoders
+const userStringDecoder = TextEncoding;
+
+/**
+ * DB NameSpace
+ */
+class DB {
+	/**
+	 * @type {Object} file alias list
+	 */
+	static mapalias = {};
+
+	/**
+	 * @type {Object} CharName by GID list
+	 */
+	static CNameTable = {};
+
+	/**
+	 * @type {string} interface path
+	 */
+	static INTERFACE_PATH = 'data/texture/\xc0\xaf\xc0\xfa\xc0\xce\xc5\xcd\xc6\xe4\xc0\xcc\xbd\xba/';
+
+	/**
+	 * @type {string} lua path
+	 */
+	static LUA_PATH = 'data/luafiles514/lua files/';
+
+	/**
+	 * @type {Object} UpdateOwnerName Table
+	 */
+	static UpdateOwnerName = {};
+
+	/**
+	 * Initialize DB
+	 */
+	static init() {
+		DB.isLoaded = false;
+		DB.count = 0;
+		DB.index = 0;
+
+		// Callback
+		let index = 0,
+			count = 0;
+		function onLoad() {
+			count++;
+			return function OnLoadClosure() {
+				index++;
+
+				if (DB.onProgress) {
+					DB.onProgress(index, count);
+				}
+
+				if (index === count && DB.onReady) {
+					DB.onReady();
+				}
+			};
+		}
+
+		loadFontFromClient('System/Font/');
+
+		// Loading TXT Tables
+		loadTable(
+			'data/mp3nametable.txt',
+			'#',
+			2,
+			function (_index, key, val) {
+				(MapTable[key] || (MapTable[key] = {})).mp3 = val;
+			},
+			onLoad()
+		);
+		loadTable(
+			'data/mapnametable.txt',
+			'#',
+			2,
+			function (_index, key, val) {
+				(MapTable[key] || (MapTable[key] = {})).name = val;
+			},
+			onLoad(),
+			true
+		);
+		const loadmsg = onLoad();
+		loadTable(
+			'data/msgstringtable.txt',
+			'#',
+			1,
+			(_index, val) => {
+				MsgStringTable[_index] = val;
+			},
+			() => loadCSV('data/msgstringtable.csv', MsgStringTable, 0, 1, loadmsg),
+			true
+		);
+
+		loadTable(
+			'data/resnametable.txt',
+			'#',
+			2,
+			function (_index, key, val) {
+				DB.mapalias[key] = val;
+			},
+			onLoad()
+		);
+	}
+
+	static isLoaded = false;
+	static count = 0;
+	static index = 0;
+	static async lazyInit() {
+		console.log('Loading DB files...');
+		await startLua();
+		// Callback
+		DB.index = 0;
+		DB.count = 0;
+		function onLoad() {
+			DB.count++;
+			return function OnLoadClosure() {
+				DB.index++;
+
+				if (DB.onProgress) {
+					DB.onProgress(DB.index, DB.count);
+				}
+
+				if (DB.index === DB.count) {
+					DB.isLoaded = true;
+					// Force cleanup of DB file data (lua, txt, csv, bson blobs) that are no longer needed
+					// gl is null here because we may not have a WebGL context yet during lazy loading
+					MemoryManager.forceClean(null, /\.(lub|lua|txt|csv|bson)$/i);
+				}
+			};
+		}
+
+		// CSV Tables - Client Date is not sure since when they were added
+		if (PACKETVER.value >= 20230302) {
+			loadCSV('data/simplemsg/msg_emotion.csv', MsgEmotionCSV, 0, 2, onLoad());
+		}
+		// TODO: load these load files by PACKETVER
+		if (Configs.get('loadLua')) {
+			// Item
+			let iteminfoNames = [];
+			const customII = Configs.get('customItemInfo', []);
+
+			if (Array.isArray(customII) && customII.length > 0) {
+				// add custom client info table
+				iteminfoNames = iteminfoNames.concat(customII);
+				tryLoadLuaAliases(loadItemInfo, iteminfoNames, null, onLoad(), true);
+			} else {
+				iteminfoNames = iteminfoNames.concat(getSystemAliases('System/itemInfo.lub'));
+				tryLoadLuaAliases(loadItemInfo, iteminfoNames, null, onLoad());
+			}
+
+			loadLuaTable(
+				[DB.LUA_PATH + 'datainfo/accessoryid.lub', DB.LUA_PATH + 'datainfo/accname.lub'],
+				'AccNameTable',
+				function (json) {
+					Object.assign(HatTable, json);
+				},
+				onLoad()
+			);
+			loadLuaTable(
+				[DB.LUA_PATH + 'datainfo/spriterobeid.lub', DB.LUA_PATH + 'datainfo/spriterobename.lub'],
+				'RobeNameTable',
+				function (json) {
+					Object.assign(RobeTable, json);
+				},
+				onLoad()
+			);
+
+			if (PACKETVER.value >= 20141008) {
+				loadLuaTable(
+					[DB.LUA_PATH + 'datainfo/npcidentity.lub', DB.LUA_PATH + 'datainfo/jobname.lub'],
+					'JobNameTable',
+					function (json) {
+						Object.assign(MonsterTable, json);
+					},
+					onLoad(),
+					function () {
+						loadPetInfo(DB.LUA_PATH + 'datainfo/petinfo.lub', null, function () {
+							tryLoadLuaAliases(
+								loadPetEvolution,
+								getSystemAliases('System/PetEvolutionCln.lub'),
+								null,
+								onLoad()
+							);
+						});
+					}
+				);
+			} else {
+				loadLuaTable(
+					[DB.LUA_PATH + 'datainfo/npcidentity.lub', DB.LUA_PATH + 'datainfo/jobname.lub'],
+					'JobNameTable',
+					function (json) {
+						Object.assign(MonsterTable, json);
+					},
+					onLoad()
+				);
+			}
+
+			loadLuaTable(
+				[DB.LUA_PATH + 'datainfo/enumvar.lub', DB.LUA_PATH + 'datainfo/addrandomoptionnametable.lub'],
+				'NameTable_VAR',
+				function (json) {
+					Object.assign(RandomOption, json);
+				},
+				onLoad()
+			);
+			loadItemDBTable(DB.LUA_PATH + 'ItemDBNameTbl.lub', null, onLoad());
+
+			// Weapon tables
+			loadWeaponTable(DB.LUA_PATH + 'datainfo/weapontable.lub', null, onLoad());
+
+			// Title tables
+			if (PACKETVER.value >= 20170208) {
+				loadTitleTable(DB.LUA_PATH + 'datainfo/titletable.lub', null, onLoad());
+			}
+
+			// Skill - load skillid.lub to populate SKID, then load description
+			const onSkillEnd = onLoad();
+			loadLuaValue(DB.LUA_PATH + 'skillinfoz/skillid.lub', 'SKID', json => {
+				if (json && typeof json === 'object') {
+					// Validate and merge entries into SKID
+					for (const k in json) {
+						if (Object.prototype.hasOwnProperty.call(json, k)) {
+							const value = json[k];
+							if (typeof value === 'number' && value > 0) {
+								SKID[k] = value;
+							}
+						}
+					}
+				}
+				// Load description - skillid.lub is re-executed harmlessly (Lua just repopulates globals)
+				loadLuaTable(
+					[DB.LUA_PATH + 'skillinfoz/skillid.lub', DB.LUA_PATH + 'skillinfoz/skilldescript.lub'],
+					'SKILL_DESCRIPT',
+					_json => {
+						SkillDescription = _json;
+					},
+					() => {
+						// Calls after skillids and descs been populated
+						loadSkillInfoList(DB.LUA_PATH + 'skillinfoz/skillinfolist.lub', null, () => {
+							loadSkillTreeView(DB.LUA_PATH + 'skillinfoz/skilltreeview.lub', null, () => {
+								// Load ez2streffect, PACKETVER unknown when the while has been added, tied to default PACKETVER of rathena for 4th job
+								if (PACKETVER.value >= 20211103) {
+									const bsonOnLoad = onLoad();
+									loadBSONFile('data/contentdata/effectdata/ez2streffect.bson', Ez2streffect, () => {
+										Promise.all([
+											import('DB/Effects/EffectTable.js'),
+											import('DB/Skills/SkillEffect.js')
+										]).then(([EffectTable, SkillEffect]) => {
+											mergeEz2Effects(EffectTable.default, SkillEffect.default);

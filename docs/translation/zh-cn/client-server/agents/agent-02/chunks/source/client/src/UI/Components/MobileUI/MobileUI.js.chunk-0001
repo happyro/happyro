@@ -1,0 +1,500 @@
+/**
+ * UI/Components/MobileUI/MobileUI.js
+ *
+ * Mobile/Touchscreen assist UI
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
++ */
+
+import Context from 'Core/Context.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import Preferences from 'Core/Preferences.js';
+import Session from 'Engine/SessionStorage.js';
+import Renderer from 'Renderer/Renderer.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import PACKET from 'Network/PacketStructure.js';
+import EntityManager from 'Renderer/EntityManager.js';
+import Network from 'Network/NetworkManager.js';
+import PathFinding from 'Utils/PathFinding.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import Events from 'Core/Events.js';
+import htmlText from './MobileUI.html?raw';
+import cssText from './MobileUI.css?raw';
+import glMatrix from 'Vendors/gl-matrix.js';
+import Camera from 'Renderer/Camera.js';
+import _KEYS from 'Controls/KeyEventHandler.js'; // Currently unused, preserved for future development
+
+const vec2 = glMatrix.vec2;
+const mat2 = glMatrix.mat2;
+
+// Object to initialize
+const direction = vec2.create();
+const rotate = mat2.create();
+
+//Memory
+const targetPos = [0, 0];
+
+let movementTimer = null; // Timer for continuous joystick movement
+
+/**
+ * Create Component
+ */
+const MobileUI = new GUIComponent('MobileUI', cssText);
+
+MobileUI.render = () => htmlText;
+
+/**
+ * @var {Preferences} window preferences
+ */
+const _preferences = Preferences.get(
+	'MobileUI',
+	{
+		x: 0,
+		y: 0,
+		zIndex: 1000,
+		width: window.innerWidth,
+		height: window.innerHeight,
+		show: false
+	},
+	1.0
+);
+
+let showButtons = false;
+let autoTargetTimer;
+const C_AUTOTARGET_DELAY = 500;
+const C_TOUCH_CLICK_GUARD = 750;
+
+let centerX, centerY;
+let maxDistance = 0;
+let normalizedX = 0;
+let normalizedY = 0;
+
+// Joystick element references (captured in setupJoystick)
+let _joystickBase = null;
+let _joystickThumb = null;
+
+/**
+ * Helper to bind click+touchstart on an element
+ */
+function bindButton(root, selector, handler) {
+	const el = root.querySelector(selector);
+	if (el) {
+		let touchHandled = false;
+		let releaseTimer = null;
+
+		const clearGuard = () => {
+			if (releaseTimer !== null) {
+				clearTimeout(releaseTimer);
+				releaseTimer = null;
+			}
+		};
+
+		const releaseGuard = () => {
+			clearGuard();
+			releaseTimer = setTimeout(() => {
+				releaseTimer = null;
+				touchHandled = false;
+			}, C_TOUCH_CLICK_GUARD);
+		};
+
+		el.addEventListener('click', event => {
+			if (touchHandled) {
+				touchHandled = false;
+				clearGuard();
+				event.preventDefault();
+				event.stopImmediatePropagation();
+				return;
+			}
+			handler(event);
+		});
+		el.addEventListener('touchstart', event => {
+			touchHandled = true;
+			clearGuard();
+			handler(event);
+		});
+		el.addEventListener('touchend', releaseGuard);
+		el.addEventListener('touchcancel', releaseGuard);
+	}
+}
+
+/**
+ * Initialize UI
+ */
+MobileUI.init = function init() {
+	const root = MobileUI.getRoot();
+
+	bindButton(root, '#toggleUIButton', e => {
+		toggleButtons();
+		stopPropagation(e);
+	});
+	bindButton(root, '#fullscreenButton', e => {
+		toggleFullScreen();
+		stopPropagation(e);
+	});
+
+	// F-key buttons
+	const fKeyMap = [
+		['#f1Button', 112],
+		['#f2Button', 113],
+		['#f3Button', 114],
+		['#f4Button', 115],
+		['#f5Button', 116],
+		['#f6Button', 117],
+		['#f7Button', 118],
+		['#f8Button', 119],
+		['#f9Button', 120]
+	];
+
+	// Number key buttons
+	const nKeyMap = [
+		['#n1Button', 49],
+		['#n2Button', 50],
+		['#n3Button', 51],
+		['#n4Button', 52],
+		['#n5Button', 53],
+		['#n6Button', 54],
+		['#n7Button', 55],
+		['#n8Button', 56],
+		['#n9Button', 57]
+	];
+
+	// Letter key buttons
+	const letterKeyMap = [
+		['#qButton', 81],
+		['#wButton', 87],
+		['#eButton', 69],
+		['#rButton', 82],
+		['#tButton', 84],
+		['#yButton', 89],
+		['#uButton', 85],
+		['#iButton', 73],
+		['#oButton', 79],
+		['#aButton', 65],
+		['#sButton', 83],
+		['#dButton', 68],
+		['#fButton', 70],
+		['#gButton', 71],
+		['#hButton', 72],
+		['#jButton', 74],
+		['#kButton', 75],
+		['#lButton', 76]
+	];
+
+	[...fKeyMap, ...nKeyMap, ...letterKeyMap].forEach(([selector, keyCode]) => {
+		bindButton(root, selector, e => {
+			logKeyPress(keyCode);
+			stopPropagation(e);
+		});
+	});
+
+	bindButton(root, '#f10Button', e => {
+		logKeyPress(121);
+		stopPropagation(e);
+	});
+	bindButton(root, '#f12Button', e => {
+		logKeyPress(123);
+		stopPropagation(e);
+	});
+	bindButton(root, '#insButton', e => {
+		logKeyPress(45);
+		stopPropagation(e);
+	});
+
+	bindButton(root, '#toggleStatusButton', e => {
+		toggleStatus();
+		stopPropagation(e);
+	});
+	bindButton(root, '#toggleTargetingButton', e => {
+		toggleTouchTargeting();
+		stopPropagation(e);
+	});
+	bindButton(root, '#toggleAutoFollowButton', e => {
+		toggleAutoFollow();
+		stopPropagation(e);
+	});
+	bindButton(root, '#toggleAutoTargetButton', e => {
+		toggleAutoTargeting();
+		stopPropagation(e);
+	});
+
+	bindButton(root, '#attackButton', e => {
+		attackTargeted();
+		stopPropagation(e);
+	});
+
+	bindButton(root, '#pickupButton', e => {
+		pickUpItem();
+		stopPropagation(e);
+	});
+
+	bindButton(root, '#switchshorcutButton', e => {
+		switchSkillButtons();
+		stopPropagation(e);
+	});
+
+	// Press effect for .buttons and .FButton
+	root.querySelectorAll('.buttons').forEach(btn => {
+		btn.addEventListener('mousedown', e => e.target.classList.add('pressed'));
+		btn.addEventListener('touchstart', e => e.target.classList.add('pressed'));
+		btn.addEventListener('mouseup', e => e.target.classList.remove('pressed'));
+		btn.addEventListener('touchend', e => e.target.classList.remove('pressed'));
+	});
+
+	root.querySelectorAll('.FButton').forEach(btn => {
+		btn.addEventListener('mousedown', e => e.target.classList.add('pressed'));
+		btn.addEventListener('touchstart', e => e.target.classList.add('pressed'));
+		btn.addEventListener('mouseup', e => e.target.classList.remove('pressed'));
+		btn.addEventListener('touchend', e => e.target.classList.remove('pressed'));
+	});
+
+	// Initialize the joystick - MicromeX
+	setupJoystick();
+	// Initialize the NPC Talk Button - MicromeX
+	setupTalkToNpcButton();
+};
+
+/**
+ * Logs the key press to the console and performs the key press action.
+ * @param {number} keyCode - The key code of the pressed key.
+ */
+function logKeyPress(keyCode) {
+	keyPress(keyCode);
+}
+
+/**
+ * Toggles full screen display
+ */
+function toggleFullScreen() {
+	if (!Context.isFullScreen()) {
+		Context.requestFullScreen();
+	} else {
+		Context.cancelFullScreen();
+	}
+}
+
+/**
+ * Emulates a keypress event
+ *
+ * @param {number} keyId
+ */
+function keyPress(k) {
+	const roWindow = window;
+	roWindow.document.getElementsByTagName('body')[0].focus();
+	roWindow.dispatchEvent(
+		new KeyboardEvent('keydown', {
+			keyCode: k,
+			which: k
+		})
+	);
+}
+
+/**
+ * Toggles MobileUI button bars visibility (and thus buttons)
+ */
+function toggleButtons() {
+	const root = MobileUI.getRoot();
+
+	if (showButtons) {
+		// Hide all bars and buttons
+		[
+			'#topBar',
+			'#leftBar',
+			'#rightBar',
+			'#joystickContainer',
+			'#buttonContainer',
+			'#attackButton',
+			'#pickupButton',
+			'#talktonpcButton',
+			'#switchshorcutButton'
+		].forEach(sel => {
+			const el = root.querySelector(sel);
+			if (el) {
+				el.classList.add('disabled');
+			}
+		});
+
+		// Hide F-key buttons
+		for (let i = 1; i <= 9; i++) {
+			const fBtn = root.querySelector(`#f${i}Button`);
+			if (fBtn) {
+				fBtn.classList.add('disabled');
+			}
+		}
+
+		// Hide number, letter buttons
+		['n', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'].forEach(key => {
+			const btn =
+				root.querySelector(`#${key}Button`) || root.querySelector(`#${key}${key === 'n' ? '' : 'B'}utton`);
+			if (btn) {
+				btn.classList.add('disabled');
+			}
+		});
+
+		// Hide number buttons specifically
+		for (let i = 1; i <= 9; i++) {
+			const nBtn = root.querySelector(`#n${i}Button`);
+			if (nBtn) {
+				nBtn.classList.add('disabled');
+			}
+		}
+
+		// Hide letter buttons
+		['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'].forEach(key => {
+			const btn = root.querySelector(`#${key}Button`);
+			if (btn) {
+				btn.classList.add('disabled');
+			}
+		});
+
+		if (Session.TouchTargeting) {
+			toggleTouchTargeting();
+		}
+
+		showButtons = false;
+	} else {
+		[
+			'#topBar',
+			'#leftBar',
+			'#rightBar',
+			'#joystickContainer',
+			'#buttonContainer',
+			'#attackButton',
+			'#pickupButton',
+			'#talktonpcButton',
+			'#switchshorcutButton'
+		].forEach(sel => {
+			const el = root.querySelector(sel);
+			if (el) {
+				el.classList.remove('disabled');
+			}
+		});
+
+		for (let i = 1; i <= 9; i++) {
+			const fBtn = root.querySelector(`#f${i}Button`);
+			if (fBtn) {
+				fBtn.classList.remove('disabled');
+			}
+		}
+
+		showButtons = true;
+	}
+}
+
+/**
+ * Toggles switch skill
+ */
+function switchSkillButtons() {
+	const root = MobileUI.getRoot();
+
+	const skillSets = [
+		[
+			'#f1Button',
+			'#f2Button',
+			'#f3Button',
+			'#f4Button',
+			'#f5Button',
+			'#f6Button',
+			'#f7Button',
+			'#f8Button',
+			'#f9Button'
+		],
+		[
+			'#n1Button',
+			'#n2Button',
+			'#n3Button',
+			'#n4Button',
+			'#n5Button',
+			'#n6Button',
+			'#n7Button',
+			'#n8Button',
+			'#n9Button'
+		],
+		['#qButton', '#wButton', '#eButton', '#rButton', '#tButton', '#yButton', '#uButton', '#iButton', '#oButton'],
+		['#aButton', '#sButton', '#dButton', '#fButton', '#gButton', '#hButton', '#jButton', '#kButton', '#lButton']
+	];
+
+	const currentSetIndex = switchSkillButtons.currentSetIndex || 0;
+	const nextSetIndex = (currentSetIndex + 1) % skillSets.length;
+
+	// Hide all skill sets
+	skillSets.flat().forEach(selector => {
+		const el = root.querySelector(selector);
+		if (el) {
+			el.classList.add('disabled');
+		}
+	});
+
+	// Show only the next set
+	skillSets[nextSetIndex].forEach(selector => {
+		const el = root.querySelector(selector);
+		if (el) {
+			el.classList.remove('disabled');
+		}
+	});
+
+	switchSkillButtons.currentSetIndex = nextSetIndex;
+}
+
+/**
+ * Toggles status view
+ */
+function toggleStatus() {
+	// StatusIcons is a separate component outside this shadow DOM
+	const statusIcons = document.querySelector('#StatusIcons');
+	if (statusIcons) {
+		statusIcons.style.display = statusIcons.style.display === 'none' ? '' : 'none';
+	}
+}
+
+/**
+ * Toggles touch targeting
+ */
+function toggleTouchTargeting() {
+	const root = MobileUI.getRoot();
+
+	if (Session.TouchTargeting) {
+		root.querySelector('#toggleTargetingButton').classList.remove('active');
+		root.querySelector('#toggleAutoFollowButton').classList.add('disabled');
+		root.querySelector('#toggleAutoTargetButton').classList.add('disabled');
+
+		if (Session.AutoTargeting) {
+			toggleAutoTargeting();
+		}
+
+		Session.TouchTargeting = false;
+	} else {
+		root.querySelector('#toggleTargetingButton').classList.add('active');
+		root.querySelector('#toggleAutoFollowButton').classList.remove('disabled');
+		root.querySelector('#toggleAutoTargetButton').classList.remove('disabled');
+
+		Session.TouchTargeting = true;
+	}
+}
+
+/**
+ * Toggles automatic targeting
+ */
+function toggleAutoTargeting() {
+	const root = MobileUI.getRoot();
+
+	if (Session.AutoTargeting) {
+		root.querySelector('#toggleAutoTargetButton').classList.remove('active');
+		Session.AutoTargeting = false;
+	} else {
+		root.querySelector('#toggleAutoTargetButton').classList.add('active');
+		Session.AutoTargeting = true;
+		autoTarget();
+	}
+}
+
+/**
+ * Toggles auto follow
+ */
+function toggleAutoFollow() {
+	const root = MobileUI.getRoot();
+
+	if (Session.autoFollow) {
+		root.querySelector('#toggleAutoFollowButton').classList.remove('active');
+		Session.autoFollow = false;

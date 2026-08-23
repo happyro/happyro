@@ -1,0 +1,500 @@
+						if (_tabEnter === 0 && _tabIntersect) {
+							Mouse.intersect = true;
+							EntityManager.setOverEntity(null);
+						}
+					}
+				}
+			},
+			true
+		);
+
+		// Prevent walking when clicking tabs
+		root.querySelector('#chatbox').addEventListener(
+			'mousedown',
+			event => {
+				if (event.target.closest('table.header tr td.tab')) {
+					event.stopPropagation();
+				}
+			},
+			true
+		);
+	})();
+
+	// Prevent map right-click (camera rotate) when using chat right-click features
+	const chatBody = root.querySelector('.body');
+	if (chatBody) {
+		chatBody.addEventListener('mousedown', event => {
+			if (event.which !== 3) {
+				return;
+			}
+			event.preventDefault();
+			event.stopPropagation();
+		});
+	}
+
+	// Chat font scale context menu (right click)
+	const chatboxEl = root.querySelector('#chatbox');
+	if (chatboxEl) {
+		chatboxEl.addEventListener('contextmenu', event => {
+			const target = event.target;
+			if (target.closest('.body, .contentwrapper, .content')) {
+				if (target.closest('a, .item-link, .event_add_cursor, .chat-function, td.tab')) {
+					return;
+				}
+
+				event.preventDefault();
+				event.stopPropagation();
+
+				Mouse.screen.x = event.pageX;
+				Mouse.screen.y = event.pageY;
+
+				ContextMenu.remove();
+				ContextMenu.append();
+				ContextMenu.addElement('Chat font x1.0', setChatFontScale(1.0));
+				ContextMenu.addElement('Chat font x1.2', setChatFontScale(1.2));
+				ContextMenu.addElement('Chat font x1.4', setChatFontScale(1.4));
+			}
+		});
+	}
+
+	// Clicking interactive elements in chat should not trigger map movement
+	if (chatboxEl) {
+		chatboxEl.addEventListener('mousedown', event => {
+			if (event.target.closest('.content a, .content .item-link')) {
+				event.stopPropagation();
+			}
+		});
+	}
+
+	const bmtoggle = root.querySelector('.battlemode .bmtoggle');
+	if (bmtoggle) {
+		bmtoggle.addEventListener('click', () => {
+			const inputEl = root.querySelector('.input');
+			const bmEl = root.querySelector('.battlemode');
+			if (inputEl) inputEl.style.display = inputEl.style.display === 'none' ? 'block' : 'none';
+			if (bmEl) bmEl.style.display = bmEl.style.display === 'none' ? 'block' : 'none';
+		});
+	}
+
+	const battleopt2 = root.querySelector('.chat-function .battleopt2');
+	if (battleopt2) {
+		battleopt2.addEventListener('click', () => {
+			if (ChatBox.tabCount <= 5) {
+				ChatBox.addNewTab();
+				ChatBox.onAppend();
+			}
+		});
+	}
+
+	// Tab click handler (delegated)
+	if (chatboxEl) {
+		chatboxEl.addEventListener('click', event => {
+			const tab = event.target.closest('table.header tr td.tab');
+			if (tab) {
+				event.stopImmediatePropagation();
+				if (ChatBox.activeTab != tab.dataset.tab) {
+					ChatBox.switchTab(tab.dataset.tab);
+				}
+			}
+		});
+	}
+
+	const wndminib = root.querySelector('.chat-function .wndminib');
+	if (wndminib) {
+		wndminib.addEventListener('click', () => {
+			if (ChatBox.tabCount > 1) {
+				ChatBox.removeTab();
+			}
+		});
+	}
+
+	const chatmodeBtn = root.querySelector('.chat-function .chatmode');
+	if (chatmodeBtn) {
+		chatmodeBtn.addEventListener('click', () => {
+			ChatBox.toggleChat();
+		});
+	}
+
+	const battleoptBtn = root.querySelector('.chat-function .battleopt');
+	if (battleoptBtn) {
+		battleoptBtn.addEventListener('click', () => {
+			ChatBox.toggleChatBattleOption();
+		});
+	}
+
+	// Init settings window as well
+	ChatBoxSettings.append();
+
+	if (_preferences.tabs.length > 0 && _preferences.tabs.length == _preferences.tabOption.length) {
+		// Load saved tabs
+		for (let i = 0; i < _preferences.tabs.length; i++) {
+			if (_preferences.tabs[i]) {
+				const tabName = _preferences.tabs[i].name;
+				const tabSettings = _preferences.tabOption[i];
+				ChatBox.addNewTab(tabName, tabSettings);
+			}
+		}
+
+		// switch to active tab
+		if (_preferences.activeTab !== undefined && ChatBox.tabs[_preferences.activeTab]) {
+			ChatBox.switchTab(_preferences.activeTab);
+		}
+	} else {
+		// Create default tabs
+		const firstTab = ChatBox.addNewTab(DB.getMessage(1291), [
+			ChatBox.FILTER.PUBLIC_LOG,
+			ChatBox.FILTER.PUBLIC_CHAT,
+			ChatBox.FILTER.WHISPER,
+			ChatBox.FILTER.PARTY,
+			ChatBox.FILTER.GUILD,
+			ChatBox.FILTER.ITEM,
+			ChatBox.FILTER.EQUIP,
+			ChatBox.FILTER.STATUS,
+			ChatBox.FILTER.PARTY_ITEM,
+			ChatBox.FILTER.PARTY_STATUS,
+			ChatBox.FILTER.SKILL_FAIL,
+			ChatBox.FILTER.PARTY_SETUP,
+			ChatBox.FILTER.EQUIP_DAMAGE,
+			ChatBox.FILTER.WOE,
+			ChatBox.FILTER.PARTY_SEARCH,
+			ChatBox.FILTER.QUEST,
+			ChatBox.FILTER.BATTLEFIELD,
+			ChatBox.FILTER.CLAN
+		]); // Public Log
+
+		ChatBox.addNewTab(DB.getMessage(1292)); // Battle Log
+
+		// switch to first
+		ChatBox.switchTab(firstTab);
+	}
+
+	// dialog box size
+	makeResizableDiv();
+
+	Commands.add(
+		'savechat',
+		'Saves current chat tab to txt file.',
+		() => {
+			ChatBox.saveCurrentTabChat();
+			return;
+		},
+		['sc'],
+		false
+	);
+
+	// Set up item link click handler inside shadow DOM
+	ChatBox._setupItemLinkHandler();
+};
+
+/**
+ * Clean up the box
+ */
+ChatBox.clean = function Clean() {
+	const root = _root();
+
+	const contents = root.querySelectorAll('.content');
+	contents.forEach(content => {
+		const matches = content.innerHTML.match(/(blob:[^"]+)/g);
+		if (matches) {
+			for (let i = 0, count = matches.length; i < count; ++i) {
+				window.URL.revokeObjectURL(matches[i]);
+			}
+		}
+		content.innerHTML = '';
+	});
+
+	const inputChatbox = root.querySelector('.input-chatbox');
+	if (inputChatbox) inputChatbox.innerHTML = '';
+
+	const nickBox = root.querySelector('.input .username');
+	if (nickBox) nickBox.value = '';
+
+	_historyMessage.clear();
+	_historyNickName.clear();
+};
+
+ChatBox.toggleChatBattleOption = function toggleChatBattleOption() {
+	const root = _root();
+	const onInput = root.querySelector('.header tr td div.on input');
+	const tabName = onInput ? onInput.value : '';
+	ChatBoxSettings.toggle();
+	ChatBoxSettings.updateTab(this.activeTab, tabName);
+};
+
+ChatBox.removeTab = function removeTab() {
+	const root = _root();
+	const tabEl = root.querySelector(`table.header tr td.tab[data-tab="${this.activeTab}"]`);
+	if (tabEl) tabEl.remove();
+
+	const contentEl = root.querySelector(`.body .content[data-content="${this.activeTab}"]`);
+	if (contentEl) contentEl.remove();
+
+	const _elem = root.querySelectorAll('table.header tr td.tab');
+	const lastElem = _elem[_elem.length - 1];
+
+	delete ChatBoxSettings.tabOption[this.activeTab];
+	delete this.tabs[this.activeTab];
+	this.tabCount--;
+
+	ChatBox.switchTab(lastElem.dataset.tab);
+
+	const onInput = root.querySelector('.header tr td div.on input');
+	const tabName = onInput ? onInput.value : '';
+	ChatBoxSettings.updateTab(this.activeTab, tabName);
+};
+
+ChatBox.addNewTab = function addNewTab(name, settings) {
+	const root = _root();
+
+	if (!name) {
+		name = 'New Tab';
+	}
+	if (!settings) {
+		settings = [
+			ChatBox.FILTER.PUBLIC_LOG,
+			ChatBox.FILTER.PUBLIC_CHAT,
+			ChatBox.FILTER.WHISPER,
+			ChatBox.FILTER.PARTY,
+			ChatBox.FILTER.GUILD,
+			ChatBox.FILTER.ITEM,
+			ChatBox.FILTER.EQUIP,
+			ChatBox.FILTER.STATUS,
+			ChatBox.FILTER.PARTY_ITEM,
+			ChatBox.FILTER.PARTY_STATUS,
+			ChatBox.FILTER.SKILL_FAIL,
+			ChatBox.FILTER.PARTY_SETUP,
+			ChatBox.FILTER.EQUIP_DAMAGE,
+			ChatBox.FILTER.WOE,
+			ChatBox.FILTER.PARTY_SEARCH,
+			ChatBox.FILTER.BATTLE,
+			ChatBox.FILTER.PARTY_BATTLE,
+			ChatBox.FILTER.EXP,
+			ChatBox.FILTER.PARTY_EXP,
+			ChatBox.FILTER.QUEST,
+			ChatBox.FILTER.BATTLEFIELD,
+			ChatBox.FILTER.CLAN
+		];
+	}
+
+	const tabName = name;
+	const tabID = ++this.lastTabID;
+
+	const tab = {};
+	tab.id = tabID;
+	tab.name = tabName;
+
+	// Remove current active state
+	root.querySelectorAll('table.header tr td.tab div').forEach(el => el.classList.remove('on'));
+	root.querySelectorAll('.body .content').forEach(el => el.classList.remove('active'));
+
+	// Add new elements as active
+	const opttab = root.querySelector('table.header tr .opttab');
+	if (opttab) {
+		opttab.insertAdjacentHTML(
+			'beforebegin',
+			`
+			<td class="tab" data-tab="${tabID}">
+				<div class="on">
+					<input type="text" value="${tabName}"/>
+				</div>
+			</td>
+		`
+		);
+	}
+
+	const newTabInput = root.querySelector(`table.header tr td.tab[data-tab="${tabID}"] div input`);
+	if (newTabInput) {
+		newTabInput.addEventListener('change', function () {
+			ChatBox.tabs[tabID].name = this.value;
+		});
+	}
+
+	const contentWrapper = root.querySelector('.body .contentwrapper');
+	if (contentWrapper) {
+		contentWrapper.insertAdjacentHTML(
+			'beforeend',
+			`<div class="content active" data-content="${tabID}" data-scrollbar-skin="chatbox"></div>`
+		);
+	}
+
+	// Bind scroll handler on new content
+	const newContent = root.querySelector(`.body .content[data-content="${tabID}"]`);
+	if (newContent) {
+		newContent.addEventListener('wheel', onScroll);
+	}
+
+	ChatBoxSettings.tabOption[tabID] = settings;
+
+	this.tabs[tabID] = tab;
+	this.activeTab = tabID;
+
+	this.tabCount++;
+
+	ChatBoxSettings.updateTab(this.activeTab, tabName);
+
+	return tabID;
+};
+
+ChatBox.switchTab = function switchTab(tabID) {
+	const root = _root();
+
+	root.querySelectorAll('table.header tr td.tab div').forEach(el => el.classList.remove('on'));
+	root.querySelectorAll('.body .content').forEach(el => el.classList.remove('active'));
+
+	this.activeTab = tabID;
+
+	const tabDiv = root.querySelector(`table.header tr td.tab[data-tab="${this.activeTab}"] div`);
+	if (tabDiv) tabDiv.classList.add('on');
+
+	const contentDiv = root.querySelector(`.body .content[data-content="${this.activeTab}"]`);
+	if (contentDiv) {
+		contentDiv.classList.add('active');
+		contentDiv.scrollTop = contentDiv.scrollHeight;
+	}
+
+	const onInput = root.querySelector('.header tr td div.on input');
+	const tabName = onInput ? onInput.value : '';
+
+	ChatBoxSettings.updateTab(this.activeTab, tabName);
+};
+
+/**
+ * Once append to HTML
+ */
+ChatBox.onAppend = function OnAppend() {
+	const root = _root();
+	const inputEl = root.querySelector('.input');
+	if (inputEl) inputEl.style.display = 'none';
+
+	const bmEl = root.querySelector('.battlemode');
+	if (bmEl) bmEl.style.display = 'block';
+
+	const content = root.querySelector('.content.active');
+	if (content) content.scrollTop = content.scrollHeight;
+};
+
+/**
+ * Stop custom scroll
+ */
+ChatBox.onRemove = function OnRemove() {
+	_preferences.y = (parseInt(this._host.style.top, 10) || 0) + (this._host.offsetHeight || 0);
+	_preferences.x = parseInt(this._host.style.left, 10) || 0;
+	_preferences.height = _heightIndex;
+	_preferences.magnet_top = this.magnet.TOP;
+	_preferences.magnet_bottom = this.magnet.BOTTOM;
+	_preferences.magnet_left = this.magnet.LEFT;
+	_preferences.magnet_right = this.magnet.RIGHT;
+
+	_preferences.tabs = this.tabs;
+	_preferences.tabOption = ChatBoxSettings.tabOption;
+	_preferences.activeTab = this.activeTab;
+
+	_preferences.save();
+
+	this.lastTabID = -1;
+	this.activeTab = 0;
+};
+
+/**
+ * @param {number} key id to check
+ * @return {boolean} found a shortcut ?
+ */
+ChatBox.processBattleMode = function processBattleMode(keyId) {
+	const root = _root();
+	const bmEl = root.querySelector('.battlemode');
+	if (
+		(bmEl && bmEl.style.display !== 'none') ||
+		KEYS.ALT ||
+		KEYS.SHIFT ||
+		KEYS.CTRL ||
+		(keyId >= KEYS.F1 && keyId <= KEYS.F24) ||
+		KEYS.INSERT
+	) {
+		return BattleMode.process(keyId);
+	}
+
+	return false;
+};
+
+/**
+ * Key Event Handler
+ */
+ChatBox.onKeyDown = function OnKeyDown(event) {
+	const root = _root();
+	const messageBox = root.querySelector('.input-chatbox');
+	const nickBox = root.querySelector('.input .username');
+
+	const onInput = root.querySelector('.header tr td div.on input');
+	if (onInput) {
+		onInput.addEventListener('keyup', function () {
+			ChatBoxSettings.updateTab(ChatBox.activeTab, this.value);
+		});
+	}
+
+	const activeElement = KEYS.getDeepActiveElement();
+	const isChatInputFocused = activeElement === messageBox || activeElement === nickBox;
+	const isOtherTextInputFocused =
+		activeElement &&
+		!isChatInputFocused &&
+		((activeElement.tagName && activeElement.tagName.match(/input|select|textarea/i)) ||
+			activeElement.isContentEditable);
+
+	if (isOtherTextInputFocused) {
+		return true;
+	}
+
+	switch (event.which) {
+		default:
+			if (isChatInputFocused) {
+				if (event.which >= KEYS.F1 && event.which <= KEYS.F24) {
+					if (event.which === KEYS.F11 || event.which === KEYS.F12) {
+						event.preventDefault();
+						return true;
+					}
+
+					if (ChatBox.processBattleMode(event.which)) {
+						event.preventDefault();
+						event.stopImmediatePropagation();
+						return false;
+					}
+					event.preventDefault();
+					event.stopImmediatePropagation();
+					return false;
+				}
+
+				if (event.getModifierState && event.getModifierState('AltGraph')) {
+					event.stopImmediatePropagation();
+					return true;
+				}
+
+				if (event.ctrlKey || KEYS.CTRL) {
+					const isEditingCombo =
+						event.which === KEYS.C ||
+						event.which === KEYS.V ||
+						event.which === KEYS.X ||
+						event.which === KEYS.A ||
+						event.which === KEYS.Z ||
+						event.which === KEYS.Y;
+
+					if (!isEditingCombo) {
+						if (ChatBox.processBattleMode(event.which)) {
+							event.preventDefault();
+							event.stopImmediatePropagation();
+							return false;
+						}
+						event.preventDefault();
+						return true;
+					}
+
+					event.stopImmediatePropagation();
+					return true;
+				}
+
+				if (event.altKey || KEYS.ALT) {
+					const isAltEditingCombo =
+						event.which === KEYS.LEFT ||
+						event.which === KEYS.RIGHT ||
+						event.which === KEYS.UP ||
+						event.which === KEYS.DOWN ||
+						event.which === KEYS.BACKSPACE ||
+						event.which === KEYS.DELETE ||

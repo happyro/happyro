@@ -1,0 +1,83 @@
+
+			dataURIList.push(dataURI);
+
+			const blobURL = URL.createObjectURL(new Blob([data.buffer], { type: 'image/png' }));
+
+			_compiledStyle.push(blobURL);
+		}
+	}
+}
+
+/**
+ * Creates a sprite sheet from a list of image URLs and appends it to the DOM.
+ *
+ * Creates a canvas, draws each sprite in a row, converts the canvas to a data URL,
+ * and then creates a Blob URL to display the sprite sheet.
+ */
+function createSpriteSheet() {
+	const spriteWidth = 50,
+		spriteHeight = 50;
+	const totalSprites = _compiledStyle.length;
+	const spriteSheetWidth = totalSprites * spriteWidth;
+	const spriteSheetHeight = spriteHeight;
+
+	// Create a canvas to hold the sprite sheet
+	const spriteSheetCanvas = document.createElement('canvas');
+	spriteSheetCanvas.width = spriteSheetWidth;
+	spriteSheetCanvas.height = spriteSheetHeight;
+	const ctx = spriteSheetCanvas.getContext('2d');
+
+	let imagesLoaded = 0;
+
+	function drawSprite(n) {
+		const img = new Image();
+		img.decoding = 'async';
+		img.onload = function () {
+			ctx.drawImage(img, n * spriteWidth, 0, spriteWidth, spriteHeight);
+			imagesLoaded++;
+			if (imagesLoaded === totalSprites) {
+				finalizeSpriteSheet();
+			}
+		};
+		img.src = _compiledStyle[n];
+	}
+
+	function finalizeSpriteSheet() {
+		// Convert the sprite sheet canvas to a data URL
+		const spriteSheetDataURL = spriteSheetCanvas.toDataURL('image/png');
+
+		// Create a Blob from the sprite sheet data URL
+		const binary = atob(spriteSheetDataURL.split(',')[1]);
+		const array = [];
+		for (let i = 0; i < binary.length; i++) {
+			array.push(binary.charCodeAt(i));
+		}
+		const blob = new Blob([new Uint8Array(array)], { type: 'image/png' });
+		const spriteSheetBlobURL = URL.createObjectURL(blob);
+
+		// Append the sprite sheet to the DOM
+		const imageElem = document.createElement('img');
+		imageElem.className = 'cursor__sprite';
+		imageElem.src = spriteSheetBlobURL;
+		imageElem.addEventListener(
+			'load',
+			e => {
+				URL.revokeObjectURL(e.target.src);
+			},
+			{ once: true }
+		);
+		const cursorEl = document.querySelector('.cursor');
+		if (cursorEl) {
+			cursorEl.appendChild(imageElem);
+		}
+	}
+
+	for (let i = 0; i < totalSprites; i++) {
+		drawSprite(i);
+	}
+}
+
+/**
+ * Export
+ */
+export default Cursor;

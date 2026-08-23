@@ -1,0 +1,299 @@
+/**
+ * @type {number} walk timer
+ */
+let _walkTimer = null;
+
+/**
+ * @type {number} Last delay to walk
+ */
+let _walkLastTick = 0;
+
+/**
+ * Ask to move
+ */
+function onRequestWalk() {
+	Events.clearTimeout(_walkTimer);
+
+	// If siting, update direction
+	if (Session.Entity.action === Session.Entity.ACTION.SIT || KEYS.SHIFT) {
+		Session.Entity.lookTo(Mouse.world.x, Mouse.world.y);
+
+		let pkt;
+		if (PACKETVER.value >= 20180307) {
+			pkt = new PACKET.CZ.CHANGE_DIRECTION2();
+		} else {
+			pkt = new PACKET.CZ.CHANGE_DIRECTION();
+		}
+		pkt.headDir = Session.Entity.headDir;
+		pkt.dir = Session.Entity.direction;
+		Network.sendPacket(pkt);
+		return;
+	}
+
+	walkIntervalProcess();
+}
+
+/**
+ * Stop moving
+ */
+function onRequestStopWalk() {
+	Events.clearTimeout(_walkTimer);
+}
+
+/**
+ * Moving function
+ */
+function walkIntervalProcess() {
+	// setTimeout isn't accurate, so reduce the value
+	// to avoid possible errors.
+	if (_walkLastTick + 200 > Renderer.tick) {
+		return;
+	}
+
+	const isWalkable = Mouse.world.x > -1 && Mouse.world.y > -1;
+	const isCurrentPos =
+		Math.round(Session.Entity.position[0]) === Mouse.world.x &&
+		Math.round(Session.Entity.position[1]) === Mouse.world.y;
+
+	if (isWalkable && !isCurrentPos) {
+		let pkt;
+		if (PACKETVER.value >= 20180307) {
+			pkt = new PACKET.CZ.REQUEST_MOVE2();
+		} else {
+			pkt = new PACKET.CZ.REQUEST_MOVE();
+		}
+		if (!checkFreeCell(Mouse.world.x, Mouse.world.y, 9, pkt.dest)) {
+			pkt.dest[0] = Mouse.world.x;
+			pkt.dest[1] = Mouse.world.y;
+		}
+
+		Network.sendPacket(pkt);
+	}
+
+	Events.clearTimeout(_walkTimer);
+	_walkTimer = Events.setTimeout(walkIntervalProcess, 500);
+	_walkLastTick = +Renderer.tick;
+}
+
+/**
+ * Search free cells around a position
+ *
+ * @param {number} x
+ * @param {number} y
+ * @param {number} range
+ * @param {array} out
+ */
+function checkFreeCell(x, y, range, out) {
+	let _x, _y, r;
+	const d_x = Session.Entity.position[0] < x ? -1 : 1;
+	const d_y = Session.Entity.position[1] < y ? -1 : 1;
+
+	// Search possible positions
+	for (r = 0; r <= range; ++r) {
+		for (_x = -r; _x <= r; ++_x) {
+			for (_y = -r; _y <= r; ++_y) {
+				if (isFreeCell(x + _x * d_x, y + _y * d_y)) {
+					out[0] = x + _x * d_x;
+					out[1] = y + _y * d_y;
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+/**
+ * Does a cell is free (walkable, and no entity on)
+ *
+ * @param {number} x
+ * @param {number} y
+ * @param {returns} is free
+ */
+function isFreeCell(x, y) {
+	if (!(Altitude.getCellType(x, y) & Altitude.TYPE.WALKABLE)) {
+		return false;
+	}
+
+	let free = true;
+
+	EntityManager.forEach(function (entity) {
+		if (
+			entity.objecttype != entity.constructor.TYPE_EFFECT &&
+			entity.objecttype != entity.constructor.TYPE_UNIT &&
+			entity.objecttype != entity.constructor.TYPE_TRAP &&
+			Math.round(entity.position[0]) === x &&
+			Math.round(entity.position[1]) === y
+		) {
+			free = false;
+			return false;
+		}
+
+		return true;
+	});
+
+	return free;
+}
+
+/**
+ * If the character moved to attack, once it finished to move ask to attack
+ */
+function onWalkEnd() {
+	// No action to do ?
+	if (Session.moveAction) {
+		// Not sure why, but there is a synchronization error with the
+		// server when moving to attack (wrong position).
+		// So wait 50ms to be sure we are at the correct position before
+		// performing an action
+		Events.setTimeout(() => {
+			if (Session.moveAction) {
+				Network.sendPacket(Session.moveAction);
+				Session.moveAction = null;
+			}
+		}, 50);
+	}
+}
+
+/**
+ * Ask server to update status
+ *
+ * @param {number} id
+ * @param {number} amount
+ */
+function onRequestStatUpdate(id, amount) {
+	const pkt = new PACKET.CZ.STATUS_CHANGE();
+	pkt.statusID = id;
+	pkt.changeAmount = amount;
+
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Drop item to the floor
+ *
+ * @param {number} index in inventory
+ * @param {number} count to drop
+ */
+function onDropItem(index, count) {
+	if (count) {
+		let pkt;
+		if (PACKETVER.value >= 20180307) {
+			pkt = new PACKET.CZ.ITEM_THROW2();
+		} else {
+			pkt = new PACKET.CZ.ITEM_THROW();
+		}
+		pkt.Index = index;
+		pkt.count = count;
+		Network.sendPacket(pkt);
+	}
+}
+
+/**
+ * Use an item
+ *
+ * @param {number} item's index
+ */
+function onUseItem(index) {
+	// Items are not usable when Laphine Synthesis, Upgrade, ItemReform UI is open (if they are available at all)
+	if (
+		(LaphineSys.__loaded && LaphineSys.__active && LaphineSys.ui.is(':visible')) ||
+		(LaphineUpg.__loaded && LaphineUpg.__active && LaphineUpg.ui.is(':visible')) ||
+		(ItemReform.__loaded && ItemReform.__active && ItemReform.ui.is(':visible'))
+	) {
+		return false;
+	}
+
+	let pkt;
+	if (PACKETVER.value >= 20180307) {
+		// not sure - this date is when the shuffle packets stoped
+		pkt = new PACKET.CZ.USE_ITEM2();
+	} else {
+		pkt = new PACKET.CZ.USE_ITEM();
+	}
+	pkt.index = index;
+	pkt.AID = Session.Entity.GID;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Equip item
+ *
+ * @param {number} item's index
+ * @param {number} where to equip
+ */
+function onEquipItem(index, location) {
+	const pkt = new PACKET.CZ.REQ_WEAR_EQUIP();
+	pkt.index = index;
+	pkt.wearLocation = location;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Take off an equip
+ *
+ * @param {number} index to unequip
+ */
+function onUnEquip(index) {
+	const pkt = new PACKET.CZ.REQ_TAKEOFF_EQUIP();
+	pkt.index = index;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Add Switch Equip
+ */
+function onAddSwitchEquip(index, location) {
+	const pkt = new PACKET.CZ.REQ_WEAR_SWITCHEQUIP_ADD();
+	pkt.index = index;
+	pkt.wearLocation = location;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Remove Switch Equip
+ */
+function onRemoveSwitchEquip(index) {
+	const pkt = new PACKET.CZ.REQ_WEAR_SWITCHEQUIP_REMOVE();
+	pkt.index = index;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Update config
+ *
+ * @param {number} config id (only type:0 is supported - equip)
+ * @param {number} val
+ */
+function onConfigUpdate(type, val) {
+	const pkt = new PACKET.CZ.CONFIG();
+	pkt.Config = type;
+	pkt.Value = val;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Go back from map-server to char-server
+ */
+function onRestart() {
+	import('Engine/CharEngine.js').then(m => m.default.reload());
+}
+
+/**
+ * Reply to reassembly auth packet
+ * @param {object} pkt - packet
+ */
+function onReassemblyAuth(pkt) {
+	for (const [ZC, CZ] of packetMap.entries()) {
+		if (pkt instanceof ZC) {
+			console.warn(`Reassembly Auth ${ZC.id} => ${CZ.id}`);
+			Network.sendPacket(new CZ());
+			return;
+		}
+	}
+}
+
+/**
+ * Export
+ */
+export default MapEngine;

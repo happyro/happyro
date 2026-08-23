@@ -1,0 +1,61 @@
+			this.position[2] += (this.target.position[2] - this.position[2]) * lerp;
+		} else {
+			this.position[0] = -this.target.position[0];
+			this.position[1] = -this.target.position[1];
+			this.position[2] = this.target.position[2];
+		}
+
+		// Zoom
+		this.zoom += (this.zoomFinal - this.zoom) * lerp * 2.0;
+
+		let zOffset = 0;
+		if (this.state == this.states.first_person) {
+			zOffset = 2;
+		} else if (
+			this.state == this.states.third_person &&
+			this.zoomFinal < Math.abs(this.altitudeRange) * C_THIRDPERSON_TRESHOLD_ZOOM
+		) {
+			zOffset = 1.5;
+		}
+
+		// Angle
+		this.angle[0] += (this.angleFinal[0] - this.angle[0]) * lerp * 2.0;
+		this.angle[1] += (this.angleFinal[1] - this.angle[1]) * lerp * 2.0;
+		this.angle[0] %= 360;
+		this.angle[1] %= 360;
+
+		// Find Camera direction (for NPC direction)
+		this.direction = Math.floor((this.angle[1] + 22.5) / 45) % 8;
+
+		// Calculate new modelView mat
+		const matrix = this.modelView;
+		mat4.identity(matrix);
+		mat4.translateZ(matrix, (this.altitudeFrom - this.zoom) / 2);
+		mat4.rotateX(matrix, matrix, (this.angle[0] / 180) * Math.PI);
+		mat4.rotateY(matrix, matrix, (this.angle[1] / 180) * Math.PI);
+
+		// Center of the cell and inversed Y-Z axis
+		_position[0] = this.position[0] - 0.5;
+		_position[1] = this.position[2] + zOffset;
+		_position[2] = this.position[1] - 0.5;
+		mat4.translate(matrix, matrix, _position);
+
+		mat4.toInverseMat3(matrix, this.normalMat);
+		mat3.transpose(this.normalMat, this.normalMat);
+	}
+}
+
+function save() {
+	_pending = false;
+	if (!DB.isIndoor(Camera.currentMap)) {
+		Preferences.zoom = Camera.zoomFinal;
+	} else {
+		Preferences.indoorZoom = Camera.zoomFinal;
+	}
+	Preferences.save();
+}
+
+/**
+ * Export
+ */
+export default Camera;

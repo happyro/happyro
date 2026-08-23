@@ -1,0 +1,500 @@
+								counterEl.textContent = count;
+								skillbox.appendChild(counterEl);
+							}
+						}
+					}
+				}
+			});
+		}
+
+		if (skdt?.dependency) {
+			skdt.dependency.forEach((item, key) => {
+				specifyRequirements(key, item, root);
+			});
+		}
+	}
+
+	function onRememberChoice(target, root) {
+		if (_justDragged) {
+			return;
+		}
+		let main = target.parentElement;
+		if (!main.classList.contains('skill')) {
+			main = main.parentElement;
+		}
+		const skillId = parseInt(main.getAttribute('data-index'), 10);
+
+		rememberChoice = setRememberChoice(skillId);
+
+		rememberChoice.forEach((item, skId) => {
+			if (!rememberChoice[skId]['isQuest'] && totalCounter < _points) {
+				const sk = skillDependencyTree[skId];
+				if (!sk) {
+					return;
+				}
+				const skillbox = root.querySelector(`#positionSkills${sk.list} .s${sk.position}`);
+				if (skillbox) {
+					const currentEl = skillbox.querySelector('.current');
+					if (incrementalRemember) {
+						if (
+							currentEl &&
+							currentEl.textContent !== String(sk.MaxLv) &&
+							currentEl.textContent !== String(item.count)
+						) {
+							const level = currentEl.textContent;
+							let diff = 0;
+							if (item.count > level) {
+								diff = item.count - level;
+							}
+							totalCounter += diff;
+							skillbox.querySelectorAll('.skill').forEach(el => el.classList.remove('disabled'));
+							const levelEl = skillbox.querySelector('.level');
+							if (levelEl) {
+								levelEl.style.display = '';
+							}
+							if (currentEl) {
+								currentEl.textContent = rememberChoice[skId]['count'];
+							}
+							const maxEl = skillbox.querySelector('.max');
+							if (maxEl) {
+								maxEl.textContent = rememberChoice[skId]['count'];
+							}
+						}
+					} else {
+						if (currentEl && currentEl.textContent !== String(sk.MaxLv)) {
+							totalCounter += rememberChoice[skId]['count'];
+							const disabledEl = skillbox.querySelector('.disabled');
+							if (disabledEl) {
+								disabledEl.classList.remove('disabled');
+							}
+							const levelEl = skillbox.querySelector('.level');
+							if (levelEl) {
+								levelEl.style.display = '';
+							}
+							if (currentEl) {
+								currentEl.textContent = rememberChoice[skId]['count'];
+							}
+							const maxEl = skillbox.querySelector('.max');
+							if (maxEl) {
+								maxEl.textContent = rememberChoice[skId]['count'];
+							}
+						}
+					}
+				}
+			}
+		});
+
+		const skpointsEl = root.querySelector('.skpoints_count');
+		if (skpointsEl) {
+			skpointsEl.textContent = `${_points - totalCounter}/${_points}`;
+		}
+	}
+
+	function setRememberChoice(skillId, count = null, isQuest = false) {
+		const sk = SkillInfo[skillId];
+
+		if (!isQuest && sk['Type'] === 'Quest') {
+			const skill = getSkillById(skillId);
+			isQuest = !skill?.level || skill?.level <= 0;
+		}
+
+		rememberChoice[skillId] = rememberChoice[skillId] ?? {
+			count: hasSkills?.[skillId]?.level ?? 0,
+			list: null,
+			isQuest: isQuest
+		};
+
+		if (!isQuest) {
+			if (count) {
+				if (count > rememberChoice[skillId]['count']) {
+					rememberChoice[skillId]['count'] = count;
+				}
+			} else {
+				if (sk['MaxLv'] > rememberChoice[skillId]['count']) {
+					rememberChoice[skillId]['count']++;
+				}
+			}
+		}
+
+		if (sk[needSkillListKey] !== undefined) {
+			sk[needSkillListKey].forEach(item => {
+				rememberChoice[skillId][item[0]] = setRememberChoice(item[0], item[1], isQuest)[item[0]];
+			});
+
+			Object.entries(rememberChoice[skillId]).forEach(([key, value]) => {
+				if (_isNumeric(key) && value.isQuest) {
+					rememberChoice[skillId]['isQuest'] = value.isQuest;
+				}
+			});
+		}
+
+		return rememberChoice;
+	}
+
+	function getSkillPosition(JobId) {
+		const positions = [];
+
+		if (guardMissingJob) {
+			if (!(JobId in SkillTreeView)) {
+				console.error(`Unimplemented JobId ${JobId} in SkillTree!`);
+				return positions;
+			}
+		}
+
+		positions[SkillTreeView[JobId]['list']] = SkillTreeView[JobId];
+
+		if (SkillTreeView[JobId]['beforeJob'] !== null) {
+			const beforeJob = SkillTreeView[JobId]['beforeJob'];
+			getSkillPosition(beforeJob).forEach((items, list) => {
+				positions[list] = positions[list] ? Object.assign(positions[list], items) : items;
+			});
+		}
+
+		return positions;
+	}
+
+	Component.addSkill = function addSkill(skill) {
+		if (!(skill.SKID in SkillInfo)) {
+			return;
+		}
+
+		const root = this.getRoot();
+		if (root.querySelector(`.skill.id${skill.SKID}`)) {
+			this.updateSkill(skill);
+			return;
+		}
+
+		if (!listOnly) {
+			this.addSkillBig(skill);
+		}
+		this.addSkillMini(skill);
+	};
+
+	Component.prepareSkillTree = function prepareSkillTree(items, list) {
+		const root = this.getRoot();
+		Object.entries(items).forEach(([key, value]) => {
+			const sk = SkillInfo[key];
+			const className = 'disabled';
+			if (sk !== undefined) {
+				const element = document.createElement('div');
+				element.className = `skill id${key} ${className}`;
+				element.setAttribute('data-index', key);
+				element.setAttribute('draggable', 'true');
+				element.innerHTML =
+					`<div class="name">${_escapeHTML(sk.SkillName).substr(0, 7)}...<br/></div>` +
+					'<div class="icon"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="24" height="24" /></div>' +
+					'<div class=selectable>' +
+					'<span class="level" style="display: none">' +
+					(sk.bSeperateLv
+						? `<button class="currentDown"></button><span class="current">0</span> / <span class="max">0</span><button class="currentUp"></button>`
+						: '<span class="current">0</span>') +
+					'</span></div>';
+
+				const upBtn = element.querySelector('.level .currentUp');
+				if (upBtn) {
+					if (_rArrow) {
+						upBtn.style.backgroundImage = _rArrow;
+					}
+					upBtn.addEventListener('click', () => skillLevelSelectUp(0, root));
+				}
+				const downBtn = element.querySelector('.level .currentDown');
+				if (downBtn) {
+					if (_lArrow) {
+						downBtn.style.backgroundImage = _lArrow;
+					}
+					downBtn.addEventListener('click', () => skillLevelSelectDown(0, root));
+				}
+
+				if (value !== undefined) {
+					const box = root.querySelector(`#positionSkills${list} .s${value}`);
+					if (box) {
+						if (parseInt(key, 10) < 41) {
+							box.parentElement.style.display = '';
+						}
+						if (!box.hasChildNodes()) {
+							box.appendChild(element);
+						}
+
+						if (hasTabs) {
+							const miniBox = root.querySelector(`#minitab${list}`);
+							if (miniBox && !miniBox.querySelector(`.skill.id${key}`)) {
+								const miniTr = document.createElement('tr');
+								miniTr.className = `skill id${key} disabled`;
+								miniTr.setAttribute('data-index', key);
+								miniTr.innerHTML =
+									'<td class="icon"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="24" height="24" /></td>' +
+									'<td class="levelupcontainer"></td>' +
+									'<td class="selectable">' +
+									`<div class="name">${_escapeHTML(sk.SkillName)}<br/>` +
+									'<span class="level">Lv : <span class="current">0</span></span>' +
+									'</div></td>' +
+									'<td class="selectable type">' +
+									'<div class="consume">Passive</div></td>';
+
+								miniBox.appendChild(miniTr);
+
+								Client.loadFile(`${DB.INTERFACE_PATH}item/${sk.Name}.bmp`, data => {
+									const img = miniTr.querySelector('.icon img');
+									if (img) {
+										img.src = data;
+									}
+								});
+							}
+						}
+					}
+				}
+
+				Client.loadFile(`${DB.INTERFACE_PATH}item/${sk.Name}.bmp`, data => {
+					const img = element.querySelector('.icon img');
+					if (img) {
+						img.src = data;
+					}
+				});
+			}
+		});
+	};
+
+	Component.addSkillBig = function addSkillBig(skill) {
+		const root = this.getRoot();
+		const sk = SkillInfo[skill.SKID];
+		const className = !skill.level ? 'disabled' : skill.type ? 'active' : 'passive';
+		const element = document.createElement('div');
+		element.className = `skill id${skill.SKID} ${className}`;
+		element.setAttribute('data-index', skill.SKID);
+		element.setAttribute('draggable', 'true');
+		element.innerHTML =
+			`<div class="name">${_escapeHTML(sk.SkillName).substr(0, 7)}...<br/></div>` +
+			'<div class="icon"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="24" height="24" /></div>' +
+			'<div class="levelupcontainer"></div>' +
+			'<div class=selectable>' +
+			'<span class="level">' +
+			(sk.bSeperateLv
+				? `<button class="currentDown"></button><span class="current">${skill.level}</span> / <span class="max">${skill.level}</span><button class="currentUp"></button>`
+				: `<span class="current">${skill.level}</span>`) +
+			'</span></div>';
+
+		const upBtn = element.querySelector('.level .currentUp');
+		if (upBtn) {
+			if (_rArrow) {
+				upBtn.style.backgroundImage = _rArrow;
+			}
+			upBtn.addEventListener('click', () => skillLevelSelectUp(skill, root));
+		}
+		const downBtn = element.querySelector('.level .currentDown');
+		if (downBtn) {
+			if (_lArrow) {
+				downBtn.style.backgroundImage = _lArrow;
+			}
+			downBtn.addEventListener('click', () => skillLevelSelectDown(skill, root));
+		}
+
+		skillPosition.forEach((items, list) => {
+			if (items[skill.SKID] !== undefined) {
+				let box = root.querySelector(`#positionSkills${list} .s${items[skill.SKID]}`);
+
+				if (hasTabs && items[skill.SKID] > 41 && !box) {
+					const startPos = items[skill.SKID] - (items[skill.SKID] % 7);
+					const rowId = Math.floor(items[skill.SKID] / 7);
+					const newRow = document.createElement('div');
+					newRow.className = 'skillRow extraRow';
+					newRow.setAttribute('data-order', rowId);
+					let rowHTML = '';
+					for (let c = 0; c < 7; c++) {
+						rowHTML += `<div class="skillCol s${startPos + c}"></div>`;
+					}
+					newRow.innerHTML = rowHTML;
+
+					const container = root.querySelector(`#positionSkills${list}`);
+					if (container) {
+						const rows = container.querySelectorAll('.skillRow');
+						let insertBefore = null;
+						for (const row of rows) {
+							if (parseInt(row.getAttribute('data-order'), 10) > rowId) {
+								insertBefore = row;
+								break;
+							}
+						}
+						if (insertBefore) {
+							container.insertBefore(newRow, insertBefore);
+						} else {
+							container.appendChild(newRow);
+						}
+					}
+
+					box = root.querySelector(`#positionSkills${list} .s${items[skill.SKID]}`);
+				}
+
+				if (box) {
+					if (box.hasChildNodes()) {
+						box.innerHTML = '';
+					}
+					box.appendChild(element);
+
+					if (skill.upgradable) {
+						box.classList.add('upgradable');
+					}
+				}
+			}
+		});
+
+		if (hasTabs) {
+			if (!root.querySelector(`.contentbig .skill.id${skill.SKID}`)) {
+				const etcContainer = root.querySelector('#etcBIG5');
+				if (etcContainer) {
+					const pos = etcContainer.querySelectorAll('.skill').length;
+
+					if (pos > 41 && (pos - 41) % 7 === 1) {
+						if (!root.querySelector(`#etcBIG5 .s${pos}`)) {
+							const rowId = Math.floor(pos / 7);
+							const newRow = document.createElement('div');
+							newRow.className = 'skillRow extraRow';
+							newRow.setAttribute('data-order', rowId);
+							let rowHTML = '';
+							for (let c = 0; c < 7; c++) {
+								rowHTML += `<div class="skillCol s${pos + c}"></div>`;
+							}
+							newRow.innerHTML = rowHTML;
+							etcContainer.appendChild(newRow);
+						}
+					}
+
+					const etcBox = root.querySelector(`#etcBIG5 .s${pos}`);
+					if (etcBox) {
+						etcBox.appendChild(element);
+					}
+				}
+			}
+		}
+
+		Client.loadFile(`${DB.INTERFACE_PATH}item/${sk.Name}.bmp`, data => {
+			const img = element.querySelector('.icon img');
+			if (img) {
+				img.src = data;
+			}
+		});
+	};
+
+	Component.addSkillMini = function addSkillMini(skill) {
+		const root = this.getRoot();
+		const sk = SkillInfo[skill.SKID];
+		const levelup = _btnIncSkill.cloneNode(true);
+		levelup.addEventListener('click', function () {
+			const index = this.parentNode.parentNode.getAttribute('data-index');
+			Component.onIncreaseSkill(parseInt(index, 10));
+		});
+		const className = !skill.level ? 'disabled' : skill.type ? 'active' : 'passive';
+		const tr = document.createElement('tr');
+		tr.className = `skill id${skill.SKID} ${className}`;
+		tr.setAttribute('data-index', skill.SKID);
+		tr.setAttribute('draggable', 'true');
+		tr.innerHTML =
+			'<td class="icon"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="24" height="24" /></td>' +
+			'<td class="levelupcontainer"></td>' +
+			'<td class=selectable>' +
+			`<div class="name">${_escapeHTML(sk.SkillName)}<br/>` +
+			'<span class="level">' +
+			(sk.bSeperateLv
+				? `<button class="currentDown"></button>Lv : <span class="current">${skill.level}</span> / <span class="max">${skill.level}</span><button class="currentUp"></button>`
+				: `Lv : <span class="current">${skill.level}</span>`) +
+			'</span></div></td>' +
+			'<td class="selectable type">' +
+			`<div class="consume">${skill.type ? `Sp : <span class="spcost">${skill.spcost}</span>` : 'Passive'}</div>` +
+			'</td>';
+
+		if (!skill.upgradable || !_points) {
+			levelup.style.display = 'none';
+		}
+
+		tr.querySelector('.levelupcontainer').appendChild(levelup);
+
+		const upBtn = tr.querySelector('.level .currentUp');
+		if (upBtn) {
+			if (_rArrow) {
+				upBtn.style.backgroundImage = _rArrow;
+			}
+			upBtn.addEventListener('click', () => skillLevelSelectUp(skill, root));
+		}
+		const downBtn = tr.querySelector('.level .currentDown');
+		if (downBtn) {
+			if (_lArrow) {
+				downBtn.style.backgroundImage = _lArrow;
+			}
+			downBtn.addEventListener('click', () => skillLevelSelectDown(skill, root));
+		}
+
+		if (hasTabs) {
+			skillPosition.forEach((items, list) => {
+				if (items[skill.SKID] !== undefined) {
+					const miniTable = root.querySelector(`#minitab${list}`);
+					if (miniTable) {
+						miniTable.appendChild(tr);
+					}
+				}
+			});
+
+			if (!root.querySelector(`.content .skill.id${skill.SKID}`)) {
+				const etcTable = root.querySelector('#minitab5');
+				if (etcTable) {
+					etcTable.appendChild(tr);
+				}
+			}
+		} else {
+			const table = root.querySelector('.content table');
+			if (table) {
+				table.appendChild(tr);
+			}
+		}
+
+		this.parseHTML.call(levelup);
+
+		Client.loadFile(`${DB.INTERFACE_PATH}item/${sk.Name}.bmp`, data => {
+			const img = tr.querySelector('.icon img');
+			if (img) {
+				img.src = data;
+			}
+		});
+
+		_list.push(skill);
+		this.onUpdateSkill(skill.SKID, skill.level);
+	};
+
+	Component.removeSkill = function removeSkill() {};
+
+	Component.updateSkill = function updateSkill(skill) {
+		let target = getSkillById(skill.SKID);
+
+		const root = this.getRoot();
+		if (!target) {
+			if (readdSkillOnUpdate && root.querySelector(`.skill.id${skill.SKID}`)) {
+				_list.push(skill);
+				this.onUpdateSkill(skill.SKID, 0);
+				hasSkills[skill.SKID] = skill;
+				target = skill;
+			} else {
+				return;
+			}
+		}
+
+		target.level = skill.level;
+		target.spcost = skill.spcost;
+		target.attackRange = skill.attackRange;
+		target.upgradable = skill.upgradable;
+		if (Number.isInteger(skill.type)) {
+			target.type = skill.type;
+		}
+
+		const elements = root.querySelectorAll(`.skill.id${skill.SKID}`);
+		elements.forEach(element => {
+			for (const el of element.querySelectorAll('.level .current, .level .max')) {
+				el.textContent = skill.level;
+			}
+			if (skill.selectedLevel) {
+				const current = element.querySelector('.level .current');
+				if (current) {
+					current.textContent = skill.selectedLevel;
+				}
+			}
+			const spcost = element.querySelector('.spcost');
+			if (spcost) {
+				spcost.textContent = skill.spcost;
+			}

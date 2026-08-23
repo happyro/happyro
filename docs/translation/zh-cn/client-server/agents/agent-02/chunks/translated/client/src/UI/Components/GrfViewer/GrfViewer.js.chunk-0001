@@ -1,0 +1,500 @@
+/**
+ * UI/Components/GrfViewer/GrfViewer.js
+ *
+ * Game File Viewer
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import Configs from 'Core/Configs.js';
+import Client from 'Core/Client.js';
+import Thread from 'Core/Thread.js';
+import Memory from 'Core/MemoryManager.js';
+import Events from 'Core/Events.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import Sprite from 'Loaders/Sprite.js';
+import Targa from 'Loaders/Targa.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import htmlText from './GrfViewer.html?raw';
+import cssText from './GrfViewer.css?raw';
+import History from './History.js';
+
+/**
+ * Create GRFViewer component
+ */
+const Viewer = new GUIComponent('GRFViewer', cssText);
+
+Viewer.render = () => htmlText;
+
+/**
+ * @var {number} The display is done asynchronous, keep reference of the thread
+ */
+let _thread = 0;
+
+/**
+ * @var {number} action id, to stop doing things when the action change
+ */
+let _actionID = 0;
+
+/**
+ * Initialize Component
+ */
+Viewer.init = function init() {
+	const root = Viewer.getRoot();
+
+	Thread.hook('THREAD_READY', () => {
+		const remoteClient = Configs.get('remoteClient');
+		if (remoteClient) {
+			Thread.send('SET_HOST', remoteClient);
+			Client.init([]);
+		}
+	});
+	Thread.init();
+
+	// Inject icon styles into shadow DOM
+	const extraStyle = document.createElement('style');
+	extraStyle.textContent =
+		`#previous { background-image: url(${new URL('./Icons/arw-left.png', import.meta.url).href}); }` +
+		`#next { background-image: url(${new URL('./Icons/arw-right.png', import.meta.url).href}); }` +
+		`#progress { background-image: url(${new URL('./Icons/load.gif', import.meta.url).href}); }`;
+	this._shadow.appendChild(extraStyle);
+
+	// Drag drop the GRF
+	const info = root.querySelector('#info');
+	info.addEventListener('dragover', e => {
+		info.style.backgroundColor = '#DFD';
+		e.preventDefault();
+	});
+	info.addEventListener('dragleave', () => {
+		info.style.backgroundColor = '#EEE';
+	});
+	info.addEventListener('drop', e => {
+		info.style.backgroundColor = '#EEE';
+		processGRF(e);
+	});
+
+	// Load GRFs
+	root.querySelector('#file').addEventListener('change', processGRF);
+	root.querySelector('#info button').addEventListener('mousedown', () => {
+		root.querySelector('#file').click();
+	});
+
+	// Bind icon events via delegation
+	const grfviewerEl = root.querySelector('#grfviewer');
+	grfviewerEl.addEventListener('click', e => {
+		let el;
+		if ((el = e.target.closest('.directory'))) {
+			onDirectoryClick(el);
+			return;
+		}
+		if ((el = e.target.closest('.audio'))) {
+			onAudioClick(el);
+			return;
+		}
+		if ((el = e.target.closest('.img, .thumb'))) {
+			onImageClick(el);
+			return;
+		}
+		if ((el = e.target.closest('.txt'))) {
+			onTextClick(el);
+			return;
+		}
+		if ((el = e.target.closest('.map'))) {
+			onWorldClick(el);
+			return;
+		}
+		if ((el = e.target.closest('.\\33 d'))) {
+			onObjectClick(el);
+			return;
+		}
+		if ((el = e.target.closest('.gr2'))) {
+			onGrannyClick(el);
+			return;
+		}
+		if ((el = e.target.closest('.fx'))) {
+			onEffectClick(el);
+			return;
+		}
+	});
+	grfviewerEl.addEventListener('contextmenu', e => {
+		const icon = e.target.closest('.icon');
+		if (icon) {
+			showContextMenu(icon, e);
+			e.preventDefault();
+		}
+	});
+
+	// Initialize toolbar
+	initToolBar();
+
+	// Initialize history
+	History.init(root.querySelector('#previous'), root.querySelector('#next'));
+
+	// Renderer is not rendering, causing issue in src/UI/UIComponents.js#212
+	// Trigger manually the event.
+	setTimeout(() => {
+		Events.process(100);
+	}, 10);
+};
+
+/**
+ * Once append to body, initialize elements
+ */
+Viewer.onAppend = function onAppend() {
+	document.body.style.backgroundColor = 'white';
+	document.body.style.margin = '0';
+	document.body.style.overflow = 'auto';
+	moveToDirectory('/', true);
+};
+
+/**
+ * Initialize tool bar
+ */
+function initToolBar() {
+	const root = Viewer.getRoot();
+
+	// Path submit
+	root.querySelector('#path').addEventListener('keydown', function (event) {
+		if (event.which === KEYS.ENTER) {
+			let value = this.value.replace(/^\s+|\s+$/g, '');
+			if (value.substr(-1) !== '/') {
+				value += '/';
+			}
+			moveToDirectory(value, true);
+		}
+	});
+
+	// History before
+	root.querySelector('#previous').addEventListener('click', () => {
+		const path = History.previous();
+		if (path) {
+			moveToDirectory(path, false);
+		}
+	});
+
+	// History after
+	root.querySelector('#next').addEventListener('click', () => {
+		const path = History.next();
+		if (path) {
+			moveToDirectory(path, false);
+		}
+	});
+
+	// Search toolbar
+	const searchInput = root.querySelector('#search');
+	searchInput.addEventListener('focus', function () {
+		this.value = '';
+	});
+	searchInput.addEventListener('blur', function () {
+		this.value = this.value || '搜索...';
+	});
+	searchInput.addEventListener('keydown', function (event) {
+		if (event.which === KEYS.ENTER) {
+			const value = this.value.replace(/^\s+|\s+$/g, '');
+			if (value.length > 2) {
+				moveToDirectory(`search/${value}`, true);
+			}
+		}
+	});
+}
+
+/**
+ * Context Menu feature
+ *
+ * @param {HTMLElement} iconElement
+ * @param {object} event
+ */
+function showContextMenu(iconElement, event) {
+	const root = Viewer.getRoot();
+	const contextmenu = root.querySelector('#contextmenu');
+	const overlay = root.querySelector('.overlay');
+	const header = contextmenu.querySelector('.header');
+	const openBtn = contextmenu.querySelector('.open');
+	const saveLink = contextmenu.querySelector('.save');
+	const infoBtn = contextmenu.querySelector('.info');
+	const path = iconElement.getAttribute('data-path');
+
+	contextmenu.style.left = `${event.pageX}px`;
+	contextmenu.style.top = `${event.pageY}px`;
+	contextmenu.style.display = 'block';
+
+	overlay.onmousedown = () => {
+		contextmenu.style.display = 'none';
+		overlay.style.display = 'none';
+	};
+	overlay.style.display = 'block';
+
+	// Clean up previous handlers
+	openBtn.classList.remove('disable');
+	openBtn.onmousedown = null;
+	saveLink.classList.remove('disable');
+	saveLink.onclick = null;
+	saveLink.onmouseup = null;
+	infoBtn.classList.remove('disable');
+	infoBtn.onmousedown = null;
+
+	// Header
+	header.innerHTML = `路径：${path}`;
+	header.style.backgroundColor = '';
+	header.onclick = () => {
+		navigator.clipboard.writeText(path);
+		header.innerHTML = `已复制：${path}`;
+		header.style.backgroundColor = '#AAFFAA';
+	};
+
+	// Open
+	if (iconElement.classList.contains('file')) {
+		openBtn.classList.add('disable');
+	} else {
+		openBtn.onmousedown = () => {
+			iconElement.click();
+			overlay.onmousedown();
+		};
+	}
+
+	// Save
+	if (iconElement.classList.contains('directory')) {
+		saveLink.classList.add('disable');
+		saveLink.onclick = e => e.preventDefault();
+		saveLink.removeAttribute('download');
+	} else {
+		saveLink.onmouseup = () => {
+			overlay.onmousedown();
+		};
+
+		Client.getFile(path, buffer => {
+			const url = URL.createObjectURL(new Blob([buffer], { type: 'application/octet-stream' }));
+			saveLink.href = url;
+			saveLink.download = iconElement.textContent.trim();
+		});
+	}
+
+	// Properties - not supported yet
+	infoBtn.classList.add('disable');
+}
+
+/**
+ * Move to a path
+ *
+ * @param {string} path to move
+ * @param {boolean} save in history
+ */
+function moveToDirectory(path, save) {
+	path = decodeURIComponent(path) || '/';
+	path = path.replace(/\\/g, '/');
+
+	if (path.substr(0, 1) === '/') {
+		path = path.substr(1);
+	}
+
+	if (path.match(/^search\//)) {
+		search(path.substr(7));
+	} else {
+		showDirectory(path);
+	}
+
+	// Update history
+	if (save) {
+		History.push(path);
+	}
+}
+
+/**
+ * Load GRF files
+ *
+ * @param {object} event
+ */
+function processGRF(event) {
+	const root = Viewer.getRoot();
+	root.querySelector('#progress').style.display = 'block';
+
+	Client.onFilesLoaded = () => {
+		moveToDirectory('data/', true);
+	};
+	Client.init((event.dataTransfer || event.target).files);
+
+	event.preventDefault();
+	event.stopPropagation();
+}
+
+/**
+ * Move to a specify path
+ *
+ * @param {string} path
+ */
+function showDirectory(path) {
+	clearTimeout(_thread);
+
+	path = decodeURIComponent(path) || '/';
+	path = path.replace(/\\/g, '/');
+
+	if (path.substr(0, 1) === '/') {
+		path = path.substr(1);
+	}
+
+	const root = Viewer.getRoot();
+	const directory = path.replace(/\//g, '\\\\');
+	const reg = `${directory}([^(\\0|\\\\)]+)`;
+
+	root.querySelector('#path').value = path;
+	root.querySelectorAll('.icon').forEach(el => el.remove());
+	root.querySelector('#progress').style.display = 'block';
+	root.querySelector('#msg').style.display = 'none';
+
+	if (!path.length) {
+		root.querySelector('#info').style.display = '';
+		renderFiles(['data']);
+		return;
+	}
+
+	root.querySelector('#info').style.display = 'none';
+
+	const actionID = ++_actionID;
+
+	Client.search(new RegExp(reg, 'gi'), list => {
+		if (actionID === _actionID) {
+			list.sort(sortFiles);
+			renderFiles(list);
+		}
+	});
+}
+
+/**
+ * Search files (apply a regex on fileList) and show the result
+ *
+ * @param {string} keyword
+ */
+function search(keyword) {
+	const escapedSearch = keyword.replace(/(\.|\\|\+|\*|\?|\[|\^|\]|\$|\(|\)|\{|\}|\=|\!|<|>|\||\:|\-)/g, '\\$1');
+	const reg = `data\\\\([^(\\0\\)]+)?${escapedSearch}([^(\\0|\\\\)]+)?`;
+	const root = Viewer.getRoot();
+	const actionID = ++_actionID;
+
+	root.querySelectorAll('.icon').forEach(el => el.remove());
+	root.querySelector('#progress').style.display = 'block';
+	root.querySelector('#info').style.display = 'none';
+	root.querySelector('#msg').style.display = 'none';
+
+	Client.search(new RegExp(reg, 'gi'), list => {
+		if (actionID === _actionID) {
+			list.sort(sortFiles);
+			renderFiles(list);
+		}
+	});
+}
+
+/**
+ * Organize file listing
+ * Directory first, and organized by alpha
+ *
+ * @param {string} a file's name
+ * @param {string} b file's name
+ * @return {number}
+ */
+function sortFiles(a, b) {
+	const nameA = a.replace(/.*\\/, '');
+	const nameB = b.replace(/.*\\/, '');
+	const isFileA = nameA.indexOf('.') !== -1;
+	const isFileB = nameB.indexOf('.') !== -1;
+
+	if (isFileA === isFileB) {
+		return nameA > nameB ? 1 : -1;
+	}
+	if (isFileA) {
+		return 1;
+	}
+	return -1;
+}
+
+/**
+ * Showing file list on the screen
+ *
+ * @param {Array} list of files and directories
+ */
+function renderFiles(list) {
+	const root = Viewer.getRoot();
+	root.querySelector('#progress').style.display = 'none';
+
+	if (!list.length) {
+		const msg = root.querySelector('#msg');
+		msg.textContent = '未找到文件。';
+		msg.style.display = 'block';
+		return;
+	}
+
+	let i;
+	const reg = /(.*\\)/;
+	i = 0;
+	const count = list.length;
+	const grfviewerEl = root.querySelector('#grfviewer');
+
+	function streamExecute() {
+		let j;
+		let html = '';
+
+		for (j = 0; j < 200 && i + j < count; ++j) {
+			const type = getFileIcon(list[j + i]);
+			html +=
+				`<div class="icon ${type}" data-path="${list[j + i]}">` +
+				`	<img src="${new URL(`./Icons/${type}.png`, import.meta.url).href}" width="48" height="48"/><br/>` +
+				list[j + i].replace(reg, '') +
+				'</div>';
+		}
+
+		grfviewerEl.insertAdjacentHTML('beforeend', html);
+
+		i += j;
+
+		if (i < count) {
+			_thread = setTimeout(streamExecute, 4);
+		}
+	}
+
+	streamExecute();
+	displayImagesThumbnail();
+}
+
+/**
+ * Get file thumbnail based on its extension
+ *
+ * @param {string} filename
+ * @return {string} icon name
+ */
+function getFileIcon(filename) {
+	const ext = filename.split(/\.([^.]+)$/)[1] || 'dir';
+	let img = 'file';
+
+	switch (ext.toLowerCase()) {
+		case 'dir':
+			img = 'directory';
+			break;
+
+		case 'xml':
+		case 'txt':
+		case 'lua':
+			img = 'txt';
+			break;
+
+		case 'jpg':
+		case 'bmp':
+		case 'tga':
+		case 'jpeg':
+		case 'spr':
+		case 'pal':
+			img = 'img';
+			break;
+
+		case 'wav':
+		case 'mp3':
+			img = 'audio';
+			break;
+
+		case 'gr2':
+			img = 'gr2';
+			break;
+
+		case 'rsm':
+		case 'rsm2':
+			img = '3d';

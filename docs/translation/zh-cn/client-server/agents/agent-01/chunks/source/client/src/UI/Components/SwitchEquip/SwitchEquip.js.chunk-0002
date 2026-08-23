@@ -1,0 +1,91 @@
+ * Update the owner name for the equipment items
+ */
+SwitchEquip.onUpdateOwnerName = function () {
+	const root = SwitchEquip.getRoot();
+	for (const index in SwitchEquip._list) {
+		const item = SwitchEquip._list[index];
+		if (item.slot && [0x00ff, 0x00fe, 0xff00].includes(item.slot.card1)) {
+			const nameEl = root.querySelector(`.item[data-index="${index}"] .itemName`);
+			if (nameEl) nameEl.textContent = _escapeHtml(DB.getItemName(item));
+		}
+	}
+};
+
+/**
+ * Get the number of equipment items excluding AMMO location
+ *
+ * @returns {number} The number of equipment items
+ */
+SwitchEquip.getNumber = function () {
+	let num = 0;
+	for (const key in SwitchEquip._list) {
+		if (SwitchEquip._list[key].location && SwitchEquip._list[key].location !== EquipLocation.AMMO) {
+			num++;
+		}
+	}
+	return num;
+};
+
+/**
+ * Check if a specific location
+ *
+ * @param {number} location The location to check
+ * @returns {number} The sprite number of the item in the specified location, or 0 if not equipped
+ */
+SwitchEquip.checkEquipLoc = function checkEquipLoc(location) {
+	const switchList = Inventory.getUI().equipswitchlist;
+	for (let i = 0; i < switchList.length; i++) {
+		const item = switchList[i];
+		if (item.location & location) {
+			return item.wItemSpriteNumber;
+		}
+	}
+
+	return 0;
+};
+
+/**
+ * Send an equipment switch request to the server.
+ */
+function sendEquipSwitchRequest() {
+	const pkt = new PACKET.CZ.REQ_FULLSWITCH();
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Request an equipment switch button
+ * Disabling the button temporarily and updating its background image.
+ */
+SwitchEquip.RequestSwitch = function () {
+	sendEquipSwitchRequest();
+
+	const root = SwitchEquip.getRoot();
+	const button = root.querySelector('#swap-button');
+	if (!button) return;
+
+	button.disabled = true;
+	button.classList.add('disabled');
+
+	Client.loadFile(DB.INTERFACE_PATH + 'swap_equipment/btn_change2_disable.bmp', data => {
+		button.style.backgroundImage = `url(${data})`;
+	});
+
+	setTimeout(() => {
+		button.disabled = false;
+		button.classList.remove('disabled');
+		Client.loadFile(DB.INTERFACE_PATH + 'swap_equipment/btn_change2_normal.bmp', data => {
+			button.style.backgroundImage = `url(${data})`;
+		});
+	}, 10000);
+};
+
+/**
+ * Method to define
+ */
+SwitchEquip.onRemoveSwitchEquip = function onRemoveSwitchEquip(/* index */) {};
+SwitchEquip.onAddSwitchEquip = function onAddSwitchEquip(/* index, location */) {};
+
+/**
+ * Create component and export it
+ */
+export default UIManager.addComponent(SwitchEquip);

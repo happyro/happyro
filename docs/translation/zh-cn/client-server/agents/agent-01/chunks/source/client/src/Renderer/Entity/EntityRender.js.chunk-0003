@@ -1,0 +1,122 @@
+	const lastFrame = animation.frame + animSize - 1;
+
+	if (type === 'body' && anim >= lastFrame) {
+		animation.frame = anim = lastFrame;
+		animation.play = false;
+		if (animation.next) {
+			entity.setAction(animation.next);
+		}
+	}
+
+	return Math.min(anim, animSize - 1);
+}
+
+/**
+ * Render ROSprite Render
+ *
+ * @param {object} layer structure
+ * @param {object} spr sprite structure
+ * @param {object} pal palette structure
+ * @param {float}  sprite size
+ * @param {Array} pos [x,y] where to render the sprite
+ * @param {string} type
+ * @param {boolean} isBlendModeOne
+ */
+function renderLayer(layer, spr, pal, size, pos, type, isBlendModeOne) {
+	// If there is nothing to render
+	if (layer.index < 0) {
+		return;
+	}
+
+	SpriteRenderer.image.palette = null;
+	SpriteRenderer.sprite = spr.frames[layer.index];
+	SpriteRenderer.palette = pal.palette;
+
+	let index = layer.index + 0;
+	const is_rgba = layer.spr_type === 1 || spr.rgba_index === 0;
+
+	if (!is_rgba) {
+		SpriteRenderer.image.palette = pal.texture;
+		SpriteRenderer.image.size[0] = 2 * spr.frames[index].width;
+		SpriteRenderer.image.size[1] = 2 * spr.frames[index].height;
+	}
+
+	// RGBA is at the end of the spr.
+	else if (layer.spr_type === 1) {
+		index += spr.old_rgba_index;
+	}
+
+	if (!spr.frames[index]) {
+		console.warn('[renderLayer] - Frame index ' + index + ' not found in sprite');
+		return;
+	}
+
+	const frame = spr.frames[index];
+	let width = frame.width;
+	let height = frame.height;
+
+	// Apply the scale
+	width *= layer.scale[0] * size;
+	height *= layer.scale[1] * size;
+
+	// Get the entity bounding rect
+	if (type === 'body') {
+		const w = (frame.originalWidth * layer.scale[0] * size) / 2;
+		const h = (frame.originalHeight * layer.scale[1] * size) / 2;
+
+		this.boundingRect.x1 = Math.min(this.boundingRect.x1, layer.pos[0] + pos[0] - w);
+		this.boundingRect.y1 = Math.max(this.boundingRect.y1, -(layer.pos[1] + pos[1]) + h);
+		this.boundingRect.x2 = Math.max(this.boundingRect.x2, layer.pos[0] + pos[0] + w);
+		this.boundingRect.y2 = Math.min(this.boundingRect.y2, -(layer.pos[1] + pos[1]) - h);
+		this.bodyHeight = height;
+	}
+
+	if (type === 'robe') {
+		this.robeHeight = height + layer.pos[1];
+	}
+
+	// Image inverted
+	if (layer.is_mirror) {
+		width = -width;
+	}
+
+	// copy color
+	if (type !== 'shadow') {
+		SpriteRenderer.color[0] = layer.color[0] * this.effectColor[0];
+		SpriteRenderer.color[1] = layer.color[1] * this.effectColor[1];
+		SpriteRenderer.color[2] = layer.color[2] * this.effectColor[2];
+		SpriteRenderer.color[3] = layer.color[3] * this.effectColor[3];
+	} else {
+		SpriteRenderer.color[0] = layer.color[0];
+		SpriteRenderer.color[1] = layer.color[1];
+		SpriteRenderer.color[2] = layer.color[2];
+		SpriteRenderer.color[3] = layer.color[3];
+	}
+
+	// apply disapear
+	if (this.remove_tick) {
+		SpriteRenderer.color[3] *= 1 - (Date.now() - this.remove_tick) / this.remove_delay;
+	}
+
+	// Store shader info
+	SpriteRenderer.angle = layer.angle;
+	SpriteRenderer.size[0] = width;
+	SpriteRenderer.size[1] = height;
+	SpriteRenderer.offset[0] = layer.pos[0] + pos[0];
+	SpriteRenderer.offset[1] = layer.pos[1] + pos[1];
+	SpriteRenderer.xSize = this.xSize;
+	SpriteRenderer.ySize = this.ySize;
+	SpriteRenderer.image.texture = frame.texture;
+
+	// Draw Sprite
+	SpriteRenderer.render(isBlendModeOne);
+}
+
+/**
+ * Export
+ */
+export default function Init() {
+	this.render = render;
+	this.renderLayer = renderLayer;
+	this.renderEntity = renderEntity;
+}

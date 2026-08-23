@@ -1,0 +1,500 @@
+/**
+ * UI/Components/Guild/Guild.js
+ *
+ * Chararacter Guild
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author @vthibault, @Javierlog08, @scriptord3
+ */
+
+import DB from 'DB/DBManager.js';
+import SkillInfo from 'DB/Skills/SkillInfo.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import MonsterTable from 'DB/Monsters/MonsterTable.js';
+import Session from 'Engine/SessionStorage.js';
+import Entity from 'Renderer/Entity/Entity.js';
+import SpriteRenderer from 'Renderer/SpriteRenderer.js';
+import Camera from 'Renderer/Camera.js';
+import Renderer from 'Renderer/Renderer.js';
+import Client from 'Core/Client.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import ContextMenu from 'UI/Components/ContextMenu/ContextMenu.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import InputBox from 'UI/Components/InputBox/InputBox.js';
+import GuildCompanion from 'UI/Components/GuildCompanion/GuildCompanion.js';
+import SkillTargetSelection from 'UI/Components/SkillTargetSelection/SkillTargetSelection.js';
+import SkillDescription from 'UI/Components/SkillDescription/SkillDescription.js';
+import htmlText from './Guild.html?raw';
+import cssText from './Guild.css?raw';
+import WinStats from 'UI/Components/WinStats/WinStats.js';
+
+/**
+ * Flags to check access
+ */
+const AccessTypeBit = {
+	0: 0x00,
+	1: 0x01,
+	2: 0x02,
+	3: 0x04,
+	4: 0x10,
+	5: 0x40,
+	6: 0x80
+};
+
+/**
+ * Create Component
+ */
+const Guild = new GUIComponent('Guild', cssText);
+Guild.render = () => htmlText;
+
+/**
+ * View templates (stored as DOM nodes)
+ */
+let _memberViewTemplate, _positionViewTemplate, _expelViewTemplate;
+
+const _positions = [];
+const _members = [];
+const _skills = [];
+
+let _btnIncSkillTemplate;
+let _skpoints = 0;
+let _btnLevelUp;
+let lArrow, rArrow;
+let _totalExp = 0;
+let _guildAccess = 0;
+let _checkbox_off, _checkbox_on;
+
+/**
+ * Helper: query inside shadow root
+ */
+function _root(comp) {
+	return comp.getRoot();
+}
+
+/**
+ * Helper: escape HTML
+ */
+function _escapeHTML(text) {
+	const div = document.createElement('div');
+	div.textContent = text;
+	return div.innerHTML;
+}
+
+/**
+ * Initialize component
+ */
+Guild.init = function init() {
+	const root = _root(this);
+
+	// Extract templates
+	_memberViewTemplate = root.querySelector('.MemberView');
+	if (_memberViewTemplate) {
+		_memberViewTemplate.remove();
+	}
+	_positionViewTemplate = root.querySelector('.PositionView');
+	if (_positionViewTemplate) {
+		_positionViewTemplate.remove();
+	}
+	_expelViewTemplate = root.querySelector('.ExpelView');
+	if (_expelViewTemplate) {
+		_expelViewTemplate.remove();
+	}
+
+	// Close button
+	const closeBtn = root.querySelector('.close');
+	if (closeBtn) {
+		closeBtn.addEventListener('mousedown', e => e.stopImmediatePropagation());
+		closeBtn.addEventListener('click', () => Guild.toggle());
+	}
+
+	// Tab buttons
+	const tabsContainer = root.querySelector('.tabs');
+	if (tabsContainer) {
+		tabsContainer.addEventListener('click', e => {
+			const btn = e.target.closest('button');
+			if (btn) {
+				onChangeTab.call(btn, e);
+			}
+		});
+	}
+
+	// Preload checkbox images
+	Client.loadFiles([`${DB.INTERFACE_PATH}checkbox_0.bmp`, `${DB.INTERFACE_PATH}checkbox_1.bmp`], (off, on) => {
+		_checkbox_off = off;
+		_checkbox_on = on;
+	});
+
+	// Positions
+	const posBody = root.querySelector('.content.positions tbody');
+	if (posBody) {
+		posBody.addEventListener('mousedown', e => {
+			const input = e.target.closest('input');
+			if (input && !Session.isGuildMaster) {
+				e.preventDefault();
+			}
+
+			const tr = e.target.closest('tr');
+			if (tr) {
+				for (const row of posBody.querySelectorAll('tr')) {
+					row.classList.remove('active');
+				}
+				tr.classList.add('active');
+			}
+		});
+
+		posBody.addEventListener(
+			'focus',
+			e => {
+				if (e.target.matches('input')) {
+					const btnOk = root.querySelector('.footer .btn_ok');
+					if (btnOk) {
+						btnOk.style.display = 'block';
+					}
+					e.target.select();
+				}
+			},
+			true
+		);
+
+		posBody.addEventListener('click', e => {
+			const btn = e.target.closest('ui-button');
+			if (btn && Session.isGuildMaster) {
+				btn.className = btn.className.replace(/\b(on|off)\b/g, '').trim();
+				const isOn = !btn.classList.contains('on');
+				btn.classList.add(isOn ? 'on' : 'off');
+				btn.style.backgroundImage = `url(${isOn ? _checkbox_on : _checkbox_off})`;
+				const btnOk = root.querySelector('.footer .btn_ok');
+				if (btnOk) {
+					btnOk.style.display = 'block';
+				}
+			}
+		});
+	}
+
+	// Antagonist/Ally context menu
+	const allyHostileContainer = root.querySelector('.content.info');
+	if (allyHostileContainer) {
+		const lists = allyHostileContainer.querySelectorAll('.ally_list, .hostile_list');
+		for (const list of lists) {
+			list.addEventListener('contextmenu', e => {
+				const div = e.target.closest('div');
+				if (!div) {
+					return;
+				}
+				const relation = div.parentNode.classList.contains('ally_list') ? 0 : 1;
+				const guildId = parseInt(div.getAttribute('data-guild-id'), 10);
+
+				for (const d of allyHostileContainer.querySelectorAll('.ally_list div, .hostile_list div')) {
+					d.classList.remove('active');
+				}
+				div.classList.add('active');
+
+				ContextMenu.remove();
+				ContextMenu.append();
+				ContextMenu.addElement(DB.getMessage(351), () => {
+					Guild.onRequestDeleteRelation(guildId, relation);
+				});
+			});
+		}
+	}
+
+	// Members
+	const membersBody = root.querySelector('.content.members tbody');
+	if (membersBody) {
+		membersBody.addEventListener('mousedown', e => {
+			const tr = e.target.closest('tr');
+			if (tr) {
+				for (const row of membersBody.querySelectorAll('tr')) {
+					row.classList.remove('active');
+				}
+				tr.classList.add('active');
+			}
+		});
+
+		membersBody.addEventListener('contextmenu', e => {
+			const td = e.target.closest('td.name');
+			if (!td) {
+				return;
+			}
+			const tr = td.parentNode;
+			const index = tr.getAttribute('data-index');
+			const member = _members[index];
+			const isSelf = member.AID === Session.AID && member.GID === Session.GID;
+
+			ContextMenu.remove();
+			ContextMenu.append();
+
+			ContextMenu.addElement(DB.getMessage(129), () => {
+				Guild.onRequestMemberInfo(member.AID);
+			});
+
+			if (isSelf && !Session.isGuildMaster) {
+				ContextMenu.addElement(DB.getMessage(508), () => {
+					InputBox.append();
+					InputBox.setType('text');
+					const textEl = (_root(InputBox) || InputBox.ui?.[0])?.querySelector?.('.text');
+					if (textEl) {
+						textEl.textContent = DB.getMessage(523);
+					} else {
+						InputBox.ui.find('.text').text(DB.getMessage(523));
+					}
+					InputBox.onSubmitRequest = reason => {
+						InputBox.remove();
+						Guild.onRequestLeave(member.AID, member.GID, reason);
+					};
+				});
+			}
+
+			if (Session.guildRight & 0x10 && !isSelf) {
+				ContextMenu.addElement(DB.getMessage(509), () => {
+					InputBox.append();
+					InputBox.setType('text');
+					const textEl = (_root(InputBox) || InputBox.ui?.[0])?.querySelector?.('.text');
+					if (textEl) {
+						textEl.textContent = DB.getMessage(524);
+					} else {
+						InputBox.ui.find('.text').text(DB.getMessage(524));
+					}
+					InputBox.onSubmitRequest = reason => {
+						InputBox.remove();
+						Guild.onRequestMemberExpel(member.AID, member.GID, reason);
+					};
+				});
+			}
+		});
+	}
+
+	// Skills — get level up button template
+	const levelupBtn = root.querySelector('.btn.levelup');
+	if (levelupBtn) {
+		_btnIncSkillTemplate = levelupBtn.cloneNode(true);
+		levelupBtn.remove();
+		_btnIncSkillTemplate.addEventListener('click', function () {
+			onRequestSkillUp.call(this);
+		});
+	}
+
+	// Level up notification button
+	const lvlupBtn = root.querySelector('#lvlup_job');
+	if (lvlupBtn) {
+		_btnLevelUp = lvlupBtn;
+		_btnLevelUp.remove();
+		_btnLevelUp.addEventListener('click', () => {
+			if (_btnLevelUp.parentNode) {
+				_btnLevelUp.remove();
+			}
+			Guild.ui.show();
+		});
+		_btnLevelUp.addEventListener('mousedown', e => e.stopImmediatePropagation());
+	}
+
+	// Bind skill events on container (delegated)
+	const container = root.querySelector('#Guild') || root;
+	container.addEventListener('dblclick', e => {
+		const target = e.target.closest('.skill .icon, .skill .name');
+		if (target) {
+			onRequestUseSkill.call(target);
+		}
+	});
+	container.addEventListener('contextmenu', e => {
+		const target = e.target.closest('.skill .icon, .skill .name');
+		if (target) {
+			onRequestSkillInfo.call(target);
+		}
+	});
+	container.addEventListener('mousedown', e => {
+		const target = e.target.closest('.selectable');
+		if (target && target.closest('.content.skills')) {
+			onSkillFocus.call(target);
+		}
+	});
+
+	// Drag events for skills
+	container.addEventListener('dragstart', e => {
+		const target = e.target.closest('.skill');
+		if (target && target.closest('.content.skills')) {
+			onSkillDragStart.call(target, e);
+		}
+	});
+	container.addEventListener('dragend', e => {
+		const target = e.target.closest('.skill');
+		if (target && target.closest('.content.skills')) {
+			onSkillDragEnd.call(target);
+		}
+	});
+
+	// Notice
+	const noticeContent = root.querySelector('.content.notice');
+	if (noticeContent) {
+		noticeContent.addEventListener(
+			'focus',
+			e => {
+				if (e.target.matches('textarea, input')) {
+					const btnOk = root.querySelector('.footer .btn_ok');
+					if (btnOk) {
+						btnOk.style.display = 'block';
+					}
+				}
+			},
+			true
+		);
+	}
+
+	// Upload emblem
+	const emblemInput = root.querySelector('.content.info .emblem_edit input');
+	if (emblemInput) {
+		emblemInput.addEventListener('change', function () {
+			const file = this.files[0];
+			if (!file) {
+				return;
+			}
+
+			const isBmp = /^image\/(bmp|x-bmp|x-ms-bmp|x-windows-bmp)$/.test(file.type) || /\.bmp$/i.test(file.name);
+			const isGif = file.type === 'image/gif' || /\.gif$/i.test(file.name);
+
+			if ((isBmp && file.size <= 1783) || (isGif && file.size <= 50000)) {
+				const reader = new FileReader();
+				reader.onload = e => {
+					Guild.onSendEmblem(new Uint8Array(e.target.result));
+				};
+				reader.readAsArrayBuffer(this.files[0]);
+			} else {
+				console.warn(
+					'[Warning] Incorrect emblem file type. Only BMP, 24bit or lower is accepted or GIFs max size 50Kb or lower.'
+				);
+			}
+		});
+	}
+
+	// Footer OK button
+	const footerOk = root.querySelector('.footer .btn_ok');
+	if (footerOk) {
+		footerOk.addEventListener('click', () => onValidate());
+	}
+
+	this.draggable('.titlebar');
+	this.ui.hide();
+
+	Client.loadFile(`${DB.INTERFACE_PATH}basic_interface/arw_right.bmp`, data => {
+		rArrow = `url(${data})`;
+	});
+	Client.loadFile(`${DB.INTERFACE_PATH}basic_interface/arw_left.bmp`, data => {
+		lArrow = `url(${data})`;
+	});
+
+	renderTendency(0, 0);
+};
+
+/**
+ * Removing guild, stop rendering
+ */
+Guild.onRemove = function onRemove() {
+	Renderer.stop(renderMemberFaces);
+};
+
+Guild.onShortCut = function onShortCut(key) {
+	if (key.cmd === 'TOGGLE') {
+		this.toggle();
+	}
+};
+
+Guild.toggle = function onToggle() {
+	if (!Session.hasGuild) {
+		Guild.promptCreateGuild();
+		return;
+	}
+
+	if (this.ui.is(':visible')) {
+		this.hide();
+		if (_btnLevelUp && _btnLevelUp.parentNode) {
+			_btnLevelUp.remove();
+		}
+	} else {
+		this.show();
+	}
+};
+
+Guild.onKeyDown = function onKeyDown(event) {
+	if ((event.which === KEYS.ESCAPE || event.key === 'Escape') && this.ui.is(':visible')) {
+		this.toggle();
+	}
+};
+
+Guild.show = function show() {
+	this.focus();
+
+	if (this.ui.is(':visible')) {
+		return;
+	}
+
+	this.ui.show();
+	const root = _root(this);
+
+	if (!root.querySelector('.tabs .active')) {
+		const infoBtn = root.querySelector('.tabs .info');
+		if (infoBtn) {
+			infoBtn.click();
+		}
+		Guild.onRequestAccess();
+	}
+
+	const membersContent = root.querySelector('.content.members');
+	if (membersContent && membersContent.style.display !== 'none') {
+		Renderer.render(renderMemberFaces);
+	}
+};
+
+Guild.hide = function hide() {
+	this.ui.hide();
+	Renderer.stop(renderMemberFaces);
+};
+
+Guild.setGuildInformations = function setGuildInformations(info) {
+	const root = _root(this);
+	const general = root.querySelector('.content.info');
+	if (!general) {
+		return;
+	}
+
+	general.querySelector('.name .value').textContent = info.guildname;
+	general.querySelector('.level .value').textContent = info.level;
+	general.querySelector('.master .value').textContent = info.masterName;
+	general.querySelector('.members .online').textContent = info.userNum;
+	general.querySelector('.members .maxMember').textContent = info.maxUserNum;
+	general.querySelector('.avglevel .value').textContent = info.userAverageLevel;
+	general.querySelector('.territory .value').textContent = info.manageLand;
+	general.querySelector('.exp .value').textContent = info.exp;
+	general.querySelector('.tax .value').textContent = info.point;
+
+	Guild.updateSession(info);
+	Guild.onRequestGuildEmblem(info.GDID, info.emblemVersion, Guild.setEmblem.bind(this));
+
+	const emblemEdit = general.querySelector('.emblem_edit');
+	if (emblemEdit) {
+		emblemEdit.style.display = Session.isGuildMaster ? '' : 'none';
+	}
+
+	updateDisbandButton(root, getActiveTab(root));
+
+	WinStats.getUI().update('guildname', info.guildname);
+
+	renderTendency(info.honor, info.virtue);
+};
+
+Guild.setEmblem = function setEmblem(image) {
+	const root = _root(this);
+	const el = root.querySelector('.content.info .emblem_container');
+	if (el) {
+		el.style.backgroundImage = `url(${image.src})`;
+	}
+};
+
+Guild.setRelations = function setRelations(guilds) {
+	const root = _root(this);
+	const allyList = root.querySelector('.ally_list');
+	const hostileList = root.querySelector('.hostile_list');
+	if (allyList) {
+		allyList.innerHTML = '';

@@ -1,0 +1,500 @@
+/**
+ * UI/Components/ChatBox/ChatBox.js
+ *
+ * ChatBox windows
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import DB from 'DB/DBManager.js';
+import Renderer from 'Renderer/Renderer.js';
+import Client from 'Core/Client.js';
+import Events from 'Core/Events.js';
+import Preferences from 'Core/Preferences.js';
+import KEYS from 'Controls/KeyEventHandler.js';
+import Mouse from 'Controls/MouseEventHandler.js';
+import Cursor from 'UI/CursorManager.js';
+import BattleMode from 'Controls/BattleMode.js';
+import History from './History.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import ContextMenu from 'UI/Components/ContextMenu/ContextMenu.js';
+import htmlText from './ChatBox.html?raw';
+import cssText from './ChatBox.css?raw';
+import Commands from 'Controls/ProcessCommand.js';
+import ChatBoxSettings from 'UI/Components/ChatBoxSettings/ChatBoxSettings.js';
+import Configs from 'Core/Configs.js';
+import EntityManager from 'Renderer/EntityManager.js';
+
+/**
+ * @var {number} max message in the chatbox
+ */
+const MAX_MSG = 400;
+const MAX_LENGTH = 100;
+const MAGIC_NUMBER = 3 * 14;
+
+/**
+ * @var {History} message cached in history
+ */
+const _historyMessage = new History();
+
+/**
+ * @var {History} nickname cached in history
+ */
+const _historyNickName = new History(true);
+
+/**
+ * @var {number} Chatbox position's index
+ */
+let _heightIndex = 2;
+
+/**
+ * Buffer para acumular mensagens antes de adicionar ao DOM.
+ * @private
+ * @type {ChatMessage[]}
+ */
+let _messageBuffer = [];
+
+/**
+ * Flag que indica se um requestAnimationFrame foi agendado para processar o buffer.
+ * @private
+ * @type {boolean}
+ */
+let _rafScheduled = false;
+
+/**
+ * @var {Preferences} structure
+ */
+const _preferences = Preferences.get(
+	'ChatBox',
+	{
+		x: 0,
+		y: Infinity,
+		height: 2,
+		fontScale: 1.0,
+		magnet_top: false,
+		magnet_bottom: true,
+		magnet_left: true,
+		magnet_right: false,
+		tabs: [],
+		tabOption: [],
+		activeTab: 0
+	},
+	1.0
+);
+
+/**
+ * Create Basic Info component
+ */
+const ChatBox = new GUIComponent('ChatBox', cssText);
+
+/**
+ * Helper: query inside shadow root
+ */
+function _root() {
+	return ChatBox._shadow || ChatBox._host;
+}
+
+/**
+ * Render HTML
+ */
+ChatBox.render = () => htmlText;
+
+/**
+ * Has input fields, protect key events
+ */
+ChatBox.captureKeyEvents = true;
+
+/**
+ * Constants
+ */
+ChatBox.TYPE = {
+	SELF: 1 << 0,
+	PUBLIC: 1 << 1,
+	PRIVATE: 1 << 2,
+	PARTY: 1 << 3,
+	GUILD: 1 << 4,
+	ANNOUNCE: 1 << 5,
+	ERROR: 1 << 6,
+	INFO: 1 << 7,
+	BLUE: 1 << 8,
+	ADMIN: 1 << 9,
+	MAIL: 1 << 10,
+	CLAN: 1 << 11
+};
+
+ChatBox.FILTER = {
+	PUBLIC_LOG: 0,
+	PUBLIC_CHAT: 1,
+	WHISPER: 2,
+	PARTY: 3,
+	GUILD: 4,
+	ITEM: 5,
+	EQUIP: 6,
+	STATUS: 7,
+	PARTY_ITEM: 8,
+	PARTY_STATUS: 9,
+	SKILL_FAIL: 10,
+	PARTY_SETUP: 11,
+	EQUIP_DAMAGE: 12,
+	WOE: 13,
+	PARTY_SEARCH: 14,
+	BATTLE: 15,
+	PARTY_BATTLE: 16,
+	EXP: 17,
+	PARTY_EXP: 18,
+	QUEST: 19,
+	BATTLEFIELD: 20,
+	CLAN: 21
+};
+
+/**
+ * @var {number} target message ?
+ */
+ChatBox.sendTo = ChatBox.TYPE.PUBLIC;
+
+/**
+ * Storage to cache the private messages
+ */
+ChatBox.PrivateMessageStorage = {
+	nick: '',
+	msg: ''
+};
+
+ChatBox.lastTabID = -1;
+ChatBox.tabCount = 0;
+ChatBox.activeTab = 0;
+
+ChatBox.tabs = [];
+
+/**
+ * Initialize UI
+ */
+ChatBox.init = function init() {
+	const root = _root();
+
+	if (!ContextMenu.__loaded) ContextMenu.prepare();
+	_heightIndex = _preferences.height - 1;
+	ChatBox.updateHeight();
+	ChatBox.applyFontScale();
+
+	this._host.style.top = `${Math.min(Math.max(0, _preferences.y - (this._host.offsetHeight || 0)), Renderer.height - (this._host.offsetHeight || 0))}px`;
+	this._host.style.left = `${Math.min(Math.max(0, _preferences.x), Renderer.width - (this._host.offsetWidth || 0))}px`;
+
+	this.magnet.TOP = _preferences.magnet_top;
+	this.magnet.BOTTOM = _preferences.magnet_bottom;
+	this.magnet.LEFT = _preferences.magnet_left;
+	this.magnet.RIGHT = _preferences.magnet_right;
+
+	this.draggable('.input');
+	this.draggable('.battlemode');
+
+	// Keep chat log area click-through for walking; only block over interactive UI parts.
+	// For GUIComponent, set up manual mouse intersection blocking on interactive elements.
+	const interactiveSelector = '.input, .chat-function, .battlemode, .event_add_cursor';
+	const interactiveEls = root.querySelectorAll(interactiveSelector);
+	interactiveEls.forEach(el => {
+		let _intersect;
+		let _enter = 0;
+		el.addEventListener('mouseenter', () => {
+			if (_enter === 0) {
+				_intersect = Mouse.intersect;
+				_enter++;
+				if (_intersect) {
+					Mouse.intersect = false;
+					Cursor.setType(Cursor.ACTION.DEFAULT);
+					EntityManager.setOverEntity(null);
+				}
+			}
+		});
+		el.addEventListener('mouseleave', () => {
+			if (_enter > 0) {
+				_enter--;
+				if (_enter === 0 && _intersect) {
+					Mouse.intersect = true;
+					EntityManager.setOverEntity(null);
+				}
+			}
+		});
+	});
+
+	// Setting chatbox scrollbar (inject into shadow style)
+	Client.loadFiles(
+		[DB.INTERFACE_PATH + 'basic_interface/dialscr_down.bmp', DB.INTERFACE_PATH + 'basic_interface/dialscr_up.bmp'],
+		(down, up) => {
+			const scrollbarCSS = [
+				'#chatbox .content::-webkit-scrollbar { width: 10px; height: 10px;}',
+				'#chatbox .content::-webkit-scrollbar-button:vertical:start:increment,',
+				'#chatbox .content::-webkit-scrollbar-button:vertical:end:decrement { display: none;}',
+				'#chatbox .content::-webkit-scrollbar-corner:vertical { display:none;}',
+				'#chatbox .content::-webkit-scrollbar-resizer:vertical { display:none;}',
+				'#chatbox .content::-webkit-scrollbar-button:start:decrement,',
+				'#chatbox .content::-webkit-scrollbar-button:end:increment { display: block; border:none;}',
+				`#chatbox .content::-webkit-scrollbar-button:vertical:increment { background: url(${down}) no-repeat; height:10px;}`,
+				`#chatbox .content::-webkit-scrollbar-button:vertical:decrement { background: url(${up}) no-repeat; height:10px;}`,
+				'#chatbox .content::-webkit-scrollbar-track-piece:vertical { background:black; border:none;}',
+				'#chatbox .content::-webkit-scrollbar-thumb:vertical { background:grey; -webkit-border-image:none; border-color:transparent;border-width: 0px 0; }'
+			].join('\n');
+
+			const style = document.createElement('style');
+			style.textContent = scrollbarCSS;
+			if (ChatBox._shadow) {
+				ChatBox._shadow.appendChild(style);
+			}
+		}
+	);
+
+	// Input selection
+	const usernameInput = root.querySelector('.input input');
+	if (usernameInput) {
+		usernameInput.addEventListener('mousedown', function (event) {
+			this.select();
+			event.stopImmediatePropagation();
+			event.preventDefault();
+		});
+	}
+
+	const inputChatbox = root.querySelector('.input-chatbox');
+
+	if (Configs.get('restoreChatFocus', false) && inputChatbox) {
+		inputChatbox.addEventListener('blur', () => {
+			Events.setTimeout(() => {
+				const active = KEYS.getDeepActiveElement();
+				const movedInsideChatbox = active && root.querySelector('#chatbox').contains(active);
+				const isTextInput = active && active.tagName && active.tagName.match(/input|select|textarea/i);
+				if (!movedInsideChatbox && !isTextInput) {
+					inputChatbox.focus();
+				}
+			}, 1000);
+		});
+	}
+
+	// Move caret to end of text
+	if (inputChatbox) {
+		inputChatbox.addEventListener('click', function () {
+			const range = document.createRange();
+			const selection = window.getSelection();
+			range.selectNodeContents(this);
+			range.collapse(false);
+			selection.removeAllRanges();
+			selection.addRange(range);
+		});
+
+		inputChatbox.addEventListener('focus', function () {
+			const range = document.createRange();
+			const selection = window.getSelection();
+			range.selectNodeContents(this);
+			range.collapse(false);
+			selection.removeAllRanges();
+			selection.addRange(range);
+		});
+
+		inputChatbox.maxLength = MAX_LENGTH;
+
+		inputChatbox.addEventListener('input', event => {
+			const currentText = extractChatMessage(inputChatbox);
+			if (currentText.length >= MAX_LENGTH) {
+				event.preventDefault();
+			}
+		});
+
+		inputChatbox.addEventListener('keydown', event => {
+			const currentText = extractChatMessage(inputChatbox);
+			if (currentText.length >= MAX_LENGTH) {
+				const allowedKeys = [
+					'ArrowLeft',
+					'ArrowUp',
+					'ArrowRight',
+					'ArrowDown',
+					'Backspace',
+					'Delete',
+					'Enter',
+					'Insert'
+				];
+
+				if (allowedKeys.includes(event.key)) {
+					return true;
+				}
+
+				if (event.ctrlKey || event.altKey) {
+					return true;
+				}
+				event.preventDefault();
+				return false;
+			}
+		});
+
+		inputChatbox.addEventListener('paste', event => {
+			event.preventDefault();
+
+			const clipboard = (event.originalEvent || event).clipboardData || event.clipboardData;
+			let pastedText = clipboard ? clipboard.getData('text/plain') : '';
+			if (!pastedText) {
+				return;
+			}
+
+			pastedText = pastedText.replace(/\u00A0/g, ' ');
+
+			const currentText = extractChatMessage(inputChatbox);
+			const remaining = MAX_LENGTH - currentText.length;
+			if (remaining <= 0) {
+				return;
+			}
+
+			const toInsert = pastedText.substr(0, remaining);
+
+			if (document.queryCommandSupported && document.queryCommandSupported('insertText')) {
+				document.execCommand('insertText', false, toInsert);
+			} else {
+				const node = document.createTextNode(toInsert);
+				inputChatbox.appendChild(node);
+			}
+		});
+	}
+
+	const nickBox = root.querySelector('.input .username');
+	if (nickBox) {
+		nickBox.addEventListener('blur', () => {
+			Events.setTimeout(() => {
+				const active = KEYS.getDeepActiveElement();
+				const movedInsideChatbox = active && root.querySelector('#chatbox').contains(active);
+				const isTextInput = active && active.tagName && active.tagName.match(/input|select|textarea/i);
+				const isChatMessage = active === inputChatbox;
+				if (!movedInsideChatbox && !isTextInput && !isChatMessage) {
+					nickBox.focus();
+				}
+			}, 1000);
+		});
+	}
+
+	// Validate information dragged into text field
+	root.querySelectorAll('input[type=text]').forEach(input => {
+		input.addEventListener('drop', onDropText);
+		input.addEventListener('dragover', stopPropagation);
+	});
+
+	// Button change name (tab inputs)
+	root.querySelectorAll('.header input').forEach(input => {
+		input.addEventListener('dblclick', function () {
+			this.type = 'text';
+			this.select();
+		});
+		input.addEventListener('blur', function () {
+			this.type = 'button';
+		});
+	});
+
+	// Private message selection
+	const listBtn = root.querySelector('.input .list');
+	if (listBtn) {
+		listBtn.addEventListener('click', function () {
+			const names = _historyNickName.list;
+			const count = names.length;
+
+			if (!count) {
+				ChatBox.addText(DB.getMessage(192), ChatBox.TYPE.ERROR, ChatBox.FILTER.PUBLIC_LOG);
+				return;
+			}
+
+			ContextMenu.remove();
+			ContextMenu.append();
+
+			for (let i = 0; i < count; ++i) {
+				ContextMenu.addElement(names[i], onPrivateMessageUserSelection(names[i]));
+			}
+
+			ContextMenu.addElement('', onPrivateMessageUserSelection(''));
+
+			const pos = this.getBoundingClientRect();
+			const ui = ContextMenu.ui.find('.menu');
+			ui.css({
+				top: pos.top - ui.height() - 5,
+				left: pos.left - ui.width() - 5
+			});
+		});
+		listBtn.addEventListener('mousedown', event => {
+			event.stopImmediatePropagation();
+			event.preventDefault();
+		});
+	}
+
+	const draggableEl = root.querySelector('.draggable');
+	if (draggableEl) {
+		draggableEl.addEventListener('mousedown', event => {
+			event.stopPropagation();
+		});
+	}
+
+	// Send message to...
+	const filterBtn = root.querySelector('.input .filter');
+	if (filterBtn) {
+		filterBtn.addEventListener('click', function () {
+			const pos = this.getBoundingClientRect();
+			const ui = ContextMenu.ui.find('.menu');
+
+			ContextMenu.remove();
+			ContextMenu.append();
+
+			ContextMenu.addElement(DB.getMessage(85), onChangeTargetMessage(ChatBox.TYPE.PUBLIC));
+			ContextMenu.addElement(DB.getMessage(86), onChangeTargetMessage(ChatBox.TYPE.PARTY));
+			ContextMenu.addElement(DB.getMessage(437), onChangeTargetMessage(ChatBox.TYPE.GUILD));
+			ContextMenu.addElement(DB.getMessage(2361), onChangeTargetMessage(ChatBox.TYPE.CLAN));
+
+			ui.css({
+				top: pos.top - ui.height() - 5,
+				left: pos.left - ui.width() + 25
+			});
+		});
+		filterBtn.addEventListener('mousedown', event => {
+			event.stopImmediatePropagation();
+			event.preventDefault();
+		});
+	}
+
+	// Change size
+	const sizeBtn = root.querySelector('.input .size');
+	if (sizeBtn) {
+		sizeBtn.addEventListener('click', event => {
+			ChatBox.updateHeight(true);
+			event.stopImmediatePropagation();
+			event.preventDefault();
+		});
+	}
+
+	// Scroll feature should block at each line
+	root.querySelectorAll('.content').forEach(el => {
+		el.addEventListener('wheel', onScroll);
+	});
+
+	// Tabs should behave like "UI" (no entity hover / map cursor changes)
+	(function initTabHoverBlock() {
+		let _tabIntersect;
+		let _tabEnter = 0;
+
+		root.querySelector('#chatbox').addEventListener(
+			'mouseenter',
+			event => {
+				if (event.target.closest('table.header tr td.tab')) {
+					if (_tabEnter === 0) {
+						_tabIntersect = Mouse.intersect;
+						_tabEnter++;
+						if (_tabIntersect) {
+							Mouse.intersect = false;
+							Cursor.setType(Cursor.ACTION.DEFAULT);
+							EntityManager.setOverEntity(null);
+						}
+					}
+				}
+			},
+			true
+		);
+
+		root.querySelector('#chatbox').addEventListener(
+			'mouseleave',
+			event => {
+				if (event.target.closest('table.header tr td.tab')) {
+					if (_tabEnter > 0) {
+						_tabEnter--;

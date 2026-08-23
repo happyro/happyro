@@ -1,0 +1,500 @@
+/**
+ * @module Renderer/EffectManager
+ *
+ * Effects Manager
+ *
+ * @author Vincent Thibault
+ */
+
+/**
+ * Load dependencies
+ */
+import EffectDB from 'DB/Effects/EffectTable.js';
+import SkillEffect from 'DB/Skills/SkillEffect.js';
+import SkillUnit from 'DB/Skills/SkillUnit.js';
+import SU from 'DB/Skills/SkillUnitConst.js';
+import ItemEffect from 'DB/Items/ItemEffect.js';
+import Commands from 'Controls/ProcessCommand.js';
+import Events from 'Core/Events.js';
+import Configs from 'Core/Configs.js';
+import Cylinder from 'Renderer/Effects/Cylinder.js';
+import StrEffect from 'Renderer/Effects/StrEffect.js';
+import RsmEffect from 'Renderer/Effects/RsmEffect.js';
+import TwoDEffect from 'Renderer/Effects/TwoDEffect.js';
+import ThreeDEffect from 'Renderer/Effects/ThreeDEffect.js';
+import Entity from 'Renderer/Entity/Entity.js';
+import EntityManager from 'Renderer/EntityManager.js';
+import Renderer from 'Renderer/Renderer.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import Sound from 'Audio/SoundManager.js';
+import Preferences from 'Preferences/Map.js';
+import QuadHorn from 'Renderer/Effects/QuadHorn.js';
+import Session from 'Engine/SessionStorage.js';
+import GraphicsSettings from 'Preferences/Graphics.js';
+
+/**
+ * @type {object} saved webgl context
+ */
+let _gl;
+
+/**
+ * @type {object} effect listing
+ */
+const _list = {};
+
+/**
+ * @type {number} used to differenciate constructors
+ */
+let _uniqueId = 1;
+
+/**
+ * Create a new EF_Init_Par object and attach existing call params
+ */
+function PrepareInit(callParams) {
+	const Params = {
+		effectId: -1,
+		skillId: null,
+		ownerAID: null,
+		position: null,
+		startTick: null,
+		duration: null,
+		persistent: false,
+		repeatEnd: null,
+		repeatDelay: 0,
+		otherAID: null,
+		otherPosition: null
+	};
+	Object.assign(Params, callParams);
+
+	if (!Params.startTick) {
+		Params.startTick = Renderer.tick;
+	}
+
+	Params.ownerEntity = EntityManager.get(Params.ownerAID);
+	Params.otherEntity = EntityManager.get(Params.otherAID);
+
+	return Params;
+}
+
+/**
+ * Spam an effect to the scene
+ *
+ * @param {object} effect params
+ */
+function spamSTR(Params) {
+	let filename;
+	const texturePath = Params.effect.texturePath || '';
+
+	// Get STR file
+	if (Preferences.mineffect && Params.effect.min) {
+		filename = Params.effect.min;
+	} else {
+		filename = Params.effect.file;
+	}
+
+	// Randomize STR file name
+	if (Params.effect.rand) {
+		filename = filename.replace(
+			'%d',
+			Math.round(Params.effect.rand[0] + (Params.effect.rand[1] - Params.effect.rand[0]) * Math.random())
+		);
+	}
+
+	// Start effect
+	EffectManager.add(
+		new StrEffect(
+			'data/texture/effect/' + filename + '.str',
+			Params.Inst.position,
+			Params.Inst.startTick,
+			texturePath
+		),
+		Params
+	);
+}
+
+/**
+ * Spam an effect to the scene
+ *
+ * @param {object} effect prams
+ */
+function spamSprite(Params) {
+	let entity = Params.Init.ownerEntity;
+	let isNewEntity = false;
+
+	if (!entity) {
+		entity = new Entity();
+		entity.GID = Params.Init.ownerAID;
+		entity.position = Params.Inst.position;
+		entity.objecttype = entity.constructor.TYPE_EFFECT;
+		isNewEntity = true;
+	} else if (!Params.effect.attachedEntity) {
+		entity = new Entity();
+		entity.GID = -1;
+		entity.position = Params.Inst.position;
+		entity.objecttype = entity.constructor.TYPE_EFFECT;
+		isNewEntity = true;
+	}
+
+	// Sprite effect
+	// Use Params.Inst.effectID as uid (for hat effects this is the hatEffectID)
+	// Fall back to Params.effect.effectID for other cases.
+	// Append duplicateID to make each duplicate instance independent.
+	const baseUid = Params.Inst.effectID || Params.effect.effectID;
+	const uid = Params.Inst.duplicateID > 0 ? `${baseUid}_${Params.Inst.duplicateID}` : baseUid;
+
+	entity.attachments.add({
+		uid: uid,
+		file: Params.effect.file,
+		head: !!Params.effect.head,
+		direction: !!Params.effect.direction,
+		repeat: Params.effect.repeat || Params.Inst.persistent,
+		duration: Params.effect.duration,
+		stackable: !!Params.effect.stackable,
+		stopAtEnd: Params.effect.stopAtEnd,
+		xOffset: Params.effect.xOffset,
+		yOffset: Params.effect.yOffset,
+		frame: Params.effect.frame,
+		delay: Params.effect.delayFrame,
+		renderBefore: !!Params.effect.renderBeforeEntities
+	});
+
+	if (isNewEntity) {
+		EntityManager.add(entity);
+	}
+}
+
+// TODO: Move these somewhere else, maybe a DB file
+/** for the EffectManager.spamSkillZone */
+const targetableUnits = [SU.UNT_ICEWALL, SU.UNT_REVERBERATION];
+
+/** for the EffectManager.spamSkillZone */
+const traps = [
+	SU.UNT_TRAP,
+	SU.UNT_BLASTMINE,
+	SU.UNT_SKIDTRAP,
+	SU.UNT_ANKLESNARE,
+	SU.UNT_LANDMINE,
+	SU.UNT_SHOCKWAVE,
+	SU.UNT_SANDMAN,
+	SU.UNT_FLASHER,
+	SU.UNT_FREEZINGTRAP,
+	SU.UNT_CLAYMORETRAP,
+	SU.UNT_TALKIEBOX,
+	SU.UNT_MAGENTATRAP,
+	SU.UNT_COBALTTRAP,
+	SU.UNT_MAIZETRAP,
+	SU.UNT_VERDURETRAP,
+	SU.UNT_FIRINGTRAP,
+	SU.UNT_ICEBOUNDTRAP,
+	SU.UNT_ELECTRICSHOCKE,
+	SU.UNT_CLUSTERBOMB,
+	SU.UNT_ICEMINE
+];
+
+/**
+ * Repeat an existing effect if needed
+ *
+ * @param {object} effect
+ */
+function repeatEffect(effect) {
+	const Params = effect._Params;
+	let restartTick = false,
+		RepeatParams,
+		EF_Inst_Par;
+
+	if (!Params || !Params.Inst) {
+		return 0;
+	}
+
+	if ((Params.Inst.persistent || Params.Inst.repeatEnd) && !effect._AlreadyRepeated) {
+		if (
+			Params.Inst.duration &&
+			Params.Inst.duration > 0 &&
+			Renderer.tick > Params.Inst.endTick + Params.Inst.repeatDelay
+		) {
+			// Has predefined duration and time to repeat (negative delay)
+
+			if (!Params.Inst.repeatEnd || Params.Inst.repeatEnd > Params.Inst.endTick + Params.Inst.repeatDelay) {
+				// Repeat period not ended
+				restartTick = Params.Inst.endTick + Params.Inst.repeatDelay; // Reference original timing to avoid timing going crazy
+			}
+		} else if (effect.needCleanUp) {
+			// Finished rendering and need to set a repeat (0 or positive delay)
+
+			if (!Params.Inst.repeatEnd || Params.Inst.repeatEnd > Renderer.tick + Params.Inst.repeatDelay) {
+				// Repeat period not ended
+				restartTick = Renderer.tick + Params.Inst.repeatDelay;
+			}
+		}
+
+		if (restartTick) {
+			// Re-spam effect if needed to repeat
+			EF_Inst_Par = {
+				effectID: Params.Inst.effectID,
+				duplicateID: Params.Inst.duplicateID,
+				startTick: restartTick,
+				noDelay: true // Offsets and delays are no longer used
+			};
+
+			RepeatParams = {
+				effect: Params.effect,
+				Inst: EF_Inst_Par,
+				Init: Params.Init
+			};
+
+			EffectManager.spamEffect(RepeatParams);
+			effect._AlreadyRepeated = true;
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+function clean(name, AID, effectID) {
+	const effectIdList = Array.isArray(effectID) ? effectID : [effectID];
+	let i, count;
+
+	const list = _list[name];
+	count = list.length;
+
+	for (i = 0; i < count; ++i) {
+		if (
+			(!AID || list[i]._Params.Init.ownerAID === AID) &&
+			(!effectID || effectIdList.includes(list[i]._Params.Inst.effectID))
+		) {
+			if (list[i].free) {
+				list[i].free(_gl);
+			}
+			list.splice(i, 1);
+			i--;
+			count--;
+		}
+	}
+
+	if (!count) {
+		//if (effect.free) {
+		//	effect.free(_gl);
+		//}
+		delete _list[name];
+	}
+}
+
+function cleanRepeat(name, AID, effectID) {
+	const effectIdList = Array.isArray(effectID) ? effectID : [effectID];
+	const list = _list[name];
+
+	list.forEach(item => {
+		if ((!AID || item._Params.Init.ownerAID === AID) && (!effectID || effectIdList.includes(item.effectID))) {
+			if (item._Params.Inst.persistent) {
+				item._Params.Inst.persistent = false;
+			}
+
+			if (item._Params.Inst.repeatEnd) {
+				item._Params.Inst.repeatEnd = false;
+			}
+		}
+	});
+}
+
+/**
+ * @type {object} Effects namespace
+ */
+class EffectManager {
+	/**
+	 * Initialize effects manager
+	 */
+	static init(gl) {
+		_gl = gl;
+
+		if (Configs.get('development')) {
+			Commands.add(
+				'd_effectmanager',
+				'Print EffectManager list to console.',
+				function () {
+					EffectManager.debug();
+				},
+				['d_em'],
+				true
+			);
+		} else {
+			if (Commands.isEnabled('d_effectmanager')) {
+				Commands.remove('d_effectmanager');
+			}
+		}
+	}
+
+	/**
+	 * Add effect to the render list
+	 *
+	 * @param {function} effect renderer function
+	 * @param {object} effect parameter object
+	 */
+	static add(effect, Params) {
+		const name = effect.constructor.name || effect.constructor._uid || (effect.constructor._uid = _uniqueId++);
+
+		if (!(name in _list)) {
+			_list[name] = [];
+
+			if (effect.constructor.init) {
+				effect.constructor.needInit = true;
+			}
+
+			// Keep constructor renderBeforeEntities as-is; do not override to false here,
+			// so external configuration (e.g., aura ordering) is respected.
+		}
+
+		if (effect.init) {
+			effect.needInit = true;
+		}
+
+		effect._Params = Params;
+
+		// Per-instance ordering: prefer explicit flag, else constructor default
+		if (effect._Params && effect._Params.Inst && typeof effect._Params.Inst.renderBeforeEntities !== 'undefined') {
+			effect.renderBeforeEntities = !!effect._Params.Inst.renderBeforeEntities;
+		} else {
+			effect.renderBeforeEntities = !!effect.constructor.renderBeforeEntities;
+		}
+
+		// Aura-specific: force renderBeforeEntities for known aura effect IDs to keep them under sprites.
+		if (effect._Params && effect._Params.Inst && effect._Params.Inst.effectID) {
+			const auraEffectIds = [200, 201, 202, 362, 397, 398, 881];
+			if (auraEffectIds.indexOf(effect._Params.Inst.effectID) !== -1) {
+				effect.renderBeforeEntities = true;
+			}
+		}
+
+		_list[name].push(effect);
+	}
+
+	/**
+	 * Destroy all effects
+	 */
+	static free(gl) {
+		const keys = Object.keys(_list);
+
+		keys.forEach(key => {
+			const list = _list[key];
+			const constructor = list[0].constructor;
+
+			list.forEach(item => {
+				if (item.free) {
+					item.free(gl);
+				}
+			});
+
+			if (constructor.free) {
+				constructor.free(gl);
+			}
+
+			delete _list[key];
+		});
+	}
+
+	/**
+	 * Renderering all effects
+	 *
+	 * @param {object} webgl context
+	 * @param {mat4} modelView matrix
+	 * @param {mat4} projection matrix
+	 * @param {mat3} normal matrix
+	 * @param {object} fog structure
+	 * @param {object} light structure
+	 * @param {number} game tick
+	 * @param {boolean} render before entities ?
+	 */
+	static render(gl, modelView, projection, fog, tick, renderBeforeEntities) {
+		const keys = Object.keys(_list);
+		const count = keys.length;
+		let i, j, size, list, constructor;
+
+		// Calculate culling bounds
+		// Simple distance check from player
+		let center = [0, 0, 0];
+		if (Session.Entity && Session.Entity.position) {
+			center = Session.Entity.position;
+		}
+		const area_size = GraphicsSettings.performanceMode ? GraphicsSettings.viewArea : 20;
+		const cullDistanceSq = area_size * area_size;
+
+		for (i = 0; i < count; ++i) {
+			list = _list[keys[i]];
+
+			if (!list.length) {
+				delete _list[keys[i]];
+				continue;
+			}
+
+			constructor = list[0].constructor;
+
+			// Initialize constructor if needed
+			if (!constructor.ready && constructor.needInit) {
+				constructor.init(gl);
+				constructor.needInit = false;
+			}
+
+			if (constructor.ready) {
+				constructor.beforeRender(gl, modelView, projection, fog, tick, null);
+
+				for (j = 0, size = list.length; j < size; ++j) {
+					// Filter per-instance ordering against the pass flag
+					if (!!list[j].renderBeforeEntities !== renderBeforeEntities) {
+						continue;
+					}
+
+					const effect = list[j];
+					const pos = effect._Params && effect._Params.Inst ? effect._Params.Inst.position : null;
+
+					// Culling: If effect has position, check distance
+					// Some effects might track an entity, updating their position is usually done in render()
+					// so we might need to run a lightweight update if we cull rendering.
+					// However, most RO effects are static or simple.
+					// Effects with a position can be distance-culled. Effects without one
+					// (e.g. standalone viewer effects) have no cullable position and must
+					// always render.
+					let culled = false;
+					if (pos) {
+						const distSq =
+							(pos[0] - center[0]) * (pos[0] - center[0]) + (pos[1] - center[1]) * (pos[1] - center[1]);
+						if (distSq > cullDistanceSq) {
+							// Cull this effect (don't render), but we must check lifecycle
+							// Check if effect is finished
+
+							// Simulate tick for removal
+							let shouldRemove = false;
+							if (
+								effect._Params.Inst.duration > 0 &&
+								effect._Params.Inst.endTick > 0 &&
+								tick > effect._Params.Inst.endTick
+							) {
+								shouldRemove = true;
+							}
+
+							if (shouldRemove) {
+								effect.needCleanUp = true;
+								culled = true;
+							} else {
+								// Check for repeat logic even if culled
+								size += repeatEffect(effect);
+								continue; // Skip rendering
+							}
+						}
+					}
+
+					if (!culled) {
+						if (!effect.ready && effect.needInit) {
+							effect.init(gl);
+							effect.needInit = false;
+						}
+
+						if (effect.ready) {
+							effect.render(gl, tick);
+						}
+					}
+
+					// Try repeating the effect.
+					size += repeatEffect(effect);
+
+					if (effect.needCleanUp) {
+						if (effect.free) {
