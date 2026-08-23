@@ -4,7 +4,7 @@
 
 - 清单：`docs/zh-cn/kro-20211105/manifest.tsv`
 - 总工作单元：77
-- 分配：agent-01 12、agent-02 12、agent-03 12、agent-04 12、agent-05 11、agent-06 11、agent-07 11、agent-08 11
+- 分配：agent-01 23、agent-02 22、agent-03 22、agent-04 22、agent-05 22、agent-06 22、agent-07 22、agent-08 22
 - 当前工作单元：无
 - 所有工作单元状态：待处理
 - 源切片：`docs/zh-cn/kro-20211105/agent-xx/chunks/source/`
