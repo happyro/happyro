@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const root = path.resolve(new URL('..', import.meta.url).pathname);
+const root = path.resolve(new URL('../../../../..', import.meta.url).pathname);
 const client = path.join(root, 'repos/happyro-client');
 const source = path.join(root, 'inputs/runtime/kro-20211105/client/System');
 const out = path.join(root, 'work/lub-reextract');

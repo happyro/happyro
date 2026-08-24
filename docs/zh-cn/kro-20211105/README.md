@@ -40,14 +40,14 @@ LUB 的目录名与源表名保持一致，切片范围以 `manifest.tsv` 为准
 
 ## LUB 提取工具
 
-长期保留的 Playwright 提取器位于仓库根目录的 [`tools/extract-lub-playwright.mjs`](../../../tools/extract-lub-playwright.mjs)。它使用客户端自带的 `wasmoon-lua5.1.js` 和本地 `liblua5.1.wasm`，并复原任务、道具、成就、推荐任务、提示框、消息、地图、城镇等客户端加载规则。提取结果写入 `work/lub-reextract/`；不得直接覆盖 `workspace/lub/source/` 中的基准结果。
+长期保留的 Playwright 提取器位于 [`tools/client/extract/lua51/playwright/main.mjs`](../../../tools/client/extract/lua51/playwright/main.mjs)。它使用客户端自带的 `wasmoon-lua5.1.js` 和本地 `liblua5.1.wasm`，并复原任务、道具、成就、推荐任务、提示框、消息、地图、城镇等客户端加载规则。提取结果写入 `work/lub-reextract/`；不得直接覆盖 `workspace/lub/source/` 中的基准结果。
 
 完整运行和一致性比较步骤见 [`LUB-EXTRACTION.md`](LUB-EXTRACTION.md)。
 
 切片和清单一致性检查：
 
 ```bash
-node tools/validate-kro-workspace.mjs
+node tools/workspace/validate-kro/main.mjs
 ```
 
 按 `manifest.tsv` 分配不重叠的工作单元；每个 agent 只写自己的译文切片和进度记录，主进度在合并后统一更新。

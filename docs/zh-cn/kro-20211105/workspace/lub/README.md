@@ -8,7 +8,7 @@
 - `../../manifest.tsv`：kRO 总翻译工作单元清单；
 - `../../agent-01/` 至 `../../agent-08/`：并行翻译切片和各 agent 清单。
 
-可重现提取流程见 [`../../LUB-EXTRACTION.md`](../../LUB-EXTRACTION.md)，长期工具为仓库根目录的 [`tools/extract-lub-playwright.mjs`](../../../../tools/extract-lub-playwright.mjs)。
+可重现提取流程见 [`../../LUB-EXTRACTION.md`](../../LUB-EXTRACTION.md)，长期工具为 [`tools/client/extract/lua51/playwright/main.mjs`](../../../../../tools/client/extract/lua51/playwright/main.mjs)。
 
 客户端现有 `DBManager.js` 已提供两种相关实现：
 

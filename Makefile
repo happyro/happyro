@@ -3,78 +3,78 @@ SHELL := /bin/bash
 .PHONY: status doctor fetch-upstreams upstream-status configure-client configure-gateway configure-resources configure-server database-start database-stop database-status database-verify server-start server-stop server-status server-verify gateway-start gateway-stop gateway-status gateway-verify test-account automation-account test-client test-gateway build-server test
 
 status:
-	@./scripts/status.sh
+	@./scripts/maintenance/status.sh
 
 doctor:
-	@./scripts/doctor.sh
+	@./scripts/maintenance/doctor.sh
 
 fetch-upstreams:
-	@./scripts/upstreams.sh fetch
+	@./scripts/maintenance/upstreams.sh fetch
 
 upstream-status:
-	@./scripts/upstreams.sh status
+	@./scripts/maintenance/upstreams.sh status
 
 configure-client:
-	@./scripts/configure-client.sh
+	@./scripts/client/configure-client.sh
 
 configure-gateway:
-	@./scripts/configure-gateway.sh
+	@./scripts/gateway/configure-gateway.sh
 
 configure-resources:
-	@./scripts/configure-resources.sh
+	@./scripts/resources/configure-resources.sh
 
 configure-server:
-	@./scripts/configure-server.sh
+	@./scripts/server/configure-server.sh
 
 database-start:
-	@./scripts/database.sh start
+	@./scripts/database/database.sh start
 
 database-stop:
-	@./scripts/database.sh stop
+	@./scripts/database/database.sh stop
 
 database-status:
-	@./scripts/database.sh status
+	@./scripts/database/database.sh status
 
 database-verify:
-	@./scripts/database.sh verify
+	@./scripts/database/database.sh verify
 
 server-start:
-	@./scripts/server.sh start
+	@./scripts/server/server.sh start
 
 server-stop:
-	@./scripts/server.sh stop
+	@./scripts/server/server.sh stop
 
 server-status:
-	@./scripts/server.sh status
+	@./scripts/server/server.sh status
 
 server-verify:
-	@./scripts/server.sh verify
+	@./scripts/server/server.sh verify
 
 gateway-start:
-	@./scripts/gateway.sh start
+	@./scripts/gateway/gateway.sh start
 
 gateway-stop:
-	@./scripts/gateway.sh stop
+	@./scripts/gateway/gateway.sh stop
 
 gateway-status:
-	@./scripts/gateway.sh status
+	@./scripts/gateway/gateway.sh status
 
 gateway-verify:
-	@./scripts/gateway.sh verify
+	@./scripts/gateway/gateway.sh verify
 
 test-account:
-	@./scripts/test-account.sh
+	@./scripts/account/test-account.sh
 
 automation-account:
-	@./scripts/automation-account.sh
+	@./scripts/account/automation-account.sh
 
 test-client: configure-client
-	@./scripts/test-client.sh
+	@./scripts/client/test-client.sh
 
 test-gateway: configure-gateway
-	@./scripts/test-gateway.sh
+	@./scripts/gateway/test-gateway.sh
 
 build-server:
-	@./scripts/build-server.sh
+	@./scripts/server/build-server.sh
 
 test: doctor test-client test-gateway build-server

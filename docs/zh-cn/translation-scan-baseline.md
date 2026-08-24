@@ -9,7 +9,7 @@
 
 - 分支：lang/zh-cn
 - 扫描日期：2026-08-21
-- 扫描工具：scripts/scan-localization-inventory.py
+- 扫描工具：scripts/localization/scan-localization-inventory.py
 - 扫描工具提交：6d36b252ce5653978f640c61f2b6319c45a9e827
 - 根仓库提交：0eb4a2b8d7e0747fec9fd7c1f731770e72fc4902
 - server 提交：ced737d3cae337da0c8d701150e4f70b845e76f9

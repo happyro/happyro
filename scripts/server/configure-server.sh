@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/../_lib/lib.sh"
 
 secret_file="$MARIADB_RUNTIME/secrets.env"
 [[ -f "$MARIADB_PROFILE" ]] || {

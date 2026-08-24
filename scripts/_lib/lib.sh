@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLIENT_REPO="$PROJECT_ROOT/repos/happyro-client"
 SERVER_REPO="$PROJECT_ROOT/repos/happyro-server"
 GATEWAY_REPO="$PROJECT_ROOT/vendor/robrowserlegacy-remote-client-js"

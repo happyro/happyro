@@ -4,14 +4,14 @@
 
 使用 Playwright 在浏览器中运行项目自己的 Lua 5.1 WASM 运行时，提取当前工具清单中的 19 个 LUB 目标，并与 `workspace/lub/source/` 中的基准 JSON 比较。官方 `.lub` 文件只读，不修改、不回编译。Lua 5.0 兼容读取结果单独登记，不混入 Playwright 5.1 运行时。
 
-长期工具：[`tools/extract-lub-playwright.mjs`](../../../tools/extract-lub-playwright.mjs)
+长期工具：[`tools/client/extract/lua51/playwright/main.mjs`](../../../tools/client/extract/lua51/playwright/main.mjs)
 
 ## 前置条件
 
-在 `tools/` 下安装 Playwright（`tools/package.json` 已固定版本），浏览器缓存仍放在用户缓存目录：
+在工具目录下安装 Playwright（`tools/client/extract/lua51/playwright/package.json` 已固定版本），浏览器缓存仍放在用户缓存目录：
 
 ```bash
-cd tools
+cd tools/client/extract/lua51/playwright
 npm install
 npx playwright install chromium
 ```
@@ -26,10 +26,10 @@ npm run dev -- --host 127.0.0.1
 然后在另一个终端运行：
 
 ```bash
-node tools/extract-lub-playwright.mjs
+node tools/client/extract/lua51/playwright/main.mjs
 ```
 
-`tools/node_modules/` 和 Playwright 浏览器缓存不得提交。
+`tools/client/extract/lua51/playwright/node_modules/` 和 Playwright 浏览器缓存不得提交。
 
 ## 提取内容
 
