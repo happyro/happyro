@@ -22,3 +22,29 @@ docs/translation/zh-cn/kro-20211105/
 ```
 
 每个工作区的 agent 都位于各自的 `agents/` 目录下。kRO 的提取基准和状态记录也只属于 kRO 工作区，不写入主产品工作区。
+
+## 分片合并与回写
+
+翻译分片完成后，先在被 Git 忽略的临时目录中合并和校验：
+
+```text
+work/translation-merge/<workspace>/<batch>/
+└── merged/
+    ├── manifest.tsv                    # 本次运行的来源和状态清单
+    ├── files/                          # 本次运行的完整合并结果
+    └── validation/merge-warnings.tsv   # 结构和标记复核项
+```
+
+确认结果后，将完整文件复制到对应工作区的 Git 跟踪目录：
+
+```text
+docs/translation/zh-cn/<workspace>/merged/
+├── README.md
+├── manifest.tsv
+├── files/           # 按目标源文件的相对路径保存完整文件
+└── validation/      # 已确认的校验记录
+```
+
+`agents/*/chunks/translated/` 保留原始译文分片，`merged/` 保存整个工作区的完整合并结果。后续回写或编译脚本以 `merged/files/` 为输入，生成到 `artifacts/` 或目标项目资源目录。`inputs/official/` 和 `inputs/runtime/kro-20211105/` 中的官方源材料保持只读，不直接覆盖。
+
+合并器和分片校验器的职责、命令和校验边界见 [`tools/translation/README.md`](../../../tools/translation/README.md)。

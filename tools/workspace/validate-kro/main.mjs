@@ -29,7 +29,12 @@ const errors = [];
 const byAgent = new Map();
 for (const row of manifest) {
   if (!/^agent-0[1-8]$/.test(row.agent_id)) errors.push(`invalid agent: ${row.agent_id}`);
-  if (row.status !== '待处理') errors.push(`${row.path}/${row.chunk_id}: status is ${row.status}`);
+  if (row.status !== '待处理') {
+    errors.push(
+      `${row.path}/${row.chunk_id}: root manifest status is ${row.status}; `
+      + 'keep the root allocation manifest at 待处理 and update the agent manifest instead',
+    );
+  }
   const source = path.join(root, 'agents', row.agent_id, row.source_chunk);
   try {
     const data = await fs.readFile(source);
