@@ -69,7 +69,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agent", action="append", help="Agent directory name; repeatable")
     parser.add_argument("--agent-dir", action="append", type=Path, help="Explicit agent directory; repeatable")
-    parser.add_argument("--root", type=Path, default=Path("docs/translation/zh-cn"), help="Root containing agent directories")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("docs/translation/zh-cn/client-server/agents"),
+        help="Root containing agent directories",
+    )
     parser.add_argument("--all", action="store_true", help="Check every immediate agent-* directory")
     parser.add_argument(
         "--merged-root",

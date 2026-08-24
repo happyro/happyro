@@ -9,6 +9,7 @@ HappyRO 是仅限局域网运行的 roBrowserLegacy 开发栈。它独立于
 ```text
 happyro/
 ├── configs/                         # HappyRO 客户端配置
+├── docs/translation/zh-cn/          # 两个独立的中文翻译工作区
 ├── deploy/mariadb/                  # 固定版本的局域网开发数据库
 ├── deploy/rathena/                  # rAthena 局域网运行时配置
 ├── deploy/remote-client/            # 局域网网关环境
@@ -20,6 +21,15 @@ happyro/
 ├── scripts/                         # 可重复执行的检查和构建脚本
 └── work/                            # 生成的输出
 ```
+
+中文翻译工作区分别位于：
+
+- [`docs/translation/zh-cn/client-server/`](docs/translation/zh-cn/client-server/README.md)：HappyRO client 和 server 项目的主产品翻译；
+- [`docs/translation/zh-cn/kro-20211105/`](docs/translation/zh-cn/kro-20211105/README.md)：kRO 2021-11-05 官方客户端资源的独立翻译工作区。
+
+两个工作区各自维护清单、进度、术语表、基准文件和 `agents/` 目录，不共用工作状态。
+
+Docker 部署规划见 [`docs/deploy/docker/README.md`](docs/deploy/docker/README.md)。
 
 网关的统一模式在 `3338` 端口提供 PWA、基于 GRF 的资源 API，以及连接
 rAthena 的 WebSocket 代理。浏览器入口为：
