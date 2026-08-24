@@ -5,13 +5,34 @@
 | 工具 | 用途 | 阶段 |
 | --- | --- | --- |
 | [`merge/main.py`](merge/main.py) | 将各 agent 的译文分片合并成完整文件，并生成来源清单 | 合并 |
-| [`check-output/main.py`](check-output/main.py) | 检查单个 agent 的译文文件、占位符、颜色码、转义符和清单登记 | 合并前 |
-| [`check-merged-indentation/main.py`](check-merged-indentation/main.py) | 检查完整文件回拼后的缩进变化 | 合并后 |
+| [`validate/main.py chunks`](validate/main.py) | 检查单个 agent 的译文文件、占位符、颜色码、转义符和清单登记 | 合并前 |
+| [`validate/main.py merged`](validate/main.py) | 检查完整文件回拼后的缩进变化 | 合并后 |
 | [`../workspace/validate-kro/main.mjs`](../workspace/validate-kro/main.mjs) | 检查 kRO 总清单、agent 清单、切片范围和提取单元一致性 | 工作区维护 |
 
 临时合并结果写入 `work/translation-merge/<workspace>/<batch>/`；确认后再复制到对应工作区的 `merged/files/`。这些工具不修改 agent 分片、官方输入或独立 client/server 仓库。
 
 合并器按职责拆分在 [`merge/`](merge/) 包中：`cli.py` 负责参数和流程编排，`manifest.py` 负责清单读取与分组，`client.py` 和 `kro.py` 分别处理两类工作区，`checks.py` 集中处理行、结构、标记和 JSON 校验，`writer.py` 写出合并清单与复核报告；`main.py` 仅作为可直接执行的薄入口。命令不带参数时只显示帮助，不执行合并。
+
+校验器按阶段统一在 [`validate/`](validate/) 包中：`chunks.py` 检查 agent 分片，`merged.py` 检查合并文件，`cli.py` 只负责子命令和参数编排，`main.py` 是薄入口。命令不带参数时只显示帮助，不执行校验。
+
+### 分片校验
+
+```bash
+python3 tools/translation/validate/main.py chunks --agent agent-03
+python3 tools/translation/validate/main.py chunks --all
+```
+
+默认行数变化为警告；需要把行数变化视为失败时，加 `--strict-lines`。颜色码、转义符、占位符、替换字符、清单重复项和译文登记缺失仍会报告为错误。
+
+### 合并文件校验
+
+```bash
+python3 tools/translation/validate/main.py merged \
+  --agent agent-03 \
+  --merged-root work/translation-merge/client-server/batch-01/merged/files
+```
+
+`merged` 校验器按照源分片和译文分片的语义行对齐，检查结构性缩进和新增的混合 Tab/空格缩进；对白命令默认只作为对齐依据，可用 `--include-dialogue` 纳入报告。它不替代 `merge` 的结构、标记和 JSON 校验，而是负责合并后完整文件的缩进复核。
 
 ## 合并器
 
