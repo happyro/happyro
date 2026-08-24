@@ -1,0 +1,500 @@
+//===== rAthena Script =======================================
+//= War of Emperium Guild Template File
+//===== By: ==================================================
+//= L0ne_W0lf
+//===== Current Version: =====================================
+//= 2.0
+//===== Compatible With: =====================================
+//= rAthena Project
+//===== Description: =========================================
+//= [Official Conversion]
+//= ----------------------------------------------------------
+//= - THIS FILE IS REQUIRED FOR GUILD CASTLES TO FUNCTION.
+//= ----------------------------------------------------------
+//= - Enables AGIT Manager inside Guild Strongholds.
+//=   Visible Name required: Agit
+//=   Manages the various functions used in and out of WoE.
+//=
+//= - Enables Stewards inside Guild Strongholds which let's
+//=   the guild master invest in Defense and Economy, and
+//=   to summon guardians, a Kafra, and enter master's room.
+//=
+//= - Guardian Spawning Template
+//=   Visible Name required: Guardian
+//=   Spawn guardians when guild castle data is received.
+//=
+//= - Enables Kafra Services inside Guild Strongholds.
+//=   Visible Name required: Kafra Employee
+//=   Storage, Guild Storage, Teleport Service, Cart rental.
+//=
+//= - Treasure Chest spawning.
+//=   Chests will NOT be saved anymore in the event of crashes.
+//=   Treasures will NOT spawn on a location that already has
+//=   treasure chest spawned.
+//===== Additional Comments: =================================
+//= 1.0 First Version. No longer uses functions. [L0ne_W0lf]
+//= 1.1 Daily investement will now be reset. [L0ne_W0lf]
+//=     Template will no longer try to spawn chests.
+//= 1.2 Fixed Eco Invest option charging twice. [L0ne_W0lf]
+//= 1.3 Fixed a loading flag emblem for Payon 1. [L0ne_W0lf]
+//=     Fixed two typos regarding Guild Steward name.
+//= 1.4 Fixed a typo in defense investment. [L0ne_W0lf]
+//= 1.5 Fixed spawn point of the emperium in Payon 1. [L0ne_W0lf]
+//=     Double-investing doubles the price now.
+//= 1.6 Corrected Zeny check when summoning guardians. [L0ne_W0lf]
+//=     Corrected cost for investing, thanks to Ai4rei.
+//=     Second invest is now quadruple the value of the first
+//=     Investing now happens at the turn of the day.
+//= 1.6a Corrected conditions in the new investing blocks. [L0ne_W0lf]
+//= 1.6b Moved where investments are added to eco/def. [L0ne_W0lf]
+//= 1.7 Updated Agitbreak announcements, added bc_woe [L0ne_W0lf]
+//=     and added extended anouncement format for mapannounce.
+//= 1.8 Fixed a possible exploit in guild castle investment. [Brian]
+//= 1.9 Partially rewrote Script. [Masao]
+//= 1.9a Fixed incorrect setcastledata parameter. [Euphy]
+//= 2.0 Fixed an issue where Castle Manager couldn't be fired. [Joseph]
+//============================================================
+
+// WoE : Main Functions
+//============================================================
+-	script	Gld_Agit_Manager::Gld_Agit_Manager	-1,{
+	end;
+
+// War of Emperium has started.
+OnAgitStart:
+	if (strnpcinfo(0) == "Gld_Agit_Manager") end;
+	MapRespawnGuildID strnpcinfo(2),GetCastleData(strnpcinfo(2),CD_GUILD_ID),6;
+	GvgOn strnpcinfo(2);
+
+// Spawn (fall through), or respawn the Emperium once it has been broken.
+OnStartArena:
+	// OnAgitStart will fall through and spawn the Emperium.
+	if (strnpcinfo(2) == "aldeg_cas01") { setarray .@emproom[0],216,23; }
+	else if (strnpcinfo(2) == "aldeg_cas02") { setarray .@emproom[0],213,23; }
+	else if (strnpcinfo(2) == "aldeg_cas03") { setarray .@emproom[0],205,31; }
+	else if (strnpcinfo(2) == "aldeg_cas04") { setarray .@emproom[0],36,217; }
+	else if (strnpcinfo(2) == "aldeg_cas05") { setarray .@emproom[0],27,101; }
+	else if (strnpcinfo(2) == "gefg_cas01") { setarray .@emproom[0],197,181; }
+	else if (strnpcinfo(2) == "gefg_cas02") { setarray .@emproom[0],176,178; }
+	else if (strnpcinfo(2) == "gefg_cas03") { setarray .@emproom[0],244,166; }
+	else if (strnpcinfo(2) == "gefg_cas04") { setarray .@emproom[0],174,177; }
+	else if (strnpcinfo(2) == "gefg_cas05") { setarray .@emproom[0],194,184; }
+	else if (strnpcinfo(2) == "payg_cas01") { setarray .@emproom[0],139,139; }
+	else if (strnpcinfo(2) == "payg_cas02") { setarray .@emproom[0],38,25; }
+	else if (strnpcinfo(2) == "payg_cas03") { setarray .@emproom[0],269,265; }
+	else if (strnpcinfo(2) == "payg_cas04") { setarray .@emproom[0],270,28; }
+	else if (strnpcinfo(2) == "payg_cas05") { setarray .@emproom[0],30,30; }
+	else if (strnpcinfo(2) == "prtg_cas01") { setarray .@emproom[0],197,197; }
+	else if (strnpcinfo(2) == "prtg_cas02") { setarray .@emproom[0],157,174; }
+	else if (strnpcinfo(2) == "prtg_cas03") { setarray .@emproom[0],16,220; }
+	else if (strnpcinfo(2) == "prtg_cas04") { setarray .@emproom[0],291,14; }
+	else if (strnpcinfo(2) == "prtg_cas05") { setarray .@emproom[0],266,266; }
+	// Add custom Guild Castles here.
+	else {
+		end;
+	}
+	if (!mobcount(strnpcinfo(2),"Agit#"+strnpcinfo(2)+"::OnAgitBreak")) {
+		monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Emperium",1288,1,"Agit#"+strnpcinfo(2)+"::OnAgitBreak";
+	}
+	end;
+
+// The Emperium has been broken.
+OnAgitBreak:
+	set .@GID,getcharid(2);
+	// Show and log error if an unguilded player breaks the Emperium. (Should NEVER happen)
+	if (.@GID <= 0) {
+		set .@notice$,"Character "+strcharinfo(0)+" ("+getcharid(0)+") broke the Emperium in Castle: "+strnpcinfo(2)+" while guildless. No data will be saved and Emperium respawned.";
+ 		logmes .@notice$; debugmes .@notice$;
+		donpcevent "Agit#"+strnpcinfo(2)+"::OnStartArena";
+		end;
+	}
+	// Adjust Economy Invest Level for Castle
+	set .@Economy,GetCastleData(strnpcinfo(2),CD_CURRENT_ECONOMY) - 5;
+	if (.@Economy < 0) set .@Economy, 0;
+	SetCastleData strnpcinfo(2), CD_CURRENT_ECONOMY, .@Economy;
+	// Adjust Defense Invest Level for Castle
+	set .@Defence,GetCastleData(strnpcinfo(2),CD_CURRENT_DEFENSE) - 5;
+	if (.@Defence < 0) set .@Defence, 0;
+	SetCastleData strnpcinfo(2), CD_CURRENT_DEFENSE, .@Defence;
+
+	// Set new Castle Occupant
+	SetCastleData strnpcinfo(2),CD_GUILD_ID, .@GID;
+
+	// Announce that the Emperium is destroyed, and respawn all but new castle-occupants.
+	mapannounce strnpcinfo(2),"城堡核心已被摧毁。",bc_map|bc_woe,"0x00CCFF",FW_NORMAL,12;
+	MapRespawnGuildID strnpcinfo(2),.@GID,6;
+
+	// Refresh castle data, disable Kafra and reset Invest information.
+	donpcevent strnpcinfo(0)+"::OnRecvCastle";
+	disablenpc "Kafra Staff#"+strnpcinfo(2);
+	for( set .@i, CD_INVESTED_ECONOMY; .@i <= CD_ENABLED_KAFRA; set .@i, .@i+1 ) {
+		SetCastleData strnpcinfo(2), .@i, 0;
+	}
+	// Erase Guardian Database information if the new owners do not have Guardian Research.
+	if( getgdskilllv(.@GID,10002) == 0 ) {
+		for( set .@i, CD_ENABLED_GUARDIAN00; .@i < CD_MAX; set .@i, .@i+1 ) {
+			SetCastleData strnpcinfo(2), .@i, 0;
+		}
+	}
+	// Respawn the Emperium, and display new owners.
+	sleep 500; // Slow down script execution slightly.
+	if( agitcheck() )
+		donpcevent "Agit#"+strnpcinfo(2)+"::OnStartArena";
+	sleep 7000;
+	announce "[" + getcastlename(strnpcinfo(2)) + "] 城堡已被公会 [" + getguildName(.@GID) + "] 征服。",bc_all|bc_woe;
+	end;
+
+// War of Emperium has ended.
+OnAgitEnd:
+	if (strnpcinfo(0) == "Gld_Agit_Manager") end;
+	GvgOff strnpcinfo(2);
+	// If the castle has no owner at the end of WoE, do not kill Emperium.
+	if (GetCastleData(strnpcinfo(2),CD_GUILD_ID)) {
+		KillMonster strnpcinfo(2),"Agit#"+strnpcinfo(2)+"::OnAgitBreak";
+	}
+	end;
+
+// Occupying Guild has been disbanded.
+OnGuildBreak:
+	if (strnpcinfo(0) == "Gld_Agit_Manager") end;
+	// Kill guardians, disable the Kafra, and set owner to 0.
+	killmonster strnpcinfo(2),"Guardian#"+strnpcinfo(2)+"::OnGuardianDied";
+	disablenpc "Kafra Staff#"+strnpcinfo(2);
+	SetCastleData strnpcinfo(2),CD_GUILD_ID,0;
+	// Wait before refreshing guild information.
+	sleep 7000;
+	Announce "Guild Base [" + GetCastleName(strnpcinfo(2)) + "] has been abandoned.",0;
+	donpcevent strnpcinfo(0)+"::OnRecvCastle";
+	end;
+
+OnAgitInit:
+OnRecvCastle:
+	if (strnpcinfo(0) == "Gld_Agit_Manager") end;
+	// Spawn Monsters if the castle is empty.
+	set .@GID, GetCastleData(strnpcinfo(2),CD_GUILD_ID);
+	if (.@GID == 0) {
+		killmonsterall strnpcinfo(2);
+		if (compare(strnpcinfo(2),"aldeg")) {
+			// Normal Spawns
+			monster strnpcinfo(2),0,0,"Evil Druid",1117,10;
+			monster strnpcinfo(2),0,0,"Khalitzburg",1132,4;
+			monster strnpcinfo(2),0,0,"Abysmal Knight",1219,2;
+			monster strnpcinfo(2),0,0,"Executioner",1205,1;
+			monster strnpcinfo(2),0,0,"Penomena",1216,10;
+			monster strnpcinfo(2),0,0,"Alarm",1193,18;
+			monster strnpcinfo(2),0,0,"Clock",1269,9;
+			monster strnpcinfo(2),0,0,"Raydric Archer",1276,7;
+			monster strnpcinfo(2),0,0,"Wanderer",1208,3;
+			monster strnpcinfo(2),0,0,"Alice",1275,1;
+			monster strnpcinfo(2),0,0,"Bloody Knight",1268,1;
+			monster strnpcinfo(2),0,0,"Dark Lord",1272,1;
+			// Set Emperium room spawn coordinates and spawn monsters.
+			if (strnpcinfo(2) == "aldeg_cas01") { setarray .@emproom[0],216,23; }
+			else if (strnpcinfo(2) == "aldeg_cas02") { setarray .@emproom[0],213,23; }
+			else if (strnpcinfo(2) == "aldeg_cas03") { setarray .@emproom[0],205,31; }
+			else if (strnpcinfo(2) == "aldeg_cas04") { setarray .@emproom[0],36,217; }
+			else if (strnpcinfo(2) == "aldeg_cas05") { setarray .@emproom[0],27,101; }
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Dark Lord",1272,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Tower Keeper",1270,4;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Bloody Knight",1268,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Abysmal Knight",1219,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Raydric Archer",1276,5;
+		}
+		else if (compare(strnpcinfo(2),"gefg")) {
+			// Normal Spawns
+			monster strnpcinfo(2),0,0,"Evil Druid",1117,10;
+			monster strnpcinfo(2),0,0,"Wind Ghost",1263,11;
+			monster strnpcinfo(2),0,0,"Bathory",1102,10;
+			monster strnpcinfo(2),0,0,"Jakk",1130,10;
+			monster strnpcinfo(2),0,0,"Marduk",1140,20;
+			monster strnpcinfo(2),0,0,"Raydric",1163,9;
+			monster strnpcinfo(2),0,0,"Alice",1275,1;
+			monster strnpcinfo(2),0,0,"Abysmal Knight",1219,1;
+			monster strnpcinfo(2),0,0,"Moonlight Flower",1150,1;
+			monster strnpcinfo(2),0,0,"Phreeoni",1159,1;
+			// Set Emperium room spawn coordinates and spawn monsters.
+			if (strnpcinfo(2) == "gefg_cas01") { setarray .@emproom[0],197,181; }
+			else if (strnpcinfo(2) == "gefg_cas02") { setarray .@emproom[0],176,178; }
+			else if (strnpcinfo(2) == "gefg_cas03") { setarray .@emproom[0],244,166; }
+			else if (strnpcinfo(2) == "gefg_cas04") { setarray .@emproom[0],174,177; }
+			else if (strnpcinfo(2) == "gefg_cas05") { setarray .@emproom[0],194,184; }
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Mysteltainn",1203,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Orc Hero",1087,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"High Orc",1213,10;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Orc Archer",1189,10;
+		}
+		else if (compare(strnpcinfo(2),"payg")) {
+			// Normal Spawns
+			monster strnpcinfo(2),0,0,"Greatest General",1277,9;
+			monster strnpcinfo(2),0,0,"Wanderer",1208,10;
+			monster strnpcinfo(2),0,0,"Mutant Dragonoid",1262,5;
+			monster strnpcinfo(2),0,0,"Bathory",1102,5;
+			monster strnpcinfo(2),0,0,"Moonlight Flower",1150,1;
+			monster strnpcinfo(2),0,0,"Eddga",1115,1;
+			monster strnpcinfo(2),0,0,"Horong",1129,11;
+			monster strnpcinfo(2),0,0,"Raydric Archer",1276,5;
+			monster strnpcinfo(2),0,0,"Kobold Archer",1282,4;
+			monster strnpcinfo(2),0,0,"Gargoyle",1253,5;
+			// Set Emperium room spawn coordinates and spawn monsters.
+			if (strnpcinfo(2) == "payg_cas01") { setarray .@emproom[0],139,139; }
+			else if (strnpcinfo(2) == "payg_cas02") { setarray .@emproom[0],38,25; }
+			else if (strnpcinfo(2) == "payg_cas03") { setarray .@emproom[0],269,265; }
+			else if (strnpcinfo(2) == "payg_cas04") { setarray .@emproom[0],270,28; }
+			else if (strnpcinfo(2) == "payg_cas05") { setarray .@emproom[0],30,30; }
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Moonlight Flower",1150,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Eddga",1115,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Wanderer",1208,6;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Raydric Archer",1276,5;
+		}
+		else if (compare(strnpcinfo(2),"prtg")) {
+			// Normal Spawns
+			monster strnpcinfo(2),0,0,"Raydric",1163,1;
+			monster strnpcinfo(2),0,0,"Khalitzburg",1132,10;
+			monster strnpcinfo(2),0,0,"Abysmal Knight",1219,5;
+			monster strnpcinfo(2),0,0,"Bloody Knight",1268,5;
+			monster strnpcinfo(2),0,0,"Stormy Knight",1251,1;
+			monster strnpcinfo(2),0,0,"Hatii",1252,1;
+			monster strnpcinfo(2),0,0,"Raydric Archer",1276,5;
+			monster strnpcinfo(2),0,0,"Gryphon",1259,2;
+			monster strnpcinfo(2),0,0,"Chimera",1283,3;
+			monster strnpcinfo(2),0,0,"Alice",1275,1;
+			monster strnpcinfo(2),0,0,"Zealotus",1200,1;
+			// Set Emperium room spawn coordinates and spawn monsters.
+			if (strnpcinfo(2) == "prtg_cas01") { setarray .@emproom[0],197,197; }
+			else if (strnpcinfo(2) == "prtg_cas02") { setarray .@emproom[0],157,174; }
+			else if (strnpcinfo(2) == "prtg_cas03") { setarray .@emproom[0],16,220; }
+			else if (strnpcinfo(2) == "prtg_cas04") { setarray .@emproom[0],291,14; }
+			else if (strnpcinfo(2) == "prtg_cas05") { setarray .@emproom[0],266,266; }
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Guardian Knight",1268,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Guardian Master",1251,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Hatii",1252,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Guardian Knight",1219,1;
+			monster strnpcinfo(2),.@emproom[0],.@emproom[1],"Raydric Archer",1276,5;
+		}
+		// Add custom Guild Castles here.
+		else {
+			end;
+		}
+		donpcevent "Agit#"+strnpcinfo(2)+"::OnStartArena";
+		// Disable Kafra Staff...
+		disablenpc "Kafra Staff#"+strnpcinfo(2);
+		end;
+	}
+	else {
+		// Otherwise place the guild emblem on flags.
+		if (strnpcinfo(2) == "aldeg_cas01") { donpcevent "::OnRecvCastleA01"; }
+		else if (strnpcinfo(2) == "aldeg_cas02") { donpcevent "::OnRecvCastleA02"; }
+		else if (strnpcinfo(2) == "aldeg_cas03") { donpcevent "::OnRecvCastleA03"; }
+		else if (strnpcinfo(2) == "aldeg_cas04") { donpcevent "::OnRecvCastleA04"; }
+		else if (strnpcinfo(2) == "aldeg_cas05") { donpcevent "::OnRecvCastleA05"; }
+		else if (strnpcinfo(2) == "gefg_cas01") { donpcevent "::OnRecvCastleG01"; }
+		else if (strnpcinfo(2) == "gefg_cas02") { donpcevent "::OnRecvCastleG02"; }
+		else if (strnpcinfo(2) == "gefg_cas03") { donpcevent "::OnRecvCastleG03"; }
+		else if (strnpcinfo(2) == "gefg_cas04") { donpcevent "::OnRecvCastleG04"; }
+		else if (strnpcinfo(2) == "gefg_cas05") { donpcevent "::OnRecvCastleG05"; }
+		else if (strnpcinfo(2) == "payg_cas01") { donpcevent "::OnRecvCastlePy01"; }
+		else if (strnpcinfo(2) == "payg_cas02") { donpcevent "::OnRecvCastlePy02"; }
+		else if (strnpcinfo(2) == "payg_cas03") { donpcevent "::OnRecvCastlePy03"; }
+		else if (strnpcinfo(2) == "payg_cas04") { donpcevent "::OnRecvCastlePy04"; }
+		else if (strnpcinfo(2) == "payg_cas05") { donpcevent "::OnRecvCastlePy05"; }
+		else if (strnpcinfo(2) == "prtg_cas01") { donpcevent "::OnRecvCastlePt01"; }
+		else if (strnpcinfo(2) == "prtg_cas02") { donpcevent "::OnRecvCastlePt02"; }
+		else if (strnpcinfo(2) == "prtg_cas03") { donpcevent "::OnRecvCastlePt03"; }
+		else if (strnpcinfo(2) == "prtg_cas04") { donpcevent "::OnRecvCastlePt04"; }
+		else if (strnpcinfo(2) == "prtg_cas05") { donpcevent "::OnRecvCastlePt05"; }
+		// Add custom Guild Castles here.
+		else {
+			end;
+		}
+		// And load purchased Guardian in castles.
+		donpcevent "Guardian#"+strnpcinfo(2)+"::OnSpawnGuardians";
+		// And display Kafra if purchased.
+		if (GetCastleData(strnpcinfo(2),CD_ENABLED_KAFRA) < 1) disablenpc "Kafra Staff#"+strnpcinfo(2);
+	}
+	end;
+}
+//
+//
+//
+//
+//
+	//
+//
+	//
+		//
+		//
+	//
+	//
+		//
+		//
+	//
+	//
+		
+		// WoE : Guild Kafras
+	//============================================================
+	-	script	Kafra Staff#woe::guildkafra	-1,{
+		
+		set .@GID,GetCastleData(strnpcinfo(2),CD_GUILD_ID);
+	
+	if (compare(strnpcinfo(2),"aldeg")) {
+	setarray .@destination$[0],"Al De Baran","aldebaran";
+		setarray .@coordinates[0],132,103;
+	}
+else if (compare(strnpcinfo(2),"gefg")) {
+	setarray .@destination$[0],"Geffen","geffen";
+	setarray .@coordinates[0],120,39;
+		}
+		else if (compare(strnpcinfo(2),"payg")) {
+		setarray .@destination$[0],"Payon","payon";
+		setarray .@coordinates[0],70,100;
+		}
+		else if (compare(strnpcinfo(2),"prtg")) {
+			setarray .@destination$[0],"Prontera","prontera";
+				setarray .@coordinates[0],278,211;
+				}
+				// Add custom Guild Castles here.
+				else {
+				end;
+				}
+				
+				cutin "kafra_01",2;
+			if (getcharid(2) == .@GID) {
+			mes "[Kafra Employee]";
+			mes "欢迎。^ff0000" + GetGuildName(.@GID) + "^000000 公会成员。";
+			mes "无论你去哪里，卡普拉公司都会陪伴你。";
+			next;
+			switch (select("使用仓库:使用传送服务:租用手推车:取消")) {
+			case 1:
+			if(!callfunc("F_CanOpenStorage")){
+			mes "[Kafra Employee]";
+			mes "抱歉，你需要初心者基本技能达到 6 级，";
+		mes "才能使用仓库服务。";
+			close2;
+			cutin "",255;
+			end;
+			}
+			mes "[Kafra Employee]";
+			mes "来，让我为你打开仓库。";
+				mes "感谢使用卡普拉服务。";
+					close2;
+					cutin "",255;
+					openstorage;
+					end;
+					case 2:
+					mes "[Kafra Employee]";
+					mes "请选择目的地。";
+					next;
+				switch (select(.@destination$+" -> 200z:取消")) {
+				case 1:
+				if (Zeny < 200) {
+				mes "[Kafra Employee]";
+				mes "抱歉，你没有足够的 Zeny 支付传送服务。";
+				mes "传送到 "+.@destination$+" 的费用是 200 Zeny。";
+			close2;
+				cutin "",255;
+				end;
+				}
+			set Zeny, Zeny - 200;
+		set RESRVPTS,RESRVPTS+20;
+			close2;
+				warp .@destination$[1],.@coordinates[0],.@coordinates[1];
+				end;
+				case 2:
+				close2;
+				cutin "",255;
+				end;
+				}
+				case 3:
+				if (BaseClass != Job_Merchant) {
+				mes "[Kafra Employee]";
+			mes "抱歉，手推车租赁服务仅对商人、铁匠、神工匠、";
+			mes "炼金术士、生化学家、机械工匠和基因研究者开放。";
+				close2;
+				cutin "",255;
+				end;
+				}
+				if (checkcart()) {
+				mes "[Kafra Employee]";
+				mes "你已经装备了手推车。";
+				mes "很遗憾，每位顾客一次只能租一辆。";
+				close2;
+			cutin "",255;
+			end;
+			}
+			mes "[Kafra Employee]";
+			mes "手推车租金是 800 Zeny。";
+			mes "你要租一辆吗？";
+			next;
+			switch (select("租用手推车。:取消")) {
+				case 1:
+					if (Zeny < 800) {
+					mes "[Kafra Employee]";
+					mes "抱歉，你没有足够的 Zeny";
+					mes "支付 800 Zeny 的手推车租金。";
+					close2;
+					cutin "",255;
+					end;
+					}
+				set RESRVPTS,RESRVPTS+80;
+				set Zeny, Zeny - 800;
+				setcart;
+				close2;
+				cutin "",255;
+				end;
+				case 2:
+			close2;
+				cutin "",255;
+				end;
+				}
+			case 4:
+		mes "[Kafra Employee]";
+			mes "卡普拉公司一直努力为你提供最佳服务。";
+			mes "希望满足你的冒险需求和卓越标准。";
+			close2;
+			cutin "",255;
+			end;
+			}
+		}
+	mes "[Kafra Employee]";
+	mes "我只被授权为 ^ff0000"+GetGuildName(.@GID)+"^000000 公会提供服务。";
+	mes "请尝试附近其他卡普拉职员。抱歉给你带来不便。";
+	close2;
+	cutin "",255;
+	end;
+}
+
+// WoE : Castle Managers
+//============================================================
+-	script	Castle Manager#cm::cm	-1,{
+
+	set .@GID,GetCastleData(strnpcinfo(2),CD_GUILD_ID);
+
+	// .@guardiantype = Defines the types of guardians per castle basis.
+	// 1 - Soldier Guardian, 2 - Archer Guardian, 3 - Knight Guardian
+	// .@guardianposx = Define the x spawn point for each uardian.
+	// [0] = 1st guardian's x spawn point.
+	// .@guardianposy = Define the y spawn point for each guardian.
+	// [0] = 1st guardian's y spawn point.
+	// .@masterroom = Defines the coordinates of the Treasure Room.
+	if (strnpcinfo(2) == "aldeg_cas01") { 
+		setarray .@guardiantype[0],1,2,2,2,2,3,3,3;
+		setarray .@guardianposx[0],17,39,38,45,21,218,213,73;
+		setarray .@guardianposy[0],218,208,196,228,194,24,24,70;
+		setarray .@masterroom[0],113,223;
+	}
+	else if (strnpcinfo(2) == "aldeg_cas02") {
+		setarray .@guardiantype[0],3,3,3,1,1,2,2,2;
+		setarray .@guardianposx[0],27,88,117,60,51,21,36,210;
+		setarray .@guardianposy[0],184,43,46,202,183,177,183,7;
+		setarray .@masterroom[0],134,225;
+	}
+	else if (strnpcinfo(2) == "aldeg_cas03") {
+		setarray .@guardiantype[0],3,3,1,1,1,2,2,2;
+		setarray .@guardianposx[0],90,116,86,116,64,212,195,110;
+		setarray .@guardianposy[0],112,112,120,76,103,160,151,217;
+		setarray .@masterroom[0],229,267;
+	}
+	else if (strnpcinfo(2) == "aldeg_cas04") {
+		setarray .@guardiantype[0],2,2,2,1,1,1,3,3;
+		setarray .@guardianposx[0],187,192,148,145,169,198,48,55;
+		setarray .@guardianposy[0],100,42,88,209,53,77,72,88;

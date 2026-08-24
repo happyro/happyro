@@ -1,0 +1,500 @@
+			break;
+		}
+	}
+	
+	status_calc_pc(sd,SCO_FORCE);
+	return 0;
+}
+
+/**
+ * Add element bonus to player when attacking
+ * @param sd: Player data
+ * @param ele: Element to adjust
+ * @param rate: Success chance
+ * @param flag: Battle flag
+ */
+static void pc_bonus_addele(map_session_data* sd, unsigned char ele, int16 rate, int16 flag)
+{
+	nullpo_retv(sd);
+
+	struct weapon_data *wd = (sd->state.lr_flag != LR_FLAG_NONE ? &sd->left_weapon : &sd->right_weapon);
+
+	if (wd->addele2.size() == MAX_PC_BONUS) {
+		ShowWarning("pc_bonus_addele: Reached max (%d) number of add element damage bonuses per character!\n", MAX_PC_BONUS);
+		return;
+	}
+
+	if (!(flag&BF_RANGEMASK))
+		flag |= BF_SHORT | BF_LONG;
+	if (!(flag&BF_WEAPONMASK))
+		flag |= BF_WEAPON;
+	if (!(flag&BF_SKILLMASK)) {
+		if (flag&(BF_MAGIC | BF_MISC))
+			flag |= BF_SKILL;
+		if (flag&BF_WEAPON)
+			flag |= BF_NORMAL | BF_SKILL;
+	}
+
+	for (auto &it : wd->addele2) {
+		if (it.ele == ele && it.flag == flag) {
+			it.rate = util::safe_addition_cap(it.rate, rate, (int16)10000);
+			return;
+		}
+	}
+
+	struct s_addele2 entry = {};
+
+	entry.ele = ele;
+	entry.rate = cap_value(rate, -10000, 10000);
+	entry.flag = flag;
+
+	wd->addele2.push_back(entry);
+}
+
+static void pc_bonus_regen(std::vector<s_regen> &bonus, int16 value, int32 rate) {
+	if (rate < 1)
+		return;
+
+	s_regen entry = {};
+
+	entry.value = value;
+	entry.rate = rate;
+	entry.tick = 0;
+
+	bonus.push_back(entry);
+}
+
+/**
+ * Reduce element bonus to player when attacking
+ * @param sd: Player data
+ * @param ele: Element to adjust
+ * @param rate: Success chance
+ * @param flag: Battle flag
+ */
+static void pc_bonus_subele(map_session_data* sd, unsigned char ele, int16 rate, int16 flag)
+{
+	nullpo_retv(sd);
+
+	if (sd->subele2.size() == MAX_PC_BONUS) {
+		ShowWarning("pc_bonus_subele: Reached max (%d) number of resist element damage bonuses per character!\n", MAX_PC_BONUS);
+		return;
+	}
+
+	if (!(flag&BF_RANGEMASK))
+		flag |= BF_SHORT | BF_LONG;
+	if (!(flag&BF_WEAPONMASK))
+		flag |= BF_WEAPON;
+	if (!(flag&BF_SKILLMASK)) {
+		if (flag&(BF_MAGIC | BF_MISC))
+			flag |= BF_SKILL;
+		if (flag&BF_WEAPON)
+			flag |= BF_NORMAL | BF_SKILL;
+	}
+
+	for (auto &it : sd->subele2) {
+		if (it.ele == ele && it.flag == flag) {
+			it.rate = util::safe_addition_cap(it.rate, rate, (int16)10000);
+			return;
+		}
+	}
+
+	struct s_addele2 entry = {};
+
+	entry.ele = ele;
+	entry.rate = cap_value(rate, -10000, 10000);
+	entry.flag = flag;
+
+	sd->subele2.push_back(entry);
+}
+
+/**
+ * Adjust race damage to target when attacking
+ * @param sd: Player data
+ * @param race: Race to adjust
+ * @param rate: Success chance
+ * @param flag: Battle flag
+*/
+static void pc_bonus_subrace(map_session_data* sd, unsigned char race, int16 rate, int16 flag)
+{
+	if (sd->subrace3.size() == MAX_PC_BONUS) {
+		ShowWarning("pc_bonus_subrace: Reached max (%d) number of resist race damage bonuses per character!\n", MAX_PC_BONUS);
+		return;
+	}
+
+	if (!(flag&BF_RANGEMASK))
+		flag |= BF_SHORT | BF_LONG;
+	if (!(flag&BF_WEAPONMASK))
+		flag |= BF_WEAPON;
+	if (!(flag&BF_SKILLMASK)) {
+		if (flag&(BF_MAGIC | BF_MISC))
+			flag |= BF_SKILL;
+		if (flag&BF_WEAPON)
+			flag |= BF_NORMAL | BF_SKILL;
+	}
+
+	for (auto &it : sd->subrace3) {
+		if (it.race == race && it.flag == flag) {
+			it.rate = util::safe_addition_cap(it.rate, rate, (int16)10000);
+			return;
+		}
+	}
+
+	struct s_addrace2 entry = {};
+
+	entry.race = race;
+	entry.rate = cap_value(rate, -10000, 10000);
+	entry.flag = flag;
+
+	sd->subrace3.push_back(entry);
+}
+/**
+ * General item bonus for player
+ * @param bonus: Bonus array
+ * @param id: Key
+ * @param val: Value
+ * @param cap_rate: If Value is a rate value that needs to be capped
+ */
+static void pc_bonus_itembonus(std::vector<s_item_bonus> &bonus, uint16 id, int32 val, bool cap_rate)
+{
+	for (auto &it : bonus) {
+		if (it.id == id) {
+			if (cap_rate)
+				it.val = util::safe_addition_cap(it.val, val, 10000);
+			else
+				it.val += val;
+			return;
+		}
+	}
+
+	struct s_item_bonus entry = {};
+
+	entry.id = id;
+	entry.val = cap_rate ? cap_value(val, -10000, 10000) : val;
+
+	bonus.push_back(entry);
+}
+
+/**
+ * Remove HP/SP to player when attacking
+ * @param bonus: Bonus array
+ * @param rate: Success chance
+ * @param per: Percentage of HP/SP to vanish
+ * @param flag: Battle flag
+ */
+static void pc_bonus_addvanish(std::vector<s_vanish_bonus> &bonus, int16 rate, int16 per, int32 flag) {
+	if (bonus.size() == MAX_PC_BONUS) {
+		ShowWarning("pc_bonus_addvanish: Reached max (%d) number of vanish damage bonuses per character!\n", MAX_PC_BONUS);
+		return;
+	}
+
+	if (!(flag&BF_RANGEMASK))
+		flag |= BF_SHORT | BF_LONG;
+	if (!(flag&BF_WEAPONMASK))
+		flag |= BF_WEAPON;
+	if (!(flag&BF_SKILLMASK)) {
+		if (flag&(BF_MAGIC | BF_MISC))
+			flag |= BF_SKILL;
+		if (flag&BF_WEAPON)
+			flag |= BF_NORMAL | BF_SKILL;
+	}
+
+	for (auto &it : bonus) {
+		if (it.flag == flag) {
+			it.rate = util::safe_addition_cap(it.rate, rate, (int16)10000);
+			it.per += per;
+			return;
+		}
+	}
+
+	struct s_vanish_bonus entry = {};
+
+	entry.rate = cap_value(rate, -10000, 10000);
+	entry.per = per;
+	entry.flag = flag;
+
+	bonus.push_back(entry);
+}
+
+/*==========================================
+ * Add a bonus(type) to player sd
+ * format: bonus bBonusName,val;
+ * @param sd
+ * @param type Bonus type used by bBonusName
+ * @param val Value that usually for rate or fixed value
+ *------------------------------------------*/
+void pc_bonus(map_session_data *sd,int32 type,int32 val)
+{
+	struct status_data *status;
+	int32 bonus;
+	nullpo_retv(sd);
+
+	status = &sd->base_status;
+
+	switch(type){
+		case SP_STR:
+		case SP_AGI:
+		case SP_VIT:
+		case SP_INT:
+		case SP_DEX:
+		case SP_LUK:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->indexed_bonus.param_bonus[type-SP_STR]+=val;
+			break;
+		case SP_POW:
+		case SP_STA:
+		case SP_WIS:
+		case SP_SPL:
+		case SP_CON:
+		case SP_CRT:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->indexed_bonus.param_bonus[type - SP_POW + PARAM_POW] += val;
+			break;
+		case SP_ATK1:
+			if (sd->state.lr_flag == LR_FLAG_NONE) {
+				bonus = status->rhw.atk + val;
+				status->rhw.atk = cap_value(bonus, 0, USHRT_MAX);
+			}
+			else if (sd->state.lr_flag == LR_FLAG_WEAPON) {
+				bonus = status->lhw.atk + val;
+				status->lhw.atk =  cap_value(bonus, 0, USHRT_MAX);
+			}
+			break;
+		case SP_ATK2:
+			if (sd->state.lr_flag == LR_FLAG_NONE) {
+				bonus = status->rhw.atk2 + val;
+				status->rhw.atk2 = cap_value(bonus, 0, USHRT_MAX);
+			}
+			else if (sd->state.lr_flag == LR_FLAG_WEAPON) {
+				bonus = status->lhw.atk2 + val;
+				status->lhw.atk2 =  cap_value(bonus, 0, USHRT_MAX);
+			}
+			break;
+		case SP_BASE_ATK:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+#ifdef RENEWAL
+				bonus = sd->bonus.eatk + val;
+				sd->bonus.eatk = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+#else
+				status->batk += val;
+#endif
+			}
+			break;
+		case SP_DEF1:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->def + val;
+#ifdef RENEWAL
+				status->def = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+#else
+				status->def = cap_value(bonus, CHAR_MIN, CHAR_MAX);
+#endif
+			}
+			break;
+		case SP_DEF2:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->def2 + val;
+				status->def2 = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_MDEF1:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->mdef + val;
+#ifdef RENEWAL
+				status->mdef = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+#else
+				status->mdef = cap_value(bonus, CHAR_MIN, CHAR_MAX);
+#endif
+				if( sd->state.lr_flag == LR_FLAG_SHIELD ) {//Shield, used for royal guard
+					sd->bonus.shieldmdef += bonus;
+				}
+			}
+			break;
+		case SP_MDEF2:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->mdef2 + val;
+				status->mdef2 = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_HIT:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->hit + val;
+				status->hit = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			} else
+				sd->bonus.arrow_hit+=val;
+			break;
+		case SP_FLEE1:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->flee + val;
+				status->flee = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_FLEE2:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->flee2 + val*10;
+				status->flee2 = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_CRITICAL:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->cri + val*10;
+				status->cri = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			} else
+				sd->bonus.arrow_cri += val*10;
+			break;
+		case SP_PATK:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->patk + val;
+				status->patk = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_SMATK:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->smatk + val;
+				status->smatk = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_RES:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->res + val;
+				status->res = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_MRES:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->mres + val;
+				status->mres = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_HPLUS:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->hplus + val;
+				status->hplus = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_CRATE:
+			if (sd->state.lr_flag != LR_FLAG_ARROW) {
+				bonus = status->crate + val;
+				status->crate = cap_value(bonus, SHRT_MIN, SHRT_MAX);
+			}
+			break;
+		case SP_ATKELE:
+			PC_BONUS_CHK_ELEMENT(val,SP_ATKELE);
+			switch (sd->state.lr_flag)
+			{
+			case LR_FLAG_ARROW:
+				switch (sd->status.weapon) {
+					case W_BOW:
+					case W_REVOLVER:
+					case W_RIFLE:
+					case W_GATLING:
+					case W_SHOTGUN:
+					case W_GRENADE:
+						//Become weapon element.
+						status->rhw.ele=val;
+						break;
+					default: //Become arrow element.
+						sd->bonus.arrow_ele=val;
+						break;
+				}
+				break;
+			case LR_FLAG_WEAPON:
+				status->lhw.ele=val;
+				break;
+			default:
+				status->rhw.ele=val;
+				break;
+			}
+			break;
+		case SP_DEFELE:
+			PC_BONUS_CHK_ELEMENT(val,SP_DEFELE);
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				status->def_ele=val;
+			break;
+		case SP_MAXHP:
+			if (sd->state.lr_flag == LR_FLAG_ARROW)
+				break;
+			sd->bonus.hp += val;
+			break;
+		case SP_MAXSP:
+			if (sd->state.lr_flag == LR_FLAG_ARROW)
+				break;
+			sd->bonus.sp += val;
+			break;
+		case SP_MAXAP:
+			if (sd->state.lr_flag == LR_FLAG_ARROW)
+				break;
+			sd->bonus.ap += val;
+			break;
+		case SP_MAXHPRATE:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->hprate+=val;
+			break;
+		case SP_MAXSPRATE:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->sprate+=val;
+			break;
+		case SP_MAXAPRATE:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->aprate += val;
+			break;
+		case SP_SPRATE:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->dsprate+=val;
+			break;
+		case SP_ATTACKRANGE:
+			switch (sd->state.lr_flag) {
+			case LR_FLAG_ARROW:
+				switch (sd->status.weapon) {
+					case W_BOW:
+					case W_REVOLVER:
+					case W_RIFLE:
+					case W_GATLING:
+					case W_SHOTGUN:
+					case W_GRENADE:
+						status->rhw.range += val;
+				}
+				break;
+			case LR_FLAG_WEAPON:
+				status->lhw.range += val;
+				break;
+			default:
+				status->rhw.range += val;
+				break;
+			}
+			break;
+		case SP_SPEED_RATE:	//Non stackable increase
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->bonus.speed_rate = min(sd->bonus.speed_rate, -val);
+			break;
+		case SP_SPEED_ADDRATE:	//Stackable increase
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->bonus.speed_add_rate -= val;
+			break;
+		case SP_ASPD:	//Raw increase
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->bonus.aspd_add -= 10*val;
+			break;
+		case SP_ASPD_RATE:	//Stackable increase - Made it linear as per rodatazone
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+#ifndef RENEWAL_ASPD
+				status->aspd_rate -= 10*val;
+#else
+				status->aspd_rate2 += val;
+#endif
+			break;
+		case SP_HP_RECOV_RATE:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->hprecov_rate += val;
+			break;
+		case SP_SP_RECOV_RATE:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->sprecov_rate += val;
+			break;
+		case SP_CRITICAL_DEF:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->bonus.critical_def += val;
+			break;
+		case SP_NEAR_ATK_DEF:
+			if (sd->state.lr_flag != LR_FLAG_ARROW)
+				sd->bonus.near_attack_def_rate += val;
+			break;
+		case SP_LONG_ATK_DEF:

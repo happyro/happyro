@@ -1,0 +1,500 @@
+/**
+ * Controls/ProcessCommand.js - extended from ChatBox
+ *
+ * Command in chatbox handler
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import DB from 'DB/DBManager.js';
+import Emotions from 'DB/Emotions.js';
+import BGM from 'Audio/BGM.js';
+import Sound from 'Audio/SoundManager.js';
+import Session from 'Engine/SessionStorage.js';
+import PACKET from 'Network/PacketStructure.js';
+import PACKETVER from 'Network/PacketVerManager.js';
+import Network from 'Network/NetworkManager.js';
+import ControlPreferences from 'Preferences/Controls.js';
+import UIPreferences from 'Preferences/UI.js';
+import AudioPreferences from 'Preferences/Audio.js';
+import MapPreferences from 'Preferences/Map.js';
+import CameraPreferences from 'Preferences/Camera.js';
+import Renderer from 'Renderer/Renderer.js';
+import Configs from 'Core/Configs.js';
+import EffectConst from 'DB/Effects/EffectConst.js';
+import StatusState from 'DB/Status/StatusState.js';
+import EntityManager from 'Renderer/EntityManager.js';
+import EffectManager from 'Renderer/EffectManager.js';
+import MapRenderer from 'Renderer/MapRenderer.js';
+import ChatRoomCreate from 'UI/Components/ChatRoomCreate/ChatRoomCreate.js';
+import ChatRoom from 'UI/Components/ChatRoom/ChatRoom.js';
+import Group from 'Engine/MapEngine/Group.js';
+import Friends from 'Engine/MapEngine/Friends.js';
+import Guild from 'Engine/MapEngine/Guild.js';
+import HomunInformations from 'UI/Components/HomunInformations/HomunInformations.js';
+import MercenaryInformations from 'UI/Components/MercenaryInformations/MercenaryInformations.js';
+import CaptchaUpload from 'UI/Components/Captcha/CaptchaUpload.js';
+import CaptchaSelector from 'UI/Components/Captcha/CaptchaSelector.js';
+import SnowWeather from 'Renderer/Effects/SnowWeather.js';
+import RainWeather from 'Renderer/Effects/RainWeather.js';
+import SakuraWeatherEffect from 'Renderer/Effects/SakuraWeatherEffect.js';
+import PokJukWeatherEffect from 'Renderer/Effects/PokJukWeatherEffect.js';
+import CloudWeatherEffect from 'Renderer/Effects/CloudWeatherEffect.js';
+import ChatBox from 'UI/Components/ChatBox/ChatBox.js';
+import Navigation from 'UI/Components/Navigation/Navigation.js';
+import RankingTypes from 'DB/Jobs/RankingTypes.js';
+
+let aliases = {};
+
+const CommandStore = {
+	sound: {
+		description: '切换音效播放',
+		callback: function () {
+			this.addText(DB.getMessage(27 + AudioPreferences.Sound.play), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			AudioPreferences.Sound.play = !AudioPreferences.Sound.play;
+			AudioPreferences.save();
+			if (AudioPreferences.Sound.play) {
+				Sound.stop();
+			}
+		}
+	},
+	bgm: {
+		description: '切换背景音乐播放',
+		callback: function () {
+			this.addText(DB.getMessage(31 + AudioPreferences.BGM.play), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			AudioPreferences.BGM.play = !AudioPreferences.BGM.play;
+			AudioPreferences.save();
+
+			if (AudioPreferences.BGM.play) {
+				BGM.play(BGM.filename);
+			} else {
+				BGM.stop();
+			}
+			return;
+		}
+	},
+	effect: {
+		description: '切换除基础图形效果外其他效果的显示',
+		callback: function () {
+			this.addText(DB.getMessage(23 + MapPreferences.effect), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.effect = !MapPreferences.effect;
+			MapPreferences.save();
+			return;
+		}
+	},
+	mineffect: {
+		description: '启用较低画质效果。此命令对巫师的范围技能无效。',
+		callback: function () {
+			this.addText(DB.getMessage(687 + MapPreferences.mineffect), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.mineffect = !MapPreferences.mineffect;
+			MapPreferences.save();
+			return;
+		}
+	},
+	miss: {
+		description: '切换“未命中”动画显示',
+		callback: function () {
+			this.addText(DB.getMessage(317 + MapPreferences.miss), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.miss = !MapPreferences.miss;
+			MapPreferences.save();
+			return;
+		}
+	},
+	aura: {
+		description: '最小化 99 级和 175 级角色的光环效果',
+		callback: function () {
+			const isSimplified = MapPreferences.aura > 1;
+			this.addText(DB.getMessage(711 + isSimplified), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.aura = isSimplified ? 1 : 2;
+			MapPreferences.save();
+
+			EntityManager.forEach(function (entity) {
+				entity.aura.load(EffectManager);
+			});
+			return;
+		}
+	},
+	aura2: {
+		description: '禁用 99 级和 175 级角色的光环效果',
+		callback: function () {
+			this.addText(
+				DB.getMessage(
+					2994 + MapPreferences.aura,
+					MapPreferences.aura ? '光环效果已关闭' : '光环效果已开启' // default text if not in DB msgstringtable
+				),
+				this.TYPE.INFO,
+				this.FILTER.PUBLIC_LOG
+			);
+			MapPreferences.aura = MapPreferences.aura ? 0 : 1;
+			MapPreferences.save();
+
+			EntityManager.forEach(function (entity) {
+				entity.aura.load(EffectManager);
+			});
+			return;
+		}
+	},
+	showname: {
+		description: '恢复原始字体',
+		callback: function () {
+			this.addText(DB.getMessage(722 + MapPreferences.showname), this.TYPE.INFO);
+			MapPreferences.showname = !MapPreferences.showname;
+			MapPreferences.save();
+
+			// update all display names
+			EntityManager.forEach(function (entity) {
+				entity.display.refresh(entity);
+			});
+			return;
+		}
+	},
+	camera: {
+		description: '切换相机“平滑”效果。',
+		callback: function () {
+			this.addText(DB.getMessage(319 + CameraPreferences.smooth), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			CameraPreferences.smooth = !CameraPreferences.smooth;
+			CameraPreferences.save();
+			return;
+		}
+	},
+
+	fog: {
+		description: '切换雾效',
+		callback: function () {
+			MapPreferences.fog = !MapPreferences.fog;
+			this.addText('雾效' + (MapPreferences.fog ? '开启' : '关闭'), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.save();
+			return;
+		}
+	},
+
+	lightmap: {
+		description: '移除阴影效果和大部分光照效果',
+		callback: function () {
+			MapPreferences.lightmap = !MapPreferences.lightmap;
+			MapPreferences.save();
+			return;
+		}
+	},
+
+	smoothlight: {
+		description: '循环切换光照贴图的色调分离效果：开启、关闭、带伽马校正关闭',
+		callback: function () {
+			MapPreferences.smoothlight = (MapPreferences.smoothlight + 1) % 3;
+			const messages = ['色调分离已开启', '平滑光照已开启', '带伽马校正的平滑光照已开启'];
+			this.addText(messages[MapPreferences.smoothlight], this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			MapPreferences.save();
+			return;
+		}
+	},
+
+	noctrl: {
+		description: '只需单击左键即可连续攻击怪物',
+		callback: function () {
+			this.addText(DB.getMessage(717 + ControlPreferences.noctrl), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.noctrl = !ControlPreferences.noctrl;
+			ControlPreferences.save();
+			return;
+		},
+		aliases: ['nc']
+	},
+
+	noshift: {
+		description:
+			' 无需按 Shift 键即可在 PvP 竞技场中使用辅助技能指定怪物或其他玩家',
+		callback: function () {
+			this.addText(DB.getMessage(701 + ControlPreferences.noshift), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.noshift = !ControlPreferences.noshift;
+			ControlPreferences.save();
+			return;
+		},
+		aliases: ['ns']
+	},
+
+	snap: {
+		description: '鼠标光标半自动移动到目标',
+		callback: function () {
+			this.addText(DB.getMessage(271 + ControlPreferences.snap), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.snap = !ControlPreferences.snap;
+			ControlPreferences.save();
+			return;
+		}
+	},
+
+	itemsnap: {
+		description: '鼠标光标半自动移动到战利品',
+		callback: function () {
+			this.addText(DB.getMessage(276 + ControlPreferences.itemsnap), this.TYPE.INFO, this.FILTER.PUBLIC_LOG);
+			ControlPreferences.itemsnap = !ControlPreferences.itemsnap;
+			ControlPreferences.save();
+			return;
+		}
+	},
+	window: {
+		description: '切换窗口吸附',
+		callback: function () {
+			UIPreferences.windowmagnet = !UIPreferences.windowmagnet;
+			this.addText(
+				'窗口吸附' + (UIPreferences.windowmagnet ? '开启' : '关闭'),
+				this.TYPE.INFO,
+				this.FILTER.PUBLIC_LOG
+			);
+			UIPreferences.save();
+			return;
+		},
+		aliases: ['wi']
+	},
+
+	stand: {
+		description: '让角色坐下或站立',
+		callback: function () {
+			let pkt;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.REQUEST_ACT2();
+			} else {
+				pkt = new PACKET.CZ.REQUEST_ACT();
+			}
+			if (Session.Entity.action === Session.Entity.ACTION.SIT) {
+				pkt.action = 3; // stand up
+			} else {
+				pkt.action = 2; // sit down
+			}
+			Network.sendPacket(pkt);
+			return;
+		},
+		aliases: ['sit']
+	},
+
+	doridori: {
+		description: '让角色左右转头',
+		callback: function () {
+			let pkt;
+			Session.Entity.headDir = Session.Entity.headDir === 1 ? 2 : 1;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION2();
+			} else {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION();
+			}
+			pkt.headDir = Session.Entity.headDir;
+			pkt.dir = Session.Entity.direction;
+			Network.sendPacket(pkt);
+
+			// Doridori recovery bonus
+			if (Session.Entity.action === Session.Entity.ACTION.SIT) {
+				if (!Session.Entity.doriTime) {
+					Session.Entity.doriTime = [0, 0, 0, 0, 0];
+				}
+
+				Session.Entity.doriTime.shift();
+				Session.Entity.doriTime.push(Renderer.tick);
+
+				const doriStart = Session.Entity.doriTime[0];
+				const doriEnd = Session.Entity.doriTime[4];
+
+				if (doriEnd - doriStart > 1500 && doriEnd - doriStart < 3000) {
+					const doripkt = new PACKET.CZ.DORIDORI();
+					Network.sendPacket(doripkt);
+					Session.Entity.doriTime = [0, 0, 0, 0, 0];
+				}
+			}
+			return;
+		}
+	},
+
+	bangbang: {
+		description: '顺时针旋转角色',
+		callback: function () {
+			let pkt;
+			Session.Entity.direction = (Session.Entity.direction + 1) % 8;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION2();
+			} else {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION();
+			}
+			pkt.headDir = Session.Entity.headDir;
+			pkt.dir = Session.Entity.direction;
+			Network.sendPacket(pkt);
+			return;
+		}
+	},
+
+	bingbing: {
+		description: '逆时针旋转角色',
+		callback: function () {
+			let pkt;
+			Session.Entity.direction = (Session.Entity.direction + 7) % 8;
+			if (PACKETVER.value >= 20180307) {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION2();
+			} else {
+				pkt = new PACKET.CZ.CHANGE_DIRECTION();
+			}
+			pkt.headDir = Session.Entity.headDir;
+			pkt.dir = Session.Entity.direction;
+			Network.sendPacket(pkt);
+			return;
+		}
+	},
+
+	where: {
+		description: '以地图名称和坐标显示角色位置',
+		callback: function () {
+			const currentMap = MapRenderer.currentMap;
+			this.addText(
+				DB.getMapName(currentMap) +
+					'(' +
+					currentMap +
+					') : ' +
+					Math.floor(Session.Entity.position[0]) +
+					', ' +
+					Math.floor(Session.Entity.position[1]),
+				this.TYPE.INFO,
+				this.FILTER.PUBLIC_LOG
+			);
+			return;
+		}
+	},
+
+	who: {
+		description: '显示服务器当前玩家数量',
+		callback: function () {
+			const pkt = new PACKET.CZ.REQ_USER_COUNT();
+			Network.sendPacket(pkt);
+			return;
+		},
+		aliases: ['w']
+	},
+
+	memo: {
+		description: '记忆一个位置，供瞬间移动技能使用',
+		callback: function () {
+			const pkt = new PACKET.CZ.REMEMBER_WARPPOINT();
+			Network.sendPacket(pkt);
+			return;
+		}
+	},
+
+	chat: {
+		description: '创建聊天室',
+		callback: function () {
+			ChatRoomCreate.show();
+			return;
+		}
+	},
+
+	q: {
+		description: '离开聊天室',
+		callback: function () {
+			ChatRoom.remove();
+			return;
+		}
+	},
+
+	leave: {
+		description: '离开队伍',
+		callback: function () {
+			Group.onRequestLeave();
+			return;
+		}
+	},
+
+	invite: {
+		description: '"<name>" 邀请玩家加入队伍，可跨地图使用',
+		callback: function (text) {
+			const matches = text.match(/^invite\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Group.onRequestInvitation(0, matches[2]);
+				return;
+			}
+		}
+	},
+
+	organize: {
+		description: '创建名为 <Party Name> 的队伍',
+		callback: function (text) {
+			const matches = text.match(/^organize\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Group.onRequestCreationEasy(matches[2]);
+				return;
+			}
+		}
+	},
+
+	hi: {
+		description: '向好友列表中的所有人发送指定消息',
+		callback: function () {
+			Friends.sayHi();
+			return;
+		}
+	},
+
+	guild: {
+		description: '创建名为 <Guild Name> 的公会。创建者背包中必须有 Emperium',
+		callback: function (text) {
+			const matches = text.match(/^guild\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Guild.createGuild(matches[2]);
+				return;
+			}
+		}
+	},
+
+	breakguild: {
+		description: '解散公会。仅公会会长可用，且必须先驱逐所有成员',
+		callback: function (text) {
+			const matches = text.match(/^breakguild\s+(")?([^"]+)(")?/);
+			if (matches && matches[2]) {
+				Guild.breakGuild(matches[2]);
+				return;
+			}
+		}
+	},
+
+	alchemist: {
+		description: '显示服务器炼金术士酿造排名前 10 名。',
+		callback: function () {
+			if (PACKETVER.value >= 20130605) {
+				const pkt = new PACKET.CZ.RANKING();
+				pkt.rankType = RankingTypes.ALCHEMIST;
+				Network.sendPacket(pkt);
+			} else {
+				const pkt = new PACKET.CZ.ALCHEMIST_RANK();
+				Network.sendPacket(pkt);
+			}
+			return;
+		}
+	},
+
+	blacksmith: {
+		description: '显示服务器铁匠锻造/升级排名前 10 名',
+		callback: function () {
+			if (PACKETVER.value >= 20130605) {
+				const pkt = new PACKET.CZ.RANKING();
+				pkt.rankType = RankingTypes.BLACKSMITH;
+				Network.sendPacket(pkt);
+			} else {
+				const pkt = new PACKET.CZ.BLACKSMITH_RANK();
+				Network.sendPacket(pkt);
+			}
+			return;
+		}
+	},
+
+	taekwon: {
+		description: '根据跆拳任务完成度显示服务器跆拳小子排名前 10 名',
+		callback: function () {
+			if (PACKETVER.value >= 20130605) {
+				const pkt = new PACKET.CZ.RANKING();
+				pkt.rankType = RankingTypes.TAEKWON;
+				Network.sendPacket(pkt);
+			} else {
+				const pkt = new PACKET.CZ.TAEKWON_RANK();
+				Network.sendPacket(pkt);
+			}
+			return;
+		}
+	},
+
+	hoai: {
+		description: '在默认和自定义模式之间切换 Homunculus AI',

@@ -1,0 +1,133 @@
+//===== rAthena Script ======================================= 
+//= Uneasy Prontera Cemetery Quest
+//===== By: ================================================== 
+//= Lupus
+//===== Current Version: ===================================== 
+//= 1.2a (Tested and fully working!)
+//===== Compatible With: ===================================== 
+//= rAthena Project
+//===== Description: ========================================= 
+//= A periodical quest of the Uneasy Cemetery (Kill undead / Prevent their appearance)
+//= Every day, at the midnight Prontera receive a wave of Undeads.
+//= They come from Uneasy Cemetery of Prontera. To protect the players
+//= from the undeads terror you may either kill the enemy. Or supply Mother Mathana
+//= with needed amount of Holy Water. Every citizen can take his part in the 
+//= saving of Prontera city. After some days of quiet life... the Cemetery strikes back.
+//===== Additional Comments: ================================= 
+//= 1.1 More advanced ver. Added some bonus for the one who'd kill the last walking undead
+//= 1.2 Added coords to the script to make label OmMobDead working
+//= 1.2a Changed item names to item IDs. [Samuray22]
+//============================================================ 
+
+prontera,3,3,3	script	Uneasy_Check	-1,{
+	end;
+
+OnHour00:
+	set $UNEASY_DL,$UNEASY_DL-1;
+	set $UNEASY_BL,$UNEASY_BL+30; //add need of HW for 30 bottles per day
+	if ($UNEASY_BL>666) set $UNEASY_BL,666; //keep needed bottles not <=666
+	if ($UNEASY_DL < 0) goto L_Start_Undead;
+//The Cemetery is OK yet.
+	disablenpc "Mother Mathana";
+	end;
+OnInit:
+	if ($UNEASY_DL >= 0) disablenpc "Mother Mathana";
+	end;
+
+OnHour06:
+	killmonsterall "prontera";	//The Sun kills undead in the morning
+	end;
+
+OnHour01:
+	if ($@UNEASY_MOB > 0) mapannounce "prontera","[玛塔娜修女]：以奥丁之名，请消灭这些游荡的亡灵残党！",0;
+	end;
+
+OnZombieDead:
+	set $@UNEASY_MOB,$@UNEASY_MOB-1;
+	if ($@UNEASY_MOB>0) end;
+	set $UNEASY_DL,0;
+	set $UNEASY_H$,strcharinfo(0);
+	if (Sex==SEX_MALE) mapannounce "prontera","[玛塔娜修女]：勇敢的"+$UNEASY_H$+"刚刚消灭了普隆德拉最后的亡灵！",0;
+	else mapannounce "prontera","[玛塔娜修女]："+$UNEASY_H$+"女士刚刚消灭了普隆德拉最后的亡灵！",0;
+	set JobExp,JobExp+100;
+	set BaseExp,BaseExp+50;
+	end;
+
+L_Start_Undead:
+	killmonsterall "prontera";	//kills any left monsters
+	enablenpc "Mother Mathana";
+//call some monsters in the city
+	set $@UNEASY_MOB, 65;
+	areamonster "prontera",0,0,0,0,"Zombie",1015,30,"Uneasy_Check::OnZombieDead";
+//in the Cemetery
+	monster "prontera",268,349,"Zombie",1015,30,"Uneasy_Check::OnZombieDead";
+	monster "prontera",269,350,"Ghoul",1036,5,"Uneasy_Check::OnZombieDead";
+//announce
+	mapannounce "prontera","[玛塔娜修女]：墓地开始骚动了！以奥丁之名，快去圣域！拯救普隆德拉城！",0;
+}
+
+prontera,257,313,5	script	Mother Mathana	79,{
+	mes "[玛塔娜修女]";
+	if ($UNEASY_DL <= 0) goto L_Undead_Walk;
+	mes "恐怕我们的老墓地出了些问题……";
+	if ($UNEASY_H$==strcharinfo(0)) mes "但多亏了你，"+$UNEASY_H$+"，我们能安睡 " + $UNEASY_DL + " 个夜晚！";
+	if ($UNEASY_H$!=strcharinfo(0)) mes "但多亏了"+$UNEASY_H$+"的帮助，我们有 " + $UNEASY_DL + " 个安稳夜晚！";
+	emotion ET_SURPRISE;
+	close;
+
+L_Undead_Walk:
+	if ($UNEASY_DL == 0) mes "它们明晚可能会再次回来！";
+	if ($UNEASY_DL == 0 && $UNEASY_H$==strcharinfo(0)) mes "谢谢你，"+$UNEASY_H$+"！现在我们能安息到下一个午夜！";
+	if ($UNEASY_DL == 0 && $UNEASY_H$!=strcharinfo(0)) mes "多亏了"+$UNEASY_H$+"的帮助，我们能安息到下一个午夜！";
+	mes "为了平息不安的墓地，我们应该用圣水浇灌所有坟墓。但兄弟姐妹们已经没有圣水了。";
+	mes "你能提供圣水吗？";
+	next;
+	menu "好的，拿去我所有的圣水！",-, "不，我还需要。",M_NO, "我没有圣水。",M_DONT_HAVE;
+
+	if ( countitem(523)<1 ) goto M_DONT_HAVE;
+	set $UNEASY_BL,$UNEASY_BL-countitem(523);
+	delitem 523,countitem(523);
+
+	if ( $UNEASY_BL > 0 ) goto L_NEED_MORE;
+//set quiet days!!! no more undead for this period!
+	set $UNEASY_DL,5+((0-$UNEASY_BL)/30);
+	set $UNEASY_H$,strcharinfo(0);
+	mes "[玛塔娜修女]";
+	mes "谢谢你，"+$UNEASY_H$+"！现在我们有足够的圣水了！";
+	next;
+	mes "[玛塔娜修女]";
+	mes "用这些水浇灌墓地后，我们会获得 " + $UNEASY_DL + " 个安全夜晚！";
+	next;
+	killmonsterall "prontera";	//kills any left monsters
+	mes "[玛塔娜修女]";
+	mes "看，"+ $UNEASY_H$ +"？它们现在全都消失了！";
+	next;
+	mes "[玛塔娜修女]";
+	mes "我们教会会亲自感谢你……";
+	next;
+	if (Sex==SEX_MALE) mapannounce "prontera","[玛塔娜修女]：以奥丁之名，我们宣布英俊的"+$UNEASY_H$+"是普隆德拉的救世主！",0;
+	else mapannounce "prontera","[玛塔娜修女]：以奥丁之名，我们宣布美丽的"+$UNEASY_H$+"是普隆德拉的救世主！",0;
+	mes "[玛塔娜修女]";
+	mes "我们以奥丁之名祝福你，并送上一份来自 Mareusis 酒窖的薄礼。";
+	getitem 505,1; //Blue_Potion
+	set JobExp,JobExp+100;
+	set BaseExp,BaseExp+50;
+	close;
+
+L_NEED_MORE:
+	mes "[玛塔娜修女]";
+	mes "谢谢你，善良的"+strcharinfo(0)+"，但我们还需要 " + $UNEASY_BL + " 瓶圣水。";
+	close;
+
+M_NO:
+	mes "[玛塔娜修女]";
+	mes "恐怕老墓地很快就要失控……请尽可能为我们带来所有能找到的圣水。";
+	close;
+
+M_DONT_HAVE:
+	mes "[玛塔娜修女]";
+	mes "唉！我们还需要 " + $UNEASY_BL + " 瓶圣水……你为什么不去向其他人求一些额外的圣水？";
+	mes "老墓地很快就要失控……";
+	mes "请以奥丁之名，帮助普隆德拉城。";
+	close;
+}

@@ -1,0 +1,500 @@
+					mes "卡普拉职员，因为";
+					mes "你还没有获得";
+					mes "^FF0000卡普拉契约^000000";
+					mes "公会技能。";
+					close;
+				}
+				if (Zeny < 10000) {
+					mes "[ Steward ]";
+					mes "主人，我们无法雇用";
+					mes "卡普拉职员，因为";
+					mes "我们没有足够";
+					mes "资金支付契约费用。";
+					close;
+				}
+				set Zeny, Zeny-10000;
+				enablenpc "Kafra Employee#"+strnpcinfo(2);
+				setcastledata strnpcinfo(4),CD_ENABLED_KAFRA,1;
+				mes "[ Steward ]";
+				mes "很好。我们已经签订";
+				mes "卡普拉契约，";
+				mes "并从总部雇用了一名";
+				mes "卡普拉职员为我们的";
+				mes "要塞服务。她来了~";
+				next;
+				cutin "kafra_01",2;
+				mes "[ Hired Kafra Employee ]";
+				mes "你好。我已经";
+				mes "由卡普拉总部派遣，";
+				mes "前来";
+				mes "满足公会的需要。";
+				mes "我会尽力服从";
+				mes "你的每个命令，主人。";
+				next;
+				cutin "kafra_01",255;
+				mes "[ Steward ]";
+				mes "我们的契约将在";
+				mes "一个月后到期，因此必须";
+				mes "支付额外费用，让";
+				mes "这名卡普拉职员继续";
+				mes "为公会服务。";
+				close;
+			case 2:
+				mes "[ Steward ]";
+				mes "遵命，主人。";
+				mes "不过我建议尽快雇用";
+				mes "卡普拉职员，因为";
+				mes "我们的公会会从";
+				mes "便利的卡普拉服务中";
+				mes "获益良多。";
+				close;
+			}
+		}
+	case 5:
+		mes "[ Steward ]";
+		mes "你要进入";
+		mes "公会宝物库吗？";
+		mes "只有你，公会会长，";
+		mes "获准进入。";
+		next;
+		mes "[ Steward ]";
+		mes "请记得打开";
+		mes "宝箱的时间要适当。";
+		mes "否则，宝物可能";
+		mes "在发生意外时消失，";
+		mes "请务必小心。";
+		next;
+		switch(select("前往宝物库:取消")) {
+		case 1:
+			mes "[ Steward ]";
+			mes "让我带你";
+			mes "沿秘密通道前往";
+			mes "宝物库。";
+			mes "想回来时按下";
+			mes "秘密开关即可。";
+			close2;
+			if (compare(strnpcinfo(4),"arug")) {
+				if (strnpcinfo(4) == "arug_cas01") setarray .@i[0],250,363;
+				else if (strnpcinfo(4) == "arug_cas02") setarray .@i[0],382,227;
+				else setarray .@i[0],292,266;	// Castles 3,4,5 are identical.
+			}
+			else {
+				if (strnpcinfo(4) == "schg_cas02") setarray .@i[0],249,373;
+				else if (strnpcinfo(4) == "schg_cas03") setarray .@i[0],190,16;
+				else setarray .@i[0],381,381;	// Castles 1,4,5 are identical.
+			}
+			warp strnpcinfo(4),.@i[0],.@i[1];
+			end;
+		case 2:
+			mes "[ Steward ]";
+			mes "宝物库中的物品";
+			mes "每天生成一次。";
+			mes "因此，你必须每天获得";
+			mes "宝物物品。";
+			mes "为了公会，";
+			mes "请优先收集宝物！";
+			close;
+		}
+	}
+
+OnStop:
+	awake strnpcinfo(0);
+	end;
+
+OnStartArena:
+	set .@GID,getcharid(2);
+	set .@region$, (compare(strnpcinfo(4),"arug"))?"Valfreyja":"Nithafjoll";
+	// Lower castle Economy
+	set .@Economy,getcastledata(strnpcinfo(4),CD_CURRENT_ECONOMY)-5;
+	if (.@Economy < 0) set .@Economy, 0;
+	setcastledata strnpcinfo(4),CD_CURRENT_ECONOMY,.@Economy;
+	// Lower Castle Defence
+	set .@Defence,getcastledata(strnpcinfo(4),CD_CURRENT_DEFENSE)-5;
+	if (.@Defence < 0) set .@Defence, 0;
+	setcastledata strnpcinfo(4),CD_CURRENT_DEFENSE,.@Defence;
+	// Set new owner
+	setcastledata strnpcinfo(4),CD_GUILD_ID,.@GID;
+	// Clear castle's data.
+	for(set .@i,CD_INVESTED_ECONOMY; .@i<CD_ENABLED_GUARDIAN00; set .@i,.@i+1)
+		setcastledata strnpcinfo(4),.@i,0;
+	// Disable Kafra
+	disablenpc "Kafra Employee#"+strnpcinfo(2);
+
+	announce "The ["+getguildname(.@GID)+"] guild conquered the ["+.@region$+" "+charat(strnpcinfo(2),3)+"] stronghold of "+getcastlename(strnpcinfo(4))+"!",bc_all|bc_woe;
+	mapannounce strnpcinfo(4),"琥珀已被击碎！",bc_map,"0x00FF00",FW_NORMAL,20,0,40;
+	donpcevent "Manager#"+strnpcinfo(4)+"::OnReset";
+	maprespawnguildid strnpcinfo(4),getcastledata(strnpcinfo(4),CD_GUILD_ID),2;
+	donpcevent "Manager#"+strnpcinfo(4)+"::OnRecvCastle2";
+	donpcevent "::OnRecvCastle"+strnpcinfo(2);
+	sleep 10000;
+	if (agitcheck2()) {
+		donpcevent "Manager#"+strnpcinfo(4)+"::OnChange";
+		mapannounce strnpcinfo(4),"重建要塞的守护石和要塞大门，巩固公会的新领地！",bc_map,"0x00FF00",FW_NORMAL,20,0,40;
+	}
+	end;
+}
+
+// Castle Guardians
+//============================================================
+-	script	Guardian#template	-1,{
+	set .@GID, getcastledata(strnpcinfo(4),CD_GUILD_ID);
+	set .@n$, "["+strnpcinfo(1)+"]";
+	if (!.@GID) {
+		mes .@n$;
+		mes "做得好。现在你只需";
+		mes "摧毁这个";
+		mes "琥珀即可获得";
+		mes "这座要塞的所有权。";
+		close;
+	}
+	if (getcharid(2) == .@GID) {
+		if (is_guild_leader() == false) {
+			mes .@n$;
+			mes "作为这座要塞的守护者，";
+			mes "我只听命于";
+			mes "控制此地的公会";
+			mes "会长。";
+			close;
+		}
+		else {
+			if (!agitcheck2()) {
+				mes .@n$;
+				mes "我是"+strnpcinfo(1)+"，这里的守护者。";
+				mes "目前，";
+				mes "这里一切平静。";
+				next;
+				switch(select("交谈:取消")) {
+				case 1:
+					mes .@n$;
+					mes "你对这座要塞";
+					mes "有什么疑问吗？";
+					next;
+					switch(select("守护石:要塞大门:连接旗帜:战斗策略:取消")) {
+					case 1:
+						mes .@n$;
+						mes "每座要塞有一个琥珀";
+						mes "和两块守护石。";
+						mes "这些石头是每座要塞";
+						mes "的第一道防线，";
+						mes "敌人必须先摧毁它们";
+						mes "才能进入。";
+						next;
+						mes .@n$;
+						mes "守护石位于";
+						mes "^4D4DFF大门房屋^000000，必须保护";
+						mes "它们以防敌人";
+						mes "到达琥珀。";
+						mes "守护石可以^4D4DFF召回";
+						mes "你的守护者^000000进行防护。";
+						next;
+						mes .@n$;
+						mes "防御等级更高的要塞";
+						mes "可以召唤更多";
+						mes "守护者，因此";
+						mes "公会投资";
+						mes "防御成长很重要。";
+						next;
+						mes .@n$;
+						mes "被摧毁的守护石";
+						mes "过一段时间可以复活，";
+						mes "但必须由公会成员";
+						mes "下令。我也能报告守护石状态。";
+						close;
+					case 2:
+						mes .@n$;
+						mes "^4D4DFF要塞大门^000000是公会要塞第二道防线，";
+						mes "由守护石启动的额外路障保护。";
+						mes "这些大门位于要塞的三个不同位置。";
+						next;
+						mes .@n$;
+						mes "路障由守护石保护，";
+						mes "并会在守护石";
+						mes "被取回时恢复。";
+						mes "不过，修复被摧毁的";
+						mes "要塞大门";
+						mes "并不容易。";
+						next;
+						mes .@n$;
+						mes "要塞大门只有在";
+						mes "^4D4DFF公会会长^000000";
+						mes "更换时，或";
+						mes "由^4D4DFF要塞修复";
+						mes "请求";
+						mes "的会长^000000提出时恢复。";
+						close;
+					case 3:
+						mes .@n$;
+						mes "要塞有许多";
+						mes "连接旗帜，让你能够";
+						mes "进入路障限制的";
+						mes "重要区域。通常，";
+						mes "^4D4DFF旗帜1";
+						mes "连接到大门房屋^000000。";
+						next;
+						mes .@n$;
+						mes "许多旗帜直接连接到";
+						mes "琥珀附近的旗帜。";
+						mes "最后编号的旗帜";
+						mes "连接到要塞所有者的";
+						mes "便利设施。";
+						mes "请记住这一点。";
+						close;
+					case 4:
+						mes .@n$;
+						mes "策略？最好";
+						mes "制定战斗计划，";
+						mes "利用公会优势";
+						mes "和敌人的弱点。";
+						mes "使用大门房屋和路障，并尽快重建！";
+						close;
+					case 5:
+						mes .@n$;
+						mes "你没有问题";
+						mes "要问我吗？好吧，我";
+						mes "会在这里满足你的需要。";
+						close;
+					}
+				case 2:
+					mes .@n$;
+					mes "我一直在这里，";
+					mes "需要时尽管请求";
+					mes "我的帮助，";
+					mes "我会随时协助。";
+					close;
+				}
+			}
+			else {
+				mes .@n$;
+				mes "你好，"+strcharinfo(0)+"。";
+				mes "你有什么吩咐？";
+				next;
+				switch(select("提升要塞防御:情况简报:取消")) {
+				case 1:
+					if (!getd("$agit_"+strnpcinfo(2)+"[5]")) {
+						if (getgdskilllv(.@GID,10002) == 0) {
+							mes .@n$;
+							mes "抱歉，守护石的力量";
+							mes "还不足以召唤守护者。";
+							mes "我们需要积累更多知识，";
+							mes "才能召唤守护者。";
+							mes "请继续提升防御。";
+							mes "还需要更多力量。";
+							close;
+						}
+						else {
+							mes .@n$;
+							mes "我会尝试通过守护石";
+							mes "召唤守护者。不过请记住，";
+							mes "如果守护石被摧毁，";
+							mes "这个方法就不会生效。";
+							mes "请保护守护石。";
+							setd "$agit_"+strnpcinfo(2)+"[5]",1;
+							if (!getd("$agit_"+strnpcinfo(2)+"[0]"))
+								donpcevent "gard1#"+strnpcinfo(4)+"::OnEnable";
+							if (!getd("$agit_"+strnpcinfo(2)+"[1]"))
+								donpcevent "gard2#"+strnpcinfo(4)+"::OnEnable";
+							close;
+						}
+					}
+					else {
+						mes .@n$;
+						mes "你已经命令我召唤";
+						mes "守护者来防卫要塞。";
+						mes "请稍候。";
+						close;
+					}
+				case 2:
+					mes .@n$;
+					mes "我们的防御状态是……";
+					setarray .@status$[0],"^4D4DFFOperational","^FF0000Destroyed","^008000Repairing";
+					mes "第1守护石："+.@status$[getd("$agit_"+strnpcinfo(2)+"[0]")]+"^000000";
+					mes "第2守护石："+.@status$[getd("$agit_"+strnpcinfo(2)+"[1]")]+"^000000";
+					mes "第1要塞大门："+.@status$[getd("$agit_"+strnpcinfo(2)+"[2]")]+"^000000";
+					mes "第2要塞大门："+.@status$[getd("$agit_"+strnpcinfo(2)+"[3]")]+"^000000";
+					mes "第3要塞大门："+.@status$[getd("$agit_"+strnpcinfo(2)+"[4]")]+"^000000";
+					close;
+				case 3:
+					mes .@n$;
+					mes "我会待命，";
+					mes "等待你的命令。";
+					close;
+				}
+			}
+		}
+	}
+	else {
+		mes .@n$;
+		mes "你是谁？恶棍！";
+		mes "现在离开这座要塞！";
+		close;
+	}
+
+OnInit:
+	setarray getd("$agit_"+strnpcinfo(2)+"[0]"),0,0,0,0,0,0;
+	end;
+}
+
+// Guild Kafras
+//============================================================
+-	script	Kafra#template	-1,{
+	cutin "kafra_01",2;
+	set .@GID, getcastledata(strnpcinfo(4),CD_GUILD_ID);
+	if (getcharid(2) == .@GID && getgdskilllv(.@GID,10001)) {
+		mes "[Kafra Employee]";
+		mes "欢迎，尊贵的";
+		mes "^FF0000"+GetGuildName(.@GID)+"^000000公会成员！";
+		mes "卡普拉公司随时准备";
+		mes "在你所到之处提供帮助！";
+		next;
+		switch(select("使用仓库:使用传送服务:租用手推车:取消")) {
+		case 1:
+			if(!callfunc("F_CanOpenStorage")){
+				mes "[Kafra Employee]";
+				mes "非常抱歉，你必须拥有";
+				mes "至少6级初心者技能，";
+				mes "才能使用仓库。";
+			}
+			else openstorage;
+			break;
+		case 2:
+			mes "[Kafra Employee]";
+			mes "请告诉我你的";
+			mes "传送目的地。";
+			next;
+			switch(select("拉赫:200 Zeny:取消")) {
+			case 1:
+				if (Zeny < 200) {
+					mes "[Kafra Employee]";
+					mes "抱歉，你没有足够的Zeny";
+					mes "支付传送费用。";
+					mes "请再次检查你的资金。";
+					mes "需要200 Zeny。";
+					close2;
+					cutin "kafra_01",255;
+					end;
+				}
+				set Zeny, Zeny-200;
+				warp "rachel",115,125;
+				end;
+			case 2:
+				cutin "kafra_01",255;
+				break;
+			}
+			break;
+		case 3:
+			if (BaseClass != Job_Merchant) {
+				mes "[Kafra Employee]";
+				mes "抱歉，手推车租用服务";
+				mes "只能由商人、铁匠";
+				mes "和炼金术士职业角色使用。";
+				mes "请更换职业。";
+			}
+			else if (checkcart() == 1) {
+				mes "[Kafra Employee]";
+				mes "嗯？你已经";
+				mes "租用了一辆手推车。";
+			}
+			else {
+				mes "[Kafra Employee]";
+				mes "手推车租金是800 Zeny。";
+				mes "要租用一辆手推车吗？";
+				mes "请确认。";
+				next;
+				switch(select("租用手推车:取消")) {
+				case 1:
+					if (Zeny < 800) {
+						mes "[Kafra Employee]";
+						mes "抱歉，你没有足够Zeny";
+						mes "租用我们的手推车。";
+						mes "请准备800 Zeny。";
+						close2;
+						cutin "kafra_01",255;
+						end;
+					}
+					set Zeny, Zeny-800;
+					setcart;
+					break;
+				case 2:
+					break;
+				}
+			}
+			break;
+		case 4:
+			mes "[Kafra Employee]";
+			mes "感谢你使用卡普拉服务。";
+			mes "无论你去哪里，";
+			mes "卡普拉都会";
+			mes "在那里支持你！";
+			close2;
+			cutin "kafra_01",255;
+			end;
+		}
+		close2;
+		cutin "kafra_01",255;
+		end;
+	}
+	else {
+		mes "[Kafra Employee]";
+		mes "抱歉，我已专门签约";
+		mes "为";
+		mes "以下公会成员服务：";
+		mes "^FF0000"+getguildname(.@GID)+"^000000 Guild.";
+		mes "请找其他卡普拉职员";
+		mes "帮助你……";
+		close2;
+		cutin "kafra_01",255;
+		end;
+	}
+}
+
+// Guardian Stones (2)
+//============================================================
+-	script	Guardian Stone#template	-1,{
+	set .@GID, getcastledata(strnpcinfo(4),CD_GUILD_ID);
+	set .@num, atoi(charat(strnpcinfo(1),0));
+	set .@var$,"$agit_"+strnpcinfo(2);
+	if (getcharid(2) == .@GID) {
+		mes "^3355FF你需要以下材料";
+		mes "来重建被摧毁的";
+		mes "守护石。^000000";
+		mes "请准备齐全。";
+		next;
+		mes "1个皓思";
+		mes "1个铝";
+		mes "30块石头";
+		mes "5颗蓝色宝石";
+		mes "5颗黄色宝石";
+		mes "5颗红色宝石";
+		next;
+		mes "^3355FF要继续吗？^000000";
+		next;
+		if(select("否:继续") == 1) {
+			mes "^3355FF工作已取消。^000000";
+			close;
+		}
+		if ((countitem(984) > 0) && (countitem(985) > 0) && (countitem(7049) > 29) && (countitem(717) > 4) && (countitem(715) > 4) && (countitem(716) > 4)) {
+			mes "^3355FF按顺序将石头、铝和";
+			mes "皓思放在中央。然后排列";
+			mes "附魔宝石以重建守护石。^000000";
+			mes "请仔细操作。";
+			mes "完成后即可重建。";
+			next;
+			setarray .@stone$[0],"Elunium","Oridecon","Stones";
+			set .@i, select("铝:皓思:石头")-1;
+			if (.@i == 2) set .@nice,.@nice+10;
+			mes "^3355FF"+.@stone$[.@i]+"已被";
+			mes "放置在中央。^000000";
+			next;
+			set .@i, select("铝:皓思:石头")-1;
+			if (.@i == 0) set .@nice,.@nice+10;
+			mes "^3355FF你已用一些";
+			mes ""+.@stone$[.@i]+"排列中央";
+			mes "外围。^000000";
+			next;
+			set .@i, select("铝:皓思:石头")-1;
+			if (.@i == 1) set .@nice,.@nice+10;
+			mes "^3355FF你已用一些";
+			mes ""+.@stone$[.@i]+"覆盖其余";
+			mes "材料。^000000";
+			next;
+			mes "^3355FF现在需要排列";

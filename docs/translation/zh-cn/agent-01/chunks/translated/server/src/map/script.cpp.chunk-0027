@@ -1,0 +1,500 @@
+			clif_changelook(sd,LOOK_CLOTHES_COLOR,sd->vd.look[LOOK_CLOTHES_COLOR]);
+		if (sd->vd.look[LOOK_BODY2])
+			clif_changelook(sd,LOOK_BODY2,sd->vd.look[LOOK_BODY2]);
+		clif_skillinfoblock(*sd);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Change account sex and unequip all item and request for a changesex to char-serv
+ * changesex({<char_id>});
+ */
+BUILDIN_FUNC(changesex)
+{
+	int32 i;
+	TBL_PC *sd = nullptr;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	pc_resetskill(sd,4);
+	// to avoid any problem with equipment and invalid sex, equipment is unequiped.
+	for(i = 0; i < EQI_MAX; i++) {
+		if (sd->equip_index[i] >= 0)
+			pc_unequipitem(sd, sd->equip_index[i], 3);
+	}
+
+	chrif_changesex(sd, true);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Change character's sex and unequip all item and request for a changesex to char-serv
+ * changecharsex({<char_id>});
+ */
+BUILDIN_FUNC(changecharsex)
+{
+#if PACKETVER >= 20141016
+	int32 i;
+	TBL_PC *sd = nullptr;
+
+	if (!script_charid2sd(2,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	pc_resetskill(sd,4);
+	// to avoid any problem with equipment and invalid sex, equipment is unequiped.
+	for (i = 0; i < EQI_MAX; i++) {
+		if (sd->equip_index[i] >= 0)
+			pc_unequipitem(sd, sd->equip_index[i], 3);
+	}
+
+	chrif_changesex(sd, false);
+	return SCRIPT_CMD_SUCCESS;
+#else
+	return SCRIPT_CMD_FAILURE;
+#endif
+}
+
+/*==========================================
+ * Works like 'announce' but outputs in the common chat window
+ *------------------------------------------*/
+BUILDIN_FUNC(globalmes)
+{
+	block_list *bl = map_id2bl(st->oid);
+	npc_data *nd = (npc_data *)bl;
+	const char *name=nullptr,*mes;
+
+	mes=script_getstr(st,2);
+	if(mes==nullptr)
+		return SCRIPT_CMD_SUCCESS;
+
+	if(script_hasdata(st,3)){	//  npc name to display
+		name=script_getstr(st,3);
+	} else {
+		name=nd->name; //use current npc name
+	}
+
+	npc_globalmessage(name,mes);	// broadcast  to all players connected
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/////////////////////////////////////////////////////////////////////
+// NPC waiting room (chat room)
+//
+
+/// Creates a waiting room (chat room) for this npc.
+///
+/// waitingroom "<title>",<limit>{,"<event>"{,<trigger>{,<zeny>{,<minlvl>{,<maxlvl>}}}}};
+BUILDIN_FUNC(waitingroom)
+{
+	npc_data* nd;
+	const char* title = script_getstr(st, 2);
+	int32 limit = script_getnum(st, 3);
+	const char* ev = script_hasdata(st,4) ? script_getstr(st,4) : "";
+	int32 trigger =  script_hasdata(st,5) ? script_getnum(st,5) : limit;
+	int32 zeny =  script_hasdata(st,6) ? script_getnum(st,6) : 0;
+	int32 minLvl =  script_hasdata(st,7) ? script_getnum(st,7) : 1;
+	int32 maxLvl =  script_hasdata(st,8) ? script_getnum(st,8) : MAX_LEVEL;
+
+	nd = (npc_data *)map_id2bl(st->oid);
+	if( nd != nullptr )
+		chat_createnpcchat(nd, title, limit, 1, trigger, ev, zeny, minLvl, maxLvl);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Removes the waiting room of the current or target npc.
+///
+/// delwaitingroom "<npc_name>";
+/// delwaitingroom;
+BUILDIN_FUNC(delwaitingroom)
+{
+	npc_data* nd;
+	if( script_hasdata(st,2) )
+		nd = npc_name2id(script_getstr(st, 2));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+	if( nd != nullptr )
+		chat_deletenpcchat(nd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Kick the specified player from the waiting room of the target npc.
+///
+/// waitingroomkick "<npc_name>", <kickusername>;
+BUILDIN_FUNC(waitingroomkick)
+{
+	npc_data* nd;
+	chat_data* cd;
+	const char* kickusername;
+	
+	nd = npc_name2id(script_getstr(st,2));
+	kickusername = script_getstr(st,3);
+
+	if( nd != nullptr && (cd=(chat_data *)map_id2bl(nd->chat_id)) != nullptr )
+		chat_npckickchat(cd, kickusername);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Get Users in waiting room and stores gids in .@waitingroom_users[]
+/// Num users stored in .@waitingroom_usercount
+///
+/// getwaitingroomusers "<npc_name>";
+BUILDIN_FUNC(getwaitingroomusers)
+{
+	npc_data* nd;
+	chat_data* cd;
+
+	int32 i, j=0;
+
+	if( script_hasdata(st,2) )
+		nd = npc_name2id(script_getstr(st, 2));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+	
+	if( nd != nullptr && (cd=(chat_data *)map_id2bl(nd->chat_id)) != nullptr ) {
+		for(i = 0; i < cd->users; ++i) {
+			setd_sub_num( st, nullptr, ".@waitingroom_users", j, cd->usersd[i]->status.account_id, nullptr );
+			j++;
+		}
+		setd_sub_num( st, nullptr, ".@waitingroom_usercount", 0, j, nullptr );
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Kicks all the players from the waiting room of the current or target npc.
+///
+/// kickwaitingroomall "<npc_name>";
+/// kickwaitingroomall;
+BUILDIN_FUNC(waitingroomkickall)
+{
+	npc_data* nd;
+	chat_data* cd;
+
+	if( script_hasdata(st,2) )
+		nd = npc_name2id(script_getstr(st,2));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( nd != nullptr && (cd=(chat_data *)map_id2bl(nd->chat_id)) != nullptr )
+		chat_npckickall(cd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Enables the waiting room event of the current or target npc.
+///
+/// enablewaitingroomevent "<npc_name>";
+/// enablewaitingroomevent;
+BUILDIN_FUNC(enablewaitingroomevent)
+{
+	npc_data* nd;
+	chat_data* cd;
+
+	if( script_hasdata(st,2) )
+		nd = npc_name2id(script_getstr(st, 2));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( nd != nullptr && (cd=(chat_data *)map_id2bl(nd->chat_id)) != nullptr )
+		chat_enableevent(cd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Disables the waiting room event of the current or target npc.
+///
+/// disablewaitingroomevent "<npc_name>";
+/// disablewaitingroomevent;
+BUILDIN_FUNC(disablewaitingroomevent)
+{
+	npc_data *nd;
+	chat_data *cd;
+
+	if( script_hasdata(st,2) )
+		nd = npc_name2id(script_getstr(st, 2));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( nd != nullptr && (cd=(chat_data *)map_id2bl(nd->chat_id)) != nullptr )
+		chat_disableevent(cd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns info on the waiting room of the current or target npc.
+/// Returns -1 if the type unknown
+/// <type>=0 : current number of users
+/// <type>=1 : maximum number of users allowed
+/// <type>=2 : the number of users that trigger the event
+/// <type>=3 : if the trigger is disabled
+/// <type>=4 : the title of the waiting room
+/// <type>=5 : the password of the waiting room
+/// <type>=16 : the name of the waiting room event
+/// <type>=32 : if the waiting room is full
+/// <type>=33 : if there are enough users to trigger the event
+///
+/// getwaitingroomstate(<type>,"<npc_name>") -> <info>
+/// getwaitingroomstate(<type>) -> <info>
+BUILDIN_FUNC(getwaitingroomstate)
+{
+	npc_data *nd;
+	chat_data *cd;
+	int32 type;
+
+	type = script_getnum(st,2);
+	if( script_hasdata(st,3) )
+		nd = npc_name2id(script_getstr(st, 3));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( nd == nullptr || (cd=(chat_data *)map_id2bl(nd->chat_id)) == nullptr )
+	{
+		script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch(type)
+	{
+	case 0:  script_pushint(st, cd->users); break;
+	case 1:  script_pushint(st, cd->limit); break;
+	case 2:  script_pushint(st, cd->trigger&0x7f); break;
+	case 3:  script_pushint(st, ((cd->trigger&0x80)!=0)); break;
+	case 4:  script_pushstrcopy(st, cd->title); break;
+	case 5:  script_pushstrcopy(st, cd->pass); break;
+	case 16: script_pushstrcopy(st, cd->npc_event);break;
+	case 32: script_pushint(st, (cd->users >= cd->limit)); break;
+	case 33: script_pushint(st, (cd->users >= cd->trigger)); break;
+	default: script_pushint(st, -1); break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Warps the trigger or target amount of players to the target map and position.
+/// Players are automatically removed from the waiting room.
+/// Those waiting the longest will get warped first.
+/// The target map can be "Random" for a random position in the current map,
+/// and "SavePoint" for the savepoint map+position.
+/// The map flag noteleport of the current map is only considered when teleporting to the savepoint.
+///
+/// The id's of the teleported players are put into the array $@warpwaitingpc[]
+/// The total number of teleported players is put into $@warpwaitingpcnum
+///
+/// warpwaitingpc "<map name>",<x>,<y>,<number of players>;
+/// warpwaitingpc "<map name>",<x>,<y>;
+BUILDIN_FUNC(warpwaitingpc)
+{
+	int32 x;
+	int32 y;
+	int32 i;
+	int32 n;
+	const char* map_name;
+	npc_data* nd;
+	chat_data* cd;
+
+	nd = (npc_data *)map_id2bl(st->oid);
+	if( nd == nullptr || (cd=(chat_data *)map_id2bl(nd->chat_id)) == nullptr )
+		return SCRIPT_CMD_SUCCESS;
+
+	map_name = script_getstr(st,2);
+	x = script_getnum(st,3);
+	y = script_getnum(st,4);
+	n = cd->trigger&0x7f;
+
+	if( script_hasdata(st,5) )
+		n = script_getnum(st,5);
+
+	for( i = 0; i < n && cd->users > 0; i++ )
+	{
+		TBL_PC* sd = cd->usersd[0];
+
+		if( strcmp(map_name,"SavePoint") == 0 && map_getmapflag(sd->m, MF_NOTELEPORT) )
+		{// can't teleport on this map
+			break;
+		}
+
+		if( cd->zeny )
+		{// fee set
+			if( (uint32)sd->status.zeny < cd->zeny )
+			{// no zeny to cover set fee
+				break;
+			}
+			pc_payzeny(sd, cd->zeny, LOG_TYPE_NPC);
+		}
+
+		mapreg_setreg(reference_uid(add_str("$@warpwaitingpc"), i), sd->id);
+
+		if( strcmp(map_name,"Random") == 0 )
+			pc_randomwarp(sd,CLR_TELEPORT,true);
+		else if( strcmp(map_name,"SavePoint") == 0 )
+			pc_setpos( sd, mapindex_name2id( sd->status.save_point.map ), sd->status.save_point.x, sd->status.save_point.y, CLR_TELEPORT );
+		else
+			pc_setpos(sd, mapindex_name2id(map_name), x, y, CLR_OUTSIGHT);
+	}
+	mapreg_setreg(add_str("$@warpwaitingpcnum"), i);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/////////////////////////////////////////////////////////////////////
+// ...
+//
+
+/// Detaches a character from a script.
+///
+/// @param st Script state to detach the character from.
+void script_detach_rid(struct script_state* st)
+{
+	if(st->rid)
+	{
+		script_detach_state(st, false);
+		st->rid = 0;
+	}
+}
+
+/*=========================================================================
+ * Attaches a set of RIDs to the current script. [digitalhamster]
+ * addrid(<type>{,<flag>{,<parameters>}});
+ * <type>:
+ *	0 : All players in the server.
+ *	1 : All players in the map of the invoking player, or the invoking NPC if no player is attached.
+ *	2 : Party members of a specified party ID.
+ *	    [ Parameters: <party id> ]
+ *	3 : Guild members of a specified guild ID.
+ *	    [ Parameters: <guild id> ]
+ *	4 : All players in a specified area of the map of the invoking player (or NPC).
+ *	    [ Parameters: <x0>,<y0>,<x1>,<y1> ]
+ *	5 : All players in the map.
+ *	    [ Parameters: "<map name>" ]
+ *	6 : Battleground members of a specified battleground ID.
+ *	    [ Parameters: <battleground id> ]
+ *	7 : Clan members of a specified clan ID.
+ *	    [ Parameters: <clan id> ]
+ *	Account ID: The specified account ID.
+ * <flag>:
+ *	0 : Players are always attached. (default)
+ *	1 : Players currently running another script will not be attached.
+ *-------------------------------------------------------------------------*/
+static int32 buildin_addrid_sub(block_list *bl,va_list ap)
+{
+	int32 forceflag;
+	map_session_data *sd = (TBL_PC *)bl;
+	struct script_state* st;
+
+	st = va_arg(ap,struct script_state*);
+	forceflag = va_arg(ap,int32);
+
+	if(!forceflag || !sd->st)
+		if(sd->status.account_id != st->rid)
+			run_script(st->script,st->pos,sd->status.account_id,st->oid);
+	return 0;
+}
+
+BUILDIN_FUNC(addrid)
+{
+	struct s_mapiterator* iter;
+	block_list *bl;
+	TBL_PC *sd;
+
+	if(st->rid < 1) {
+		st->state = END;
+		bl = map_id2bl(st->oid);
+	} else
+		bl = map_id2bl(st->rid); //if run without rid it'd error,also oid if npc, else rid for map
+	iter = mapit_getallusers();
+
+	int32 type = script_getnum(st,2);
+	bool forceflag = (script_hasdata(st,3) ? script_getnum(st,3) != 0 : 0);
+
+	switch(type) {
+		case 0:
+			for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter)) {
+				if(!forceflag || !sd->st)
+					if(sd->status.account_id != st->rid) //attached player already runs.
+						run_script(st->script,st->pos,sd->status.account_id,st->oid);
+			}
+			break;
+		case 1:
+			for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter)) {
+				if(!forceflag || !sd->st)
+					if((sd->m == bl->m) && (sd->status.account_id != st->rid))
+						run_script(st->script,st->pos,sd->status.account_id,st->oid);
+			}
+			break;
+		case 2:
+			if(script_getnum(st,4) == 0) {
+				script_pushint(st,0);
+				mapit_free(iter);
+				return SCRIPT_CMD_SUCCESS;
+			}
+			for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter)) {
+				if(!forceflag || !sd->st)
+					if((sd->status.account_id != st->rid) && (sd->status.party_id == script_getnum(st,4))) //attached player already runs.
+						run_script(st->script,st->pos,sd->status.account_id,st->oid);
+			}
+			break;
+		case 3:
+			if(script_getnum(st,4) == 0) {
+				script_pushint(st,0);
+				mapit_free(iter);
+				return SCRIPT_CMD_SUCCESS;
+			}
+			for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter)) {
+				if(!forceflag || !sd->st)
+					if((sd->status.account_id != st->rid) && (sd->status.guild_id == script_getnum(st,4))) //attached player already runs.
+						run_script(st->script,st->pos,sd->status.account_id,st->oid);
+			}
+			break;
+		case 4:
+			map_foreachinallarea(buildin_addrid_sub,
+			bl->m,script_getnum(st,4),script_getnum(st,5),script_getnum(st,6),script_getnum(st,7),BL_PC,
+			st,forceflag);//4-x0 , 5-y0 , 6-x1, 7-y1
+			break;
+		case 5:
+			if (script_getstr(st, 4) == nullptr) {
+				script_pushint(st, 0);
+				mapit_free(iter);
+				return SCRIPT_CMD_FAILURE;
+			}
+			if (map_mapname2mapid(script_getstr(st, 4)) < 0) {
+				script_pushint(st, 0);
+				mapit_free(iter);
+				return SCRIPT_CMD_FAILURE;
+			}
+			map_foreachinmap(buildin_addrid_sub, map_mapname2mapid(script_getstr(st, 4)), BL_PC, st, script_getnum(st, 3));
+			break;
+		case 6:
+			if (script_getnum(st, 4) == 0) {
+				script_pushint(st, 0);
+				mapit_free(iter);
+				return SCRIPT_CMD_FAILURE;
+			}
+			for (sd = (TBL_PC *)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC *)mapit_next(iter)) {
+				if (!forceflag || !sd->st)
+					if ((sd->status.account_id != st->rid) && (sd->bg_id == script_getnum(st, 4))) //attached player already runs.
+						run_script(st->script, st->pos, sd->status.account_id, st->oid);
+			}
+			break;
+		case 7:
+			if (script_getnum(st, 4) == 0) {
+				script_pushint(st, 0);
+				mapit_free(iter);
+				return SCRIPT_CMD_FAILURE;
+			}
+			for (sd = (TBL_PC *)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC *)mapit_next(iter)) {
+				if (!forceflag || !sd->st)
+					if ((sd->status.account_id != st->rid) && (sd->status.clan_id == script_getnum(st, 4))) //attached player already runs.
+						run_script(st->script, st->pos, sd->status.account_id, st->oid);
+			}
+			break;
+		default:
+			mapit_free(iter);
+			if((map_id2sd(type)) == nullptr) { // Player not found.
+				script_pushint(st,0);
+				return SCRIPT_CMD_SUCCESS;
+			}
+			if(!forceflag || !map_id2sd(type)->st) {
+				run_script(st->script,st->pos,type,st->oid);
+				script_pushint(st,1);
+			}
+			return SCRIPT_CMD_SUCCESS;
+	}
+	mapit_free(iter);
+	script_pushint(st,1);

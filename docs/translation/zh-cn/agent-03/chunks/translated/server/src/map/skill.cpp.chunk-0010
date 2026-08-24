@@ -1,0 +1,500 @@
+				switch (skill_lv) {
+					case 1:	calls = 7; break;
+					case 2:	calls = 12; break;
+					case 3:	calls = 20; break;
+					default: calls = 0;	break;
+				}
+
+			clif_skill_nodamage(src,*bl,skill_id,skill_lv);
+			for (i = 0; i < g->guild.max_member && (!calls || (calls && called < calls)); i++, j++) {
+				if (j > 8)
+					j = 0;
+				if ((dstsd = g->guild.member[i].sd) != nullptr && sd != dstsd && !dstsd->state.autotrade && !pc_isdead(dstsd)) {
+					if (dstsd->status.disable_call)
+						continue;
+					if (map_getmapflag(dstsd->m, MF_NOWARP) && !map_flag_gvg2(dstsd->m))
+						continue;
+					if (!pc_job_can_entermap((enum e_job)dstsd->status.class_, src->m, pc_get_group_level(dstsd)))
+						continue;
+					if(map_getcell(src->m,src->x+dx[j],src->y+dy[j],CELL_CHKNOREACH))
+						dx[j] = dy[j] = 0;
+					if (!pc_setpos(dstsd, map_id2index(src->m), src->x+dx[j], src->y+dy[j], CLR_RESPAWN))
+						called++;
+				}
+			}
+			if (sd)
+#ifdef RENEWAL
+				skill_blockpc_start(*sd, skill_id, skill_get_cooldown(skill_id, skill_lv));
+#else
+				guild_block_skill(sd, skill_get_time2(skill_id, skill_lv));
+#endif
+		}
+		break;
+	case GD_CHARGESHOUT_FLAG:
+		if (sd && sd->guild && sd->state.gmaster_flag == 1) {
+			mob_data *md = mob_once_spawn_sub(src, src->m, src->x, src->y, sd->guild->guild.name, MOBID_GUILD_SKILL_FLAG, nullptr, SZ_SMALL, AI_GUILD);
+
+			if (md) {
+				sd->guild->chargeshout_flag_id = md->id;
+				md->master_id = src->id;
+
+				if (md->deletetimer != INVALID_TIMER)
+					delete_timer(md->deletetimer, mob_timer_delete);
+				md->deletetimer = add_timer(gettick() + skill_get_time(GD_CHARGESHOUT_FLAG, skill_lv), mob_timer_delete, md->id, 0);
+				mob_spawn(md);
+			}
+		}
+		break;
+	case GD_CHARGESHOUT_BEATING:
+		if (sd && sd->guild && map_blid_exists(sd->guild->chargeshout_flag_id)) {
+			block_list *mob_bl = map_id2bl(sd->guild->chargeshout_flag_id);
+
+			if (pc_setpos(sd, map_id2index(mob_bl->m), mob_bl->x, mob_bl->y, CLR_RESPAWN) != SETPOS_OK)
+				clif_skill_fail( *sd, skill_id );
+			else
+				clif_skill_nodamage(src, *bl, skill_id, skill_lv);
+		} else if (sd)
+			clif_skill_fail( *sd, skill_id );
+		break;
+
+	case NPC_WIDEHEALTHFEAR:	// TODO: skills undefined in skill_db.yml
+	case NPC_WIDEBODYBURNNING:
+	case NPC_WIDEFROSTMISTY:
+	case NPC_WIDECOLD:
+	case NPC_WIDE_DEEP_SLEEP:
+	case NPC_WIDESIREN:
+		if (flag&1){
+			switch ( type ) {
+			case SC_BURNING:
+				sc_start4(src,bl,type,100,skill_lv,1000,src->id,0,skill_get_time2(skill_id,skill_lv));
+				break;
+			case SC_STONEWAIT:
+				sc_start2(src,bl,type,100,skill_lv,src->id,skill_get_time2(skill_id,skill_lv),skill_get_time(skill_id, skill_lv));
+				break;
+			default:
+				sc_start2(src,bl,type,100,skill_lv,src->id,skill_get_time2(skill_id,skill_lv));
+			}
+		}
+		else {
+			skill_area_temp[2] = 0; //For SD_PREAMBLE
+			clif_skill_nodamage(src,*bl,skill_id,skill_lv);
+			map_foreachinallrange(skill_area_sub, bl,
+				skill_get_splash(skill_id, skill_lv),BL_CHAR,
+				src,skill_id,skill_lv,tick, flag|BCT_ENEMY|SD_PREAMBLE|1,
+				skill_castend_nodamage_id);
+		}
+		break;
+	default: {
+		std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+
+		if( skill != nullptr && skill->impl != nullptr ){
+			skill->impl->castendNoDamageId( src, bl, skill_lv, tick, flag );
+			break;
+		}
+
+		ShowWarning("skill_castend_nodamage_id: missing code case for skill %s(%d)\n", skill ? skill->name : "UNKNOWN", skill_id);
+		clif_skill_nodamage(src,*bl,skill_id,skill_lv);
+		return 1;
+		}
+	}
+
+	if (skill_id != SR_CURSEDCIRCLE && skill_id != NPC_SR_CURSEDCIRCLE) {
+		if (sc && sc->getSCE(SC_CURSEDCIRCLE_ATKER)) // Should only remove after the skill had been casted.
+			status_change_end(src,SC_CURSEDCIRCLE_ATKER);
+	}
+
+	if (dstmd) { //Mob skill event for no damage skills (damage ones are handled in battle_damage/skill_attack) [Skotlex]
+		if (battle_config.exp_bonus_nodamage_attacker != 0)
+			mob_log_damage(dstmd, src, 0); //Log interaction (counts as 'attacker' for the exp bonus)
+		mobskill_event(dstmd, src, tick, MSC_SKILLUSED|(skill_id<<16));
+	}
+
+	if( sd && !(flag&1) )
+	{// ensure that the skill last-cast tick is recorded
+		sd->canskill_tick = gettick();
+
+		if( sd->state.arrow_atk )
+		{// consume arrow on last invocation to this skill.
+			battle_consume_ammo(sd, skill_id, skill_lv);
+		}
+		skill_onskillusage(sd, bl, skill_id, tick);
+		// perform skill requirement consumption
+		if (!(flag&SKILL_NOCONSUME_REQ))
+			skill_consume_requirement(sd,skill_id,skill_lv,2);
+	}
+
+	return 0;
+}
+
+/**
+ * Checking that causing skill failed
+ * @param src Caster
+ * @param target Target
+ * @param skill_id
+ * @param skill_lv
+ * @return -1 success, others are failed @see enum useskill_fail_cause.
+ **/
+static int8 skill_castend_id_check(block_list *src, block_list *target, uint16 skill_id, uint16 skill_lv) {
+	std::shared_ptr<s_skill_db> skill = skill_db.find(skill_id);
+	int32 inf = skill->inf;
+	status_change *tsc = status_get_sc(target);
+
+	if (src != target && (status_bl_has_mode(target,MD_SKILLIMMUNE) || (status_get_class(target) == MOBID_EMPERIUM && !skill->inf2[INF2_TARGETEMPERIUM])) && skill_get_casttype(skill_id) == CAST_NODAMAGE)
+		return USESKILL_FAIL_MAX; // Don't show a skill fail message (NoDamage type doesn't consume requirements)
+
+	switch (skill_id) {
+		case AL_HEAL:
+		case AL_INCAGI:
+		case AL_DECAGI:
+		case SA_DISPELL: // Mado Gear is immune to Dispell according to bugreport:49 [Ind]
+		case AB_RENOVATIO:
+		case AB_HIGHNESSHEAL:
+			if (tsc && tsc->option&OPTION_MADOGEAR)
+				return USESKILL_FAIL_TOTARGET;
+			break;
+		case RG_BACKSTAP:
+			{
+#ifndef RENEWAL
+				uint8 dir = map_calc_dir(src,target->x,target->y), t_dir = unit_getdir(target);
+
+				if (map_check_dir(dir, t_dir))
+					return USESKILL_FAIL_MAX;
+#endif
+
+				if (check_distance_bl(src, target, 0))
+					return USESKILL_FAIL_MAX;
+			}
+			break;
+		case RG_STEALCOIN:
+			// Does not work on non-monsters, bosses and targets already mugged
+			if (target->type != BL_MOB || status_bl_has_mode(target, MD_STATUSIMMUNE) || ((TBL_MOB*)target)->state.steal_coin_flag)
+				return USESKILL_FAIL;
+			break;
+		case PR_TURNUNDEAD:
+			{
+				status_data* tstatus = status_get_status_data(*target);
+				if (!battle_check_undead(tstatus->race, tstatus->def_ele))
+					return USESKILL_FAIL_MAX;
+			}
+			break;
+		case DC_WINKCHARM:
+			switch (status_get_status_data(*target)->race) {
+				case RC_DEMON:
+				case RC_DEMIHUMAN:
+				case RC_ANGEL:
+				case RC_PLAYER_HUMAN:
+				case RC_PLAYER_DORAM:
+					break;
+				default:
+					return USESKILL_FAIL_LEVEL;
+			}
+			break;
+		case PR_LEXDIVINA:
+		case MER_LEXDIVINA:
+			{
+				//If it's not an enemy, and not silenced, you can't use the skill on them. [Skotlex]
+				if (battle_check_target(src,target, BCT_ENEMY) <= 0 && (!tsc || !tsc->getSCE(SC_SILENCE)))
+					return USESKILL_FAIL_LEVEL;
+				else
+					return -1; //Works on silenced allies
+			}
+			break;
+		case PF_SOULBURN:
+			// Only works on players
+			if (target->type != BL_PC)
+				return USESKILL_FAIL_LEVEL;
+			break;
+		case RA_WUGSTRIKE:
+			// Check if path can be reached
+			if (!path_search(nullptr,src->m,src->x,src->y,target->x,target->y,1,CELL_CHKNOREACH))
+				return USESKILL_FAIL_MAX;
+			break;
+		case MG_NAPALMBEAT:
+		case MG_FIREBALL:
+		case HT_BLITZBEAT:
+		case AS_GRIMTOOTH:
+		case MO_COMBOFINISH:
+		case NC_VULCANARM:
+		case SR_TIGERCANNON:
+			// These can damage traps, but can't target traps directly
+			if (target->type == BL_SKILL) {
+				TBL_SKILL *su = (TBL_SKILL*)target;
+				if (!su || !su->group)
+					return USESKILL_FAIL_MAX;				
+				if (skill_get_inf2(su->group->skill_id, INF2_ISTRAP))
+					return USESKILL_FAIL_MAX;
+			}
+			break;
+		case IQ_SECOND_FLAME:
+		case IQ_SECOND_FAITH:
+		case IQ_SECOND_JUDGEMENT:
+			if (!tsc || !(tsc->getSCE(SC_FIRST_BRAND) || tsc->getSCE(SC_SECOND_BRAND)))
+				return USESKILL_FAIL_LEVEL;
+			break;
+		case IQ_THIRD_PUNISH:
+		case IQ_THIRD_FLAME_BOMB:
+		case IQ_THIRD_CONSECRATION:
+			if (!tsc || !tsc->getSCE(SC_SECOND_BRAND))
+				return USESKILL_FAIL_LEVEL;
+			break;
+		case SH_BLESSING_OF_MYSTICAL_CREATURES:
+			if( src == target ){
+				return USESKILL_FAIL_TOTARGET;
+			}
+
+			if( battle_check_target( src, target, BCT_PARTY ) <= 0 ){
+				return USESKILL_FAIL_TOTARGET;
+			}
+
+			if( ( status_get_class_( target )&MAPID_FIRSTMASK ) == MAPID_SUMMONER ){
+				return USESKILL_FAIL_TOTARGET;
+			}
+
+			if( tsc != nullptr && tsc->getSCE( SC_BLESSING_OF_M_C_DEBUFF ) != nullptr ){
+				return USESKILL_FAIL_TOTARGET;
+			}
+			break;
+
+		case SKE_STAR_BURST:
+		case SKE_STAR_CANNON: {
+				unit_data* ud = unit_bl2ud( src );
+
+				if( ud == nullptr ){
+					return USESKILL_FAIL_NEED_TWINKLING_GALAXY;
+				}
+
+				bool ok = false;
+
+				for( const std::shared_ptr<s_skill_unit_group>& sug : ud->skillunits ){
+					if( sug->skill_id != SKE_TWINKLING_GALAXY ){
+						continue;
+					}
+
+					skill_unit* su = sug->unit;
+					std::shared_ptr<s_skill_unit_group> sg = su->group;
+
+					if( distance_xy( src->x, src->y, su->x, su->y ) > skill_get_unit_range( sug->skill_id, sug->skill_lv ) ){
+						continue;
+					}
+
+					ok = true;
+					break;
+				}
+
+				if( !ok ){
+					return USESKILL_FAIL_NEED_TWINKLING_GALAXY;
+				}
+			} break;
+	}
+
+	if (inf&INF_ATTACK_SKILL ||
+		(inf&INF_SELF_SKILL && skill->inf2[INF2_NOTARGETSELF]) //Combo skills
+		) // Casted through combo.
+		inf = BCT_ENEMY; //Offensive skill.
+	else if (skill->inf2[INF2_NOTARGETENEMY])
+		inf = BCT_NOENEMY;
+	else
+		inf = 0;
+
+	if ((skill->inf2[INF2_PARTYONLY] || skill->inf2[INF2_GUILDONLY]) && src != target) {
+		inf |=
+			(skill->inf2[INF2_PARTYONLY]?BCT_PARTY:0)|
+			(skill->inf2[INF2_GUILDONLY]?BCT_GUILD:0);
+		//Remove neutral targets (but allow enemy if skill is designed to be so)
+		inf &= ~BCT_NEUTRAL;
+	}
+
+	switch (skill_id) {
+		// Cannot be casted to Emperium
+		case WZ_ESTIMATION:
+		case SL_SKE:
+		case SL_SKA:
+		case RK_PHANTOMTHRUST:
+		case NPC_PHANTOMTHRUST:
+			if (target->type == BL_MOB && ((TBL_MOB*)target)->mob_id == MOBID_EMPERIUM)
+				return USESKILL_FAIL_MAX;
+			break;
+	}
+
+	if (inf && battle_check_target(src, target, inf) <= 0) {
+		switch(skill_id) {
+			case RK_PHANTOMTHRUST:
+			case NPC_PHANTOMTHRUST:
+			case AB_CLEARANCE:
+				return USESKILL_FAIL_TOTARGET;
+			default:
+				return USESKILL_FAIL_LEVEL;
+		}
+	}
+
+	// Fogwall makes all offensive-type targetted skills fail at 75%
+	// Jump Kick can still fail even though you can jump to friendly targets.
+	if ((inf&BCT_ENEMY || skill_id == TK_JUMPKICK || skill_id == EM_PSYCHIC_STREAM) && tsc && tsc->getSCE(SC_FOGWALL) && rnd() % 100 < 75)
+		return USESKILL_FAIL_LEVEL;
+
+	return -1;
+}
+
+TIMER_FUNC( skill_keep_using ){
+	map_session_data* sd = map_id2sd( id );
+
+	if( sd && sd->skill_keep_using.skill_id ){
+		sd->skill_keep_using.tid = INVALID_TIMER;
+		clif_parse_skill_toid( sd, sd->skill_keep_using.skill_id, sd->skill_keep_using.level, sd->skill_keep_using.target );
+	}
+
+	return 0;
+}
+
+/**
+ * Check & process skill to target on castend. Determines if skill is 'damage' or 'nodamage'
+ * @param tid
+ * @param tick
+ * @param data
+ **/
+TIMER_FUNC(skill_castend_id){
+	block_list *target, *src;
+	map_session_data *sd;
+	mob_data *md;
+	struct unit_data *ud;
+	int32 flag = 0;
+
+	src = map_id2bl(id);
+	if( src == nullptr )
+	{
+		ShowDebug("skill_castend_id: src == nullptr (tid=%d, id=%d)\n", tid, id);
+		return 0;// not found
+	}
+
+	ud = unit_bl2ud(src);
+	if( ud == nullptr )
+	{
+		ShowDebug("skill_castend_id: ud == nullptr (tid=%d, id=%d)\n", tid, id);
+		return 0;// ???
+	}
+
+	sd = BL_CAST(BL_PC,  src);
+	md = BL_CAST(BL_MOB, src);
+	status_change *sc = status_get_sc(src);
+
+	if( src->prev == nullptr ) {
+		ud->skilltimer = INVALID_TIMER;
+		return 0;
+	}
+
+	if(ud->skill_id != SA_CASTCANCEL && ud->skill_id != SO_SPELLFIST) {// otherwise handled in unit_skillcastcancel()
+		if( ud->skilltimer != tid ) {
+			ShowError("skill_castend_id: Timer mismatch %d!=%d!\n", ud->skilltimer, tid);
+			ud->skilltimer = INVALID_TIMER;
+			return 0;
+		}
+
+		if( sd && ud->skilltimer != INVALID_TIMER && (pc_checkskill(sd,SA_FREECAST) > 0 || ud->skill_id == LG_EXEEDBREAK) )
+		{// restore original walk speed
+			ud->skilltimer = INVALID_TIMER;
+			status_calc_bl(sd, { SCB_SPEED, SCB_ASPD });
+		} else
+			ud->skilltimer = INVALID_TIMER;
+	}
+
+	if (ud->skilltarget == id)
+		target = src;
+	else
+		target = map_id2bl(ud->skilltarget);
+
+	// Use a do so that you can break out of it when the skill fails.
+	do {
+		bool fail = false;
+		int8 res = USESKILL_FAIL_LEVEL;
+
+		if (status_isdead(*src))
+			break;
+
+		// These actions happen even if the skill fails except when the caster is already dead
+		unit_set_attackdelay(*src, tick, DELAY_EVENT_CASTEND);
+		if (md != nullptr) {
+			if (md->skill_idx >= 0 && md->db->skill[md->skill_idx]->emotion >= ET_SURPRISE && md->db->skill[md->skill_idx]->emotion < ET_MAX)
+				clif_emotion(*src, static_cast<emotion_type>(md->db->skill[md->skill_idx]->emotion));
+		}
+
+		if (!target || target->prev == nullptr)
+			break;
+
+		if (src->m != target->m)
+			break;
+
+		//These should become skill_castend_pos
+		switch (ud->skill_id) {
+			case WE_CALLPARTNER:
+				if (sd) {
+					map_session_data *p_sd = pc_get_partner(sd);
+
+					if (p_sd != nullptr && (p_sd->state.autotrade || p_sd->status.disable_call)) {
+						fail = true;
+						break;
+					} else
+						clif_callpartner(*sd);
+				}
+				break;
+			case WE_CALLPARENT:
+				if (sd) {
+					map_session_data *f_sd = pc_get_father(sd);
+					map_session_data *m_sd = pc_get_mother(sd);
+
+					if ((f_sd != nullptr && (f_sd->state.autotrade || f_sd->status.disable_call)) || (m_sd != nullptr && (m_sd->state.autotrade || m_sd->status.disable_call))) {
+						fail = true;
+						break;
+					}
+				}
+				break;
+			case WE_CALLBABY:
+				if (sd) {
+					map_session_data *c_sd = pc_get_child(sd);
+
+					if (c_sd != nullptr && (c_sd->state.autotrade || c_sd->status.disable_call)) {
+						fail = true;
+						break;
+					}
+				}
+				break;
+			case AM_RESURRECTHOMUN:
+			case PF_SPIDERWEB:
+				{
+					//Find a random spot to place the skill. [Skotlex]
+					int32 splash = skill_get_splash(ud->skill_id, ud->skill_lv);
+					ud->skillx = target->x + splash;
+					ud->skilly = target->y + splash;
+					if (splash && !map_random_dir(target, &ud->skillx, &ud->skilly)) {
+						ud->skillx = target->x;
+						ud->skilly = target->y;
+					}
+					ud->skilltimer = tid;
+					return skill_castend_pos(tid,tick,id,data);
+				}
+			case GN_WALLOFTHORN:
+			case SC_ESCAPE:
+			case WL_FROSTMISTY:
+			case SU_CN_POWDERING:
+			case AG_RAIN_OF_CRYSTAL:
+				ud->skillx = target->x;
+				ud->skilly = target->y;
+				ud->skilltimer = tid;
+				return skill_castend_pos(tid,tick,id,data);
+		}
+
+		// Failing
+		if (fail || (res = skill_castend_id_check(src, target, ud->skill_id, ud->skill_lv)) >= 0) {
+			if (sd && res != USESKILL_FAIL_MAX)
+				clif_skill_fail( *sd, ud->skill_id, (enum useskill_fail_cause)res );
+			break;
+		}
+
+		//Avoid doing double checks for instant-cast skills.
+		if (tid != INVALID_TIMER && !status_check_skilluse(src, target, ud->skill_id, 1))
+			break;
+
+		if (src != target && battle_config.skill_add_range &&
+			!check_distance_bl(src, target, skill_get_range2(src, ud->skill_id, ud->skill_lv, true) + battle_config.skill_add_range))
+		{
+			if (sd) {
+				clif_skill_fail( *sd, ud->skill_id);

@@ -1,0 +1,500 @@
+	sd->status.head_bottom = sd->status.head_mid = sd->status.head_top = sd->status.robe = 0;
+
+	//Added check to prevent sending the same look on multiple slots ->
+	//causes client to redraw item on top of itself. (suggested by Lupus)
+	// Normal headgear checks
+	if ((i = sd->equip_index[EQI_HEAD_LOW]) != -1 && (id = sd->inventory_data[i])) {
+		if (!(id->equip&(EQP_HEAD_MID|EQP_HEAD_TOP)))
+			sd->status.head_bottom = id->look;
+		else
+			sd->status.head_bottom = 0;
+	}
+	if ((i = sd->equip_index[EQI_HEAD_MID]) != -1 && (id = sd->inventory_data[i])) {
+		if (!(id->equip&(EQP_HEAD_TOP)))
+			sd->status.head_mid = id->look;
+		else
+			sd->status.head_mid = 0;
+	}
+	if ((i = sd->equip_index[EQI_HEAD_TOP]) != -1 && (id = sd->inventory_data[i]))
+		sd->status.head_top = id->look;
+	if ((i = sd->equip_index[EQI_GARMENT]) != -1 && (id = sd->inventory_data[i]))
+		sd->status.robe = id->look;
+
+	// Costumes check
+	if (!map_getmapflag(sd->m, MF_NOCOSTUME) && !sd->status.disable_showcostumes) {
+		if ((i = sd->equip_index[EQI_COSTUME_HEAD_LOW]) != -1 && (id = sd->inventory_data[i])) {
+			if (!(id->equip&(EQP_COSTUME_HEAD_MID|EQP_COSTUME_HEAD_TOP)))
+				sd->status.head_bottom = id->look;
+			else
+				sd->status.head_bottom = 0;
+		}
+		if ((i = sd->equip_index[EQI_COSTUME_HEAD_MID]) != -1 && (id = sd->inventory_data[i])) {
+			if (!(id->equip&EQP_COSTUME_HEAD_TOP))
+				sd->status.head_mid = id->look;
+			else
+				sd->status.head_mid = 0;
+		}
+		if ((i = sd->equip_index[EQI_COSTUME_HEAD_TOP]) != -1 && (id = sd->inventory_data[i]))
+			sd->status.head_top = id->look;
+		if ((i = sd->equip_index[EQI_COSTUME_GARMENT]) != -1 && (id = sd->inventory_data[i]))
+			sd->status.robe = id->look;
+	}
+
+	if (sd->setlook_head_bottom)
+		sd->status.head_bottom = sd->setlook_head_bottom;
+	if (sd->setlook_head_mid)
+		sd->status.head_mid = sd->setlook_head_mid;
+	if (sd->setlook_head_top)
+		sd->status.head_top = sd->setlook_head_top;
+	if (sd->setlook_robe)
+		sd->status.robe = sd->setlook_robe;
+
+	if (head_low != sd->status.head_bottom)
+		clif_changelook(sd, LOOK_HEAD_BOTTOM, sd->status.head_bottom);
+	if (head_mid != sd->status.head_mid)
+		clif_changelook(sd, LOOK_HEAD_MID, sd->status.head_mid);
+	if (head_top != sd->status.head_top)
+		clif_changelook(sd, LOOK_HEAD_TOP, sd->status.head_top);
+	if (robe != sd->status.robe)
+		clif_changelook(sd, LOOK_ROBE, sd->status.robe);
+}
+
+std::shared_ptr<s_attendance_period> pc_attendance_period(){
+	uint32 date = date_get(DT_YYYYMMDD);
+
+	for( std::pair<const uint32,std::shared_ptr<s_attendance_period>>& pair : attendance_db ){
+		std::shared_ptr<s_attendance_period> period = pair.second;
+
+		if( period->start <= date && period->end >= date ){
+			return period;
+		}
+	}
+
+	return nullptr;
+}
+
+bool pc_attendance_enabled(){
+	// Check if the attendance feature is disabled
+	if( !battle_config.feature_attendance ){
+		return false;
+	}
+
+	// Check if there is a running attendance period
+	return pc_attendance_period() != nullptr;
+}
+
+static inline bool pc_attendance_rewarded_today( map_session_data* sd ){
+	return pc_readreg2( sd, ATTENDANCE_DATE_VAR ) >= date_get(DT_YYYYMMDD);
+}
+
+int32 pc_attendance_counter( map_session_data* sd ){
+	std::shared_ptr<s_attendance_period> period = pc_attendance_period();
+
+	// No running attendance period
+	if( period == nullptr ){
+		return 0;
+	}
+
+	// Get the counter for the current period
+	int32 counter = static_cast<int32>(pc_readreg2( sd, ATTENDANCE_COUNT_VAR ));
+
+	// Check if we have a remaining counter from a previous period
+	if( counter > 0 && pc_readreg2( sd, ATTENDANCE_DATE_VAR ) < period->start ){
+		// Reset the counter to zero
+		pc_setreg2( sd, ATTENDANCE_COUNT_VAR, 0 );
+
+		return 0;
+	}
+
+	return 10 * counter + ( ( pc_attendance_rewarded_today(sd) ) ? 1 : 0 );
+}
+
+void pc_attendance_claim_reward( map_session_data* sd ){
+	// If the user's group does not have the permission
+	if( !pc_has_permission( sd, PC_PERM_ATTENDANCE ) ){
+		return;
+	}
+
+	// Check if the attendance feature is disabled
+	if( !pc_attendance_enabled() ){
+		return;
+	}
+
+	// Check if the user already got his reward today
+	if( pc_attendance_rewarded_today( sd ) ){
+		return;
+	}
+
+	int32 attendance_counter = static_cast<int32>(pc_readreg2( sd, ATTENDANCE_COUNT_VAR ));
+
+	attendance_counter += 1;
+
+	std::shared_ptr<s_attendance_period> period = pc_attendance_period();
+
+	if( period == nullptr ){
+		return;
+	}
+
+	if( period->rewards.size() < attendance_counter ){
+		return;
+	}
+
+	pc_setreg2( sd, ATTENDANCE_DATE_VAR, date_get(DT_YYYYMMDD) );
+	pc_setreg2( sd, ATTENDANCE_COUNT_VAR, attendance_counter );
+
+	if( save_settings&CHARSAVE_ATTENDANCE )
+		chrif_save(sd, CSAVE_NORMAL);
+
+	std::shared_ptr<s_attendance_reward> reward = period->rewards[attendance_counter - 1];
+
+	struct mail_message msg;
+
+	memset( &msg, 0, sizeof( struct mail_message ) );
+
+	msg.dest_id = sd->status.char_id;
+	safestrncpy( msg.send_name, msg_txt( sd, 788 ), NAME_LENGTH );
+	safesnprintf( msg.title, MAIL_TITLE_LENGTH, msg_txt( sd, 789 ), attendance_counter );
+	safesnprintf( msg.body, MAIL_BODY_LENGTH, msg_txt( sd, 790 ), attendance_counter );
+
+	msg.item[0].nameid = reward->item_id;
+	msg.item[0].amount = reward->amount;
+	msg.item[0].identify = 1;
+
+	msg.status = MAIL_NEW;
+	msg.type = MAIL_INBOX_NORMAL;
+	msg.timestamp = time(nullptr);
+
+	intif_Mail_send(0, &msg);
+
+	clif_attendence_response( sd, attendance_counter );
+}
+
+/**
+ * Send a player to jail and determine the location to send in jail.
+ * @param sd: Player data
+ * @param duration: Duration in minutes (default INT_MAX = infinite)
+ */
+void pc_jail(map_session_data &sd, int32 duration) {
+	uint16 m_index = mapindex_name2id(MAP_JAIL);
+	int16 x, y;
+
+	switch (rnd() % 2) { // Jail Locations
+		case 0: // Jail #1
+			x = 49;
+			y = 75;
+			break;
+		default: // Default Jail
+			x = 24;
+			y = 75;
+			break;
+	}
+
+	duration = i32max(0, duration); // Can't be less than 0 seconds.
+
+	// If duration > 0 then triggered via jailfor which checks every minute.
+	// If duration == INT_MAX then triggered via jail for infinite duration.
+	// If duration == 0 then triggered via unjail and end status.
+	if (duration > 0)
+		sc_start4(nullptr, &sd, SC_JAILED, 100, duration, m_index, x, y, 60000);
+	else
+		status_change_end(&sd, SC_JAILED);
+}
+
+/**
+ * Determine the punishment type when failing macro checks.
+ * @param sd: Player data
+ * @param stype: Macro detection status type (for banning)
+ */
+static void pc_macro_punishment(map_session_data &sd, e_macro_detect_status stype) {
+	int32 duration = 0;
+
+	// Determine if there's a unique duration
+	if (battle_config.macro_detection_punishment_time > 0) {
+		char time[13];
+
+		safesnprintf(time, 13, "+%dnm", battle_config.macro_detection_punishment_time);
+		duration = static_cast<int32>(solve_time(time));
+	}
+
+	// Delete the timer
+	if (sd.macro_detect.timer != INVALID_TIMER)
+		delete_timer(sd.macro_detect.timer, pc_macro_detector_timeout);
+
+	int32 reporter_aid = sd.macro_detect.reporter_aid;
+	// Clear the macro detect data
+	sd.macro_detect = {};
+	sd.macro_detect.timer = INVALID_TIMER;
+
+	// Unblock all actions for the player
+	sd.state.block_action &= ~PCBLOCK_ALL;
+	sd.state.block_action &= ~PCBLOCK_IMMUNE;
+
+	if (battle_config.macro_detection_punishment == 0) { // Ban
+		clif_macro_detector_status(sd, stype);
+		chrif_req_login_operation(reporter_aid, sd.status.name, (duration == 0 ? CHRIF_OP_LOGIN_BLOCK : CHRIF_OP_LOGIN_BAN), duration, 0, 0);
+	} else { // Jail
+		// Send success to close the window without closing the client
+		clif_macro_detector_status(sd, MCD_GOOD);
+
+		pc_jail(sd, (duration == 0 ? INT_MAX : duration / 60));
+	}
+}
+
+/**
+ * Save a captcha image to memory via /macro_register.
+ * @param sd: Player data
+ * @param image_size: Captcha image size
+ * @param captcha_answer: Answer to captcha
+ */
+void pc_macro_captcha_register(map_session_data &sd, uint16 image_size, const char captcha_answer[CAPTCHA_ANSWER_SIZE_MAX]) {
+	nullpo_retv(captcha_answer);
+
+	sd.captcha_upload.cd = nullptr;
+	sd.captcha_upload.upload_size = 0;
+
+	if (strlen(captcha_answer) < CAPTCHA_ANSWER_SIZE_MIN || image_size == 0 || image_size > CAPTCHA_BMP_SIZE) {
+		clif_captcha_upload_request(sd); // Notify client of failure.
+		return;
+	}
+
+	std::shared_ptr<s_captcha_data> cd = std::make_shared<s_captcha_data>();
+	sd.captcha_upload.cd = cd;
+
+	cd->image_size = image_size;
+	safestrncpy(cd->captcha_answer, captcha_answer, sizeof(cd->captcha_answer));
+	memset(cd->image_data, 0, sizeof(cd->image_data));
+
+	// Request the image data from the client.
+	clif_captcha_upload_request(sd);
+}
+
+/**
+ * Save captcha image to server.
+ * @param sd: Player data
+ * @param captcha_key: Captcha ID
+ * @param upload_size: Captcha size
+ * @param upload_data: Image data
+ */
+void pc_macro_captcha_register_upload(map_session_data &sd, uint16 upload_size, const char *upload_data) {
+	nullpo_retv(upload_data);
+
+	memcpy(&sd.captcha_upload.cd->image_data[sd.captcha_upload.upload_size], upload_data, upload_size);
+	sd.captcha_upload.upload_size += upload_size;
+
+	// Notify that the image finished uploading.
+	if (sd.captcha_upload.upload_size == sd.captcha_upload.cd->image_size) {
+		// Tell the client that the upload was finished
+		clif_captcha_upload_end(sd);
+
+		// Look for a free key
+		uint16 index;
+
+		for (index = 0; index < UINT16_MAX; index++) {
+			if (!captcha_db.exists(index)) {
+				break;
+			}
+		}
+
+		if (index == UINT16_MAX) {
+			// no free key found...
+			sd.captcha_upload.cd = nullptr;
+			sd.captcha_upload.upload_size = 0;
+			return;
+		}
+
+		captcha_db.put(index, sd.captcha_upload.cd);
+		sd.captcha_upload.cd = nullptr;
+		sd.captcha_upload.upload_size = 0;
+		
+		// TODO: write YAML and BMP file?
+	}
+}
+
+/**
+ * Timer attached to target player with attempts to confirm captcha.
+ */
+TIMER_FUNC(pc_macro_detector_timeout) {
+	map_session_data *sd = map_id2sd(id);
+
+	nullpo_ret(sd);
+
+	// Remove the current timer
+	sd->macro_detect.timer = INVALID_TIMER;
+
+	// Deduct an answering attempt
+	sd->macro_detect.retry -= 1;
+
+	if (sd->macro_detect.retry == 0) {
+		// All attempts have been exhausted, punish the user
+		pc_macro_punishment(*sd, MCD_TIMEOUT);
+	} else {
+		// Update the client
+		clif_macro_detector_request_show(*sd);
+
+		// Start a new timer
+		sd->macro_detect.timer = add_timer(gettick() + battle_config.macro_detection_timeout, pc_macro_detector_timeout, sd->id, 0);
+	}
+	return 0;
+}
+
+/**
+ * Check player's captcha answer.
+ * @param sd: Player data
+ * @param captcha_answer: Captcha answer entered by player
+ */
+void pc_macro_detector_process_answer(map_session_data &sd, const char captcha_answer[CAPTCHA_ANSWER_SIZE_MAX]) {
+	nullpo_retv(captcha_answer);
+
+	const std::shared_ptr<s_captcha_data> cd = sd.macro_detect.cd;
+
+	// Has no captcha request
+	if (cd == nullptr) {
+		return;
+	}
+
+	// Correct answer
+	if (strcmp(captcha_answer, cd->captcha_answer) == 0) {
+		// Delete the timer
+		delete_timer(sd.macro_detect.timer, pc_macro_detector_timeout);
+
+		// Clear the macro detect data
+		sd.macro_detect = {};
+		sd.macro_detect.timer = INVALID_TIMER;
+
+		// Unblock all actions for the player
+		sd.state.block_action &= ~PCBLOCK_ALL;
+		sd.state.block_action &= ~PCBLOCK_IMMUNE;
+
+		// Assign temporary macro variable to check failures
+		pc_setreg(&sd, add_str("@captcha_retries"), battle_config.macro_detection_retry - sd.macro_detect.retry);
+
+		// Grant bonuses via script
+		if( cd->bonus_script != nullptr ){
+			run_script(cd->bonus_script, 0, sd.id, fake_nd->id);
+		}
+
+		// Notify the client
+		clif_macro_detector_status(sd, MCD_GOOD);
+	} else {
+		// Deduct an answering attempt
+		sd.macro_detect.retry -= 1;
+
+		// All attempts have been exhausted, punish the user
+		if (sd.macro_detect.retry <= 0) {
+			pc_macro_punishment(sd, MCD_INCORRECT);
+			return;
+		}
+
+		// Incorrect response, update the client
+		clif_macro_detector_request_show(sd);
+
+		// Reset the timer
+		addtick_timer(sd.macro_detect.timer, gettick() + battle_config.macro_detection_timeout);
+	}
+}
+
+/**
+ * Determine if a player tries to log out during a captcha check.
+ * @param sd: Player data
+ */
+void pc_macro_detector_disconnect(map_session_data &sd) {
+	// Delete the timeout timer
+	if (sd.macro_detect.timer != INVALID_TIMER) {
+		delete_timer(sd.macro_detect.timer, pc_macro_detector_timeout);
+		sd.macro_detect.timer = INVALID_TIMER;
+	}
+
+	// If the player disconnects before clearing the challenge the player is punished.
+	if (sd.macro_detect.retry != 0)
+		pc_macro_punishment(sd, MCD_TIMEOUT);
+}
+
+/**
+ * Save a list of players from an area select via /macro_detector.
+ */
+int32 pc_macro_reporter_area_select_sub(block_list *bl, va_list ap) {
+	nullpo_retr(0, bl);
+
+	if (bl->type != BL_PC)
+		return 0;
+
+	std::vector<uint32> *aid_list = va_arg(ap, std::vector<uint32> *);
+
+	nullpo_ret(aid_list);
+
+	aid_list->push_back(bl->id);
+	return 0;
+}
+
+/**
+ * Area select via /macro_detector.
+ * @param sd: Player data
+ * @param x: X location
+ * @param y: Y location
+ * @param radius: Area
+ */
+void pc_macro_reporter_area_select(map_session_data &sd, const int16 x, const int16 y, const int8 radius) {
+	std::vector<uint32> aid_list;
+
+	map_foreachinarea(pc_macro_reporter_area_select_sub, sd.m, x - radius, y - radius, x + radius, y + radius, BL_PC, &aid_list);
+
+	clif_macro_reporter_select(sd, aid_list);
+}
+
+/**
+ * Send out captcha check to player.
+ * @param sd: Target player data
+ * @param reporter_account_id: Account ID of reporter
+ */
+void pc_macro_reporter_process(map_session_data &sd, int32 reporter_account_id) {
+	if (captcha_db.empty())
+		return;
+
+	// Pick a random image from the database.
+	const std::shared_ptr<s_captcha_data> cd = captcha_db.random();
+
+	// Set macro detection data.
+	sd.macro_detect.cd = cd;
+	sd.macro_detect.reporter_aid = reporter_account_id;
+	sd.macro_detect.retry = battle_config.macro_detection_retry;
+
+	// Block all actions for the target player.
+	sd.state.block_action |= (PCBLOCK_ALL | PCBLOCK_IMMUNE);
+
+	// Open macro detect client side.
+	clif_macro_detector_request(sd);
+
+	// Start the timeout timer.
+	sd.macro_detect.timer = add_timer(gettick() + battle_config.macro_detection_timeout, pc_macro_detector_timeout, sd.id, 0);
+}
+
+/**
+ * Parse a BMP image to memory.
+ * @param filepath: Image file location
+ * @param cd: Captcha data
+ */
+bool pc_macro_read_captcha_db_loadbmp(const std::string &filepath, std::shared_ptr<s_captcha_data> cd) {
+	if (cd == nullptr)
+		return false;
+
+	FILE *fp = fopen(filepath.c_str(), "rb");
+
+	if (fp == nullptr) {
+		ShowError("%s: Failed to open file \"%s\"\n", __func__, filepath.c_str());
+		return false;
+	}
+
+	// Load the file data and verify magic
+	char bmp_data[CAPTCHA_BMP_SIZE];
+
+	if (fread(bmp_data, CAPTCHA_BMP_SIZE, 1, fp) != 1) {
+		ShowError("%s: Failed to read data from \"%s\"\n", __func__, filepath.c_str());
+		fclose(fp);
+		return false;
+	}
+
+	fclose(fp);
+
+	if (bmp_data[0] != 'B' || bmp_data[1] != 'M') {
+		ShowError("%s: Invalid BMP file header given at \"%s\"\n", __func__, filepath.c_str());
+		return false;

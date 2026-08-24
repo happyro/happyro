@@ -1,0 +1,500 @@
+ *------------------------------------------*/
+ACMD_FUNC(speed)
+{
+	int16 speed;
+
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%6hd", &speed) < 1) {
+		sprintf(atcmd_output, msg_txt(sd,918), MIN_WALK_SPEED, MAX_WALK_SPEED); // Please enter a speed value (usage: @speed <%d-%d>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	sd->state.permanent_speed = 0; // Remove lock when set back to default speed.
+
+	if (speed < 0)
+		sd->base_status.speed = DEFAULT_WALK_SPEED;
+	else
+		sd->base_status.speed = cap_value(speed, MIN_WALK_SPEED, MAX_WALK_SPEED);
+
+	if (sd->base_status.speed != DEFAULT_WALK_SPEED) {
+		sd->state.permanent_speed = 1; // Set lock when set to non-default speed.
+		clif_displaymessage(fd, msg_txt(sd,8)); // Speed changed.
+	} else
+		clif_displaymessage(fd, msg_txt(sd,389)); // Speed returned to normal.
+
+	status_calc_bl(sd, { SCB_SPEED });
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(storage)
+{
+	nullpo_retr(-1, sd);
+
+	if (sd->npc_id || sd->state.vending || sd->state.buyingstore || sd->state.trading || sd->state.storage_flag)
+		return -1;
+
+	if (storage_storageopen(sd) == 1)
+	{	//Already open.
+		clif_displaymessage(fd, msg_txt(sd,250)); // You have already opened your storage. Close it first.
+		return -1;
+	}
+
+	clif_displaymessage(fd, msg_txt(sd,919)); // Storage opened.
+
+	return 0;
+}
+
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(guildstorage)
+{
+	nullpo_retr(-1, sd);
+
+	if (sd->npc_id || sd->state.vending || sd->state.buyingstore || sd->state.trading)
+		return -1;
+
+	switch (storage_guild_storageopen(sd)) {
+		case GSTORAGE_OPEN:
+			clif_displaymessage(fd, msg_txt(sd, 920)); // Guild storage opened.
+			break;
+		case GSTORAGE_STORAGE_ALREADY_OPEN:
+			clif_displaymessage(fd, msg_txt(sd, 250)); // You have already opened your storage. Close it first.
+			return -1;
+		case GSTORAGE_ALREADY_OPEN:
+			clif_displaymessage(fd, msg_txt(sd, 251)); // You have already opened your guild storage. Close it first.
+			return -1;
+		case GSTORAGE_NO_GUILD:
+			clif_displaymessage(fd, msg_txt(sd, 252)); // You are not in a guild.
+			return -1;
+		case GSTORAGE_NO_STORAGE:
+			clif_displaymessage(fd, msg_txt(sd, 786)); // The guild does not have a guild storage.
+			return -1;
+		case GSTORAGE_NO_PERMISSION:
+			clif_displaymessage(fd, msg_txt(sd, 787)); // You do not have permission to use the guild storage.
+			return -1;
+	}
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(option)
+{
+	int32 param1 = 0, param2 = 0, param3 = 0;
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message || sscanf(message, "%11d %11d %11d", &param1, &param2, &param3) < 1 || param1 < 0 || param2 < 0 || param3 < 0)
+	{// failed to match the parameters so inform the user of the options
+		const char* text;
+
+		// attempt to find the setting information for this command
+		text = atcommand_help_string( command );
+
+		// notify the user of the requirement to enter an option
+		clif_displaymessage(fd, msg_txt(sd,921)); // Please enter at least one option.
+
+		if( text )
+		{// send the help text associated with this command
+			clif_displaymessage( fd, text );
+		}
+
+		return -1;
+	}
+
+	sd->sc.opt1 = param1;
+	sd->sc.opt2 = param2;
+	pc_setoption(sd, param3);
+
+	clif_displaymessage(fd, msg_txt(sd,9)); // Options changed.
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(hide)
+{
+	nullpo_retr(-1, sd);
+	if (pc_isinvisible(sd)) {
+		sd->sc.option &= ~OPTION_INVISIBLE;
+		if (sd->disguise)
+			status_set_viewdata(sd, sd->disguise);
+		else
+			status_set_viewdata(sd, sd->status.class_);
+		clif_displaymessage(fd, msg_txt(sd,10)); // Invisible: Off
+
+		// increment the number of pvp players on the map
+		map_getmapdata(sd->m)->users_pvp++;
+
+		if( !battle_config.pk_mode && map_getmapflag(sd->m, MF_PVP) && !map_getmapflag(sd->m, MF_PVP_NOCALCRANK) )
+		{// register the player for ranking calculations
+			sd->pvp_timer = add_timer( gettick() + 200, pc_calc_pvprank_timer, sd->id, 0 );
+		}
+		//bugreport:2266
+		map_foreachinmovearea(clif_insight, sd, AREA_SIZE, sd->x, sd->y, BL_ALL, sd);
+	} else {
+		sd->sc.option |= OPTION_INVISIBLE;
+		sd->vd.look[LOOK_BASE] = JT_INVISIBLE;
+		clif_displaymessage(fd, msg_txt(sd,11)); // Invisible: On
+
+		// decrement the number of pvp players on the map
+		map_getmapdata(sd->m)->users_pvp--;
+
+		if( map_getmapflag(sd->m, MF_PVP) && !map_getmapflag(sd->m, MF_PVP_NOCALCRANK) && sd->pvp_timer != INVALID_TIMER )
+		{// unregister the player for ranking
+			delete_timer( sd->pvp_timer, pc_calc_pvprank_timer );
+			sd->pvp_timer = INVALID_TIMER;
+		}
+	}
+	clif_changeoption(sd);
+
+	return 0;
+}
+
+ACMD_FUNC(resetcooltime)
+{
+	nullpo_retr(-1, sd);
+
+	if (!sd->scd.empty()) {
+		for (const auto &entry : sd->scd) {
+			sprintf( atcmd_output, msg_txt( sd, 1537 ), skill_db.find( entry.first )->name ); // Found skill '%s', unblocking...
+			clif_displaymessage( sd->fd, atcmd_output );
+		}
+
+		skill_blockpc_clear(*sd);
+	}
+
+	if( sd->hd != nullptr && hom_is_active( sd->hd ) ){
+		for (const auto &entry : sd->hd->scd) {
+			sprintf( atcmd_output, msg_txt( sd, 1537 ), skill_db.find( entry.first )->name ); // Found skill '%s', unblocking...
+			clif_displaymessage( sd->fd, atcmd_output );
+		}
+
+		skill_blockhomun_clear(*sd->hd);
+	}
+
+	if( sd->md != nullptr ){
+		for( const auto &entry : sd->md->scd ){
+			sprintf( atcmd_output, msg_txt( sd, 1537 ), skill_db.find( entry.first )->name ); // Found skill '%s', unblocking...
+			clif_displaymessage( sd->fd, atcmd_output );
+		}
+
+		skill_blockmerc_clear(*sd->md);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * Changes a character's class
+ *------------------------------------------*/
+ACMD_FUNC(jobchange)
+{
+	int32 job = 0, upper = 0;
+	const char* text;
+	nullpo_retr(-1, sd);
+
+    if (!message || !*message || sscanf(message, "%11d %11d", &job, &upper) < 1) {
+		int32 i;
+		bool found = false;
+
+		upper = 0;
+
+		// Normal Jobs
+		for( i = JOB_NOVICE; i < JOB_MAX_BASIC && !found; i++ ) {
+			if (strncmpi(message, job_name(i), 16) == 0) {
+				job = i;
+				found = true;
+			}
+		}
+
+		// High Jobs, Babys, Third, and Fourth
+		for( i = JOB_NOVICE_HIGH; i < JOB_MAX && !found; i++ ) {
+			if (strncmpi(message, job_name(i), 16) == 0) {
+				job = i;
+				found = true;
+			}
+		}
+
+		if (!found) {
+			text = atcommand_help_string(command);
+			if (text)
+				clif_displaymessage(fd, text);
+			return -1;
+		}
+	}
+
+	if (job == JOB_KNIGHT2 || job == JOB_CRUSADER2 || job == JOB_WEDDING || job == JOB_XMAS || job == JOB_SUMMER || job == JOB_HANBOK || job == JOB_OKTOBERFEST
+		|| job == JOB_LORD_KNIGHT2 || job == JOB_PALADIN2 || job == JOB_BABY_KNIGHT2 || job == JOB_BABY_CRUSADER2 || job == JOB_STAR_GLADIATOR2
+		|| (job >= JOB_RUNE_KNIGHT2 && job <= JOB_MECHANIC_T2) || (job >= JOB_BABY_RUNE_KNIGHT2 && job <= JOB_BABY_MECHANIC2) || job == JOB_BABY_STAR_GLADIATOR2
+		|| job == JOB_STAR_EMPEROR2 || job == JOB_BABY_STAR_EMPEROR2 || job == JOB_SUMMER2
+		|| (job >= JOB_WINDHAWK2 && job <= JOB_IMPERIAL_GUARD2) || job == JOB_SKY_EMPEROR2)
+	{ // Deny direct transformation into dummy jobs
+		clif_displaymessage(fd, msg_txt(sd,923)); //"You can not change to this job by command."
+		return 0;
+	}
+
+	if (pcdb_checkid(job))
+	{
+		if (pc_jobchange(sd, job, upper))
+			clif_displaymessage(fd, msg_txt(sd,12)); // Your job has been changed.
+		else {
+			clif_displaymessage(fd, msg_txt(sd,155)); // You are unable to change your job.
+			return -1;
+		}
+	} else {
+		text = atcommand_help_string(command);
+		if (text)
+			clif_displaymessage(fd, text);
+		return -1;
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(kill)
+{
+	nullpo_retr(-1, sd);
+	status_kill(sd);
+	clif_displaymessage(sd->fd, msg_txt(sd,13)); // A pity! You've died.
+	if (fd != sd->fd)
+		clif_displaymessage(fd, msg_txt(sd,14)); // Character killed.
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(alive)
+{
+	nullpo_retr(-1, sd);
+	if (!status_revive(sd, 100, 100))
+	{
+		clif_displaymessage(fd, msg_txt(sd,667)); // You're not dead.
+		return -1;
+	}
+	clif_skill_nodamage(sd,*sd,ALL_RESURRECTION,4);
+	clif_displaymessage(fd, msg_txt(sd,16)); // You've been revived! It's a miracle!
+	return 0;
+}
+
+ACMD_FUNC(kami){
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,980)); // Please enter a message (usage: @kami <message>).
+		return -1;
+	}
+
+	sscanf(message, "%255[^\n]", atcmd_output);
+
+	intif_broadcast(atcmd_output, strlen(atcmd_output) + 1, BC_DEFAULT);
+
+	return 0;
+}
+
+ACMD_FUNC(lkami){
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,980)); // Please enter a message (usage: @kami <message>).
+		return -1;
+	}
+
+	sscanf(message, "%255[^\n]", atcmd_output);
+
+	clif_broadcast(sd, atcmd_output, strlen(atcmd_output) + 1, BC_DEFAULT, ALL_SAMEMAP);
+
+	return 0;
+}
+
+ACMD_FUNC(kamib){
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,980)); // Please enter a message (usage: @kami <message>).
+		return -1;
+	}
+
+	sscanf(message, "%255[^\n]", atcmd_output);
+
+	intif_broadcast(atcmd_output, strlen(atcmd_output) + 1, BC_BLUE);
+
+	return 0;
+}
+
+ACMD_FUNC(kamic){
+	unsigned long color=0;
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if(!message || !*message || (sscanf(message, "%20lx %199[^\n]", &color, atcmd_output) < 2)) {
+		clif_displaymessage(fd, msg_txt(sd,981)); // Please enter color and message (usage: @kamic <color> <message>).
+		return -1;
+	}
+
+	if(color > 0xFFFFFF) {
+		clif_displaymessage(fd, msg_txt(sd,982)); // Invalid color.
+		return -1;
+	}
+
+	intif_broadcast2(atcmd_output, strlen(atcmd_output) + 1, color, 0x190, 12, 0, 0);
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+ACMD_FUNC(heal)
+{
+	int32 hp = 0, sp = 0; // [Valaris] thanks to fov
+	nullpo_retr(-1, sd);
+
+	sscanf(message, "%11d %11d", &hp, &sp);
+
+	// some overflow checks
+	if( hp == INT_MIN ) hp++;
+	if( sp == INT_MIN ) sp++;
+
+	if ( hp == 0 && sp == 0 ) {
+		if (!status_percent_heal(sd, 100, 100))
+			clif_displaymessage(fd, msg_txt(sd,157)); // HP and SP have already been recovered.
+		else
+			clif_displaymessage(fd, msg_txt(sd,17)); // HP, SP recovered.
+		return 0;
+	}
+
+	if ( hp > 0 && sp >= 0 ) {
+		if(!status_heal(sd, hp, sp, 0))
+			clif_displaymessage(fd, msg_txt(sd,157)); // HP and SP are already with the good value.
+		else
+			clif_displaymessage(fd, msg_txt(sd,17)); // HP, SP recovered.
+		return 0;
+	}
+
+	if ( hp < 0 && sp <= 0 ) {
+		status_damage(nullptr, sd, -hp, -sp, 0, 0, 0);
+		clif_damage(*sd, *sd, gettick(), 0, 0, -hp, 0, DMG_ENDURE, 0, false);
+		clif_displaymessage(fd, msg_txt(sd,156)); // HP or/and SP modified.
+		return 0;
+	}
+
+	//Opposing signs.
+	if ( hp ) {
+		if (hp > 0)
+			status_heal(sd, hp, 0, 0);
+		else {
+			status_damage(nullptr, sd, -hp, 0, 0, 0, 0);
+			clif_damage(*sd, *sd, gettick(), 0, 0, -hp, 0, DMG_ENDURE, 0, false);
+		}
+	}
+
+	if ( sp ) {
+		if (sp > 0)
+			status_heal(sd, 0, sp, 0);
+		else
+			status_damage(nullptr, sd, 0, -sp, 0, 0, 0);
+	}
+
+	clif_displaymessage(fd, msg_txt(sd,156)); // HP or/and SP modified.
+	return 0;
+}
+
+/*==========================================
+* Recover's AP and allows exact adjustments. [Rytech]
+*------------------------------------------*/
+ACMD_FUNC(healap)
+{
+	int32 ap = 0;
+	nullpo_retr(-1, sd);
+
+	sscanf(message, "%11d", &ap);
+
+	// Overflow check.
+	if (ap == INT_MIN) ap++;
+
+	if (ap == 0) {
+		if (!status_percent_heal(sd, 0, 0, 100))
+			clif_displaymessage(fd, msg_txt(sd, 823));// AP have already been recovered.
+		else
+			clif_displaymessage(fd, msg_txt(sd, 821));// AP recovered.
+		return 0;
+	}else if (ap > 0) {
+		if (!status_heal(sd, 0, 0, ap, 0))
+			clif_displaymessage(fd, msg_txt(sd, 823));// AP have already been recovered.
+		else
+			clif_displaymessage(fd, msg_txt(sd, 821));// AP recovered.
+		return 0;
+	}else{
+		status_damage(nullptr, sd, 0, 0, -ap, 0, 0, 0);
+		clif_displaymessage(fd, msg_txt(sd, 822));// AP modified.
+		return 0;
+	}
+}
+
+/*==========================================
+ * @item command (usage: @item <itemdid1:itemid2:itemname:..> <quantity>) (modified by [Yor] for pet_egg)
+ * @itembound command (usage: @itembound <name/id_of_item> <quantity> <bound_type>)
+ *------------------------------------------*/
+ACMD_FUNC(item)
+{
+	char item_name[100];
+	int32 number = 0, bound = BOUND_NONE;
+	char flag = 0;
+	char *itemlist;
+
+	nullpo_retr(-1, sd);
+	memset(item_name, '\0', sizeof(item_name));
+
+	parent_cmd = atcommand_alias_db.checkAlias(command+1);
+
+	if (!strcmpi(parent_cmd,"itembound")) {
+		if (!message || !*message || (
+			sscanf(message, "\"%99[^\"]\" %11d %11d", item_name, &number, &bound) < 3 &&
+			sscanf(message, "%99s %11d %11d", item_name, &number, &bound) < 3))
+		{
+			clif_displaymessage(fd, msg_txt(sd,295)); // Please enter an item name or ID (usage: @item <item name/ID> <quantity> <bound_type>).
+			clif_displaymessage(fd, msg_txt(sd,298)); // Invalid bound type
+			return -1;
+		}
+		if( bound <= BOUND_NONE || bound >= BOUND_MAX ) {
+			clif_displaymessage(fd, msg_txt(sd,298)); // Invalid bound type
+			return -1;
+		}
+	} else if (!message || !*message || (
+		sscanf(message, "\"%99[^\"]\" %11d", item_name, &number) < 1 &&
+		sscanf(message, "%99s %11d", item_name, &number) < 1
+	)) {
+		clif_displaymessage(fd, msg_txt(sd,983)); // Please enter an item name or ID (usage: @item <item name/ID> <quantity>).
+		return -1;
+	}
+
+	std::vector<std::shared_ptr<item_data>> items;
+	itemlist = strtok(item_name, ":");
+
+	while( itemlist != nullptr ){
+		std::shared_ptr<item_data> item = item_db.searchname( itemlist );
+

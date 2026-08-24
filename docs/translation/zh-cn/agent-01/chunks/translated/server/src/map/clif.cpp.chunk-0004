@@ -1,0 +1,500 @@
+	p.num = sd.servantball;
+
+	if( target == nullptr ){
+		target = &sd;
+	}
+
+	clif_send( &p, sizeof( p ), target, send_target );
+}
+
+void clif_abyssball( const map_session_data& sd, const block_list* target, enum send_target send_target ){
+	PACKET_ZC_SPIRITS p = {};
+
+	p.PacketType = HEADER_ZC_SPIRITS;
+	p.AID = sd.id;
+	p.num = sd.abyssball;
+
+	if( target == nullptr ){
+		target = &sd;
+	}
+
+	clif_send( &p, sizeof( p ), target, send_target );
+}
+
+/// Notifies the client of an object's Millenium Shields.
+static void clif_millenniumshield_single( map_session_data& sd, map_session_data& tsd ){
+#if PACKETVER >= 20081126
+	status_change_entry* sce = sd.sc.getSCE( SC_MILLENNIUMSHIELD );
+
+	if( sce == nullptr ){
+		return;
+	}
+
+	PACKET_ZC_MILLENNIUMSHIELD packet{};
+
+	packet.packetType = HEADER_ZC_MILLENNIUMSHIELD;
+	packet.aid = sd.id;
+	packet.num = sce->val2;
+	packet.state = 0;
+
+	clif_send( &packet, sizeof( packet ), &tsd, SELF );
+#endif
+}
+
+/*==========================================
+ * Kagerou/Oboro amulet spirit
+ *------------------------------------------*/
+static void clif_spiritcharm_single( const map_session_data& sd, const map_session_data& tsd ){
+#if PACKETVER >= 20111102
+	if( sd.spiritcharm_type == CHARM_TYPE_NONE ){
+		return;
+	}
+
+	if( sd.spiritcharm <= 0 ){
+		return;
+	}
+
+	PACKET_ZC_SPIRITS_ATTRIBUTE packet{};
+
+	packet.packetType = HEADER_ZC_SPIRITS_ATTRIBUTE;
+	packet.aid = sd.id;
+	packet.spiritsType = static_cast<decltype(packet.spiritsType)>(sd.spiritcharm_type);
+	packet.num = static_cast<decltype(packet.num)>(sd.spiritcharm);
+
+	clif_send( &packet, sizeof( packet ), &tsd, SELF );
+#endif
+}
+
+/*==========================================
+ * Enchanting Shadow / Shadow Scar Spirit
+ *------------------------------------------*/
+void clif_enchantingshadow_spirit(const unit_data &ud) {
+#if PACKETVER_MAIN_NUM >= 20191120 || PACKETVER_RE_NUM >= 20191120 || PACKETVER_ZERO_NUM >= 20191127
+	PACKET_ZC_TARGET_SPIRITS p = {};
+
+	p.packetType = HEADER_ZC_TARGET_SPIRITS;
+	p.GID = ud.bl->id;
+	p.unknown_val = 0;
+	p.amount = static_cast<uint16>(ud.shadow_scar_timer.size());
+
+	clif_send(&p, sizeof(p), ud.bl, AREA);
+#endif
+}
+
+/*==========================================
+ * Run when player changes map / refreshes
+ * Tells its client to display all weather settings being used by this map
+ *------------------------------------------*/
+static void clif_weather_check(map_session_data *sd)
+{
+	int16 m = sd->m;
+	int32 fd = sd->fd;
+
+	if (map_getmapflag(m, MF_SNOW)
+		|| map_getmapflag(m, MF_CLOUDS)
+		|| map_getmapflag(m, MF_FOG)
+		|| map_getmapflag(m, MF_FIREWORKS)
+		|| map_getmapflag(m, MF_SAKURA)
+		|| map_getmapflag(m, MF_LEAVES)
+		|| map_getmapflag(m, MF_CLOUDS2))
+	{
+		if (map_getmapflag(m, MF_SNOW))
+			clif_specialeffect_single(sd, EF_SNOW, fd);
+		if (map_getmapflag(m, MF_CLOUDS))
+			clif_specialeffect_single(sd, EF_CLOUD3, fd);
+		if (map_getmapflag(m, MF_CLOUDS2))
+			clif_specialeffect_single(sd, EF_CLOUD5, fd);
+		if (map_getmapflag(m, MF_FOG))
+			clif_specialeffect_single(sd, EF_CLOUD4, fd);
+		if (map_getmapflag(m, MF_FIREWORKS)) {
+			clif_specialeffect_single(sd, EF_POKJUK, fd);
+			clif_specialeffect_single(sd, EF_THROWITEM2, fd);
+			clif_specialeffect_single(sd, EF_POKJUK_SOUND, fd);
+		}
+		if (map_getmapflag(m, MF_SAKURA))
+			clif_specialeffect_single(sd, EF_SAKURA, fd);
+		if (map_getmapflag(m, MF_LEAVES))
+			clif_specialeffect_single(sd, EF_MAPLE, fd);
+	}
+}
+/**
+ * Run when the weather on a map changes, throws all players in map id 'm' to clif_weather_check function
+ **/
+void clif_weather(int16 m)
+{
+	struct s_mapiterator* iter;
+	map_session_data *sd=nullptr;
+
+	iter = mapit_getallusers();
+	for( sd = (map_session_data*)mapit_first(iter); mapit_exists(iter); sd = (map_session_data*)mapit_next(iter) )
+	{
+		if( sd->m == m )
+			clif_weather_check(sd);
+	}
+	mapit_free(iter);
+}
+
+/**
+ * Hide a NPC from the effects of Maya Purple card.
+ * @param bl: Block data
+ * @return True if NPC is disabled or false otherwise
+ */
+static inline bool clif_npc_mayapurple( const block_list& bl ){
+	if( bl.type == BL_NPC ){
+		const npc_data& nd = static_cast<const npc_data&>( bl );
+
+		// TODO: Confirm if waitingroom cause any special cases
+		if( /* nd->chat_id == 0 && */ nd.is_invisible ){
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/// For the stupid cloth-dye bug. Resends the given view data to the area specified by bl.
+void clif_refresh_clothcolor( const block_list& bl, enum send_target target, const block_list* tbl = nullptr ){
+// Unconfirmed when this was fixed, if you encounter any problems, feel free to report them
+#if PACKETVER < 20091103
+	const view_data* vd = status_get_viewdata( &bl );
+
+	if( vd == nullptr ){
+		return;
+	}
+
+	if( vd->look[LOOK_CLOTHES_COLOR] == 0 ){
+		return;
+	}
+
+	if( tbl == nullptr ){
+		tbl = &bl;
+	}
+
+	clif_sprite_change( tbl, bl.id, LOOK_CLOTHES_COLOR, vd->look[LOOK_CLOTHES_COLOR], 0, target );
+#endif
+}
+
+/**
+ * Main function to spawn a unit on the client (player/mob/pet/etc)
+ **/
+int32 clif_spawn( const block_list* bl, bool walking ){
+	if( bl == nullptr ){
+		return 0;
+	}
+
+	const view_data* vd = status_get_viewdata(bl);
+	if( !vd || vd->look[LOOK_BASE] == JT_INVISIBLE)
+		return 0;
+
+	// Hide NPC from Maya Purple card
+	if( clif_npc_mayapurple( *bl ) ){
+		return 0;
+	}
+
+	if( bl->type == BL_NPC && !vd->dead_sit ){
+		clif_set_unit_idle( bl, walking, AREA_WOS, bl );
+	}else{
+		clif_spawn_unit( bl, AREA_WOS );
+	}
+
+	clif_refresh_clothcolor( *bl, AREA_WOS );
+
+	switch (bl->type)
+	{
+	case BL_PC:
+		{
+			TBL_PC *sd = ((TBL_PC*)bl);
+
+			if (sd->spiritball > 0)
+				clif_spiritball(sd);
+			if (sd->sc.getSCE(SC_MILLENNIUMSHIELD))
+				clif_millenniumshield( *sd, sd->sc.getSCE( SC_MILLENNIUMSHIELD )->val2 );
+			if (sd->soulball > 0)
+				clif_soulball(sd);
+			if (sd->servantball > 0)
+				clif_servantball( *sd );
+			if (sd->abyssball > 0)
+				clif_abyssball( *sd );
+			if(sd->state.size==SZ_BIG) // tiny/big players [Valaris]
+				clif_specialeffect(bl,EF_GIANTBODY2,AREA);
+			else if(sd->state.size==SZ_MEDIUM)
+				clif_specialeffect(bl,EF_BABYBODY2,AREA);
+			if( sd->bg_id && map_getmapflag(sd->m, MF_BATTLEGROUND) )
+				clif_sendbgemblem_area(sd);
+			if (sd->spiritcharm_type != CHARM_TYPE_NONE && sd->spiritcharm > 0)
+				clif_spiritcharm( *sd );
+			clif_efst_status_change_sub(bl, bl, AREA);
+		}
+		break;
+	case BL_MOB:
+		{
+			TBL_MOB *md = ((TBL_MOB*)bl);
+			if(md->special_state.size==SZ_BIG) // tiny/big mobs [Valaris]
+				clif_specialeffect(md,EF_GIANTBODY2,AREA);
+			else if(md->special_state.size==SZ_MEDIUM)
+				clif_specialeffect(md,EF_BABYBODY2,AREA);
+			if ( md->special_state.ai == AI_ABR || md->special_state.ai == AI_BIONIC )
+				clif_summon_init(*md);
+			clif_name_area(md);
+		}
+		break;
+	case BL_NPC:
+		{
+			TBL_NPC *nd = ((TBL_NPC*)bl);
+			if( nd->size == SZ_BIG )
+				clif_specialeffect(nd,EF_GIANTBODY2,AREA);
+			else if( nd->size == SZ_MEDIUM )
+				clif_specialeffect(nd,EF_BABYBODY2,AREA);
+			clif_efst_status_change_sub(bl, bl, AREA);
+			clif_progressbar_npc_area(nd);
+		}
+		break;
+	case BL_PET:
+		// If the pet wears equip
+		if( vd->look[LOOK_HEAD_BOTTOM] != 0 ){
+			const pet_data& pd = *static_cast<const pet_data*>( bl );
+			clif_send_petdata( nullptr, pd, CHANGESTATEPET_ACCESSORY );
+		}
+		break;
+	}
+
+	clif_hat_effects( *bl, AREA, *bl );
+
+	return 0;
+}
+
+/// Notifies client of a change in an homunculus' status parameter.
+/// 0x7db <type>.W <value>.L (ZC_HO_PAR_CHANGE)
+/// 0xba5 <type>.W <value>.Q (ZC_HO_PAR_CHANGE2)
+void clif_homunculus_updatestatus( const map_session_data& sd, _sp type ) {
+	if( !hom_is_active(sd.hd) )
+		return;
+
+#if PACKETVER >= 20090610
+	PACKET_ZC_HO_PAR_CHANGE p = {};
+
+	p.packetType = HEADER_ZC_HO_PAR_CHANGE;
+	p.type = static_cast<decltype(p.type)>(type);
+	status_data* status = &sd.hd->battle_status;
+
+	switch (type) {
+	case SP_BASEEXP:
+		p.value = static_cast<decltype(p.value)>( std::min<decltype(sd.hd->homunculus.exp)>( sd.hd->homunculus.exp, std::numeric_limits<decltype(p.value)>::max() ) );
+		break;
+	case SP_HP:
+		// Homunculus HP and SP bars will screw up if the percentage calculation exceeds signed values
+		// Any value above will screw up the bars
+		// Since max values depend on PACKET_ZC_PROPERTY_HOMUN we check for each version of that packet
+#if PACKETVER_MAIN_NUM >= 20200819 || PACKETVER_RE_NUM >= 20200723 || PACKETVER_ZERO_NUM >= 20190626
+		// Tested maximum: 2147483647 (INT32_MAX)
+		if (status->max_hp > INT32_MAX)
+#elif PACKETVER_MAIN_NUM >= 20131230 || PACKETVER_RE_NUM >= 20131230 || defined(PACKETVER_ZERO)
+		// Tested maximum: 21474836 (INT32_MAX / 100)
+		if (status->max_hp > INT32_MAX / 100)
+#else
+		// Tested maximum: 32767 (INT16_MAX)
+		if (status->max_hp > INT16_MAX)
+#endif
+			p.value = status->hp / (status->max_hp / 100);
+		else
+			p.value = static_cast<decltype(p.value)>(status->hp);
+		break;
+	case SP_SP:
+#if PACKETVER_MAIN_NUM >= 20200819 || PACKETVER_RE_NUM >= 20200723 || PACKETVER_ZERO_NUM >= 20190626
+		// Tested maximum: 2147483647 (INT32_MAX)
+		if (status->max_sp > INT32_MAX)
+#else
+		// Tested maximum: 32767 (INT16_MAX)
+		if (status->max_sp > INT16_MAX)
+#endif
+			p.value = status->sp / (status->max_sp / 100);
+		else
+			p.value = static_cast<decltype(p.value)>(status->sp);
+		break;
+	default:
+		ShowError("clif_homunculus_updatestatus: Unsupported type %d.\n", type);
+		return;
+	}
+
+	clif_send(&p, sizeof(p), &sd, SELF);
+#else
+	clif_hominfo(&sd, sd.hd, 0);
+#endif
+}
+
+/// Sends information about owned homunculus to the client . [orn]
+/// 022e <name>.24B <modified>.B <level>.W <hunger>.W <intimacy>.W <equip id>.W <atk>.W <matk>.W <hit>.W <crit>.W <def>.W <mdef>.W <flee>.W <aspd>.W <hp>.W <max hp>.W <sp>.W <max sp>.W <exp>.L <max exp>.L <skill points>.W <atk range>.W	(ZC_PROPERTY_HOMUN)
+/// 09f7 <name>.24B <modified>.B <level>.W <hunger>.W <intimacy>.W <equip id>.W <atk>.W <matk>.W <hit>.W <crit>.W <def>.W <mdef>.W <flee>.W <aspd>.W <hp>.L <max hp>.L <sp>.W <max sp>.W <exp>.L <max exp>.L <skill points>.W <atk range>.W (ZC_PROPERTY_HOMUN_2)
+void clif_hominfo( const map_session_data* sd, const homun_data *hd, int32 flag ){
+#if PACKETVER_MAIN_NUM >= 20101005 || PACKETVER_RE_NUM >= 20080827 || PACKETVER_SAK_NUM >= 20080618 || defined(PACKETVER_ZERO)
+	nullpo_retv( sd );
+	nullpo_retv( hd );
+
+	const status_data* status = &hd->battle_status;
+	PACKET_ZC_PROPERTY_HOMUN p = {};
+
+	p.packetType = HEADER_ZC_PROPERTY_HOMUN;
+	safestrncpy( p.name, hd->homunculus.name, sizeof( p.name ) );
+	// Bit field, bit 0 : rename_flag (1 = already renamed), bit 1 : homunc vaporized (1 = true), bit 2 : homunc dead (1 = true)
+	p.flags = ( !battle_config.hom_rename && hd->homunculus.rename_flag ? 0x1 : 0x0 ) | ( hd->homunculus.vaporize == HOM_ST_REST ? 0x2 : 0 ) | ( hd->homunculus.hp > 0 ? 0x4 : 0 );
+	p.level = hd->homunculus.level;
+	p.hunger = hd->homunculus.hunger;
+	p.intimacy = hd->homunculus.intimacy / 100;
+#if !(PACKETVER_MAIN_NUM >= 20190619 || PACKETVER_RE_NUM >= 20190605 || PACKETVER_ZERO_NUM >= 20190626)
+	p.itemId = 0; // equip id
+#endif
+	p.atk2 = cap_value( status->rhw.atk2 + status->batk, 0, INT16_MAX );
+	p.matk = i16min( status->matk_max, INT16_MAX ); //FIXME capping to INT16 here is too late
+	p.hit = status->hit;
+	if( battle_config.hom_setting&HOMSET_DISPLAY_LUK ){
+		p.crit = status->luk / 3 + 1;	//crit is a +1 decimal value! Just display purpose.[Vicious]
+	}else{
+		p.crit = status->cri / 10;
+	}
+#ifdef RENEWAL
+	p.def = status->def + status->def2;
+	p.mdef = status->mdef + status->mdef2;
+#else
+	p.def = status->def + status->vit;
+	p.mdef = status->mdef;
+#endif
+	p.flee = status->flee;
+	p.amotion = (flag) ? 0 : status->amotion;
+	// Homunculus HP and SP bars will screw up if the percentage calculation exceeds signed values
+	// Any value above will screw up the bars
+#if PACKETVER_MAIN_NUM >= 20200819 || PACKETVER_RE_NUM >= 20200723 || PACKETVER_ZERO_NUM >= 20190626
+	// Tested maximum: 2147483647 (INT32_MAX)
+	if (status->max_hp > INT32_MAX)
+#elif PACKETVER_MAIN_NUM >= 20131230 || PACKETVER_RE_NUM >= 20131230 || defined(PACKETVER_ZERO)
+	// Tested maximum: 21474836 (INT32_MAX / 100)
+	if (status->max_hp > INT32_MAX / 100)
+#else
+	// Tested maximum: 32767 (INT16_MAX)
+	if (status->max_hp > INT16_MAX)
+#endif
+	{
+		p.hp = status->hp / ( status->max_hp / 100 );
+		p.maxHp = 100;
+	}else{
+		p.hp = static_cast<decltype(p.hp)>(status->hp);
+		p.maxHp = static_cast<decltype(p.maxHp)>(status->max_hp);
+	}
+#if PACKETVER_MAIN_NUM >= 20200819 || PACKETVER_RE_NUM >= 20200723 || PACKETVER_ZERO_NUM >= 20190626
+	// Tested maximum: 2147483647 (INT32_MAX)
+	if (status->max_sp > INT32_MAX)
+#else
+	// Tested maximum: 32767 (INT16_MAX)
+	if (status->max_sp > INT16_MAX)
+#endif
+	{
+		p.sp = status->sp / ( status->max_sp / 100 );
+		p.maxSp = 100;
+	}else{
+		p.sp = static_cast<decltype(p.sp)>(status->sp);
+		p.maxSp = static_cast<decltype(p.maxSp)>(status->max_sp);
+	}
+	p.exp = static_cast<decltype(p.exp)>( std::min<decltype(hd->homunculus.exp)>( hd->homunculus.exp, std::numeric_limits<decltype(p.exp)>::max() ) );
+	p.expNext = static_cast<decltype(p.expNext)>( std::min<decltype(hd->exp_next)>( hd->exp_next, std::numeric_limits<decltype(p.expNext)>::max() ) );
+
+	switch( hom_class2type( hd->homunculus.class_ ) ){
+		case HT_REG:
+		case HT_EVO:
+			if( hd->homunculus.level >= battle_config.hom_max_level ){
+				p.expNext = 0;
+			}
+			break;
+		case HT_S:
+			if( hd->homunculus.level >= battle_config.hom_S_max_level ){
+				p.expNext = 0;
+			}
+			break;
+	}
+	p.skillPoints = hd->homunculus.skillpts;
+	p.range = status_get_range( hd );
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+
+/// Notification about a change in homunuculus' state.
+/// 0230 <type>.B <state>.B <id>.L <data>.L (ZC_CHANGESTATE_MER)
+/// type:
+///     unused
+/// state:
+///     0 = pre-init
+///     1 = intimacy
+///     2 = hunger
+///     3 = accessory?
+///     ? = ignored
+void clif_send_homdata( homun_data& hd, e_hom_state2 state ){
+#if PACKETVER >= 20050523
+	if( hd.master == nullptr ){
+		return;
+	}
+
+	uint32 param;
+
+	switch( state ){
+		case SP_ACK:
+			param = 0;
+			break;
+		case SP_INTIMATE:
+			// TODO: Why is something like this here? [Lemongrass]
+			if( hd.homunculus.class_ == hd.homunculusDB->evo_class && hom_intimacy_intimacy2grade( hd.homunculus.intimacy ) >= HOMGRADE_LOYAL ){
+				hom_calc_skilltree( &hd );
+			}
+
+			param = hd.homunculus.intimacy / 100;
+			break;
+		case SP_HUNGRY:
+			param = hd.homunculus.hunger;
+			break;
+		default:
+			return;
+	}
+	
+	PACKET_ZC_CHANGESTATE_MER packet{};
+
+	packet.packetType = HEADER_ZC_CHANGESTATE_MER;
+	packet.type = 0;
+	packet.state = state;
+	packet.gid = hd.id;
+	packet.data = param;
+
+	clif_send( &packet, sizeof( packet ), hd.master, SELF );
+#endif
+}
+
+
+void clif_homskillinfoblock( const homun_data& hd ){
+#if PACKETVER >= 20050530
+	map_session_data* sd = hd.master;
+
+	if( sd == nullptr ){
+		return;
+	}
+	
+	PACKET_ZC_HOSKILLINFO_LIST* packet = reinterpret_cast<PACKET_ZC_HOSKILLINFO_LIST*>(packet_buffer);
+
+	packet->packetType = HEADER_ZC_HOSKILLINFO_LIST;
+	packet->packetLength = sizeof( *packet );
+
+	for(int32 i = 0, count = 0; i < MAX_HOMUNSKILL; i++) {
+		int32 id = hd.homunculus.hskill[i].id;
+
+		if (id != 0) {
+			int32 combo = (hd.homunculus.hskill[i].flag)&SKILL_FLAG_TMP_COMBO;
+			int16 idx = hom_skill_get_index(id);
+			if (idx == -1)
+				continue;
+			packet->skills[count].id = id;
+			packet->skills[count].inf = (combo) ? INF_SELF_SKILL : skill_get_inf(id);
+			packet->skills[count].unknown = 0;
+			packet->skills[count].level = hd.homunculus.hskill[idx].lv;
+			packet->skills[count].sp = skill_get_sp(id,hd.homunculus.hskill[idx].lv);
+			packet->skills[count].range = skill_get_range2(&hd,id,hd.homunculus.hskill[idx].lv,false);
+			safestrncpy(packet->skills[count].name, skill_get_name(id), NAME_LENGTH);
+			packet->skills[count].upgradable = (hd.homunculus.level < hom_skill_get_min_level(hd.homunculus.class_, id) || hd.homunculus.hskill[idx].lv >= hom_skill_tree_get_max(id, hd.homunculus.class_)) ? 0 : 1;
+			packet->packetLength += sizeof( packet->skills[0] );
+			count++;

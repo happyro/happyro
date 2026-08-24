@@ -1,0 +1,500 @@
+#endif
+}
+
+/// Request to buy item(s) from cash shop.
+/// 0288 <name id>.W <amount>.W (CZ_PC_BUY_CASH_POINT_ITEM)
+/// 0288 <name id>.W <amount>.W <kafra points>.L (PACKETVER >= 20070711)
+/// 0288 <packet len>.W <kafra points>.L <count>.W { <amount>.W <name id>.W }.4B*count (PACKETVER >= 20100803)
+void clif_parse_npccashshop_buy( int32 fd, map_session_data *sd ){
+	nullpo_retv( sd );
+
+	if( sd->state.trading || !sd->npc_shopid ){
+		clif_cashshop_ack( sd, 1 );
+		return;
+	}
+
+	const PACKET_CZ_PC_BUY_CASH_POINT_ITEM* p = reinterpret_cast<PACKET_CZ_PC_BUY_CASH_POINT_ITEM*>( RFIFOP( fd, 0 ) );
+
+#if PACKETVER < 20070711
+	clif_cashshop_ack( sd, npc_cashshop_buy( sd, p->itemId, p->amount, 0 ) );
+#elif PACKETVER < 20101116
+	clif_cashshop_ack( sd, npc_cashshop_buy( sd, p->itemId, p->amount, p->kafraPoints ) );
+#else
+	int32 s_itl = sizeof( p->items[0] );
+
+	if( p->packetLength < sizeof( *p ) || p->packetLength != sizeof( *p ) + p->count * s_itl ){
+		ShowWarning( "Player %u sent incorrect cash shop buy packet (len %u:%" PRIdPTR ")!\n", sd->status.char_id, p->packetLength, sizeof( *p ) + p->count * s_itl );
+		return;
+	}
+
+	std::vector<s_npc_buy_list> item_list = {};
+
+	item_list.reserve( p->count );
+
+	for( int32 i = 0; i < p->count; i++ ){
+		s_npc_buy_list item = {};
+
+		item.nameid = p->items[i].itemId;
+		item.qty = p->items[i].amount;
+
+		item_list.push_back( item );
+	}
+
+	clif_cashshop_ack( sd, npc_cashshop_buylist( sd, p->kafraPoints, item_list ) );
+#endif
+}
+
+/// Request to buy item(s) from cash shop.
+/// 0848 <packet len>.W <count>.W <packet len>.W <kafra points>.L <count>.W { <amount>.W <name id>.W <tab>.W }.6B*count (CZ_SE_PC_BUY_CASHITEM_LIST)
+void clif_parse_cashshop_buy( int32 fd, map_session_data *sd ){
+	const PACKET_CZ_SE_PC_BUY_CASHITEM_LIST* p = reinterpret_cast<PACKET_CZ_SE_PC_BUY_CASHITEM_LIST*>( RFIFOP( fd, 0 ) );
+
+	int32 s_itl = sizeof( p->items[0] );
+
+	if( p->packetLength < sizeof( *p ) || p->packetLength != sizeof( *p ) + p->count * s_itl ){
+		ShowWarning( "Player %u sent incorrect cash shop buy packet (len %u:%" PRIdPTR ")!\n", sd->status.char_id, p->packetLength, sizeof( *p ) + p->count * s_itl );
+		return;
+	}
+
+	cashshop_buylist( sd, p->kafraPoints, p->count, p->items );
+}
+
+/// Adoption System
+///
+
+/// Adoption message (ZC_BABYMSG).
+/// 0216 <msg>.L
+/// msg:
+///     ADOPT_REPLY_MORE_CHILDREN = "You cannot adopt more than 1 child."
+///     ADOPT_REPLY_LEVEL_70 = "You must be at least character level 70 in order to adopt someone."
+///     ADOPT_REPLY_MARRIED = "You cannot adopt a married person."
+void clif_Adopt_reply( const map_session_data* sd, int32 type )
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,6);
+	WFIFOW(fd,0) = 0x216;
+	WFIFOL(fd,2) = type;
+	WFIFOSET(fd,6);
+}
+
+
+/// Adoption confirmation (ZC_REQ_BABY).
+/// 01f6 <account id>.L <char id>.L <name>.B
+void clif_Adopt_request( const map_session_data* sd, const map_session_data* src, int32 p_id)
+{
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd,34);
+	WFIFOW(fd,0) = 0x1f6;
+	WFIFOL(fd,2) = src->status.account_id;
+	WFIFOL(fd,6) = p_id;
+	safestrncpy(WFIFOCP(fd,10), src->status.name, NAME_LENGTH);
+	WFIFOSET(fd,34);
+}
+
+
+/// Request to adopt a player (CZ_REQ_JOIN_BABY).
+/// 01f9 <account id>.L
+void clif_parse_Adopt_request(int32 fd, map_session_data *sd)
+{
+	TBL_PC *tsd = map_id2sd(RFIFOL(fd,packet_db[RFIFOW(fd,0)].pos[0]));
+	TBL_PC *p_sd = map_charid2sd(sd->status.partner_id);
+
+	if( pc_try_adopt(sd, p_sd, tsd) == ADOPT_ALLOWED )
+	{
+		tsd->adopt_invite = sd->status.account_id;
+		clif_Adopt_request(tsd, sd, p_sd->status.account_id);
+	}
+}
+
+
+/// Answer to adopt confirmation.
+/// 01f7 <account id>.L <char id>.L <answer>.L (CZ_JOIN_BABY)
+/// answer:
+///     0 = rejected
+///     1 = accepted
+void clif_parse_Adopt_reply(int32 fd, map_session_data *sd){
+	const PACKET_CZ_JOIN_BABY* p = reinterpret_cast<PACKET_CZ_JOIN_BABY*>( RFIFOP( fd, 0 ) );
+
+	// Check if the adoption was accepted
+	if( p->accepted == 0 ){
+		sd->adopt_invite = 0;
+		return;
+	}
+
+	map_session_data* father_sd = map_id2sd( p->father_AID );
+
+	// The father has to be online
+	if( father_sd == nullptr ){
+		sd->adopt_invite = 0;
+		return;
+	}
+
+	map_session_data* mother_sd = map_id2sd( p->mother_AID );
+
+	// The mother has to be online
+	if( mother_sd == nullptr ){
+		sd->adopt_invite = 0;
+		return;
+	}
+
+	if( sd->adopt_invite != father_sd->status.account_id ){
+		sd->adopt_invite = 0;
+		return;
+	}
+
+	sd->adopt_invite = 0;
+
+	pc_adoption( father_sd, mother_sd, sd );
+}
+
+
+/// Convex Mirror
+/// 0293 <infoType>.B <x>.L <y>.L <minHours>.W <minMinutes>.W <maxHours>.W <maxMinutes>.W <monster name>.51B (ZC_BOSS_INFO)
+/// infoType:
+///     BOSS_INFO_NOT = No boss on this map.
+///     BOSS_INFO_ALIVE = Boss is alive (position update).
+///     BOSS_INFO_ALIVE_WITHMSG = Boss is alive (initial announce).
+///     BOSS_INFO_DEAD = Boss is dead.
+void clif_bossmapinfo( const map_session_data& sd, mob_data* md, e_bossmap_info flag ){
+	PACKET_ZC_BOSS_INFO p = {};
+
+	p.packetType = HEADER_ZC_BOSS_INFO;
+	p.type = flag;
+
+	switch (flag) {
+		case BOSS_INFO_NOT:
+			// No data required
+			break;
+		case BOSS_INFO_ALIVE_WITHMSG:
+			[[fallthrough]];
+		case BOSS_INFO_ALIVE:
+
+			p.x = md->x;
+			p.y = md->y;
+			break;
+		case BOSS_INFO_DEAD: {
+			const struct TimerData * timer_data = get_timer(md->spawn_timer);
+			uint32 seconds;
+			int32 hours, minutes;
+
+			seconds = (uint32)(DIFF_TICK(timer_data->tick, gettick()) / 1000 + 60);
+			hours = seconds / (60 * 60);
+			seconds = seconds - (60 * 60 * hours);
+			minutes = seconds / 60;
+
+
+			p.minHours = hours;
+			p.minMinutes = minutes;
+			break;
+		}
+	}
+
+	if( md != nullptr ){
+		safestrncpy( p.name, md->db->jname.c_str(), sizeof( p.name ) );
+	}
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+}
+
+
+/// Requesting equip of a player (CZ_EQUIPWIN_MICROSCOPE).
+/// 02d6 <account id>.L
+void clif_parse_ViewPlayerEquip(int32 fd, map_session_data* sd)
+{
+	int32 aid = RFIFOL(fd, packet_db[RFIFOW(fd,0)].pos[0]);
+	map_session_data* tsd = map_id2sd(aid);
+
+	if (!tsd)
+		return;
+
+	if (sd->m != tsd->m)
+		return;
+	else if( tsd->status.show_equip || pc_has_permission(sd, PC_PERM_VIEW_EQUIPMENT) )
+		clif_viewequip_ack( *sd, *tsd );
+	else
+		clif_msg( *sd, MSI_OPEN_EQUIPEDITEM_REFUSED );
+}
+
+
+/// Request to a configuration.
+/// 02d8 <type>.L <flag>.L (CZ_CONFIG)
+/// type: see enum e_config_type
+/// flag:
+///     false = disabled
+///     true = enabled
+void clif_parse_configuration( int32 fd, map_session_data* sd ){
+	int32 cmd = RFIFOW(fd,0);
+	int32 type = RFIFOL(fd,packet_db[cmd].pos[0]);
+	bool flag = RFIFOL(fd,packet_db[cmd].pos[1]) != 0;
+
+	switch( type ){
+		case CONFIG_OPEN_EQUIPMENT_WINDOW:
+			sd->status.show_equip = flag;
+			break;
+		case CONFIG_CALL:
+			sd->status.disable_call = flag;
+			break;
+		case CONFIG_PET_AUTOFEED:
+			// Player can not click this if he does not have a pet
+			if( sd->pd == nullptr || !battle_config.feature_pet_autofeed || !sd->pd->get_pet_db()->allow_autofeed ){
+				return;
+			}
+
+			sd->pd->pet.autofeed = flag;
+			break;
+		case CONFIG_HOMUNCULUS_AUTOFEED:
+			// Player can not click this if he does not have a homunculus or it is vaporized
+			if( sd->hd == nullptr || sd->hd->homunculus.vaporize || !battle_config.feature_homunculus_autofeed ){
+				return;
+			}
+
+			sd->hd->homunculus.autofeed = flag;
+			break;
+		case CONFIG_DISABLE_SHOWCOSTUMES:
+			sd->status.disable_showcostumes = flag;
+			pc_set_costume_view(sd);
+			break;
+		default:
+			ShowWarning( "clif_parse_configuration: received unknown configuration type '%d'...\n", type );
+			return;
+	}
+
+	clif_configuration( sd, static_cast<e_config_type>(type), flag );
+}
+
+/// Request to change party invitation tick.
+/// 02C8 <enabled>.B (CZ_PARTY_CONFIG)
+/// value:
+///	 0 = disabled (triggered by /accept)
+///	 1 = enabled (triggered by /refuse)
+void clif_parse_PartyTick( int32 fd, map_session_data* sd ){
+	const PACKET_CZ_PARTY_CONFIG* p = reinterpret_cast<PACKET_CZ_PARTY_CONFIG*>( RFIFOP( fd, 0 ) );
+
+	sd->status.disable_partyinvite = p->refuseInvite;
+
+	clif_partyinvitationstate( *sd );
+}
+
+/// Questlog System [Kevin] [Inkfish]
+///
+
+/**
+ * Safe check to init packet len & quest num for player.
+ * @param def_len
+ * @param info_len Length of each quest info.
+ * @param avail_quests Avail quests that player has.
+ * @param limit_out Limit for quest num, to make sure the quest num is still in allowed value.
+ * @param len_out Packet length as initial set => def_len + limit_out * info_len.
+ **/
+static void clif_quest_len(int32 def_len, int32 info_len, int32 avail_quests, int32 *limit_out, int32 *len_out) {
+	(*limit_out) = (0xFFFF - def_len) / info_len;
+	(*limit_out) = (avail_quests > (*limit_out)) ? (*limit_out) : avail_quests;
+	(*len_out) = ((*limit_out) * info_len) + def_len;
+}
+
+std::string clif_quest_string( std::shared_ptr<s_quest_objective> objective ){
+	std::string race_name;
+
+	switch( objective->race ){
+		case RC_FORMLESS:	race_name = "Formless"; break;
+		case RC_UNDEAD:		race_name = "Undead"; break;
+		case RC_BRUTE:		race_name = "Brute"; break;
+		case RC_PLANT:		race_name = "Plant"; break;
+		case RC_INSECT:		race_name = "Insect"; break;
+		case RC_FISH:		race_name = "Fish"; break;
+		case RC_DEMON:		race_name = "Demon"; break;
+		case RC_DEMIHUMAN:	race_name = "Demihuman"; break;
+		case RC_ANGEL:		race_name = "Angel"; break;
+		case RC_DRAGON:		race_name = "Dragon"; break;
+		default:
+			ShowWarning( "clif_quest_string: Unsupported race %d - using empty string...\n", objective->race );
+			[[fallthrough]];
+		case RC_ALL:		race_name = ""; break;
+	}
+
+	std::string size_name;
+
+	switch( objective->size ){
+		case SZ_SMALL:	size_name = "Small"; break;
+		case SZ_MEDIUM:	size_name = "Medium"; break;
+		case SZ_BIG:	size_name = "Large"; break;
+		default:
+			ShowWarning( "clif_quest_string: Unsupported size %d - using empty string...\n", objective->size );
+			[[fallthrough]];
+		case SZ_ALL:	size_name = ""; break;
+	}
+
+	std::string ele_name;
+
+	switch( objective->element ){
+		case ELE_NEUTRAL:	ele_name = "Neutral Element"; break;
+		case ELE_WATER:		ele_name = "Water Element"; break;
+		case ELE_EARTH:		ele_name = "Earth Element"; break;
+		case ELE_FIRE:		ele_name = "Fire Element"; break;
+		case ELE_WIND:		ele_name = "Wind Element"; break;
+		case ELE_POISON:	ele_name = "Poison Element"; break;
+		case ELE_HOLY:		ele_name = "Holy Element"; break;
+		case ELE_DARK:		ele_name = "Shadow Element"; break;
+		case ELE_GHOST:		ele_name = "Ghost Element"; break;
+		case ELE_UNDEAD:	ele_name = "Undead Element"; break;
+		default:
+			ShowWarning( "clif_quest_string: Unsupported element %d - using empty string...\n", objective->element );
+			[[fallthrough]];
+		case ELE_ALL:		ele_name = ""; break;
+	}
+
+	std::string str;
+
+	if( !objective->map_name.empty() ){
+		str += objective->map_name;
+	}
+
+	if( !race_name.empty() ){
+		if( !str.empty() ){
+			str += ", ";
+		}
+
+		str += race_name;
+	}
+
+	if( !size_name.empty() ){
+		if( !str.empty() ){
+			str += ", ";
+		}
+
+		str += size_name;
+	}
+
+	if( !ele_name.empty() ){
+		if( !str.empty() ){
+			str += ", ";
+		}
+
+		str += ele_name;
+	}
+	
+	return str;
+}
+
+/// Sends list of all quest states
+/// 02b1 <packet len>.W <num>.L { <quest id>.L <active>.B }*num (ZC_ALL_QUEST_LIST)
+/// 097a <packet len>.W <num>.L { <quest id>.L <active>.B <remaining time>.L <time>.L <count>.W { <mob_id>.L <killed>.W <total>.W <mob name>.24B }*count }*num (ZC_ALL_QUEST_LIST2)
+/// 09f8 <packet len>.W <num>.L { <quest id>.L <active>.B <remaining time>.L <time>.L <count>.W { <hunt identification>.L <mob type>.L <mob_id>.L <min level>.W <max level>.W <killed>.W <total>.W <mob name>.24B }*count }*num  (ZC_ALL_QUEST_LIST3)
+void clif_quest_send_list( const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+	int32 i;
+	int32 offset = 8;
+	int32 limit = 0;
+
+#if PACKETVER >= 20141022
+#if PACKETVER >= 20150513
+	int32 size = 22 + NAME_LENGTH;
+#else
+	int32 size = 10 + NAME_LENGTH;
+#endif
+
+	clif_quest_len(offset, 15 + ( size * MAX_QUEST_OBJECTIVES), sd->avail_quests, &limit, &i);
+	WFIFOHEAD(fd,i);
+#if PACKETVER >= 20150513
+	WFIFOW(fd, 0) = 0x9f8;
+#else
+	WFIFOW(fd, 0) = 0x97a;
+#endif
+	WFIFOL(fd, 4) = limit;
+
+	for (i = 0; i < limit; i++) {
+		std::shared_ptr<const s_quest_db> qi = quest_search(sd->quest_log[i].quest_id);
+
+		WFIFOL(fd, offset) = sd->quest_log[i].quest_id;
+		offset += 4;
+		WFIFOB(fd, offset) = sd->quest_log[i].state;
+		offset++;
+		WFIFOL(fd, offset) = static_cast<uint32>(sd->quest_log[i].time - qi->time);
+		offset += 4;
+		WFIFOL(fd, offset) = static_cast<uint32>(sd->quest_log[i].time);
+		offset += 4;
+		WFIFOW(fd, offset) = static_cast<uint16>(qi->objectives.size());
+		offset += 2;
+		
+		if (!qi->objectives.empty()) {
+			std::shared_ptr<const s_mob_db> mob;
+			for (int32 j = 0; j < qi->objectives.size(); j++) {
+				mob = mob_db.find(qi->objectives[j]->mob_id);
+
+				e_race race = qi->objectives[j]->race;
+				e_size size = qi->objectives[j]->size;
+				e_element element = qi->objectives[j]->element;
+
+#if PACKETVER >= 20150513
+				WFIFOL(fd, offset) = sd->quest_log[i].quest_id * 1000 + j;
+				offset += 4;
+				WFIFOL(fd, offset) = (race ? race : (size ? size : (element ? element : 0)));
+				offset += 4;
+#endif
+				WFIFOL(fd, offset) = ((mob && qi->objectives[j]->mob_id > 0) ? qi->objectives[j]->mob_id : MOBID_PORING);
+				offset += 4;
+#if PACKETVER >= 20150513
+				WFIFOW(fd, offset) = qi->objectives[j]->min_level;
+				offset += 2;
+				WFIFOW(fd, offset) = qi->objectives[j]->max_level;
+				offset += 2;
+#endif
+				WFIFOW(fd, offset) = sd->quest_log[i].count[j];
+				offset += 2;
+				WFIFOW(fd, offset) = qi->objectives[j]->count;
+				offset += 2;
+				if (mob && qi->objectives[j]->mob_id > 0)
+					safestrncpy(WFIFOCP(fd,offset), mob->jname.c_str(), NAME_LENGTH);
+				else
+					safestrncpy(WFIFOCP(fd,offset), clif_quest_string(qi->objectives[j]).c_str(), NAME_LENGTH);
+				offset += NAME_LENGTH;
+			}
+		}
+	}
+
+	WFIFOW(fd, 2) = offset;
+	WFIFOSET(fd, offset);
+#else
+	clif_quest_len(offset, 5, sd->avail_quests, &limit, &i);
+	WFIFOHEAD(fd,i);
+	WFIFOW(fd, 0) = 0x2b1;
+	WFIFOL(fd, 4) = limit;
+
+	for (i = 0; i < limit; i++) {
+		WFIFOL(fd, offset) = sd->quest_log[i].quest_id;
+		offset += 4;
+		WFIFOB(fd, offset) = sd->quest_log[i].state;
+		offset += 1;
+	}
+	
+	WFIFOW(fd, 2) = offset;
+	WFIFOSET(fd, offset);
+#endif
+}
+
+/// Sends list of all quest missions (ZC_ALL_QUEST_MISSION).
+/// 02b2 <packet len>.W <num>.L { <quest id>.L <start time>.L <expire time>.L <mobs>.W { <mob id>.L <mob count>.W <mob name>.24B }*3 }*num
+void clif_quest_send_mission( const map_session_data* sd )
+{
+	nullpo_retv(sd);
+
+	int32 fd = sd->fd;
+	int32 limit = 0;
+	int32 len = sd->avail_quests*104+8;
+
+	clif_quest_len(8, 14 + ((6 + NAME_LENGTH) * MAX_QUEST_OBJECTIVES), sd->avail_quests, &limit, &len);
+	WFIFOHEAD(fd, len);
+	WFIFOW(fd, 0) = 0x2b2;
+	WFIFOW(fd, 2) = len;
+	WFIFOL(fd, 4) = limit;
+
+	for (int32 i = 0; i < limit; i++) {
+		const std::shared_ptr<const s_quest_db> qi = quest_search(sd->quest_log[i].quest_id);
+
+		WFIFOL(fd, i*104+8) = sd->quest_log[i].quest_id;
+		WFIFOL(fd, i*104+12) = static_cast<uint32>(sd->quest_log[i].time - qi->time);

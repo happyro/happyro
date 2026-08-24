@@ -1,0 +1,321 @@
+//===== rAthena Script =======================================
+//= MVP Ladder Game
+//===== By: ==================================================
+//= aftermath, AnnieRuru (rewrite)
+//===== Current Version: =====================================
+//= 1.0
+//===== Compatible With: =====================================
+//= rAthena Project
+//===== Description: =========================================
+//= Gather a party and kill every MVP in ascending order.
+//===== Additional Comments: =================================
+//= 1.0 First version, edited. [Euphy]
+//============================================================
+
+prontera,164,171,3	script	MvP Ladder Warper	56,{
+	mes "[MvP Ladder Warper]";
+	mes "请问……你想玩 MVP 阶梯挑战吗？";
+	next;
+	switch(select("是，开始吧！:说明。:查看最佳记录。:否。")) {
+	case 1:
+		break;
+	case 2:
+		mes "[MvP Ladder Warper]";
+		mes "在这个游戏中，你的队伍必须按从弱到强的顺序击败所有 MVP 魔物。";
+		if ( .finish_item_amount )
+			mes "如果队伍完成 MVP 阶梯挑战，每名成员将获得 "+ callfunc("F_InsertPlural", .finish_item_amount, getitemname( .finish_item_id )) +"。";
+		if ( .register_cost )
+			mes "但入场费是 "+ callfunc( "F_InsertComma", .register_cost ) +" Zeny。";
+		next;
+		mes "[MvP Ladder Warper]";
+		mes "如果你无法在 "+ .timeout +" 分钟内完成，或队伍全灭，就会挑战失败。";
+		mes "祝你好运！";
+		close;
+	case 3:
+		mes "[MvP Ladder Warper]";
+		if ( !$mvpladdderparty_time ) {
+			mes "还没有人完成过这个挑战。";
+			close;
+		}
+		mes "最佳记录是";
+		mes "[ "+( $mvpladdderparty_time / 60 )+" 分 "+( $mvpladdderparty_time % 60 )+" 秒 ]";
+		mes "由队伍 ^FF0000"+ $mvpladdderparty_name$ +"^000000 创下。";
+		.@size = getarraysize( $mvpladderparty_member$ );
+		for ( .@i = 0; .@i < .@size; .@i++ )
+			mes "^000000"+ ( .@i +1 ) +". ^0000FF"+ $mvpladderparty_member$[.@i];
+		if ( getgmlevel() < .gmlvlreset ) close;
+		next;
+		if ( select( "关闭。", "重置记录。" ) == 1 ) close;
+		if ( select( "算了。", "我确定要重置。" ) == 1 ) close;
+		$mvpladdderparty_time = 0;
+		$mvpladdderparty_name$ = "";
+		deletearray $mvpladderparty_member$[.@i];
+		mes "[MvP Ladder Warper]";
+		mes "记录已成功重置。";
+		close;
+	case 4:
+		mes "[MvP Ladder Warper]";
+		mes "等你足够强大、能够完成挑战时，再回来吧。";
+		close;
+	}
+	if ( !getcharid(1) ) {
+		mes "[MvP Ladder Warper]";
+		mes "你必须组队才能参加。";
+		close;
+	}
+	if ( is_party_leader() == false ) {
+		mes "[MvP Ladder Warper]";
+		mes "只有队长可以登记。";
+		close;
+	}
+	.@origin = getcharid(3);
+	getpartymember getcharid(1), 1;
+	getpartymember getcharid(1), 2;
+	for ( .@i = 0; .@i < $@partymembercount; .@i++ ) {
+		if ( isloggedin( $@partymemberaid[.@i], $@partymembercid[.@i] ) ) {
+			attachrid $@partymemberaid[.@i];
+			if ( strcharinfo(3) == strnpcinfo(4) )
+				.@online++;
+		}
+	}
+	attachrid .@origin;
+	if ( $@partymembercount != .register_min ) {
+		mes "[MvP Ladder Warper]";
+		mes "你必须组建一支正好有 "+ .register_min +" 名成员的队伍才能参加。";
+		close;
+	}
+	else if ( .@online != .register_min )  {
+		mes "[MvP Ladder Warper]";
+		mes "你的队伍必须有 "+ .register_min +" 名成员在线于地图‘"+ strnpcinfo(4) +"’。";
+		close;
+	}
+	else if ( .register_cost && Zeny < .register_cost ) {
+		mes "[MvP Ladder Warper]";
+		mes "你的 Zeny 不够。准备好后再回来。";
+		close;
+	}
+	else if ( .party_id ) {
+		mes "[MvP Ladder Warper]";
+		mes "抱歉，目前已有队伍正在挑战。请等待他们完成。";
+		mes "谢谢。";
+		close;
+	}
+	Zeny -= .register_cost;
+	announce "队伍 ["+ strcharinfo(1) +"] 开始了 MVP 阶梯挑战。", bc_all;
+	set .party_id, getcharid(1);
+	set .@time_enter, gettimetick(2);
+	for ( .@i = 0; .@i < $@partymembercount; .@i++ ) {
+		if ( isloggedin( $@partymemberaid[.@i], $@partymembercid[.@i] ) ) {
+			attachrid $@partymemberaid[.@i];
+			if ( strcharinfo(3) == strnpcinfo(4) ) {
+				announce "你有 "+ .timeout +" 分钟完成 "+ .totalround +" 个回合。", bc_self;
+				.@name$[.@c] = strcharinfo(0);
+				.@c++;
+			}
+		}
+	}
+	cleanmap .eventmap$;
+	warpparty .eventmap$, 0,0, .party_id, strnpcinfo(4);
+	donpcevent strnpcinfo(0)+"::OnMvpDead";
+	sleep .timeout * 60000;
+	if ( .round == .totalround +1 ) {
+		getpartymember .party_id, 1;
+		getpartymember .party_id, 2;
+		mapannounce .eventmap$, "恭喜……你们击败了所有 MVP！", bc_map;
+		for ( .@i = 0; .@i < $@partymembercount; .@i++ ) {
+			if ( isloggedin( $@partymemberaid[.@i], $@partymembercid[.@i] ) ) {
+				attachrid $@partymemberaid[.@i];
+				if ( strcharinfo(3) == .eventmap$ )
+					getitem .finish_item_id, .finish_item_amount;
+			}
+		}
+		set .@timeused, gettimetick(2) - .@time_enter;
+		if ( .bonus_item_amount && .@timeused < .bonus_time * 60 ) {
+			mapannounce .eventmap$, "你们在 "+ .bonus_time +" 分钟内完成挑战，获得额外奖励。", bc_map;
+			for ( .@i = 0; .@i < $@partymembercount; .@i++ ) {
+				if ( isloggedin( $@partymemberaid[.@i], $@partymembercid[.@i] ) ) {
+					attachrid $@partymemberaid[.@i];
+					if ( strcharinfo(3) == .eventmap$ )
+						getitem .bonus_item_id, .bonus_item_amount;
+				}
+			}
+		}
+
+		if ( !$mvpladdderparty_time || .@timeused < $mvpladdderparty_time ) {
+			mapannounce .eventmap$, "你们打破了记录！[ "+( .@timeused / 60 )+" 分 "+( .@timeused % 60 )+" 秒 ]", bc_map;
+			set $mvpladdderparty_time, .@timeused;
+			set $mvpladdderparty_name$, getpartyname( .party_id );
+			copyarray $mvpladderparty_member$, .@name$, .register_min;
+		}
+		else
+			mapannounce .eventmap$, "用时 [ "+( .@timeused / 60 )+" 分 "+( .@timeused % 60 )+" 秒 ]", bc_map;
+		sleep 10000;
+		announce "队伍 ["+ getpartyname( .party_id ) +"] 完成了 MVP 阶梯挑战！", bc_all;
+	}
+	else
+		announce "队伍 ["+ getpartyname( .party_id ) +"] 未能完成 MVP 阶梯挑战。", bc_all;
+	mapwarp .eventmap$, .map$, .x, .y;
+	killmonsterall .eventmap$;
+	.party_id = .round = 0;
+	end;
+
+OnMvpDead:
+	getpartymember .party_id, 1;
+	getpartymember .party_id, 2;
+	.round++;
+	if ( .round >= 2 && .round != .totalround +1 && .round_item_amount ) {
+		for ( .@i = 0; .@i < $@partymembercount; .@i++ ) {
+			if ( isloggedin( $@partymemberaid[.@i], $@partymembercid[.@i] ) ) {
+				attachrid $@partymemberaid[.@i];
+				if ( strcharinfo(3) == .eventmap$ )
+					getitem .round_item_id, .round_item_amount;
+			}
+		}
+	}
+	if ( .round == .totalround +1 ) {
+		awake strnpcinfo(0);
+		end;
+	}
+	else if ( .round == .totalround )
+		mapannounce .eventmap$, "最终回合将在 "+ .delay +" 秒后开始……", bc_map;
+	else
+		mapannounce .eventmap$, "第 "+ .round +" 回合将在 "+ .delay +" 秒后开始……", bc_map;
+	sleep .delay * 1000;
+	if ( .mvpid[.round] == 1646 )  // pick random Bio3 MVP
+		.mvpid[.round] = rand(1646,1651);
+	monster .eventmap$,0,0, "--ja--", .mvpid[.round], 1, strnpcinfo(0)+"::OnMvpDead";
+	mapannounce .eventmap$, getmonsterinfo( .mvpid[.round], MOB_NAME ) +" 已出现！", bc_map|bc_blue;
+	end;
+
+OnPCLogoutEvent:
+	if ( hp > 0 )
+		.@less_one = 1;
+	else
+		end;
+OnPCDieEvent:
+	if ( strcharinfo(3) != .eventmap$ || !getcharid(1) ) end;
+	if ( getcharid(1) != .party_id ) end;
+	getpartymember .party_id, 1;
+	getpartymember .party_id, 2;
+	for ( .@i = 0; .@i < $@partymembercount; .@i++ ) {
+		if ( isloggedin( $@partymemberaid[.@i], $@partymembercid[.@i] ) ) {
+			attachrid $@partymemberaid[.@i];
+			if ( strcharinfo(3) == .eventmap$ && hp > 0 )
+				.@alive++;
+		}
+	}
+	if ( .@less_one )
+		.@alive--;
+	if ( !.@alive ) {
+		mapannounce .eventmap$, "队伍全灭！", bc_map;
+		sleep 10000;
+		awake strnpcinfo(0);
+	}
+	end;
+
+OnInit:
+//	Configurations -----------------------------------------------------
+
+	// Time limit (in minutes)
+	// When time runs out, all players inside the room will be kicked out.
+	// Do NOT set this to zero!
+	set .timeout, 60;
+
+	// entrance fee (in Zeny)
+	set .register_cost, 100000;
+
+	// exact amount of party members needed to start the game
+	set .register_min, 2;
+
+	// id of each mvp. you can add more
+	setarray .mvpid[1],
+		1086,//	Golden Thief Bug	64
+		1115,//	Eddga				65
+		1150,//	Moonlight Flower	67
+		1159,//	Phreeoni			69
+		1112,//	Drake				70
+		1583,//	Tao Gunka			70
+		1492,//	Incantation Samurai	71
+		1046,//	Doppelgangger		72
+		1252,//	Garm				73
+		1418,//	Evil Snake Lord		73
+		1059,//	Mistress			74
+		1190,//	Orc Lord			74
+		1087,//	Orc Hero			77
+		1251,//	Knight of Windstorm	77
+		1038,//	Osiris				78
+		1658,//	Ygnizem				79
+		1272,//	Dark Lord			80
+		1871,//	Fallen Bishop		80
+		1039,//	Baphomet			81
+		1147,//	Maya				81
+		1785,//	Atroce				82
+		1389,//	Dracula				85
+		1630,//	Bacsojin			85
+		1885,//	Gorynych			85
+		1623,//	RSX 0806			86
+		1511,//	Amon Ra				88
+		1688,//	Lady Tanee			89
+		1768,//	Gloom Under Night	89
+		1719,//	Datale				90
+		1734,//	Kiel D-01			90
+		1157,//	Pharaoh				93
+		1373,//	Lord of Death		94
+		1312,//	Turtle General		97
+		1779,//	Ktullanux			98
+		1874,//	Beelzebub			98
+		1646,// Bio3 placeholder    99
+		1708,//	Thanatos			99
+		1751,//	Valkyrie Randgris	99
+		1832;//	Ifrit				99
+
+	// number of rounds (default: 39)
+	set .totalround, getarraysize(.mvpid) -1;
+
+	// item reward for completing each round
+	set .round_item_id, 512;
+	set .round_item_amount, 1;
+
+	// item reward for completing the entire ladder
+	set .finish_item_id, 501;
+	set .finish_item_amount, 10;
+
+	// bonus reward if ladder completed within a certain time (in minutes)
+	set .bonus_time, 45; // if completed within 45 minutes, this reward is given
+	set .bonus_item_id, 504;
+	set .bonus_item_amount, 10;
+
+	// time delay between rounds, in seconds (default: 3)
+	set .delay, 5;
+
+	// minimum GM level to reset the best record
+	set .gmlvlreset, 99;
+
+	// event map
+	set .eventmap$, "guild_vs2-2";
+
+	// mapflag configuration
+	setarray .@mapflag,
+		mf_nowarp,
+		mf_nowarpto,
+		mf_nosave,
+		mf_nomemo,
+		mf_noteleport,
+//		mf_nopenalty, // disable exp loss
+		mf_noreturn,
+//		mf_nobranch,
+//		mf_nomobloot, // disable monster drop loots,
+//		mf_nomvploot, // 2 of these
+		mf_partylock;
+
+//	Config Ends --------------------------------------------------------------
+
+	mapannounce .eventmap$, "管理员刷新了服务器。请重新登记。对此带来的不便，我们深表歉意。", bc_map;
+	getmapxy .map$, .x, .y, BL_NPC;
+	mapwarp .eventmap$, .map$, .x, .y;
+	killmonsterall .eventmap$;
+	.@size = getarraysize( .@mapflag );
+	for ( .@i = 0; .@i < .@size; .@i++ )
+		setmapflag .eventmap$, .@mapflag[.@i];
+	end;
+}

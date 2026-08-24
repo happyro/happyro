@@ -1,0 +1,500 @@
+//===== rAthena Script ======================================= 
+//= Warper
+//===== Description: ========================================= 
+//= A complete - but very condensed - warper script.
+//===== Additional Comments: =================================
+//= 1.0 Initial script By [Euphy].
+//= 1.1 Added missing duplicates and fixed coordinates.
+//=     Some coordinates written by [Tekno-Kanix] and [ToastOfDoom].
+//= 1.2 Added new episodes and simplified functions.
+//= 1.3 Added Renewal checks and Instances menu.
+//=     Aligned coordinates with @go.
+//= 1.4 Added new Guild Dungeons.
+//= 1.4a Slight edits.
+//= 1.4b Added Wolfchev's Laboratory warp.
+//= 1.5 Added Lasagna ,Para Market ,WOE TE ,Instances and settings [sader1992].
+//= 1.5a Fix Bifrost Tower
+//============================================================
+
+-	script	Warper	-1,{
+function Go; function Disp; function Pick; function Restrict;
+
+// --------------------------------------------------
+//	Main Menu:
+// --------------------------------------------------
+
+menu	"上次传送 ^777777["+lastwarp$+"]^000000",-,
+    	" ~ 城镇",Towns,
+    	" ~ 原野",Fields,
+    	" ~ 地下城",Dungeons,
+    	" ~ 公会城堡",Castles,
+    	" ~ 公会地下城",Guild_Dungeons,
+    	" ~ 副本",Instances,
+    	" ~ 特殊区域",Special;
+
+	if (lastwarp$ == "")
+		message strcharinfo(0),"你还没有传送过。";
+	else
+		warp lastwarp$,lastwarpx,lastwarpy;
+	end;
+
+// ------------------- Functions -------------------
+// * Go("<map>",<x>,<y>);
+//	~ Warps directly to a map.
+//
+// * Disp("<Menu Option>",<first option>,<last option>);
+// * Pick("<map_prefix>"{,<index offset>});
+//	~ Dynamic menu and map selection (auto-numbered).
+//	~ Fields and Dungeons must use Disp and Pick Functions.
+//
+// * Disp("<Option 1>:<Option 2>:<etc.>");
+// * Pick("","<map1>","<map2>","<etc.>");
+//	~ Manual menu and map selection (listed).
+//
+// * Restrict("<RE | Pre-RE>"{,<menu option numbers>});
+//	~ Only allows map for Renewal or Pre-Renewal modes.
+//     If menu option numbers are given, only those maps
+//     will be restricted (i.e. not for "Go").
+//
+// Other notes:
+//   ~ Array @c[] holds all (x,y) coordinates.
+//   ~ Use @c[2] EXCEPT when maps begin dynamically
+//	  at 0: use @c[0] and Pick() offset 1.
+// --------------------------------------------------
+
+function Go {
+	set lastwarp$, getarg(0);
+	set lastwarpx, getarg(1,0);
+	set lastwarpy, getarg(2,0);
+	warp getarg(0),getarg(1,0),getarg(2,0);
+	end;
+}
+function Disp {
+	if (getargcount() < 3)
+		set @menu$, getarg(0);
+	else {
+		set @menu$,"";
+		for (set .@i,getarg(1); .@i<=getarg(2); set .@i,.@i+1)
+			set @menu$, @menu$+getarg(0)+" "+.@i+":";
+	}
+	return;
+}
+function Pick {
+	set .@warp_block,@warp_block;
+	set @warp_block,0;
+	if((@f && .OnlyFirstFld) || (@d && .OnlyFirstDun)){
+		set .@select,1;
+		if(.@warp_block){
+			while(.@warp_block & (1<<.@select)){
+				.@select += 1;
+			}
+		}
+	}else{
+		set .@select, select(@menu$);
+	}
+	if (getarg(0) == "") {
+		set .@i, .@select;
+		set .@map$, getarg(.@i);
+	} else {
+		set .@i, .@select-getarg(1,0);
+		set .@map$, getarg(0)+((.@i<10)?"0":"")+.@i;
+	}
+	if (.@warp_block & (1<<.@select)) {
+		message strcharinfo(0),"这张地图未在"+((checkre(0))?"":"前置")+"Renewal 中启用。";
+		end;
+	}
+	set .@x, @c[.@i*2];
+	set .@y, @c[.@i*2+1];
+	deletearray @c[0],getarraysize(@c);
+	@f = false; @d = false;
+	Go(.@map$,.@x,.@y);
+}
+function Restrict {
+	.@type$ = getarg(0);
+	
+	if (.@type$ == "Brasilis") {
+		// If the official warper to Brasilis is enabled, meaning is either
+		// Renewal mode or Pre-renewal Brasilis is enabled, we lift the restriction
+		if (getnpcid(0, "Crewman_bra2"))
+			return;
+		// Otherwise we apply the renewal restriction
+		.@type$ = "RE";
+	}
+
+	if ((.@type$ == "RE" && !checkre(0)) || (.@type$ == "Pre-RE" && checkre(0))) {
+		if (getarg(1,0)) {
+			set @warp_block,0;
+			for (set .@i,1; .@i<getargcount(); set .@i,.@i+1)
+				set @warp_block, @warp_block | (1<<getarg(.@i));
+		} else {
+			message strcharinfo(0),"这张地图未在"+((checkre(0))?"":"前置")+"Renewal 中启用。";
+			end;
+		}
+	}
+	return;
+}
+
+// --------------------------------------------------
+	Towns:
+// --------------------------------------------------
+menu	"普隆德拉",T1, "艾尔贝塔",T2, "艾尔帕兰",T3, "天津町",T4, "阿育王町",T5,
+    	"巴西利斯",T6, "海洞",T7, "德瓦塔",T8, "伊克拉斯",T9, "艾因贝赫",T10,
+		"艾因布洛克",T11, "埃尔迪卡斯特",T12, "吉芬",T13, "胡格尔",T14, "冰城",T15,
+		"依斯鲁得",T16, "嘉年华岛",T17, "朱诺",T18, "昆仑",T19, "拉萨格",T20,
+		"里希塔乐镇",T21, "洛阳",T22, "姜饼城",T23, "马林岛",T24, "马来西亚",T25,
+		"马努克",T26, "米德加尔特远征队营地",T27, "莫拉",T28, "梦罗克",T29, "莫斯科比亚",T30,
+		"无名岛（白天）",T31, "无名岛（夜晚）",T32, "尼夫海姆",T33, "帕扬",T34, "拉赫",T35,
+		"洛克里奇",T36, "特殊安全区域科尔",T37, "斯普兰迪德",T38, "托尔营地",T39, "乌帕拉",T40,
+		"瓦尔蒙特府邸",T41, "维因斯",T42, "维鲁斯发掘地",T43, "狼村",T44;
+
+T1: Go("prontera",155,183);
+T2: Go("alberta",28,234);
+T3: Go("aldebaran",140,131);
+T4: Go("amatsu",198,84);
+T5: Go("ayothaya",208,166);
+T6: Restrict("Brasilis");
+	Go("brasilis",196,217);
+T7: Go("comodo",209,143);
+T8: Restrict("RE");
+	Go("dewata",200,180);
+T9: Restrict("RE");
+	Go("ecl_in01",48,53);
+T10: Go("einbech",63,35);
+T11: Go("einbroch",64,200);
+T12: Restrict("RE");
+	 Go("dicastes01",198,187);
+T13: Go("geffen",119,59);
+T14: Go("hugel",96,145);
+T15: Restrict("RE");
+	 Go("icecastle",185,212);
+T16: Go("izlude",128,(checkre(3)?146:114));
+T17: Go("jawaii",251,132);
+T18: Go("yuno",157,51);
+T19: Go("gonryun",160,120);
+T20: Restrict("RE");
+	 Go("lasagna",193,182);
+T21: Go("lighthalzen",158,92);
+T22: Go("louyang",217,100);
+T23: Go("xmas",147,134);
+T24: Restrict("RE");
+	 Go("malangdo",140,114);
+T25: Restrict("RE");
+	 Go("malaya",231,200);
+T26: Go("manuk",282,138);
+T27: Go("mid_camp",210,288);
+T28: Restrict("RE");
+	 Go("mora",55,146);
+T29: Go("morocc",156,93);
+T30: Go("moscovia",223,184);
+T31: Go("nameless_i",256,215);
+T32: Go("nameless_n",256,215);
+T33: Go("niflheim",202,174);
+T34: Go("payon",179,100);
+T35: Go("rachel",130,110);
+T36: Restrict("RE");
+	 Go("harboro1",298,206);
+T37: Restrict("RE");
+	 Go("sp_cor",160,166);
+T38: Go("splendide",201,147);
+T39: Go("thor_camp",246,68);
+T40: Go("umbala",97,153);
+T41: Restrict("RE");
+	Go("ba_maison",72,146);
+T42: Go("veins",216,123);
+T43: Restrict("RE");
+	 Go("verus04",123,250);
+T44: Restrict("RE");
+	 Go("wolfvill",144,144);
+
+// --------------------------------------------------
+	Fields:
+// --------------------------------------------------
+@f = true;
+menu	"天津町原野",F1, "阿育王町原野",F2, "彩虹桥原野", F3,
+    	"巴西利斯原野",F4, "海洞原野",F5, "德瓦塔原野",F6,
+    	"伊克拉斯原野",F7, "艾因布洛克原野",F8, "埃尔迪卡斯特原野",F9,
+    	"冰鳞原野",F10, "吉芬原野",F11, "灰狼森林",F12,
+		"胡格尔原野",F13, "朱诺原野",F14, "奇瓦瓦沙漠",F15,
+		"昆仑原野",F16, "拉萨格原野",F17, "里希塔乐原野",F18,
+		"洛阳原野",F19, "姜饼城原野",F20, "马来西亚原野",F21,
+		"马努克原野",F22, "妙勒尼山脉原野",F23, "莫斯科比亚原野",F24,
+		"尼夫海姆原野",F25, "帕扬森林",F26, "普隆德拉原野",F27,
+		"拉赫原野",F28, "苏格拉特沙漠",F29, "斯普兰迪德原野",F30,
+		"乌帕拉原野",F31, "维因斯原野",F32;
+
+F1: setarray @c[2],190,197;
+	Disp("天津町原野",1,1); Pick("ama_fild");
+F2: setarray @c[2],173,134,212,150;
+	Disp("阿育王町原野",1,2); Pick("ayo_fild");
+F3: Restrict("RE");
+	setarray @c[2],193,220,220,187;
+	Disp("彩虹桥原野",1,2); Pick("bif_fild");
+F4: Restrict("Brasilis");
+	setarray @c[2],74,32;
+	Disp("巴西利斯原野",1,1); Pick("bra_fild");
+F5: Restrict("Pre-RE",5);
+	setarray @c[2],180,178,231,160,191,172,228,194,224,203,190,223,234,177,194,175,172,172;
+	Disp("海洞原野",1,9); Pick("cmd_fild");
+F6: Restrict("RE");
+	setarray @c[2],371,212;
+	Disp("德瓦塔原野",1,1); Pick("dew_fild");
+F7: Restrict("RE");
+	setarray @c[2],97,314;
+	Disp("伊克拉斯原野",1,1); Pick("ecl_fild");
+F8: Restrict("Pre-RE",2,10);
+	setarray @c[2],142,225,182,141,187,228,185,173,216,173,195,148,272,220,173,214,207,174,196,200;
+	Disp("艾因布洛克原野",1,10); Pick("ein_fild");
+F9: Restrict("RE");
+	setarray @c[2],143,132,143,217;
+	Disp("埃尔迪卡斯特原野",1,2); Pick("dic_fild");
+F10: Restrict("RE");
+	 setarray @c[2],378,223,223,18,365,241,140,280;
+	 Disp("冰鳞山丘:冰鳞平原:冰鳞冰川:冰鳞尾部"); Pick("","jor_back1","jor_back2","jor_back3","jor_tail");
+F11: Restrict("Pre-RE",13,15);
+	 setarray @c[0],46,199,213,204,195,212,257,192,188,171,166,263,248,158,195,191,186,183,221,117,178,218,136,328,240,181,235,235,211,185;
+	 Disp("吉芬原野",0,14); Pick("gef_fild",1);
+F12: Restrict("RE");
+	 setarray @c[2],22,315,122,388;
+	 Disp("灰狼森林",1,2); Pick("gw_fild");
+F13: Restrict("Pre-RE",3,7);
+	 setarray @c[2],268,101,222,193,232,185,252,189,196,106,216,220,227,197;
+	 Disp("胡格尔原野",1,7); Pick("hu_fild");
+F14: Restrict("Pre-RE",5,10);
+	 setarray @c[2],189,224,192,207,221,157,226,199,223,177,187,232,231,174,196,203,183,214,200,124,195,226,210,304;
+	 Disp("朱诺原野",1,12); Pick("yuno_fild");
+F15: Restrict("RE");
+	 setarray @c[2],38,246,31,207;
+	 Disp("奇瓦瓦沙漠",1,2); Pick("","rockrdg1","rockrdg2");
+F16: setarray @c[2],220,227;
+	 Disp("昆仑原野",1,1); Pick("gon_fild");
+F17: Restrict("RE");
+	 setarray @c[2],344,371,20,98;
+	 Disp("拉萨格原野",1,2); Pick("lasa_fild");
+F18: setarray @c[2],240,179,185,235,240,226;
+	 Disp("里希塔乐原野",1,3); Pick("lhz_fild");
+F19: setarray @c[2],229,187;
+	 Disp("洛阳原野",1,1); Pick("lou_fild");
+F20: setarray @c[2],115,145;
+	 Disp("姜饼城原野",1,1); Pick("xmas_fild");
+F21: Restrict("RE");
+	 setarray @c[2],40,272,207,180;
+	 Disp("马来西亚原野",1,2); Pick("ma_fild");
+F22: setarray @c[2],35,236,35,262,84,365;
+	 Disp("马努克原野",1,3); Pick("man_fild");
+F23: setarray @c[2],204,120,175,193,208,213,179,180,181,240,195,270,235,202,188,215,205,144,245,223,180,206,196,208;
+	 Disp("妙勒尼山脉原野",1,12); Pick("mjolnir_");
+F24: setarray @c[2],82,104,131,147;
+	 Disp("莫斯科比亚原野",1,2); Pick("mosk_fild");
+F25: setarray @c[2],215,229,167,234;
+	 Disp("尼夫海姆原野",1,2); Pick("nif_fild");
+F26: Restrict("Pre-RE",5,11);
+	 setarray @c[2],158,206,151,219,205,148,186,247,134,204,193,235,200,177,137,189,201,224,160,205,194,150;
+	 Disp("帕扬森林",1,11); Pick("pay_fild");
+F27: setarray @c[0],208,227,190,206,240,206,190,143,307,252,239,213,185,188,193,194,187,218,210,183,195,149,198,164;
+	 Disp("普隆德拉原野",0,11); Pick("prt_fild",1);
+F28: Restrict("Pre-RE",2,7,9,10,11,13);
+	 setarray @c[2],192,162,235,166,202,206,202,208,225,202,202,214,263,196,217,201,87,121,277,181,221,185,175,200,174,197;
+	 Disp("拉赫原野",1,13); Pick("ra_fild");
+F29: if(.Satan_Morocc){
+	 setarray @c[2],219,205,177,206,194,182,224,170,198,216,156,187,185,263,206,228,208,238,209,223,85,97,207,202,31,195,38,195;
+	 Disp("苏格拉特沙漠 1:苏格拉特沙漠 2:苏格拉特沙漠 3:苏格拉特沙漠 7:苏格拉特沙漠 11:苏格拉特沙漠 12:苏格拉特沙漠 13:苏格拉特沙漠 16:苏格拉特沙漠 17:苏格拉特沙漠 18:苏格拉特沙漠 19:苏格拉特沙漠 20:苏格拉特沙漠 21:苏格拉特沙漠 22");
+	 Pick("","moc_fild01","moc_fild02","moc_fild03","moc_fild07","moc_fild11","moc_fild12","moc_fild13","moc_fild16","moc_fild17","moc_fild18","moc_fild19","moc_fild20","moc_fild21","moc_fild22");
+	 }else{
+	 setarray @c[2],219,205,177,206,194,182,146,297,204,197,275,302,224,170,139,123,101,110,341,39,198,216,156,187,185,263,223,222,170,257,206,228,208,238,209,223,85,97;
+	 Disp("苏格拉特沙漠",1,19); Pick("moc_fild");
+	 }
+F30: setarray @c[2],175,186,236,184,188,204;
+	 Disp("斯普兰迪德原野",1,3); Pick("spl_fild");
+F31: setarray @c[2],217,206,223,221,237,215,202,197;
+	 Disp("乌帕拉原野",1,4); Pick("um_fild");
+F32: Restrict("Pre-RE",5);
+	 setarray @c[2],186,175,196,370,222,45,51,250,202,324,150,223,149,307;
+	 Disp("维因斯原野",1,7); Pick("ve_fild");
+
+// --------------------------------------------------
+	Dungeons:
+// --------------------------------------------------
+@d = true;
+menu	"阿米希提亚废弃实验室",D1, "深渊湖",D2, "天津町地下城",D3,
+		"蚂蚁地狱",D4, "阿育王町地下城",D5, "海滩地下城",D6,
+		"彩虹桥塔",D7, "生化实验室",D8, "巴西利斯地下城",D9,
+		"拜亚兰地下城",D10, "钟楼",D11, "矿山",D12,
+		"下水道",D13, "诅咒修道院",D14, "德瓦塔地下城",D15,
+		"艾因布洛克地下城",D16, "火焰盆地",D17, "吉芬尼亚",D18,
+		"吉芬地下城",D19, "古城",D20, "隐藏地下城",D21,
+		"冰洞地下城",D22, "幻影地下城",D23, "伊斯加德地下城",D24,
+		"朱彼洛斯",D25, "基尔地下城",D26, "昆仑地下城",D27,
+		"拉萨格地下城",D28, "洛阳地下城",D29, "熔岩地下城",D30,
+		"马林岛地下城",D31, "莫斯科比亚地下城",D32, "尼德霍格地下城",D33,
+		"尼夫海姆地下城",D34, "奥丁神殿",D35, "兽人地下城",D36,
+		"奥兹迷宫地下城",D37, "帕扬地下城",D38, "普隆德拉地下",D39,
+		"金字塔",D40, "拉赫圣域",D41, "洛克里奇地下城",D42,
+		"鲁杜斯地下城",D43, "斯卡拉巴洞穴",D44, "斯芬克斯",D45,
+		"沉船",D46, "塔纳托斯塔",D47, "托尔火山",D48,
+		"玩具工厂",D49, "乌龟地下城",D50, "乌帕拉地下城",D51,
+		"瓦尔蒙特地下城",D52, "维鲁斯区域",D53;
+
+D1: Restrict("RE");
+	setarray @c[2],253,244,145,278;
+	Disp("第 1 层 - 综合实验室:第 2 层 - 深度培养室"); Pick("","amicitia1","amicitia2");
+D2: Restrict("RE",4);
+	setarray @c[2],261,272,275,270,116,27,169,159;
+	Disp("深渊湖",1,4); Pick("abyss_");
+D3: setarray @c[2],228,11,34,41,119,14;
+	Disp("天津町地下城",1,3); Pick("ama_dun");
+D4: setarray @c[2],35,262,168,170;
+	Disp("蚂蚁地狱",1,2); Pick("anthell");
+D5: setarray @c[2],275,19,24,26;
+	Disp("古代神社迷宫:古代神社内部"); Pick("ayo_dun");
+D6: setarray @c[2],266,67,255,244,23,260;
+	Disp("海滩地下城",1,3); Pick("","beach_dun","beach_dun2","beach_dun3");
+D7: Restrict("RE");
+	setarray @c[2],57,13,64,88,45,14,26,23;
+	Disp("彩虹桥塔",1,4); Pick("ecl_tdun");
+D8: Restrict("RE",4,5);
+	setarray @c[2],150,288,150,18,140,134,244,52,100,202;
+	Disp("生化实验室 1:生化实验室 2:生化实验室 3:生化实验室 4:陨落者之墓"); Pick("","lhz_dun01","lhz_dun02","lhz_dun03","lhz_dun04","lhz_dun_n");
+D9: Restrict("Brasilis");
+	setarray @c[2],87,47,262,262;
+	Disp("巴西利斯地下城",1,2); Pick("bra_dun");
+D10: Restrict("RE",6);
+	 setarray @c[0],168,168,253,252,236,204,32,63,26,27,141,187;
+	 Disp("拜亚兰地下城",1,6); Pick("iz_dun",1);
+D11: Restrict("RE",9,10,11);
+	 setarray @c[2],199,159,148,283,65,147,56,155,297,25,127,169,277,178,268,74,266,27,60,142,79,39;
+	 Disp("钟楼 1:钟楼 2:钟楼 3:钟楼 4:地下 1 层:地下 2 层:地下 3 层:地下 4 层:梦魇钟楼第 2 层:梦魇钟楼第 3 层:未知地下层");
+	 Pick("","c_tower1","c_tower2","c_tower3","c_tower4","alde_dun01","alde_dun02","alde_dun03","alde_dun04","c_tower2_","c_tower3_","clock_01");
+D12: setarray @c[2],52,17,381,343,302,262;
+	 Disp("矿山",1,3); Pick("mjo_dun");
+D13: setarray @c[2],131,247,19,19,180,169,100,92;
+	 Disp("下水道",1,4); Pick("","prt_sewb1","prt_sewb2","prt_sewb3","prt_sewb4");
+D14: setarray @c[2],51,14,150,11,120,10;
+	 Disp("诅咒修道院",1,3); Pick("abbey");
+D15: Restrict("RE");
+	 setarray @c[2],285,160,299,29;
+	 Disp("德瓦塔地下城",1,2); Pick("dew_dun");
+D16: Restrict("RE",3);
+	 setarray @c[2],22,14,292,290,269,279;
+	 Disp("艾因布洛克地下城",1,3); Pick("ein_dun");
+D17: Restrict("RE");
+	 Go("moro_vol",97,107);
+D18: setarray @c[2],40,103,203,34,266,168,130,272;
+	 Disp("吉芬尼亚",1,4); Pick("gefenia",0);
+D19: setarray @c[0],104,99,115,236,106,132,203,200;
+	 Disp("吉芬地下城",1,4); Pick("gef_dun",1);
+D20: Restrict("RE",17,18,19);
+	 setarray @c[2],370,304,199,29,104,25,150,15,157,287,147,15,258,255,108,291,171,283,68,277,156,7,12,7,133,271,224,274,14,70,150,14,104,31,148,144,199,29;
+	 Disp("入口:城堡 1:城堡 2:骑士团 1:骑士团 2:墓地:下水道 1:下水道 2:下水道 3:下水道 4:圣修道院:阶梯地下城:地下洞穴 1:地下洞穴 2:地下监狱 1:地下监狱 2:城堡 2 - 梦魇模式:墓地 - 梦魇模式:深渊古城城堡第 1 层");
+	 Pick("","glast_01","gl_cas01","gl_cas02","gl_knt01","gl_knt02","gl_chyard","gl_sew01","gl_sew02","gl_sew03","gl_sew04","gl_church","gl_step","gl_dun01","gl_dun02","gl_prison","gl_prison1","gl_cas02_","gl_chyard_","gl_cas01_");
+D21: setarray @c[2],99,31,93,20,182,88;
+	 Disp("隐藏地下城",1,3); Pick("prt_maze");
+D22: setarray @c[2],157,14,151,155,149,22,33,158;
+	 Disp("冰洞地下城",1,4); Pick("ice_dun");
+D23: menu	"深渊幻影",SubD1, "冰冻幻影",SubD2, "迷宫幻影",SubD3,
+			"卢安达幻影",SubD4, "月光幻影",SubD5, "泰迪熊幻影",SubD6,
+			"双子幻影",SubD7, "水下幻影",SubD8, "吸血鬼幻影",SubD9;
+	SubD1: Restrict("RE");
+		   setarray @c[2],132,189,99,186;
+		   Disp("荒凉村庄:阴郁乌龟宫殿"); Pick("","tur_d03_i","tur_d04_i");
+	SubD2: Restrict("RE");
+		   Go("ice_d03_i",149,22);
+	SubD3: Restrict("RE");
+		   Go("prt_mz03_i",100,100);
+	SubD4: Restrict("RE");
+		   Go("com_d02_i",250,245);
+	SubD5: Restrict("RE");
+		   Go("pay_d03_i",140,44);
+	SubD6: Restrict("RE");
+		   Go("ein_d02_i",164,184);
+	SubD7: Restrict("RE");
+		   Go("ant_d02_i",168,170);
+	SubD8: Restrict("RE");
+		   setarray @c[2],130,230,141,188;
+		   Disp("深海洞穴",1,2); Pick("","iz_d04_i","iz_d05_i");
+	SubD9: Restrict("RE");
+		   Go("gef_d01_i",114,216);
+D24: Restrict("RE");
+	 setarray @c[2],112,15,280,87,112,12,274,85;
+	 Disp("废弃矿坑第 1 层:废弃矿坑第 2 层:蛇神温床第 1 层:蛇神温床第 2 层"); Pick("","jor_ab01","jor_ab02","jor_dun01","jor_dun02");
+D25: Restrict("RE",5);
+	 setarray @c[2],140,51,53,247,37,63,150,285,146,215;
+	 Disp("入口:朱彼洛斯 1:朱彼洛斯 2:核心:朱彼洛斯东部遗迹");
+	 Pick("","jupe_cave","juperos_01","juperos_02","jupe_core","ver_eju");
+D26: setarray @c[2],28,226,41,198;
+	 Disp("基尔地下城",1,2); Pick("kh_dun");
+D27: setarray @c[2],153,53,28,113,68,16;
+	 Disp("昆仑地下城",1,3); Pick("gon_dun");
+D28: Restrict("RE");
+	 setarray @c[2],24,143,22,171,190,18;
+	 Disp("拉萨格地下城",1,3); Pick("lasa_dun");
+D29: setarray @c[2],218,196,282,20,165,38;
+	 Disp("王陵:王陵内部:水龙宫"); Pick("lou_dun");
+D30: Restrict("RE",3);
+	 setarray @c[2],126,68,47,30,118,113;
+	 Disp("熔岩地下城",1,3); Pick("mag_dun");
+D31: Restrict("RE");
+	 setarray @c[2],33,230;
+	 Disp("马林岛地下城",1,1); Pick("mal_dun");
+D32: setarray @c[2],189,48,165,30,32,135;
+	 Disp("莫斯科比亚地下城",1,3); Pick("mosk_dun");
+D33: setarray @c[2],61,239,60,271;
+	 Disp("尼德霍格地下城",1,2); Pick("nyd_dun");
+D34: Restrict("RE");
+	 setarray @c[2],145,90,150,20;
+	 Disp("尼夫海姆地下城 - 第 1 层:尼夫海姆地下城 - 第 2 层"); Pick("nif_dun");
+D35: Restrict("RE",4);
+	 setarray @c[2],298,167,224,149,266,280,276,236;
+	 Disp("奥丁神殿 1:奥丁神殿 2:奥丁神殿 3:奥丁过去"); Pick("","odin_tem01","odin_tem02","odin_tem03","odin_past");
+D36: setarray @c[2],32,170,21,185;
+	 Disp("兽人地下城",1,2); Pick("orcsdun");
+D37: Restrict("RE");
+	 setarray @c[2],21,191,141,277;
+	 Disp("奥兹迷宫第 1 层:奥兹迷宫第 2 层"); Pick("oz_dun");
+D38: setarray @c[0],21,183,19,33,19,63,155,159,201,204;
+	 Disp("帕扬地下城",1,5); Pick("pay_dun",1);
+D39: Restrict("RE");
+	 setarray @c[2],159,289,155,353;
+	 Disp("普隆德拉地下监狱:普隆德拉入侵"); Pick("","prt_prison","prt_q");
+D40: Restrict("RE",7,8);
+	 setarray @c[2],192,9,10,192,100,92,181,11,94,96,192,8,94,96,192,8;
+	 Disp("金字塔 1:金字塔 2:金字塔 3:金字塔 4:地下 1 层:地下 2 层:地下 1 层 - 梦魇模式:地下 2 层 - 梦魇模式");
+	 Pick("","moc_pryd01","moc_pryd02","moc_pryd03","moc_pryd04","moc_pryd05","moc_pryd06","moc_prydn1","moc_prydn2");
+D41: setarray @c[2],140,11,32,21,8,149,204,218,150,9;
+	 Disp("拉赫圣域",1,5); Pick("ra_san");
+D42: Restrict("RE");
+	 setarray @c[2],247,19,281,104;
+	 Disp("洛克里奇矿山:地下水道下水道"); Pick("","rockmi1","harboro2");
+D43: Restrict("RE");
+	 setarray @c[2],200,377,185,258,366,207,378,178;
+	 Disp("鲁杜斯地下城",1,4); Pick("","sp_rudus","sp_rudus2","sp_rudus3","sp_rudus4");
+D44: Restrict("RE");
+	 setarray @c[2],364,44,101,141,101,141;
+	 Disp("斯卡拉巴洞穴",1,3); Pick("dic_dun");
+D45: setarray @c[2],288,9,149,81,210,54,10,222,100,99;
+	 Disp("斯芬克斯",1,5); Pick("","in_sphinx1","in_sphinx2","in_sphinx3","in_sphinx4","in_sphinx5");
+D46: setarray @c[2],69,24,102,27;
+	 Disp("沉船",1,2); Pick("treasure");
+D47: setarray @c[2],150,39,150,136,220,158,59,143,62,11,89,221,35,166,93,148,29,107,159,138,19,20,130,52;
+	 Disp("塔纳托斯塔",1,12); Pick("tha_t");
+D48: setarray @c[2],21,228,75,205,34,272;
+	 Disp("托尔火山",1,3); Pick("thor_v");
+D49: setarray @c[2],205,15,129,133;
+	 Disp("玩具工厂",1,2); Pick("xmas_dun");
+D50: setarray @c[2],154,49,148,261,132,189,100,192;
+	 Disp("入口:乌龟地下城 1:乌龟地下城 2:乌龟地下城 3"); Pick("tur_dun");
+D51: Restrict("Pre-RE",1,2);
+	 setarray @c[2],42,31,48,30,204,78;
+	 Disp("树中木匠店:通往异世界的通道:赫维尔格米尔泉");
+	 Pick("","um_dun01","um_dun02","yggdrasil01");
+D52: Restrict("RE");
+	 setarray @c[2],275,21,15,115,15,115,159,27,162,36,159,11,156,33,337,333,314,64,163,18,156,20,39,81;
+	 Disp("污水处理厂:第 1 发电厂:第 2 发电厂:大型冥想浴场:失落农场谷:图书馆记忆回廊:塔尔塔罗斯仓库上层:塔尔塔罗斯仓库下层:死亡符文:火焰符文:草地符文:冰霜符文"); Pick("","ba_pw02","ba_pw01","ba_pw03","ba_bath","ba_lost","ba_lib","ba_2whs01","ba_2whs02","bl_death","bl_lava","bl_grass","bl_ice");
+D53: Restrict("RE");
+	 setarray @c[2],244,61,72,20,122,22;
+	 Disp("奥普塔提奥实验室:维希研发部:维鲁斯中心广场"); Pick("verus");
+
+// --------------------------------------------------
+	Castles:
+// --------------------------------------------------
+menu	"[FE] 艾尔帕兰城堡",C1, "[FE] 吉芬城堡",C2, "[FE] 帕扬城堡",C3,
+    	"[FE] 普隆德拉城堡",C4, "[SE] 阿鲁纳佩尔兹城堡",C5, "[SE] 施瓦尔茨瓦德城堡",C6,

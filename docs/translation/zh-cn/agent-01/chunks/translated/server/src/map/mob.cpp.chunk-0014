@@ -1,0 +1,500 @@
+	j = atoi(str[3]);
+	if ( !skill_db.exists( j ) ){
+		if (mob_id < 0)
+			ShowError("mob_parse_row_mobskilldb: Invalid Skill ID (%d) for all mobs\n", j);
+		else
+			ShowError("mob_parse_row_mobskilldb: Invalid Skill ID (%d) for mob %d (%s)\n", j, mob_id, mob->sprite.c_str());
+		return false;
+	}
+	ms->skill_id = j;
+
+	//Skill lvl
+	j = atoi(str[4]) <= 0 ? 1 : atoi(str[4]);
+	ms->skill_lv = j > battle_config.mob_max_skilllvl ? battle_config.mob_max_skilllvl : j; //we strip max skill level
+
+	//Apply battle_config modifiers to rate (permillage) and delay [Skotlex]
+	tmp = atoi(str[5]);
+	if (battle_config.mob_skill_rate != 100)
+		tmp = tmp*battle_config.mob_skill_rate/100;
+	if (tmp > 10000)
+		ms->permillage = 10000;
+	else if (!tmp && battle_config.mob_skill_rate)
+		ms->permillage = 1;
+	else
+		ms->permillage = tmp;
+	ms->casttime = atoi(str[6]);
+	ms->delay = atoi(str[7]);
+	if (battle_config.mob_skill_delay != 100)
+		ms->delay = ms->delay*battle_config.mob_skill_delay/100;
+	if (ms->delay < 0 || ms->delay > MOB_MAX_DELAY) //time overflow?
+		ms->delay = MOB_MAX_DELAY;
+	ms->cancel = atoi(str[8]);
+	if( strcmp(str[8],"yes")==0 )
+		ms->cancel=1;
+
+	//Target
+	ARR_FIND( 0, ARRAYLENGTH(target), j, strcmp(str[9],target[j].str) == 0 );
+	if( j < ARRAYLENGTH(target) )
+		ms->target = target[j].id;
+	else {
+		ShowWarning("mob_parse_row_mobskilldb: Unrecognized target %s for %d\n", str[9], mob_id);
+		ms->target = MST_TARGET;
+	}
+
+	//Check that the target condition is right for the skill type. [Skotlex]
+	if (skill_get_casttype(ms->skill_id) == CAST_GROUND)
+	{	//Ground skill.
+		if (ms->target > MST_AROUND)
+		{
+			ShowWarning("mob_parse_row_mobskilldb: Wrong mob skill target for ground skill %d (%s) for %s.\n",
+				ms->skill_id, skill_get_name(ms->skill_id),
+				mob_id < 0 ? "all mobs" : mob->sprite.c_str());
+			ms->target = MST_TARGET;
+		}
+	} else if (ms->target > MST_MASTER) {
+		ShowWarning("mob_parse_row_mobskilldb: Wrong mob skill target 'around' for non-ground skill %d (%s) for %s.\n",
+			ms->skill_id, skill_get_name(ms->skill_id),
+			mob_id < 0 ? "all mobs" : mob->sprite.c_str());
+		ms->target = MST_TARGET;
+	}
+
+	//Cond1
+	ARR_FIND( 0, ARRAYLENGTH(cond1), j, strcmp(str[10],cond1[j].str) == 0 );
+	if( j < ARRAYLENGTH(cond1) )
+		ms->cond1 = cond1[j].id;
+	else {
+		ShowWarning("mob_parse_row_mobskilldb: Unrecognized condition 1 %s for %d\n", str[10], mob_id);
+		ms->cond1 = -1;
+	}
+
+	//Cond2
+	// numeric value
+	ms->cond2 = atoi(str[11]);
+	// or special constant
+	ARR_FIND( 0, ARRAYLENGTH(cond2), j, strcmp(str[11],cond2[j].str) == 0 );
+	if( j < ARRAYLENGTH(cond2) )
+		ms->cond2 = cond2[j].id;
+
+	ms->val[0] = (int32)strtol(str[12],nullptr,0);
+	ms->val[1] = (int32)strtol(str[13],nullptr,0);
+	ms->val[2] = (int32)strtol(str[14],nullptr,0);
+	ms->val[3] = (int32)strtol(str[15],nullptr,0);
+	ms->val[4] = (int32)strtol(str[16],nullptr,0);
+
+	if(ms->skill_id == NPC_EMOTION && mob_id > 0 &&
+		ms->val[1] == mob->status.mode)
+	{
+		ms->val[1] = 0;
+		ms->val[4] = 1; //request to return mode to normal.
+	}
+	if(ms->skill_id == NPC_EMOTION_ON && mob_id > 0 && ms->val[1])
+	{	//Adds a mode to the mob.
+		//Remove aggressive mode when the new mob type is passive.
+		if (!(ms->val[1]&MD_AGGRESSIVE))
+			ms->val[3] |= MD_AGGRESSIVE;
+		ms->val[2] |= ms->val[1]; //Add the new mode.
+		ms->val[1] = 0; //Do not "set" it.
+	}
+
+	if(*str[17])
+		ms->emotion = atoi(str[17]);
+	else
+		ms->emotion = -1;
+
+	if (*str[18]) {
+		uint16 id = static_cast<uint16>(strtol(str[18], nullptr, 10));
+		if (mob_chat_db.find(id) != nullptr)
+			ms->msg_id = id;
+		else {
+			ms->msg_id = 0;
+			ShowWarning("mob_parse_row_mobskilldb: Unknown chat ID %s for monster %d.\n", str[18], mob_id);
+		}
+	}
+	else
+		ms->msg_id = 0;
+
+	skill->skill.push_back(ms);
+
+	if (!skill->mob_id) { // Insert new entry
+		skill->mob_id = mob_id;
+		mob_skill_db.insert({ mob_id, skill });
+	}
+	return true;
+}
+
+/*==========================================
+ * mob_skill_db.txt reading
+ *------------------------------------------*/
+static void mob_readskilldb(const char* basedir, bool silent) {
+	if( battle_config.mob_skill_rate == 0 ) {
+		ShowStatus("Mob skill use disabled. Not reading mob skills.\n");
+		return;
+	}
+	sv_readdb(basedir, "mob_skill_db.txt", ',', 19, 19, -1, &mob_parse_row_mobskilldb, silent);
+}
+
+/**
+ * mob_skill_db table reading [CalciumKid]
+ * not overly sure if this is all correct
+ * seems to work though...
+ */
+static int32 mob_read_sqlskilldb(void)
+{
+	const char* mob_skill_db_name[] = {
+		mob_skill_table,
+		mob_skill2_table };
+	int32 fi;
+
+	if( battle_config.mob_skill_rate == 0 ) {
+		ShowStatus("Mob skill use disabled. Not reading mob skills.\n");
+		return 0;
+	}
+
+	for( fi = 0; fi < ARRAYLENGTH(mob_skill_db_name); ++fi ) {
+		uint32 lines = 0, count = 0;
+
+		// retrieve all rows from the mob skill database
+		if( SQL_ERROR == Sql_Query(mmysql_handle, "SELECT * FROM `%s`", mob_skill_db_name[fi]) ) {
+			Sql_ShowDebug(mmysql_handle);
+			continue;
+		}
+
+		// process rows one by one
+		while( SQL_SUCCESS == Sql_NextRow(mmysql_handle) ) {
+			// wrap the result into a TXT-compatible format
+			char* str[19];
+			char dummy[255] = "";
+			int32 i;
+			++lines;
+			for( i = 0; i < 19; ++i )
+			{
+				Sql_GetData(mmysql_handle, i, &str[i], nullptr);
+				if( str[i] == nullptr ) 
+					str[i] = dummy; // get rid of nullptr columns
+			}
+
+			if (!mob_parse_row_mobskilldb(str, 19, count))
+				continue;
+
+			count++;
+		}
+
+		// free the query result
+		Sql_FreeResult(mmysql_handle);
+
+		ShowStatus("Done reading '" CL_WHITE "%u" CL_RESET "' entries in '" CL_WHITE "%s" CL_RESET "'.\n", count, mob_skill_db_name[fi]);
+	}
+	return 0;
+}
+
+const std::string MobItemRatioDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/mob_item_ratio.yml";
+}
+
+/**
+ * Reads and parses an entry from the mob_item_ratio.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 MobItemRatioDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string item_name;
+
+	if (!this->asString(node, "Item", item_name))
+		return 0;
+
+	std::shared_ptr<item_data> item = item_db.search_aegisname(item_name.c_str());
+
+	if (item == nullptr) {
+		this->invalidWarning(node["Item"], "Item %s does not exist, skipping.\n", item_name.c_str());
+		return 0;
+	}
+
+	t_itemid nameid = item->nameid;
+
+	std::shared_ptr<s_mob_item_drop_ratio> data = this->find(nameid);
+	bool exists = data != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Ratio" })) {
+			return 0;
+		}
+
+		data = std::make_shared<s_mob_item_drop_ratio>();
+		data->nameid = nameid;
+	}
+	
+	if (this->nodeExists(node, "Ratio")) {
+		uint32 ratio;
+
+		if (!this->asUInt32(node, "Ratio", ratio))
+			return 0;
+
+		data->drop_ratio = ratio;
+	}
+
+	if (this->nodeExists(node, "List")) {
+		const auto& MobNode = node["List"];
+
+		for (const auto& mobit : MobNode) {
+			std::string mob_name;
+			c4::from_chars(mobit.key(), &mob_name);
+
+			std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname(mob_name.c_str());
+
+			if (mob == nullptr) {
+				this->invalidWarning(node["List"], "Unknown mob %s, skipping.\n", mob_name.c_str());
+				continue;
+			}
+			uint16 mob_id = mob->id;
+
+			bool active;
+
+			if (!this->asBool(node["List"], mob_name, active))
+				return 0;
+
+			if (!active) {
+				util::vector_erase_if_exists(data->mob_ids, mob_id);
+				continue;
+			}
+
+			data->mob_ids.push_back(mob_id);
+		}
+	}
+
+	if (!exists)
+		this->put(nameid, data);
+
+	return 1;
+}
+
+/**
+ * Adjust drop ratio for each monster
+ **/
+static void mob_drop_ratio_adjust(void){
+	for( auto &pair : mob_db ){
+		std::shared_ptr<s_mob_db> mob = pair.second;
+		int32 mob_id = pair.first;
+
+		if( mob_is_clone( mob_id ) ){
+			continue;
+		}
+
+		for( auto it = mob->mvpitem.begin(); it != mob->mvpitem.end(); ){
+			std::shared_ptr<s_mob_drop>& entry = *it;
+
+			if( entry->nameid == 0 || entry->rate == 0 ){
+				it = mob->mvpitem.erase( it );
+				continue;
+			}
+
+			int32 rate_adjust = battle_config.item_rate_mvp;
+
+			// Adjust the rate if there is an entry in mob_item_ratio
+			item_dropratio_adjust( entry->nameid, mob_id, &rate_adjust );
+
+			// remove the item if the rate of item_dropratio_adjust is 0
+			if (rate_adjust == 0) {
+				it = mob->mvpitem.erase( it );
+				continue;
+			}
+
+			// Adjust rate with given algorithms
+			int32 rate = mob_drop_adjust( entry->rate, rate_adjust, battle_config.item_drop_mvp_min, battle_config.item_drop_mvp_max );
+
+			// calculate and store Max available drop chance of the MVP item
+			if( rate ){
+				item_data* id = itemdb_search( entry->nameid );
+
+				// Item is not known anymore(should never happen)
+				if( !id ){
+					ShowWarning( "Monster \"%s\"(id:%u) is dropping an unknown item(id: %u)\n", mob->name.c_str(), mob_id, entry->nameid );
+					it = mob->mvpitem.erase( it );
+					continue;
+				}
+
+				if( id->maxchance == -1 || ( id->maxchance < rate/10 + 1 ) ){
+					// item has bigger drop chance or sold in shops
+					id->maxchance = rate/10 + 1; // reduce MVP drop info to not spoil common drop rate
+				}
+			}
+
+			entry->rate = rate;
+			it++;
+		}
+
+		for( auto it = mob->dropitem.begin(); it != mob->dropitem.end(); ){
+			std::shared_ptr<s_mob_drop>& entry = *it;
+			uint16 ratemin, ratemax;
+			bool is_treasurechest;
+
+			if( entry->nameid == 0 || entry->rate == 0 ){
+				it = mob->dropitem.erase( it );
+				continue;
+			}
+
+			item_data* id = itemdb_search( entry->nameid );
+
+			// Item is not known anymore(should never happen)
+			if( !id ){
+				ShowWarning( "Monster \"%s\"(id:%hu) is dropping an unknown item(id: %u)\n", mob->name.c_str(), mob_id, entry->nameid );
+				it = mob->dropitem.erase( it );
+				continue;
+			}
+
+			int32 rate = entry->rate;
+			int32 rate_adjust;
+
+			if( battle_config.drop_rateincrease && rate < 5000 ){
+				rate++;
+			}
+
+			// Treasure box drop rates [Skotlex]
+			if (util::vector_exists(mob->race2, RC2_TREASURE)) {
+				is_treasurechest = true;
+
+				rate_adjust = battle_config.item_rate_treasure;
+				ratemin = battle_config.item_drop_treasure_min;
+				ratemax = battle_config.item_drop_treasure_max;
+			} else {
+				bool is_mvp = mob->get_bosstype() == BOSSTYPE_MVP;
+				bool is_boss = mob->get_bosstype() == BOSSTYPE_MINIBOSS;
+
+				is_treasurechest = false;
+
+				 // Added suport to restrict normal drops of MVP's [Reddozen]
+				switch( id->type ){
+					case IT_HEALING:
+						rate_adjust = is_mvp ? battle_config.item_rate_heal_mvp : (is_boss ? battle_config.item_rate_heal_boss : battle_config.item_rate_heal);
+						ratemin = battle_config.item_drop_heal_min;
+						ratemax = battle_config.item_drop_heal_max;
+						break;
+					case IT_USABLE:
+					case IT_CASH:
+						rate_adjust = is_mvp ? battle_config.item_rate_use_mvp : (is_boss ? battle_config.item_rate_use_boss : battle_config.item_rate_use);
+						ratemin = battle_config.item_drop_use_min;
+						ratemax = battle_config.item_drop_use_max;
+						break;
+					case IT_WEAPON:
+					case IT_ARMOR:
+					case IT_PETARMOR:
+						rate_adjust = is_mvp ? battle_config.item_rate_equip_mvp : (is_boss ? battle_config.item_rate_equip_boss : battle_config.item_rate_equip);
+						ratemin = battle_config.item_drop_equip_min;
+						ratemax = battle_config.item_drop_equip_max;
+						break;
+					case IT_CARD:
+						rate_adjust = is_mvp ? battle_config.item_rate_card_mvp : (is_boss ? battle_config.item_rate_card_boss : battle_config.item_rate_card);
+						ratemin = battle_config.item_drop_card_min;
+						ratemax = battle_config.item_drop_card_max;
+						break;
+					default:
+						rate_adjust = is_mvp ? battle_config.item_rate_common_mvp : (is_boss ? battle_config.item_rate_common_boss : battle_config.item_rate_common);
+						ratemin = battle_config.item_drop_common_min;
+						ratemax = battle_config.item_drop_common_max;
+						break;
+				}
+			}
+
+			item_dropratio_adjust( entry->nameid, mob_id, &rate_adjust );
+
+			// remove the item if the rate of item_dropratio_adjust is 0
+			if (rate_adjust == 0) {
+				it = mob->dropitem.erase( it );
+				continue;
+			}
+
+			rate = mob_drop_adjust( rate, rate_adjust, ratemin, ratemax );
+
+			// calculate and store Max available drop chance of the item
+			// but skip treasure chests.
+			if( rate && !is_treasurechest ){
+				uint16 k;
+
+				if( id->maxchance == -1 || ( id->maxchance < rate ) ){
+					id->maxchance = rate; // item has bigger drop chance or sold in shops
+				}
+
+				for( k = 0; k < MAX_SEARCH; k++ ){
+					if( id->mob[k].chance <= rate ){
+						break;
+					}
+				}
+
+				if( k != MAX_SEARCH ){
+					if( id->mob[k].id != mob_id ){
+						memmove( &id->mob[k+1], &id->mob[k], (MAX_SEARCH-k-1)*sizeof(id->mob[0]) );
+					}
+
+					id->mob[k].chance = rate;
+					id->mob[k].id = mob_id;
+				}
+			}
+
+			entry->rate = rate;
+			it++;
+		}
+	}
+
+	// Now that we are done we can delete the stored item ratios
+	mob_item_drop_ratio.clear();
+}
+
+const std::string MapDropDatabase::getDefaultLocation(){
+	return std::string( db_path ) + "/map_drops.yml";
+}
+
+uint64 MapDropDatabase::parseBodyNode( const ryml::NodeRef& node ){
+	std::string mapname;
+
+	if( !this->asString( node, "Map", mapname ) ){
+		return 0;
+	}
+
+	uint16 mapindex = mapindex_name2idx( mapname.c_str(), nullptr );
+
+	if( mapindex == 0 ){
+		this->invalidWarning( node["Map"], "Unknown map \"%s\".\n", mapname.c_str() );
+		return 0;
+	}
+
+	int16 mapid = map_mapindex2mapid( mapindex );
+
+	if( mapid < 0 ){
+		// Silently ignore. Map might be on a different map-server
+		return 0;
+	}
+
+	std::shared_ptr<s_map_drops> mapdrops = this->find( mapid );
+	bool exists = mapdrops != nullptr;
+
+	if( !exists ){
+		mapdrops = std::make_shared<s_map_drops>();
+		mapdrops->mapid = mapid;
+	}
+
+	if( this->nodeExists( node, "GlobalDrops" ) ){
+		const ryml::NodeRef& globalNode = node["GlobalDrops"];
+
+		for( const auto& it : globalNode ){
+			if( !this->parseDrop( it, mapdrops->globals ) ){
+				return 0;
+			}
+		}
+	}
+
+	if( this->nodeExists( node, "SpecificDrops" ) ){
+		const ryml::NodeRef& specificNode = node["SpecificDrops"];
+
+		for( const auto& monsterNode : specificNode ){
+			if( !this->nodesExist( monsterNode, { "Monster", "Drops" } ) ){
+				return 0;
+			}
+
+			std::string mobname;
+
+			if( !this->asString( monsterNode, "Monster", mobname ) ){
+				return 0;
+			}
+
+			std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname( mobname.c_str() );
+
+			if( mob == nullptr ){

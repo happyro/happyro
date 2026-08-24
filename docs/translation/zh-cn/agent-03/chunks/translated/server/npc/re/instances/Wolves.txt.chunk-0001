@@ -1,0 +1,500 @@
+//===== rAthena Script =======================================
+//= Instances: Wolves Gathering Place and Sanctuary Purification.
+//===== Description: =========================================
+//- [Walkthrough conversion]
+//- "Wolves Gathering Place" is a part of the Episode 18 main quest.
+//- Sanctuary Purification is a daily quest.
+//===== Changelogs: ==========================================
+//= 1.0 First version. [Capuche]
+//============================================================
+
+// Main Quest: Step 54. (entrance npc is a part of the instance Wolves Gathering Place)
+rachel,167,244,5	duplicate(dummy_cloaked_npc)	Suad#sms03	4_EP18_SUAD
+rachel,167,242,7	duplicate(dummy_cloaked_npc)	Miriam#sms03	4_EP18_MIRIAM
+
+rachel,169,245,3	script	Ordinary Person#sms04	4_EP18_GW_WOMAN01,{
+	if (BaseLevel < 170) {
+		mes "[Wolf]";
+		mes "你是来参加抗议的吗？但你看起来不像有经验的抗议者。";
+		next;
+		mes "- 此任务从170级起开放。-";
+		close;
+	}
+	if (ep18_main < 50) {
+		mes "[Ordinary Person]";
+		mes "该区域正在维护，禁止进入。这里很危险，请退后。";
+		close;
+	}
+	if (ep18_main == 50 || ep18_main == 51) {
+		if (ep18_main == 50) {
+			mes "[Ordinary Person]";
+			mes "该区域正在维护，禁止进入。";
+			next;
+			cutin "ep18_suad_01.png",2;
+			cloakoffnpcself( "Suad#sms03" );
+			mes "[Suad]";
+			mes "不用警惕。这位冒险者和我们一起。";
+			next;
+			cutin "ep18_miriam_01.png",0;
+			cloakoffnpcself( "Miriam#sms03" );
+			mes "[Miriam]";
+			mes "大家都到齐了吗？";
+			next;
+			cutin "ep18_suad_01.png",2;
+			mes "[Suad]";
+			mes "是的，大家都准备好了。只需向分散各处的同伴发信号，然后进入神殿。";
+			next;
+			cutin "ep18_miriam_01.png",0;
+			mes "[Miriam]";
+			mes "我们得快点行动。";
+			next;
+		}
+		cutin "ep18_suad_01.png",2;
+		mes "[Suad]";
+		mes "从这里进入后可以前往神殿侧门。向那边发送信号并收到回应后就能进入。冒险者，你能发送信号吗？";
+		next;
+
+		.@md_name$ = "Wolves Gathering Place";
+
+		if (is_party_leader()) {
+			.@menu$[0] = "好，发送信号吧。";
+			.@menu$[1] = "我们快点进入。";
+		}
+
+		switch( select( .@menu$[0], .@menu$[1], "我们需要做好准备。" ) ) {
+		case 1:
+			mes "Beep-";
+			next;
+			instance_create(.@md_name$);
+			mes "[Suad]";
+			mes "既然已经发送信号，紧急通道很快会打开。准备好后告诉我们，我们会立即进入。";
+			if (ep18_main == 50) {
+				changequest 17519,17520;
+				ep18_main = 51;
+			}
+			close3;
+		case 2:
+			switch( instance_enter(.@md_name$) ) {
+			case IE_OTHER:
+				mes "[Suad]";
+				mes "^ff0000发生未知错误。^000000";
+				close3;
+			case IE_NOINSTANCE:
+				mes "[Suad]";
+				mes "我们还没发送信号。大家准备好后会立即发送。";
+				close3;
+			case IE_NOMEMBER:
+				mes "[Suad]";
+				mes "^ff0000只有队伍成员才能进入纪念副本。^000000";
+				close3;
+			case IE_OK:
+				mes "[Suad]";
+				mes "信号来了，我们行动吧。马上进入。";
+				if (ep18_main == 50) {	// debug
+					changequest 17519,17520;
+					ep18_main = 51;
+				}
+				cutin "",255;
+				mapannounce "rachel", "队伍" + getpartyname( getcharid(1) ) + "的冒险者" + strcharinfo(0) + "将首先进入" + .@md_name$ + "。所有狼群依次集合。", bc_map, 0xFF99;
+				// warp "1@nyr",194,30;
+				close;
+			}
+			end;
+		case 3:
+			mes "[Suad]";
+			mes "没错。冒险者也是重要力量，我们等他们准备好吧。";
+			close3;
+		}
+		end;
+	}
+	mes "[Ordinary Person]";
+	mes "你好，冒险者。神殿的一名特使一直在等你。";
+	close2;
+	cloakoffnpcself( "Priest#sms01" );
+	npctalk "冒险者，欢迎。", "Priest#sms01", bc_self;
+	end;
+
+OnInit:
+	questinfo( QTYPE_QUEST2, QMARK_YELLOW, "isbegin_quest(17519) == 1" );
+
+	// Sanctuary Purification
+	questinfo( QTYPE_DAILYQUEST, QMARK_YELLOW, "checkquest(17527,PLAYTIME) == 2" );
+	questinfo( QTYPE_DAILYQUEST, QMARK_YELLOW, "ep18_main >= 52 && checkquest(17527,PLAYTIME) == -1 && isbegin_quest(17522) == 0 && isbegin_quest(17523) == 0" );
+	end;
+}
+
+// Instance Sanctuary Purification entrance
+rachel,167,244,5	script(CLOAKED)	Priest#sms01	4_F_TRAINEE,{
+	if (checkweight(1000405,4) == 0) {
+		mes "- 等一下！！-";
+		mes "- 你目前携带了-";
+		mes "- 太多物品。-";
+		mes "- 请减轻负重-";
+		mes "- 后再试。-";
+		close;
+	}
+	if (ep18_main < 52)
+		end;
+	// repeatable instance Sanctuary Purification
+	if (BaseLevel < 170) {
+		mes "[Priest]";
+		mes "进入此副本至少需要基础等级170。";
+		close;
+	}
+	if (isbegin_quest(17524) == 1 || isbegin_quest(17526) == 1) {
+		mes "[Priest]";
+		mes "欢迎，冒险者。你辛苦了。";
+		if (isbegin_quest(17524) == 1) {
+			erasequest 17524;
+			.@count = 2;
+		}
+		if (isbegin_quest(17526) == 1) {
+			erasequest 17526;
+			.@count += 2;
+		}
+		getitem 1000405,.@count;	// Ep18_Amethyst_Fragment
+		next;
+		mes "[Priest]";
+		mes "现在请休息一下！再见！";
+		close;
+	}
+	.@md_name$ = "Sanctuary Purification";
+
+	switch( checkquest(17527,PLAYTIME) ) {
+	case -1:
+		if (isbegin_quest(17522) == 0 && isbegin_quest(17523) == 0)
+			callsub( S_Take, 0, "既然要做，就两项都做。", "突袭叛变的神殿守卫。", "突袭心猎者。", "", "会很艰难。" );
+		break;
+	case 0:
+	case 1:
+		mes "[Priest]";
+		mes "下一次行动计划还没完成。因为每天只能进行一次，我们必须谨慎。冒险者，请休息到那时。";
+		close;
+	case 2:
+		mes "[Priest]";
+		mes "你好！休息得好吗？如果今天能帮我，我会很感激。请注意行动每天只能进行一次。";
+		erasequest 17527;
+		if (isbegin_quest(17522) == 0 && isbegin_quest(17523) == 0)
+			callsub( S_Take, 2, "既然要做，就两项都做。", "突袭叛变的神殿守卫。", "突袭心猎者。", "", "会很艰难。" );
+		break;
+	}
+	mes "[Priest]";
+	mes "准备好了吗？我会发送加入信号。";
+	next;
+	switch( select( "好，我发送信号。", "我继续。", "我还有任务没完成！", "还需要更多准备。" ) ) {
+	case 1:
+		mes "[Priest]";
+		mes "我收到了集合地点。你可以从紧急出口立即加入。准备好后进入。";
+		if (instance_create(.@md_name$) < 0) {
+			mes "队伍：" + getpartyname(getcharid(1)) + "";
+			mes "队长：" + strcharinfo(0) + "";
+			mes "^0000ff" + .@md_name$ + " ^000000- 未知错误";
+			close;
+		}
+		end;
+	case 2:
+		switch( instance_enter(.@md_name$) ) {
+		case IE_OTHER:
+			mes "^ff0000发生未知错误。^000000";
+			close;
+		case IE_NOINSTANCE:
+			mes "纪念副本不存在。";
+			mes "队长尚未创建副本。";
+			close;
+		case IE_NOMEMBER:
+			mes "^ff0000只有队伍成员才能进入纪念副本。^000000";
+			close;
+		case IE_OK:
+			mes "[Priest]";
+			mes "信号到了，我们行动吧。马上进入集合地点。";
+			mapannounce "rachel", "队伍" + getpartyname( getcharid(1) ) + "的成员" + strcharinfo(0) + "正在进入" + .@md_name$ + "。",bc_map,"0x00ff99",FW_NORMAL,12;
+			setquest 17527;
+			// warp "1@nyr",194,30;
+			end;
+		}
+		end;
+	case 3:
+		callsub( S_Take, 1, "", "Raid on the defected temple guards.", "Raid on the Heart Hunters.", "Since we're doing it, let's do both.", "It's going to be tough." );
+	case 4:
+		mes "[Priest]";
+		mes "明白了。我会等。";
+		close;
+	}
+	end;
+
+S_Take:
+	if (getarg(0) == 0) {
+		mes "[Priest]";
+		mes "渗透神殿的主力已经逃走，但投靠心猎者的神殿守卫，以及觊觎核心的心猎者残党仍带来麻烦。";
+		next;
+		mes "[Priest]";
+		mes "我们正在独立进行突袭，但很希望得到你的帮助，冒险者。请注意突袭每天只能进行一次。";
+	}
+	else if (getarg(0) == 1) {
+		mes "[Priest]";
+		mes "是吗？你错过了什么任务？";
+	}
+	next;
+	switch( select( getarg(1), getarg(2), getarg(3), getarg(4), getarg(5) ) ) {
+	case 1:
+	case 4:	// (same menu as 1 but order is different)
+		if (isbegin_quest(17522) == 0 && isbegin_quest(17524) == 0)
+			setquest 17522;
+		if (isbegin_quest(17523) == 0 && isbegin_quest(17526) == 0)
+			setquest 17523;
+		mes "[Priest]";
+		mes "明白了。";
+		next;
+		mes "[Priest]";
+		mes "准备好后请告诉我。";
+		close;
+	case 2:
+		if (isbegin_quest(17522) == 0 && isbegin_quest(17524) == 0) {
+			setquest 17522;
+			mes "[Priest]";
+			mes "突袭叛变的神殿守卫。是吗？明白了。";
+			next;
+			mes "[Priest]";
+			mes "准备好后请告诉我。";
+			close;
+		}
+		mes "[Priest]";
+		mes "看来你已经在执行任务。好吧，请先处理好它。";
+		next;
+		mes "[Priest]";
+		mes "准备好后请告诉我。";
+		close;
+	case 3:
+		if (isbegin_quest(17523) == 0 && isbegin_quest(17526) == 0) {
+			setquest 17523;
+			mes "[Priest]";
+			mes "感谢你的合作。准备好后告诉我。";
+			close;
+		}
+		mes "[Priest]";
+		mes "看来你已经在执行任务。好吧，请先处理好它。";
+		next;
+		mes "[Priest]";
+		mes "准备好后请告诉我。";
+		close;
+	case 5:
+		mes "[Priest]";
+		mes "既然如此，我们也无能为力。下次见！";
+		close2;
+		cloakonnpcself( "Priest#sms01" );
+		end;
+	}
+	end;
+}
+
+
+// Define the instance variables and disable the unused NPCs
+1@nyr,1,1,0	script	nyr_starter	-1,{
+	end;
+OnInstanceInit:
+	'nyr_main_step = 0;
+	'nyr_daily_step = 0;
+	'code = 0;
+	'map_1nyr$ = instance_mapname("1@nyr");
+	'map_2nyr$ = instance_mapname("2@nyr");
+
+	if (instance_live_info(ILI_NAME) == "Wolves Gathering Place") {	// Wolves Gathering Place instance : disable the stater NPCs of Sanctuary Purification
+		disablenpc instance_npcname("#qar101sw");
+
+		for ( .@i = 1; .@i < 16; ++.@i ) {
+			if (.@i < 10)
+				.@string$ = "0" + .@i;
+			else
+				.@string$ = "" + .@i;
+			disablenpc instance_npcname("#cell" + .@string$);
+		}
+		disablenpc instance_npcname("#cell42");
+		disablenpc instance_npcname("#cell51");
+		disablenpc instance_npcname("#cell66");
+		
+		// disablenpc instance_npcname("#cell41");	// duplicate of 8
+		disablenpc instance_npcname("#qmobg101");
+	}
+	else {	// Sanctuary Purification instance : disable the stater NPCs of Wolves Gathering Place
+		// Step 1 - Wolves Gathering Place
+		disablenpc instance_npcname("Miriam#dms101");
+		disablenpc instance_npcname("Suad#dms101");
+		disablenpc instance_npcname("Lamacus#dms102");
+		disablenpc instance_npcname("Kun#dms112");
+		disablenpc instance_npcname("Yopi#dms122");
+		disablenpc instance_npcname("Angry Crowd#dms171");
+		disablenpc instance_npcname("Temple Guard#dms101");
+		disablenpc instance_npcname("Temple Guard#dms111");
+		disablenpc instance_npcname("Temple Guard#dms121");
+		disablenpc instance_npcname("Temple Guard#dms131");
+		disablenpc instance_npcname("Temple Guard#dms141");
+		disablenpc instance_npcname("Temple Guard#dms151");
+		disablenpc instance_npcname("Temple Guard#dms181");
+		disablenpc instance_npcname("Temple Guard#dms191");
+		disablenpc instance_npcname("Angry Crowd#dms101");
+		disablenpc instance_npcname("Angry Crowd#dms111");
+		disablenpc instance_npcname("Angry Crowd#dms121");
+		disablenpc instance_npcname("Angry Crowd#dms131");
+		disablenpc instance_npcname("Angry Crowd#dms141");
+		disablenpc instance_npcname("Angry Crowd#dms151");
+		disablenpc instance_npcname("Angry Crowd#dms161");
+		disablenpc instance_npcname("Angry Crowd#dms181");
+		disablenpc instance_npcname("Angry Crowd#dms191");
+		
+		// walls
+		setcell 'map_1nyr$,89,24,89,153,cell_walkable,0;
+		setcell 'map_1nyr$,150,24,150,153,cell_walkable,0;
+	}
+
+	// Sanctuary Purification instance - 1@nyr
+	disablenpc instance_npcname("Temple Guard#qdms01");
+	disablenpc instance_npcname("Temple Guard#qdms02");
+	disablenpc instance_npcname("Temple Guard#qdms03");
+	disablenpc instance_npcname("Temple Guard#qdms21");
+	disablenpc instance_npcname("Temple Guard#qdms22");
+	disablenpc instance_npcname("Temple Guard#qdms23");
+	disablenpc instance_npcname("Temple Guard#qdms31");
+	disablenpc instance_npcname("Temple Guard#qdms32");
+	disablenpc instance_npcname("Temple Guard#qdms33");
+	disablenpc instance_npcname("Temple Guard#qdms41");
+	disablenpc instance_npcname("Temple Guard#qdms42");
+
+	// disablenpc instance_npcname("#qmobg401");
+	// disablenpc instance_npcname("#qar201sw");
+
+	// warps
+	disablenpc instance_npcname("#qwpto01");
+	disablenpc instance_npcname("#qwpto02");
+	disablenpc instance_npcname("#qwpto03");
+	disablenpc instance_npcname("#areaw03");
+
+	// disablenpc instance_npcname("#qwptora");	// unknown
+
+	disablenpc instance_npcname("Temple Guard#qdms101");
+	disablenpc instance_npcname("Temple Guard#qdms111");
+	disablenpc instance_npcname("Temple Guard#qdms121");
+	disablenpc instance_npcname("Temple Guard#qdms131");
+	disablenpc instance_npcname("Temple Guard#qdms141");
+	disablenpc instance_npcname("Temple Guard#qdms151");
+	disablenpc instance_npcname("Temple Guard#qdms161");
+	disablenpc instance_npcname("Temple Guard#qdms171");
+	disablenpc instance_npcname("Temple Guard#qdms181");
+	disablenpc instance_npcname("Temple Guard#qdms102");
+	disablenpc instance_npcname("Temple Guard#qdms112");
+	disablenpc instance_npcname("Temple Guard#qdms122");
+	disablenpc instance_npcname("Temple Guard#qdms132");
+	disablenpc instance_npcname("Temple Guard#qdms142");
+	disablenpc instance_npcname("Temple Guard#qdms152");
+	disablenpc instance_npcname("Temple Guard#qdms162");
+	disablenpc instance_npcname("Temple Guard#qdms172");
+	disablenpc instance_npcname("Temple Guard#qdms182");
+
+	// Step 2 - Wolves Gathering Place
+	disablenpc instance_npcname("Miriam#dms201");
+	disablenpc instance_npcname("Temple Guard#dms201");
+	disablenpc instance_npcname("Temple Guard#dms211");
+	disablenpc instance_npcname("Temple Guard#dms221");
+	disablenpc instance_npcname("Temple Guard#dms231");
+	disablenpc instance_npcname("Temple Guard#dms241");
+	disablenpc instance_npcname("#msna01");
+
+	// Step 3 - Wolves Gathering Place
+	disablenpc instance_npcname("Miriam#dms301");
+	disablenpc instance_npcname("Lamacus#dms201");
+	disablenpc instance_npcname("Yopi#dms221");
+	disablenpc instance_npcname("Kun#dms211");
+	disablenpc instance_npcname("Temple Guard#dms301");
+	disablenpc instance_npcname("Temple Guard#dms311");
+	disablenpc instance_npcname("Temple Guard#dms321");
+	disablenpc instance_npcname("Temple Guard#dms331");
+	disablenpc instance_npcname("Temple Guard#dms341");
+
+	// Step 4 - Wolves Gathering Place
+	disablenpc instance_npcname("Miriam#dms401");
+	disablenpc instance_npcname("Lamacus#dms301");
+	disablenpc instance_npcname("Kun#dms311");
+	disablenpc instance_npcname("Yopi#dms321");
+	disablenpc instance_npcname("Temple Guard#dms401");
+	disablenpc instance_npcname("Temple Guard#dms411");
+	disablenpc instance_npcname("Temple Guard#dms421");
+	disablenpc instance_npcname("Temple Guard#dms431");
+	disablenpc instance_npcname("Temple Guard#dms441");
+
+	// Step 5 - Wolves Gathering Place
+	disablenpc instance_npcname("Miriam#dms501");
+	disablenpc instance_npcname("Lamacus#dms401");
+	disablenpc instance_npcname("Kun#dms411");
+	disablenpc instance_npcname("Yopi#dms421");
+	disablenpc instance_npcname("Schulang#dms101");
+	disablenpc instance_npcname("Temple Guard#dms501");
+	disablenpc instance_npcname("Temple Guard#dms511");
+	disablenpc instance_npcname("Temple Guard#dms521");
+	disablenpc instance_npcname("Temple Guard#dms531");
+	disablenpc instance_npcname("Temple Guard#dms541");
+
+	// Step 6 - Wolves Gathering Place
+	// disablenpc instance_npcname("#dmss101");
+	disablenpc instance_npcname("Miriam#dms601");
+	disablenpc instance_npcname("Lamacus#dms501");
+	disablenpc instance_npcname("Kun#dms511");
+	disablenpc instance_npcname("Yopi#dms521");
+	disablenpc instance_npcname("Schulang#dms201");
+	disablenpc instance_npcname("Bagot#dms101");
+	disablenpc instance_npcname("Private Officer#dms101");
+	disablenpc instance_npcname("Temple Guard#dms601");
+	disablenpc instance_npcname("Temple Guard#dms611");
+	disablenpc instance_npcname("Temple Guard#dms621");
+	disablenpc instance_npcname("#effc01");
+
+	// Step 7 + 8 - Wolves Gathering Place
+	// disablenpc instance_npcname("#dms701");
+	disablenpc instance_npcname("Miriam#dms701");
+	disablenpc instance_npcname("Lamacus#dms601");
+	disablenpc instance_npcname("Kun#dms611");
+	disablenpc instance_npcname("Yopi#dms621");
+	disablenpc instance_npcname("Niren#dms101");
+	disablenpc instance_npcname("High Priest#dms201");
+	disablenpc instance_npcname("Bagot#dms201");
+	disablenpc instance_npcname("Schulang#dms301");
+	disablenpc instance_npcname("Temple Guard#dms701");
+	disablenpc instance_npcname("Temple Guard#dms711");
+	disablenpc instance_npcname("Temple Guard#dms721");
+	disablenpc instance_npcname("Temple Guard#dms731");
+	disablenpc instance_npcname("Temple Guard#dms741");
+	disablenpc instance_npcname("Temple Guard#dms751");
+	disablenpc instance_npcname("Temple Guard#dms761");
+	disablenpc instance_npcname("Temple Guard#dms771");
+
+	// Step 9 - Wolves Gathering Place
+	disablenpc instance_npcname("#dmswch02");
+	disablenpc instance_npcname("Miriam#dms801");
+
+	// Step 10 - Wolves Gathering Place
+	disablenpc instance_npcname("Suad#dms102");
+
+	disablenpc instance_npcname("Zhed#dms101");
+	disablenpc instance_npcname("Niren#dms201");
+
+	disablenpc instance_npcname("Temple Guard#dms802");
+	disablenpc instance_npcname("Temple Guard#dms812");
+	disablenpc instance_npcname("Temple Guard#dms822");
+	disablenpc instance_npcname("Temple Guard#dms832");
+	disablenpc instance_npcname("Temple Guard#dms842");
+
+	disablenpc instance_npcname("Temple Guard#dms801");
+	disablenpc instance_npcname("Temple Guard#dms811");
+	disablenpc instance_npcname("Temple Guard#dms821");
+	disablenpc instance_npcname("Temple Guard#dms831");
+	disablenpc instance_npcname("Temple Guard#dms841");
+	disablenpc instance_npcname("Temple Guard#dms851");
+	disablenpc instance_npcname("Temple Guard#dms861");
+	disablenpc instance_npcname("Temple Guard#dms871");
+	disablenpc instance_npcname("Temple Guard#dms881");
+	disablenpc instance_npcname("Temple Guard#dms891");
+
+	disablenpc instance_npcname("Heart Hunter#dms101");
+	disablenpc instance_npcname("Heart Hunter#dms111");
+	disablenpc instance_npcname("Heart Hunter#dms121");
+	disablenpc instance_npcname("Heart Hunter#dms131");
+	disablenpc instance_npcname("Heart Hunter#dms141");
+	disablenpc instance_npcname("Heart Hunter#dms151");

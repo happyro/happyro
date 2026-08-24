@@ -1,0 +1,500 @@
+	}
+	if (hostileList) {
+		hostileList.innerHTML = '';
+	}
+
+	for (let i = 0, count = guilds.length; i < count; ++i) {
+		this.addRelation(guilds[i]);
+	}
+};
+
+Guild.addRelation = function addRelation(guild) {
+	const root = _root(this);
+	const list = root.querySelector(`.${guild.relation === 0 ? 'ally' : 'hostile'}_list`);
+	if (!list) {
+		return;
+	}
+	const div = document.createElement('div');
+	div.setAttribute('data-guild-id', guild.GDID);
+	div.textContent = guild.guildName;
+	list.appendChild(div);
+};
+
+Guild.removeRelation = function removeRelation(guildId, relation) {
+	const root = _root(this);
+	const list = root.querySelector(`.content.info .${relation === 0 ? 'ally' : 'hostile'}_list`);
+	if (!list) {
+		return;
+	}
+	const el = list.querySelector(`div[data-guild-id="${guildId}"]`);
+	if (el) {
+		el.remove();
+	}
+};
+
+Guild.setMembers = function setMembers(members) {
+	let online = 0;
+	const count = members.length;
+	_members.length = 0;
+	_totalExp = 0;
+
+	const root = _root(this);
+	const tbody = root.querySelector('.content.members tbody');
+	if (tbody) {
+		tbody.innerHTML = '';
+	}
+
+	for (let i = 0; i < count; ++i) {
+		_totalExp += members[i].MemberExp;
+		online += members[i].CurrentState ? 1 : 0;
+	}
+
+	const numMember = root.querySelector('.content.info .members .numMember');
+	if (numMember) {
+		numMember.textContent = count;
+	}
+	const onlineEl = root.querySelector('.content.info .members .online');
+	if (onlineEl) {
+		onlineEl.textContent = online;
+	}
+
+	for (let i = 0; i < count; ++i) {
+		this.setMember(members[i]);
+	}
+
+	renderMemberFaces(Renderer.tick + 1000);
+};
+
+Guild.setMember = function setMember(member) {
+	let i, count;
+	const root = _root(this);
+
+	for (i = 0, count = _members.length; i < count; ++i) {
+		if (_members[i].AID === member.AID && _members[i].GID === member.GID) {
+			break;
+		}
+	}
+
+	let view;
+
+	if (i < count) {
+		view = root.querySelector(`.MemberView[data-index="${i}"]`);
+	} else {
+		view = _memberViewTemplate.cloneNode(true);
+		const tbody = root.querySelector('.content.members tbody');
+		if (tbody) {
+			tbody.appendChild(view);
+		}
+		_members.push(member);
+	}
+
+	if (member.CurrentState) {
+		view.classList.add('online');
+	}
+
+	view.setAttribute('data-index', i);
+	const nameValue = view.querySelector('.name .value');
+	if (nameValue) {
+		nameValue.textContent = member.CharName;
+		nameValue.title = member.CharName;
+	}
+
+	if (_positions[member.GPositionID]) {
+		const positionCell = view.querySelector('.position');
+		if (Session.isGuildMaster) {
+			let selectHTML = `<select class="changePosition member_${member.AID}_${member.GID}">`;
+			_positions.forEach((position, key) => {
+				selectHTML +=
+					`<option value="${position.positionID}" ${key === member.GPositionID ? 'selected' : ''}>` +
+					`${_escapeHTML(position.posName)}</option>`;
+			});
+			selectHTML += '</select>';
+			positionCell.innerHTML = selectHTML;
+
+			const selectEl = positionCell.querySelector(`.member_${member.AID}_${member.GID}`);
+			if (selectEl) {
+				selectEl.addEventListener('change', evt => {
+					Guild.updateMemberPosition(member.AID, member.GID, parseInt(evt.target.value, 10), true);
+				});
+			}
+		} else {
+			positionCell.textContent = _positions[member.GPositionID].posName;
+			positionCell.title = _positions[member.GPositionID].posName;
+		}
+	}
+
+	const jobCell = view.querySelector('.job');
+	if (jobCell) {
+		jobCell.textContent = MonsterTable[member.Job];
+		jobCell.title = MonsterTable[member.Job];
+	}
+	const levelCell = view.querySelector('.level');
+	if (levelCell) {
+		levelCell.textContent = member.Level;
+	}
+	const noteCell = view.querySelector('.note');
+	if (noteCell) {
+		noteCell.textContent = member.Memo;
+	}
+	const devotionCell = view.querySelector('.devotion');
+	if (devotionCell) {
+		devotionCell.textContent = `${member.MemberExp ? Math.round((member.MemberExp / _totalExp) * 100) : 0} %`;
+	}
+	const taxCell = view.querySelector('.tax');
+	if (taxCell) {
+		taxCell.textContent = member.MemberExp;
+		taxCell.title = member.MemberExp;
+	}
+
+	if (!member.entity) {
+		member.entity = new Entity();
+		member.entity.direction = 4;
+		member.entity.objecttype = Entity.TYPE_PC;
+		member.entity.files.shadow.spr = null;
+	}
+	member.entity.sex = member.Sex;
+	member.entity._job = member.Job;
+	member.entity._effectiveJob = member.Job;
+	member.entity.head = member.HeadType;
+	member.entity.headpalette = member.HeadPalette;
+
+	const numMember = root.querySelector('.content.info .members .numMember');
+	if (numMember) {
+		numMember.textContent = _members.length;
+	}
+};
+
+Guild.updateMemberStatus = function updateMemberStatus(member) {
+	let i, count;
+	let online = 0;
+	const root = _root(this);
+
+	for (i = 0, count = _members.length; i < count; ++i) {
+		if (_members[i].AID === member.AID && _members[i].GID === member.GID) {
+			break;
+		}
+	}
+
+	if (i >= count) {
+		return;
+	}
+
+	const view = root.querySelector(`.MemberView[data-index="${i}"]`);
+
+	_members[i].CurrentState = member.status;
+	if (view) {
+		if (_members[i].CurrentState) {
+			view.classList.add('online');
+		} else {
+			view.classList.remove('online');
+		}
+	}
+
+	if ('sex' in member) {
+		_members[i].entity.sex = member.sex;
+	}
+
+	if ('head' in member) {
+		_members[i].entity.head = member.head;
+	}
+
+	if ('headPalette' in member) {
+		_members[i].entity.headpalette = member.headPalette;
+	}
+
+	for (i = 0, count = _members.length; i < count; ++i) {
+		online += _members[i].CurrentState ? 1 : 0;
+	}
+	const onlineEl = root.querySelector('.content.info .members .online');
+	if (onlineEl) {
+		onlineEl.textContent = online;
+	}
+
+	const nameValue = view?.querySelector('.name .value');
+	ChatBox.addText(
+		DB.getMessage(485 + (member.status ? 0 : 1)).replace('%s', nameValue ? nameValue.textContent : ''),
+		ChatBox.TYPE.BLUE,
+		ChatBox.FILTER.GUILD
+	);
+};
+
+Guild.updateMemberPosition = function updateMemberPosition(AID, GID, positionID, fromDropdown) {
+	for (let i = 0, count = _members.length; i < count; ++i) {
+		if (_members[i].AID === AID && _members[i].GID === GID) {
+			_members[i].GPositionID = positionID;
+
+			// The dropdown already displays the new position, re-rendering the row
+			// here would replace the <select> while its change event is dispatching.
+			if (!fromDropdown) {
+				Guild.setMember(_members[i]);
+			}
+			break;
+		}
+	}
+
+	if (fromDropdown) {
+		onValidate();
+	}
+};
+
+Guild.setPositions = function setPositions(positions, erase) {
+	let rank;
+
+	if (erase) {
+		_positions.length = positions.length;
+	}
+
+	for (let i = 0, count = positions.length; i < count; ++i) {
+		rank = positions[i];
+
+		if (!(rank.positionID in _positions)) {
+			_positions[rank.positionID] = {};
+		}
+
+		_positions[rank.positionID].positionID = rank.positionID;
+		_positions[rank.positionID].right = rank.right;
+		_positions[rank.positionID].ranking = rank.ranking;
+		_positions[rank.positionID].payRate = rank.payRate;
+
+		if (rank.posName) {
+			_positions[rank.positionID].posName = rank.posName;
+		}
+	}
+
+	Guild.updatePositionView();
+};
+
+Guild.setPositionsName = function setPositionsName(positions) {
+	let rank;
+
+	for (let i = 0, count = positions.length; i < count; ++i) {
+		rank = positions[i];
+
+		if (!(rank.positionID in _positions)) {
+			_positions[rank.positionID] = {};
+		}
+
+		_positions[rank.positionID].posName = rank.posName;
+	}
+
+	Guild.updatePositionView();
+};
+
+Guild.updatePositionView = function updatePositionView() {
+	const root = _root(this);
+	const container = root.querySelector('.content.positions tbody');
+	if (!container) {
+		return;
+	}
+	container.innerHTML = '';
+
+	const count = _positions.length;
+	for (let i = 0; i < count; ++i) {
+		const view = _positionViewTemplate.cloneNode(true);
+		const rank = _positions[i];
+
+		if (i === 0) {
+			view.classList.add('active');
+		}
+
+		const idCell = view.querySelector('.id');
+		if (idCell) {
+			idCell.textContent = rank.positionID;
+		}
+		const titleInput = view.querySelector('.title input');
+		if (titleInput) {
+			titleInput.value = rank.posName;
+		}
+		const taxInput = view.querySelector('.tax input');
+		if (taxInput) {
+			taxInput.value = rank.payRate;
+		}
+
+		const inviteBtn = view.querySelector('.invite ui-button');
+		if (inviteBtn) {
+			inviteBtn.style.backgroundImage = `url(${rank.right & 0x01 ? _checkbox_on : _checkbox_off})`;
+			inviteBtn.className = inviteBtn.className.replace(/\b(on|off)\b/g, '').trim();
+			inviteBtn.classList.add(rank.right & 0x01 ? 'on' : 'off');
+		}
+
+		const punishBtn = view.querySelector('.punish ui-button');
+		if (punishBtn) {
+			punishBtn.style.backgroundImage = `url(${rank.right & 0x10 ? _checkbox_on : _checkbox_off})`;
+			punishBtn.className = punishBtn.className.replace(/\b(on|off)\b/g, '').trim();
+			punishBtn.classList.add(rank.right & 0x10 ? 'on' : 'off');
+		}
+
+		container.appendChild(view);
+	}
+};
+
+Guild.setSkills = function setSkills(skills) {
+	const root = _root(this);
+
+	for (let i = 0, count = _skills.length; i < count; ++i) {
+		this.onUpdateSkill(_skills[i].SKID, 0);
+	}
+
+	_skills.length = 0;
+	const table = root.querySelector('.content.skills .skill_list table');
+	if (table) {
+		table.innerHTML = '';
+	}
+
+	for (let i = 0, count = skills.length; i < count; ++i) {
+		this.addSkill(skills[i]);
+	}
+};
+
+Guild.addSkill = function addSkill(skill) {
+	if (!(skill.SKID in SkillInfo)) {
+		return;
+	}
+
+	const root = _root(this);
+	const existing = root.querySelector(`.skill.id${skill.SKID}`);
+	if (existing) {
+		this.updateSkill(skill);
+		return;
+	}
+
+	const sk = SkillInfo[skill.SKID];
+	const levelup = _btnIncSkillTemplate.cloneNode(true);
+	levelup.addEventListener('click', function () {
+		onRequestSkillUp.call(this);
+	});
+	const className = !skill.level ? 'disabled' : skill.type ? 'active' : 'passive';
+
+	const tr = document.createElement('tr');
+	tr.className = `skill id${skill.SKID} ${className}`;
+	tr.setAttribute('data-index', skill.SKID);
+	tr.setAttribute('draggable', 'true');
+	tr.innerHTML =
+		'<td class="icon"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==" width="24" height="24" /></td>' +
+		'<td class="levelupcontainer"></td>' +
+		'<td class=selectable>' +
+		`<div class="name">${_escapeHTML(sk.SkillName)}<br/>` +
+		'<span class="level">' +
+		(sk.bSeperateLv
+			? `<button class="currentDown"></button>等级：<span class="current">${skill.level}</span> / <span class="max">${skill.level}</span><button class="currentUp"></button>`
+			: `等级：<span class="current">${skill.level}</span>`) +
+		'</span></div></td>' +
+		'<td class="selectable type">' +
+		`<div class="consume">${skill.type ? `SP：<span class="spcost">${skill.spcost}</span>` : '被动'}</div>` +
+		'</td>';
+
+	if (!skill.upgradable || !_skpoints) {
+		levelup.style.display = 'none';
+	}
+
+	tr.querySelector('.levelupcontainer').appendChild(levelup);
+
+	const currentUp = tr.querySelector('.level .currentUp');
+	if (currentUp) {
+		if (rArrow) {
+			currentUp.style.backgroundImage = rArrow;
+		}
+		currentUp.addEventListener('click', () => {
+			skillLevelSelectUp(skill);
+		});
+	}
+	const currentDown = tr.querySelector('.level .currentDown');
+	if (currentDown) {
+		if (lArrow) {
+			currentDown.style.backgroundImage = lArrow;
+		}
+		currentDown.addEventListener('click', () => {
+			skillLevelSelectDown(skill);
+		});
+	}
+
+	const table = root.querySelector('.content.skills .skill_list table');
+	if (table) {
+		table.appendChild(tr);
+	}
+
+	// Process data attributes on the levelup button for GUIComponent
+	this.parseHTML.call(levelup);
+
+	Client.loadFile(`${DB.INTERFACE_PATH}item/${sk.Name}.bmp`, data => {
+		const img = tr.querySelector('.icon img');
+		if (img) {
+			img.src = data;
+		}
+	});
+
+	_skills.push(skill);
+	this.onUpdateSkill(skill.SKID, skill.level);
+};
+
+Guild.removeSkill = function removeSkill() {
+	// Not implemented by gravity
+};
+
+Guild.updateSkill = function updateSkill(skill) {
+	const target = getSkillById(skill.SKID);
+
+	if (!target) {
+		return;
+	}
+
+	target.level = skill.level;
+	target.spcost = skill.spcost;
+	target.attackRange = skill.attackRange;
+	target.upgradable = skill.upgradable;
+	if (Number.isInteger(skill.type)) {
+		target.type = skill.type;
+	}
+
+	const root = _root(this);
+	const element = root.querySelector(`.skill.id${skill.SKID}`);
+	if (!element) {
+		return;
+	}
+
+	for (const el of element.querySelectorAll('.level .current, .level .max')) {
+		el.textContent = skill.level;
+	}
+	if (skill.selectedLevel) {
+		const current = element.querySelector('.level .current');
+		if (current) {
+			current.textContent = skill.selectedLevel;
+		}
+	}
+	const spcost = element.querySelector('.spcost');
+	if (spcost) {
+		spcost.textContent = skill.spcost;
+	}
+
+	element.classList.remove('active', 'passive', 'disabled');
+	element.classList.add(!skill.level ? 'disabled' : skill.type ? 'active' : 'passive');
+
+	const levelupEl = element.querySelector('.levelup');
+	if (levelupEl) {
+		levelupEl.style.display = skill.upgradable && _skpoints ? '' : 'none';
+	}
+
+	this.onUpdateSkill(skill.SKID, skill.level);
+};
+
+Guild.useSkillID = function useSkillID(id, level) {
+	const skill = getSkillById(id);
+	if (!skill || !skill.level || !skill.type) {
+		return;
+	}
+
+	Guild.useSkill(skill, level ? level : skill.selectedLevel);
+};
+
+Guild.useSkill = function useSkill(skill, level) {
+	if (skill.type & SkillTargetSelection.TYPE.SELF) {
+		this.onUseSkill(skill.SKID, level ? level : skill.level);
+	}
+
+	skill.useLevel = level;
+
+	if (skill.type & SkillTargetSelection.TYPE.TARGET) {
+		SkillTargetSelection.append();
+		SkillTargetSelection.set(skill, skill.type);
+	}
+};

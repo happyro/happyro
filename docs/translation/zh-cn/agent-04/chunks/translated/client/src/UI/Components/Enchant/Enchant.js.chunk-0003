@@ -1,0 +1,500 @@
+		info.className = 'item_info';
+		const name = document.createElement('div');
+		name.className = 'item_name';
+		const grade = document.createElement('div');
+		grade.className = 'item_grade';
+		const itemName = DB.getItemName(item, {
+			showItemRefine: true,
+			showItemGrade: false,
+			showItemOptions: false
+		});
+
+		name.textContent = itemName;
+		info.appendChild(name);
+		info.appendChild(grade);
+
+		entry.dataset.index = item.index;
+		entry.dataset.name = itemName;
+		entry.dataset.background = 'enchantui/bg_enc_gear.bmp';
+		entry.dataset.hover = 'enchantui/bg_enc_gear_over.bmp';
+		entry.dataset.down = 'enchantui/bg_enc_gear_press.bmp';
+		entry.dataset.active = 'enchantui/bg_enc_gear_press.bmp';
+		entry.classList.toggle('active', !!(selectedIndex && item.index === selectedIndex));
+		entry.appendChild(slot);
+		entry.appendChild(info);
+		list.appendChild(entry);
+		GUIComponent.processDataAttrs(entry);
+		slot.dataset.itid = item.ITID;
+		slot.dataset.name = itemName;
+		loadItemIcon(slot, item.ITID, item.IsIdentified);
+		loadGradeIcon(grade, getItemGrade(item));
+	});
+}
+
+function renderItemPreview() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const preview = root.querySelector('.preview_item');
+	if (!preview) {
+		return;
+	}
+	preview.style.backgroundImage = '';
+	if (!EnchantState.item) {
+		return;
+	}
+	loadItemCollection(preview, EnchantState.item.ITID, EnchantState.item.IsIdentified);
+}
+
+function renderSlots() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const list = root.querySelector('.slot_list');
+	if (!list) {
+		return;
+	}
+	let empty = list.querySelector('.slot_empty');
+	if (!empty) {
+		empty = document.createElement('div');
+		empty.className = 'slot_empty';
+		empty.textContent = '请选择物品';
+		list.appendChild(empty);
+	}
+	const hasItem = !!(EnchantState.item && EnchantState.group);
+	empty.style.display = hasItem ? 'none' : 'flex';
+
+	const baseSlots = hasItem ? getBaseSlotCount(EnchantState.item) : 0;
+	list.querySelectorAll('.slot_entry').forEach(entry => {
+		const slotNum = parseInt(entry.dataset.slot, 10);
+		const icon = entry.querySelector('.slot_icon');
+		const slotItem = hasItem ? getSlotValue(EnchantState.item, slotNum) : 0;
+		entry.classList.toggle('locked', hasItem && slotNum < baseSlots);
+		entry.classList.toggle('active', hasItem && slotNum === EnchantState.selectedSlot);
+		entry.classList.toggle('empty', !slotItem);
+		entry.dataset.itid = slotItem || 0;
+		if (icon) {
+			icon.style.backgroundImage = '';
+		}
+		if (slotItem && icon) {
+			loadItemIcon(icon, slotItem, true);
+		}
+	});
+}
+
+function updateTabs(availability) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	root.querySelectorAll('.action_tabs .tab').forEach(tab => {
+		const action = tab.dataset.action;
+		tab.classList.toggle('active', EnchantState.action === action);
+		tab.classList.toggle('disabled', availability && availability[action] === false);
+	});
+	updateSubpageSkin();
+	updateMenuSkin();
+}
+
+function updateActionSections() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	root.querySelectorAll('.action_section').forEach(section => {
+		section.classList.remove('active');
+	});
+	const activeSection = root.querySelector('.' + EnchantState.action + '_section');
+	if (activeSection) {
+		activeSection.classList.add('active');
+	}
+}
+
+function updateActionButton(enabled) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const button = root.querySelector('.action_btn');
+	if (!button) {
+		return;
+	}
+	const label = EnchantState.action === 'reset' ? '重置' : '附魔';
+	button.textContent = '';
+	button.title = label;
+	button.classList.toggle('disabled', !enabled);
+	updateActionButtonSkin(button, enabled);
+}
+
+function renderCosts(rate, zeny, materials) {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const zenyText = zeny != null ? formatZeny(zeny) : '';
+	const zenyCost = root.querySelector('.zeny_cost');
+	if (zenyCost) {
+		zenyCost.textContent = zenyText;
+	}
+	renderMaterials(materials);
+}
+
+function refreshActionContent() {
+	const root = _root();
+	if (!root) {
+		return;
+	}
+	const group = EnchantState.group;
+	const item = EnchantState.item;
+	let actionReady = false;
+	const availability = {
+		random: false,
+		perfect: false,
+		upgrade: false,
+		reset: false
+	};
+	let listEntries = [];
+	let selectedKey = null;
+
+	const upgradeResult = root.querySelector('.upgrade_result');
+	if (upgradeResult) {
+		upgradeResult.textContent = '';
+	}
+
+	if (group && item) {
+		const slotNum = getNextEnchantSlot(item, group);
+		const slotData = slotNum !== null ? group.slots[slotNum] : null;
+		const baseSlots = getBaseSlotCount(item);
+
+		if (slotData && slotData.random && Object.keys(slotData.random).length) {
+			availability.random = true;
+		}
+		if (slotData && slotData.perfect && Object.keys(slotData.perfect).length) {
+			availability.perfect = true;
+		}
+
+		const upgradeCandidates = getUpgradeCandidates(item, group);
+		if (upgradeCandidates.length) {
+			availability.upgrade = true;
+		}
+
+		let hasEnchant = false;
+		const slotOrder = group.slotOrder && group.slotOrder.length ? group.slotOrder : [0, 1, 2, 3];
+		slotOrder.forEach(orderSlot => {
+			if (orderSlot >= baseSlots && getSlotValue(item, orderSlot)) {
+				hasEnchant = true;
+			}
+		});
+		if (group.reset && group.reset.enabled && hasEnchant) {
+			availability.reset = true;
+		}
+
+		if (!availability[EnchantState.action]) {
+			const nextAction = Object.keys(availability).find(key => availability[key]);
+			EnchantState.action = nextAction || EnchantState.action;
+		}
+
+		updateTabs(availability);
+		updateActionSections();
+
+		if (EnchantState.action === 'random') {
+			EnchantState.selectedSlot = slotNum;
+			if (slotData) {
+				const grade = getItemGrade(item);
+				const bonus = slotData.gradeBonus ? slotData.gradeBonus[grade] || 0 : 0;
+				const baseRate = slotData.successRate || 0;
+				const totalRate = Math.min(baseRate + bonus, 100000);
+				const require = slotData.require || { zeny: 0, materials: [] };
+				renderCosts(totalRate, require.zeny, require.materials);
+				actionReady = availability.random && canAffordCost(require.zeny, require.materials);
+				if (slotData.random) {
+					const randomList = slotData.random[grade] || slotData.random[0] || [];
+					listEntries = randomList.map(entry => ({
+						key:
+							entry.id ||
+							entry.base ||
+							(entry.id ? getItemDisplayName(entry.id, entry.base) : entry.base),
+						id: entry.id,
+						base: entry.base,
+						label: entry.id ? getItemDisplayName(entry.id, entry.base) : entry.base,
+						disabled: true
+					}));
+				}
+			} else {
+				renderCosts(null, 0, []);
+			}
+		}
+
+		if (EnchantState.action === 'perfect') {
+			EnchantState.selectedSlot = slotNum;
+			const select = root.querySelector('.perfect_select');
+			const perfectEntries = [];
+			if (select) {
+				select.innerHTML = '';
+			}
+			if (slotData && slotData.perfect) {
+				const perfectList = Object.keys(slotData.perfect);
+				perfectList.forEach(key => {
+					const entry = slotData.perfect[key];
+					const label = entry.id ? getItemDisplayName(entry.id, entry.base) : entry.base;
+					if (select) {
+						const option = document.createElement('option');
+						option.value = key;
+						option.textContent = label;
+						select.appendChild(option);
+					}
+					perfectEntries.push({
+						key: key,
+						id: entry.id,
+						base: entry.base,
+						label: label
+					});
+				});
+				if (perfectList.length) {
+					if (EnchantState.selectedPerfect && slotData.perfect[EnchantState.selectedPerfect]) {
+						if (select) {
+							select.value = EnchantState.selectedPerfect;
+						}
+						const selected = slotData.perfect[EnchantState.selectedPerfect];
+						renderCosts(100000, selected.zeny, selected.materials);
+						actionReady = availability.perfect && canAffordCost(selected.zeny, selected.materials);
+						selectedKey = EnchantState.selectedPerfect;
+					} else {
+						EnchantState.selectedPerfect = null;
+						if (select) {
+							select.selectedIndex = -1;
+						}
+						renderCosts(null, 0, []);
+					}
+				} else {
+					renderCosts(null, 0, []);
+				}
+			} else {
+				renderCosts(null, 0, []);
+			}
+			listEntries = perfectEntries;
+		}
+
+		if (EnchantState.action === 'upgrade') {
+			const upgradeSelect = root.querySelector('.upgrade_select');
+			const upgradeEntries = [];
+			if (upgradeSelect) {
+				upgradeSelect.innerHTML = '';
+			}
+			if (upgradeCandidates.length) {
+				upgradeCandidates.forEach(candidate => {
+					const currentName = getItemDisplayName(candidate.currentId, candidate.baseName);
+					const resultId = candidate.entry.result
+						? candidate.entry.result.id || DB.getItemIdfromBase(candidate.entry.result.base)
+						: 0;
+					const resultName = resultId
+						? getItemDisplayName(resultId, candidate.entry.result.base)
+						: candidate.entry.result
+							? candidate.entry.result.base
+							: '';
+					if (upgradeSelect) {
+						const option = document.createElement('option');
+						option.value = candidate.slotNum;
+						option.textContent = `槽位 ${candidate.slotNum + 1}：${currentName} → ${resultName}`;
+						upgradeSelect.appendChild(option);
+					}
+					upgradeEntries.push({
+						key: String(candidate.slotNum),
+						id: resultId || 0,
+						base: candidate.entry.result ? candidate.entry.result.base : null,
+						label: resultName || currentName
+					});
+				});
+				if (
+					!EnchantState.selectedUpgradeSlot ||
+					!upgradeCandidates.find(candidate => candidate.slotNum === EnchantState.selectedUpgradeSlot)
+				) {
+					EnchantState.selectedUpgradeSlot = upgradeCandidates[0].slotNum;
+				}
+				if (upgradeSelect) {
+					upgradeSelect.value = EnchantState.selectedUpgradeSlot;
+				}
+				const selectedEntry = upgradeCandidates.find(
+					candidate => candidate.slotNum === EnchantState.selectedUpgradeSlot
+				);
+				if (selectedEntry) {
+					EnchantState.selectedSlot = selectedEntry.slotNum;
+					const ur = root.querySelector('.upgrade_result');
+					if (ur) {
+						ur.textContent =
+							'结果：' + (selectedEntry.entry.result ? selectedEntry.entry.result.base : '');
+					}
+					renderCosts(100000, selectedEntry.entry.zeny, selectedEntry.entry.materials);
+					actionReady =
+						availability.upgrade && canAffordCost(selectedEntry.entry.zeny, selectedEntry.entry.materials);
+					selectedKey = String(EnchantState.selectedUpgradeSlot);
+				}
+			} else {
+				renderCosts(null, 0, []);
+			}
+			listEntries = upgradeEntries;
+		}
+
+		if (EnchantState.action === 'reset') {
+			EnchantState.selectedSlot = null;
+			if (availability.reset) {
+				renderCosts(group.reset.rate, group.reset.zeny, group.reset.materials);
+				actionReady = canAffordCost(group.reset.zeny, group.reset.materials);
+			} else {
+				renderCosts(null, 0, []);
+			}
+		}
+	} else {
+		updateTabs(availability);
+		updateActionSections();
+		renderCosts(null, 0, []);
+	}
+
+	renderEnchantList(listEntries, selectedKey);
+	updateActionButton(actionReady);
+}
+
+function refreshUI() {
+	renderItemList();
+	renderItemPreview();
+	refreshActionContent();
+	renderSlots();
+	setCaution(EnchantState.group ? EnchantState.group.caution : '');
+}
+
+function validateItem(item) {
+	if (!EnchantState.group) {
+		return { ok: false, message: '此附魔组缺少附魔数据。' };
+	}
+	if (!item) {
+		return { ok: false, message: '物品无效。' };
+	}
+	if (item.WearState) {
+		return { ok: false, message: '物品必须位于背包中。' };
+	}
+	if ((item.equipSwitch && item.equipSwitch > 0) || (item.EquipSwitch && item.EquipSwitch > 0)) {
+		return { ok: false, message: '物品不能位于装备切换栏中。' };
+	}
+	if (item.attribute && item.attribute !== 0) {
+		return { ok: false, message: '物品属性必须为普通。' };
+	}
+	if (!isTargetItem(item, EnchantState.group)) {
+		return { ok: false, message: '物品不适用于此附魔组。' };
+	}
+	const refine = item.RefiningLevel || item.refiningLevel || 0;
+	if (refine < EnchantState.group.condition.minRefine) {
+		return { ok: false, message: '精炼等级过低。' };
+	}
+	const grade = getItemGrade(item);
+	if (grade < EnchantState.group.condition.minGrade) {
+		return { ok: false, message: '附魔等级过低。' };
+	}
+	if (!EnchantState.group.allowRandomOption && hasRandomOptions(item)) {
+		return { ok: false, message: '不允许使用随机选项。' };
+	}
+	return { ok: true };
+}
+
+function getInventoryItemByIndex(index) {
+	const inventoryUI = Inventory.getUI && Inventory.getUI();
+	return inventoryUI && inventoryUI.getItemByIndex ? inventoryUI.getItemByIndex(index) : null;
+}
+
+function resolveItemContext(target) {
+	const slotEntry = target.closest('.slot_entry');
+	if (slotEntry) {
+		if (!EnchantState.item) {
+			return null;
+		}
+		const slotNum = parseInt(slotEntry.dataset.slot, 10);
+		if (isNaN(slotNum)) {
+			return null;
+		}
+		const slotItemId = getSlotValue(EnchantState.item, slotNum);
+		if (!slotItemId) {
+			return null;
+		}
+		return {
+			item: { ITID: slotItemId, IsIdentified: 1 },
+			label: '',
+			identified: true,
+			anchor: slotEntry
+		};
+	}
+
+	const itemEntry = target.closest('.item_entry');
+	if (itemEntry) {
+		const index = parseInt(itemEntry.dataset.index, 10);
+		let invItem = !isNaN(index) ? getInventoryItemByIndex(index) : null;
+		if (!invItem) {
+			const itemId = parseInt(target.dataset.itid, 10);
+			if (!isNaN(itemId) && itemId) {
+				invItem = { ITID: itemId, IsIdentified: 1 };
+			}
+		}
+		return {
+			item: invItem,
+			label: target.dataset.name || itemEntry.dataset.name || '',
+			identified: invItem ? !!invItem.IsIdentified : true,
+			anchor: target
+		};
+	}
+
+	const materialIcon = target.closest('.material .icon');
+	if (materialIcon) {
+		const matId = parseInt(materialIcon.dataset.itid, 10);
+		const matItem = !isNaN(matId) && matId ? { ITID: matId, IsIdentified: 1 } : null;
+		return {
+			item: matItem,
+			label: materialIcon.dataset.name || '',
+			identified: true,
+			anchor: materialIcon
+		};
+	}
+
+	const enchantEntry = target.closest('.enchant_entry');
+	if (enchantEntry) {
+		const enchantId = parseInt(enchantEntry.dataset.itid, 10);
+		const enchantItem = !isNaN(enchantId) && enchantId ? { ITID: enchantId, IsIdentified: 1 } : null;
+		return {
+			item: enchantItem,
+			label: enchantEntry.dataset.name || '',
+			identified: true,
+			anchor: target
+		};
+	}
+
+	return null;
+}
+
+function onIconOver(event) {
+	const context = resolveItemContext(event.currentTarget);
+	if (!context) {
+		return;
+	}
+	let label = context.label;
+	if (context.item) {
+		label = DB.getItemName(context.item, { showItemOptions: false });
+	}
+	if (!label) {
+		return;
+	}
+	showHoverOverlay(label, context.identified, context.anchor || event.currentTarget);
+}
+
+function onIconOut() {
+	hideHoverOverlay();
+}
+
+function onIconInfo(event) {
+	event.preventDefault();
+	event.stopImmediatePropagation();
+	const context = resolveItemContext(event.currentTarget);
+	if (context && context.item) {
+		showItemInfo(context.item);
+	}
+}
+
+function onActionSelect(event) {

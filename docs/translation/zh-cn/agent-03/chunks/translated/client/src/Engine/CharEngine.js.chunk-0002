@@ -1,0 +1,371 @@
+	const ChSel = CharSelect.getUI();
+	const ChCre = CharCreate.getUI();
+	_creationSlot = index;
+	ChSel.remove();
+	ChCre.setAccountSex(Session.Sex);
+	ChCre.onCharCreationRequest = onCharCreationRequest;
+	ChCre.onExitRequest = function () {
+		ChCre.remove();
+		ChSel.append();
+	};
+	ChCre.append();
+}
+
+/**
+ * User want to create a character, send data to server
+ *
+ * @param {string} name
+ * @param {number} Str - strength stat
+ * @param {number} Agi - agility stat
+ * @param {number} Vit - vitality stat
+ * @param {number} Int - intelligence stat
+ * @param {number} Dex - dexterity stat
+ * @param {number} Luk - luck stat
+ * @param {number} hair - hair style
+ * @param {number} color - hair color
+ * @param {number} job - job
+ * @param {number} sex - sex
+ */
+function onCharCreationRequest(name, Str, Agi, Vit, Int, Dex, Luk, hair, color, job, sex) {
+	let pkt;
+
+	// Old Packet required stats
+	if (PACKETVER.value < 20120307) {
+		pkt = new PACKET.CH.MAKE_CHAR();
+		pkt.Str = Str;
+		pkt.Agi = Agi;
+		pkt.Vit = Vit;
+		pkt.Int = Int;
+		pkt.Dex = Dex;
+		pkt.Luk = Luk;
+	} else if (PACKETVER.value >= 20120307 && PACKETVER.value < 20151001) {
+		pkt = new PACKET.CH.MAKE_CHAR2();
+	} else {
+		pkt = new PACKET.CH.MAKE_CHAR3();
+	}
+
+	pkt.name = name;
+	pkt.head = hair;
+	pkt.headPal = color;
+	pkt.CharNum = _creationSlot;
+	pkt.Job = job;
+	pkt.Sex = sex;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Success to create a character
+ *
+ * @param {object} pkt - PACKET.HC.ACCEPT_MAKECHAR_NEO_UNION
+ * @param {object} pkt - PACKET.HC.ACCEPT_MAKECHAR
+ */
+function onCreationSuccess(pkt) {
+	CharCreate.getUI().remove();
+	const ChSel = CharSelect.getUI();
+	ChSel.addCharacter(pkt.charinfo);
+	ChSel.append();
+}
+
+/**
+ * Fail to create a character
+ *
+ * @param {object} pkt - PACKET.HC.REFUSE_MAKECHAR
+ */
+function onCreationFail(pkt) {
+	let msg_id;
+
+	switch (pkt.ErrorCode) {
+		case 0x00:
+			msg_id = 10;
+			break; // 'Charname already exists'
+		case 0x01:
+			msg_id = 298;
+			break; // 'You are underaged'
+		case 0x02:
+			msg_id = 1272;
+			break; // 'Symbols in Character Names are forbidden'
+		case 0x03:
+			msg_id = 1355;
+			break; // 'You are not elegible to open the Character Slot.'
+		default:
+		case 0xff:
+			msg_id = 11;
+			break; // 'Char creation denied'
+	}
+
+	UIManager.showMessageBox(DB.getMessage(msg_id), 'ok');
+}
+
+/*function sendPincodeRequest() {
+		let pkt;
+
+		pkt = new PACKET.CH.PINCODE_REQUEST();
+		pkt.AID = Session.AID;
+
+		Network.sendPacket(pkt);
+	}*/ // UNUSED
+
+function onPincodeCheckRequest(pincode) {
+	const pkt = new PACKET.CH.PINCODE_CHECK();
+	pkt.AID = Session.AID;
+	pkt.PINCODE = pincode;
+
+	Network.sendPacket(pkt);
+}
+
+function onPincodeCreate(pincode, bad) {
+	_creatingPincode = true;
+
+	const pkt = new PACKET.CH.PINCODE_FIRST_PIN();
+	pkt.AID = Session.AID;
+	pkt.PINCODE = pincode;
+
+	Network.sendPacket(pkt);
+}
+
+function onPincodeReset(oldpin, newpin) {
+	_inAuthPincodeReset = false;
+	_resettingPincode = true;
+
+	const pkt = new PACKET.CH.PINCODE_CHANGE();
+	pkt.AID = Session.AID;
+	pkt.OLD_PINCODE = oldpin;
+	pkt.NEW_PINCODE = newpin;
+
+	Network.sendPacket(pkt);
+}
+
+/*function onAuthPincodeReset(oldpin, newpin) {
+		_inAuthPincodeReset = true;
+		onPincodeCheckRequest(oldpin);
+	}*/ // UNUSED
+
+function onUserPincodeResetReq() {
+	_pincodeAttempts = 0;
+	PincodeWindow.onPincodeReset = onPincodeReset;
+}
+
+function onPincodeCheckSuccess(pkt) {
+	if (!PincodeWindow.__active && pkt.State == 0) {
+		console.log('Pincode is disabled.');
+		return;
+	}
+
+	PincodeWindow.remove();
+
+	if (PACKETVER.value < 20110309) {
+		console.log('Pincode packet sent from server, but PACKETVER is too old. Ignoring.');
+		return;
+	}
+	PincodeWindow.onPincodeCheckRequest = onPincodeCheckRequest;
+	PincodeWindow.onUserPincodeResetReq = onUserPincodeResetReq;
+	PincodeWindow.onExitRequest = () => {
+		_pincodeAttempts = 0;
+		_inAuthPincodeReset = false;
+		_resettingPincode = false;
+		_creatingPincode = false;
+		PincodeWindow.resetUI();
+		PincodeWindow.remove();
+		onExitRequest();
+	};
+
+	/*
+	 * Pincode
+	 *
+	 * S 08b8 <AID>.L <data>.4B - check PIN
+	 * S 08c5 <AID>.L <data>.4B - request for PIN button ?
+	 * S 08be <AID>.L <old>.4B <new>.4B - change PIN
+	 * S 08ba <AID>.L <new>.4B - set PIN
+	 * R 08b9 <seed>.L <AID>.L <state>.W
+	 *	State:
+	 *	0 = pin is correct OR pincode feature is disabled
+	 *	1 = ask for pin - client sends 0x8b8
+	 *	2 = create new pin - client sends 0x8ba
+	 *	3 = pin must be changed - client 0x8be
+	 *	4 = create new pin ?? - client sends 0x8ba
+	 *	5 = client shows msgstr(1896) Unable to use restricted number in 2nd password
+	 *	6 = client shows msgstr(1897) Unable to use your KSSN number
+	 *	7 = char select window shows a button - client sends 0x8c5
+	 *	8 = pincode was incorrect
+	 */
+	switch (pkt.State) {
+		case 7: // Pin is correct on PACKETVERs < 20180124.
+			if (PACKETVER.value >= 20180124) {
+				console.log(
+					'PINCODE: Received invalid state from server for configured PACKETVER: ' +
+						pkt.State +
+						'. Aborting, please fix your PACKETVER in the config.'
+				);
+				PincodeWindow.onExitRequest();
+			}
+		case 0: // pin is correct
+			_pincodeAttempts = 0;
+			if (_inAuthPincodeReset === true) {
+				PincodeWindow.onPincodeReset = onPincodeReset;
+				PincodeWindow.onOldPincodeCheckResult(true);
+			} else {
+				if (_creatingPincode === true) {
+					_creatingPincode = false;
+					UIManager.showMessageBox(DB.getMessage(1889), 'ok');
+				}
+				if (_resettingPincode === true) {
+					_resettingPincode = false;
+					UIManager.showMessageBox(DB.getMessage(1891), 'ok');
+				}
+				PincodeWindow.resetUI();
+				CharSelect.getUI().setUIEnabled(true);
+			}
+			break;
+		case 1: // ask for pin
+			CharSelect.getUI().setUIEnabled(false);
+			PincodeWindow.selectInput(0);
+			if (_pincodeAttempts < 3) {
+				PincodeWindow.clearPin();
+				PincodeWindow.setUserSeed(pkt.Seed);
+				PincodeWindow.append();
+			} else {
+				PincodeWindow.onExitRequest(); // Failed authentication.
+			}
+			break;
+		case 2: // create new pin
+		case 4: // create new pin ??
+			CharSelect.getUI().setUIEnabled(false);
+			UIManager.showMessageBox(DB.getMessage(1900), 'ok');
+			PincodeWindow.selectInput(0);
+			PincodeWindow.setUserSeed(pkt.Seed);
+			PincodeWindow.onPincodeCheckRequest = onPincodeCreate;
+			PincodeWindow.append();
+			break;
+		case 3: // pin must be changed
+			CharSelect.getUI().setUIEnabled(false);
+			if (_pincodeAttempts < 3) {
+				UIManager.showMessageBox(DB.getMessage(2345), 'ok');
+				PincodeWindow.setUserSeed(pkt.Seed);
+				PincodeWindow.onPincodeReset = onPincodeReset;
+				PincodeWindow.onParentPincodeResetReq();
+				PincodeWindow.append();
+			} else {
+				PincodeWindow.onExitRequest(); // Failed authentication.
+			}
+			break;
+		case 5: // client shows msgstr(1896) Unable to use restricted number in 2nd password
+		case 6: // client shows msgstr(1897) Unable to use your KSSN number
+		case 8: // pincode was incorrect
+			if (_creatingPincode === true) {
+				UIManager.showMessageBox(DB.getMessage(1893), 'ok');
+			} else {
+				UIManager.showMessageBox(DB.getMessage(pkt.State == 5 ? 1896 : pkt.State == 6 ? 1897 : 1892), 'ok');
+			}
+			_pincodeAttempts++;
+			if (_pincodeAttempts < 3) {
+				PincodeWindow.resetPins();
+				PincodeWindow.setUserSeed(pkt.Seed);
+				if (_inAuthPincodeReset === true) {
+					_inAuthPincodeReset = false;
+					PincodeWindow.onOldPincodeCheckResult(false);
+				}
+				PincodeWindow.append();
+			} else {
+				PincodeWindow.onExitRequest(); // Failed authentication.
+			}
+			break;
+		default:
+			console.log('PINCODE: Received unknown state from server: ' + pkt.State);
+			PincodeWindow.append();
+			break;
+	}
+}
+
+/**
+ * User ask to connect with its player
+ *
+ * @param {object} entity to connect with
+ */
+function onConnectRequest(entity) {
+	// Play sound
+	Sound.play('\xB9\xF6\xC6\xB0\xBC\xD2\xB8\xAE.wav');
+
+	CharSelect.getUI().remove();
+	UIManager.getComponent('WinLoading').append();
+	// The char-select list holds plain packet structures, build the player from it.
+	// Done here (instead of on char-list reception) so that characters delivered by
+	// any char-list packet, and freshly created ones, all end up with a Player.
+	Session.Entity = new Player(entity);
+	const pkt = new PACKET.CH.SELECT_CHAR();
+	pkt.CharNum = entity.CharNum;
+	Network.sendPacket(pkt);
+}
+
+/**
+ * Server send char list info, ask for char list
+ *
+ * @param {object} charListInfo - PACKET.HC.CHARLIST_NOTIFY
+ */
+function onCharListNotify(charListInfo) {
+	const total = Math.max(charListInfo.TotalCnt, 1);
+	for (let i = 0; i < total; i++) {
+		const pkt = new PACKET.CH.CHARLIST_REQ();
+		Network.sendPacket(pkt);
+	}
+}
+
+/**
+ * Player selection successful, get mapserver information to connect
+ *
+ * @param {object} pkt - PACKET.HC.NOTIFY_ZONESVR
+ */
+let retryCount = 0;
+function onReceiveMapInfo(pkt) {
+	if (!DB.isLoaded) {
+		if (!DB.startedLazyInit) {
+			DB.lazyInit();
+			DB.startedLazyInit = true;
+		}
+		retryCount++;
+		if (retryCount > 600) {
+			UIManager.showMessageBox('数据库加载失败，请重启游戏', 'ok', () => {
+				CharEngine.reload();
+			});
+			retryCount = 0;
+			DB.startedLazyInit = false;
+			return;
+		}
+		setTimeout(() => onReceiveMapInfo(pkt), 100);
+		return;
+	}
+	DB.startedLazyInit = false;
+	retryCount = 0;
+	Session.GID = pkt.GID;
+	MapEngine.init(pkt.addr.ip, pkt.addr.port, pkt.mapName);
+}
+
+// TODO: Add support for captcha, rename, changeslot and pincode.
+/*
+ * Captcha
+ *
+ * S 07e5 PACKET.CH.ENTER_CHECKBOT - Request for the captcha ?
+ * S 07e7 PACKET.CH.CHECKBOT - Send code
+ * R 07e8 PACKET.HC.CHECKBOT - image url ?
+ * R 07e9 PACKET.HC.CHECKBOT_RESULT - Result for captcha
+ */
+
+/*
+ * Rename (http://ragnarok.levelupgames.ph/main/new-loki-server-merge-faq/)
+ *
+ * S 08fc <char ID>.l <new name>.24B (new one) - Ask if valid
+ * S 028d PACKET.CH.REQ_IS_VALID_CHARNAME - Ask if valid
+ * R 028e PACKET.HC.ACK_IS_VALID_CHARNAME - Result
+ * S 028f PACKET.CH.REQ_CHANGE_CHARNAME (confirm)
+ */
+
+/*
+ * Change slot (http://ragnarok.levelupgames.ph/main/new-loki-server-merge-faq/)
+ *
+ * S 08d4 <from>.W <to>.W <unk>.W
+ * R 08d5 <len>.W <success>.W <unk>.W
+ */
+
+/**
+ * Export
+ */
+export default CharEngine;

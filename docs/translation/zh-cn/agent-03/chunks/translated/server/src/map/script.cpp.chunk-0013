@@ -1,0 +1,500 @@
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Force Heal a player (hp and sp)
+ *------------------------------------------*/
+BUILDIN_FUNC(heal)
+{
+	TBL_PC *sd;
+	int32 hp,sp;
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_SUCCESS;
+
+	hp=script_getnum(st,2);
+	sp=script_getnum(st,3);
+	status_heal(sd, hp, sp, 1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Force Heal a player (ap)
+ *------------------------------------------*/
+BUILDIN_FUNC(healap)
+{
+	map_session_data* sd;
+
+	if (!script_charid2sd(3, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	status_heal(sd, 0, 0, script_getnum(st, 2), 1);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Heal a player by item (get vit bonus etc)
+ *------------------------------------------*/
+BUILDIN_FUNC(itemheal)
+{
+	TBL_PC *sd;
+	int32 hp,sp;
+
+	hp=script_getnum(st,2);
+	sp=script_getnum(st,3);
+
+	if(potion_flag==1) {
+		potion_hp = hp;
+		potion_sp = sp;
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_SUCCESS;
+
+	pc_itemheal(sd,sd->itemid,hp,sp);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(percentheal)
+{
+	int32 hp,sp;
+	TBL_PC* sd;
+
+	hp=script_getnum(st,2);
+	sp=script_getnum(st,3);
+
+	if(potion_flag==1) {
+		potion_per_hp = hp;
+		potion_per_sp = sp;
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_SUCCESS;
+
+#ifdef RENEWAL
+	if( sd->sc.getSCE(SC_EXTREMITYFIST) )
+		sp = 0;
+#endif
+
+	if (sd->sc.getSCE(SC_NORECOVER_STATE)) {
+		hp = 0;
+		sp = 0;
+	}
+
+	if (sd->sc.getSCE(SC_BITESCAR))
+		hp = 0;
+
+	pc_percentheal(sd,hp,sp);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(jobchange)
+{
+	int32 job, upper=-1;
+
+	job=script_getnum(st,2);
+	if( script_hasdata(st,3) )
+		upper=script_getnum(st,3);
+
+	if (pcdb_checkid(job))
+	{
+		TBL_PC* sd;
+
+		if (!script_charid2sd(4,sd))
+			return SCRIPT_CMD_SUCCESS;
+
+		pc_jobchange(sd, job, upper);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+BUILDIN_FUNC(jobname)
+{
+	int32 class_=script_getnum(st,2);
+	script_pushconststr(st, (char*)job_name(class_));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Get input from the player.
+/// For numeric inputs the value is capped to the range [min,max]. Returns 1 if
+/// the value was higher than 'max', -1 if lower than 'min' and 0 otherwise.
+/// For string inputs it returns 1 if the string was longer than 'max', -1 is
+/// shorter than 'min' and 0 otherwise.
+///
+/// input(<var>{,<min>{,<max>}}) -> <int>
+BUILDIN_FUNC(input)
+{
+	TBL_PC* sd;
+	struct script_data* data;
+	int64 uid;
+	const char* name;
+	int32 min;
+	int32 max;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	data = script_getdata(st,2);
+	if( !data_isreference(data) ){
+		ShowError("script:input: not a variable\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+	uid = reference_getuid(data);
+	name = reference_getname(data);
+	min = (script_hasdata(st,3) ? script_getnum(st,3) : script_config.input_min_value);
+	max = (script_hasdata(st,4) ? script_getnum(st,4) : script_config.input_max_value);
+
+#ifdef SECURE_NPCTIMEOUT
+	sd->npc_idle_type = NPCT_WAIT;
+#endif
+
+	if( !sd->state.menu_or_input )
+	{	// first invocation, display npc input box
+		sd->state.menu_or_input = 1;
+		st->state = RERUNLINE;
+		if( is_string_variable(name) )
+			clif_scriptinputstr( *sd, st->oid );
+		else
+			clif_scriptinput( *sd, st->oid );
+	}
+	else
+	{	// take received text/value and store it in the designated variable
+		sd->state.menu_or_input = 0;
+		if( is_string_variable(name) )
+		{
+			int32 len = (int32)strlen(sd->npc_str);
+			set_reg_str(st, sd, uid, name, sd->npc_str, script_getref(st,2));
+			script_pushint(st, (len > max ? 1 : len < min ? -1 : 0));
+		}
+		else
+		{
+			int32 amount = sd->npc_amount;
+			set_reg_num(st, sd, uid, name, cap_value(amount,min,max), script_getref(st,2));
+			script_pushint(st, (amount > max ? 1 : amount < min ? -1 : 0));
+		}
+		st->state = RUN;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+// declare the copyarray method here for future reference
+BUILDIN_FUNC(copyarray);
+
+/// Sets the value of a variable.
+/// The value is converted to the type of the variable.
+///
+/// set(<variable>,<value>{,<charid>})
+BUILDIN_FUNC(setr)
+{
+	TBL_PC* sd = nullptr;
+	struct script_data* data;
+	//struct script_data* datavalue;
+	int64 num;
+	uint8 pos = 4;
+	const char* name, *command = script_getfuncname(st);
+	char prefix;
+
+	data = script_getdata(st,2);
+	//datavalue = script_getdata(st,3);
+	if( !data_isreference(data) )
+	{
+		ShowError("script:set: not a variable\n");
+		script_reportdata(script_getdata(st,2));
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	num = reference_getuid(data);
+	name = reference_getname(data);
+	prefix = *name;
+
+	if (!strcmp(command, "setr"))
+		pos = 5;
+
+	if (not_server_variable(prefix) && !script_charid2sd(pos,sd)) {
+		ShowError("buildin_set: No player attached for player variable '%s'\n", name);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+#if 0
+	if( data_isreference(datavalue) )
+	{// the value being referenced is a variable
+		const char* namevalue = reference_getname(datavalue);
+
+		if( !not_array_variable(*namevalue) )
+		{// array variable being copied into another array variable
+			if( sd == nullptr && not_server_variable(*namevalue) && !(sd = script_rid2sd(st)) )
+			{// player must be attached in order to copy a player variable
+				ShowError("script:set: no player attached for player variable '%s'\n", namevalue);
+				return SCRIPT_CMD_SUCCESS;
+			}
+
+			if( is_string_variable(namevalue) != is_string_variable(name) )
+			{// non-matching array value types
+				ShowWarning("script:set: two array variables do not match in type.\n");
+				return SCRIPT_CMD_SUCCESS;
+			}
+
+			// push the maximum number of array values to the stack
+			push_val(st->stack, C_INT, SCRIPT_MAX_ARRAYSIZE);
+
+			// call the copy array method directly
+			return buildin_copyarray(st);
+		}
+	}
+#endif
+
+	if( !strcmp(command, "setr") && script_hasdata(st, 4) ) { // Optional argument used by post-increment/post-decrement constructs to return the previous value
+		if( is_string_variable(name) )
+			script_pushstrcopy(st,script_getstr(st, 4));
+		else
+			script_pushint(st,script_getnum64(st, 4));
+	} else // Return a copy of the variable reference
+		script_pushcopy(st, 2);
+
+	if( is_string_variable(name) )
+		set_reg_str( st, sd, num, name, script_getstr( st, 3 ), script_getref( st, 2 ) );
+	else
+		set_reg_num( st, sd, num, name, script_getnum64( st, 3 ), script_getref( st, 2 ) );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/////////////////////////////////////////////////////////////////////
+/// Array variables
+///
+
+/// Sets values of an array, from the starting index.
+/// ex: setarray arr[1],1,2,3;
+///
+/// setarray <array variable>,<value1>{,<value2>...};
+BUILDIN_FUNC(setarray)
+{
+	struct script_data* data;
+	const char* name;
+	uint32 start;
+	uint32 end;
+	int32 id;
+	int32 i;
+	TBL_PC* sd = nullptr;
+
+	data = script_getdata(st, 2);
+	if( !data_isreference(data) )
+	{
+		ShowError("script:setarray: not a variable\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	id = reference_getid(data);
+	start = reference_getindex(data);
+	name = reference_getname(data);
+
+	if( not_server_variable(*name) )
+	{
+		if( !script_rid2sd(sd) )
+			return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	end = start + script_lastdata(st) - 2;
+	if( end > SCRIPT_MAX_ARRAYSIZE )
+		end = SCRIPT_MAX_ARRAYSIZE;
+
+	if( is_string_variable(name) )
+	{// string array
+		for( i = 3; start < end; ++start, ++i )
+			set_reg_str( st, sd, reference_uid( id, start ), name, script_getstr( st, i ), reference_getref( data ) );
+	}
+	else
+	{// int32 array
+		for( i = 3; start < end; ++start, ++i )
+			set_reg_num( st, sd, reference_uid( id, start ), name, script_getnum64( st, i ), reference_getref( data ) );
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Sets count values of an array, from the starting index.
+/// ex: cleararray arr[0],0,1;
+///
+/// cleararray <array variable>,<value>,<count>;
+BUILDIN_FUNC(cleararray)
+{
+	struct script_data* data;
+	const char* name;
+	uint32 start;
+	uint32 end;
+	int32 id;
+	TBL_PC* sd = nullptr;
+
+	data = script_getdata(st, 2);
+	if( !data_isreference(data) )
+	{
+		ShowError("script:cleararray: not a variable\n");
+		script_reportdata(data);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	id = reference_getid(data);
+	start = reference_getindex(data);
+	name = reference_getname(data);
+
+	if( not_server_variable(*name) )
+	{
+		if( !script_rid2sd(sd) )
+			return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	end = start + script_getnum(st, 4);
+	if( end > SCRIPT_MAX_ARRAYSIZE )
+		end = SCRIPT_MAX_ARRAYSIZE;
+
+	if( is_string_variable( name ) ){
+		const char* value = script_getstr( st, 3 );
+
+		for( ; start < end; ++start ){
+			set_reg_str( st, sd, reference_uid( id, start ), name, value, script_getref( st,2 ) );
+		}
+	}else{
+		int64 value = script_getnum64( st, 3 );
+
+		for( ; start < end; ++start ){
+			set_reg_num( st, sd, reference_uid( id, start ), name, value, script_getref( st,2 ) );
+		}
+	}
+	
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Copies data from one array to another.
+/// ex: copyarray arr[0],arr[2],2;
+///
+/// copyarray <destination array variable>,<source array variable>,<count>;
+BUILDIN_FUNC(copyarray)
+{
+	struct script_data* data1;
+	struct script_data* data2;
+	const char* name1;
+	const char* name2;
+	int32 idx1;
+	int32 idx2;
+	int32 id1;
+	int32 id2;
+	int32 i;
+	uint32 count;
+	TBL_PC* sd = nullptr;
+
+	data1 = script_getdata(st, 2);
+	data2 = script_getdata(st, 3);
+	if( !data_isreference(data1) || !data_isreference(data2) )
+	{
+		ShowError("script:copyarray: not a variable\n");
+		script_reportdata(data1);
+		script_reportdata(data2);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	id1 = reference_getid(data1);
+	id2 = reference_getid(data2);
+	idx1 = reference_getindex(data1);
+	idx2 = reference_getindex(data2);
+	name1 = reference_getname(data1);
+	name2 = reference_getname(data2);
+
+	bool is_string = is_string_variable( name1 );
+
+	if( is_string != is_string_variable( name2 ) ){
+		ShowError("script:copyarray: type mismatch\n");
+		script_reportdata(data1);
+		script_reportdata(data2);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// data type mismatch
+	}
+
+	if( not_server_variable(*name1) || not_server_variable(*name2) )
+	{
+		if( !script_rid2sd(sd) )
+			return SCRIPT_CMD_SUCCESS;// no player attached
+	}
+
+	count = script_getnum(st, 4);
+	if( count > SCRIPT_MAX_ARRAYSIZE - idx1 )
+		count = SCRIPT_MAX_ARRAYSIZE - idx1;
+	if( count <= 0 || (id1 == id2 && idx1 == idx2) )
+		return SCRIPT_CMD_SUCCESS;// nothing to copy
+
+	if( id1 == id2 && idx1 > idx2 ){
+		// destination might be overlapping the source - copy in reverse order
+		for( i = count - 1; i >= 0; --i ){
+			if( is_string ){
+				const char* value = get_val2_str( st, reference_uid( id2, idx2 + i ), reference_getref( data2 ) );
+				set_reg_str( st, sd, reference_uid( id1, idx1 + i ), name1, value, reference_getref( data1 ) );
+				// Remove stack entry from get_val2_str
+				script_removetop( st, -1, 0 );
+			}else{
+				int64 value = get_val2_num( st, reference_uid( id2, idx2 + i ), reference_getref( data2 ) );
+				set_reg_num( st, sd, reference_uid( id1, idx1 + i ), name1, value, reference_getref( data1 ) );
+			}
+		}
+	}else{
+		// normal copy
+		for( i = 0; i < count; ++i ){
+			if( idx2 + i < SCRIPT_MAX_ARRAYSIZE ){
+				if( is_string ){
+					const char* value = get_val2_str( st, reference_uid( id2, idx2 + i ), reference_getref( data2 ) );
+					set_reg_str( st, sd, reference_uid( id1, idx1 + i ), name1, value, reference_getref( data1 ) );
+					// Remove stack entry from get_val2_str
+					script_removetop( st, -1, 0 );
+				}else{
+					int64 value = get_val2_num( st, reference_uid( id2, idx2 + i ), reference_getref( data2 ) );
+					set_reg_num( st, sd, reference_uid( id1, idx1 + i ), name1, value, reference_getref( data1 ) );
+				}
+			}else{
+				// out of range - assume ""/0
+				clear_reg( st, sd, reference_uid( id1, idx1 + i ), name1, reference_getref( data1 ) );
+			}
+		}
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Returns the size of the array.
+/// Assumes that everything before the starting index exists.
+/// ex: getarraysize(arr[3])
+///
+/// getarraysize(<array variable>) -> <int>
+BUILDIN_FUNC(getarraysize)
+{
+	struct script_data* data;
+	const char* name;
+	map_session_data* sd = nullptr;
+
+	data = script_getdata(st, 2);
+	if( !data_isreference(data) )
+	{
+		ShowError("script:getarraysize: not a variable\n");
+		script_reportdata(data);
+		script_pushnil(st);
+		st->state = END;
+		return SCRIPT_CMD_FAILURE;// not a variable
+	}
+
+	name = reference_getname(data);
+
+	if( not_server_variable(*name) ){

@@ -1,0 +1,500 @@
+
+	for (const auto &it : idata->map)
+		map_foreachinmap(buildin_announce_sub, it.m, BL_PC, mes, strlen(mes)+1, flag&BC_COLOR_MASK, fontColor, fontType, fontSize, fontAlign, fontY);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * instance_check_party [malufett]
+ * Values:
+ * party_id : Party ID of the invoking character. [Required Parameter]
+ * amount : Amount of needed Partymembers for the Instance. [Optional Parameter]
+ * min : Minimum Level needed to join the Instance. [Optional Parameter]
+ * max : Maximum Level allowed to join the Instance. [Optional Parameter]
+ * Example: instance_check_party (getcharid(1){,amount}{,min}{,max});
+ * Example 2: instance_check_party (getcharid(1),1,1,99);
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_check_party)
+{
+	int32 min;	// Minimum Level needed to join the Instance.
+	int32 max;	// Maximum Level allowed to join the Instance.
+	int32 amount;	// Amount of needed Partymembers for the Instance.
+
+	if (!script_hasdata(st, 3))
+		amount = 1;
+	else {
+		amount = script_getnum(st, 3);
+
+		if (amount < 1 || amount > MAX_PARTY) {
+			ShowError("buildin_instance_check_party: Invalid amount %d. Min: 1, max: %d.\n", amount, MAX_PARTY);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (!script_hasdata(st, 4))
+		min = 1;
+	else {
+		min = script_getnum(st, 4);
+
+		if (min < 1 || min > MAX_LEVEL) {
+			ShowError("buildin_instance_check_party: Invalid min level %d. Min: 1, max: %d.\n", min, MAX_LEVEL);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if (!script_hasdata(st, 5))
+		max = MAX_LEVEL;
+	else {
+		max = script_getnum(st, 5);
+
+		if (max < 1 || max > MAX_LEVEL) {
+			ShowError("buildin_instance_check_party: Invalid max level %d. Min: 1, max: %d.\n", max, MAX_LEVEL);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	int32 party_id = script_getnum(st, 2);
+	party_data *p = party_search( party_id );
+
+	if (p == nullptr) {
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	int32 count = 0;
+
+	for( size_t i = 0; i < MAX_PARTY; i++ ) {
+		map_session_data *sd = p->data[i].sd;
+
+		if (sd == nullptr){
+			continue;
+		}
+		
+		if (sd->state.autotrade) {
+			continue;
+		}
+	
+		if (sd->status.base_level < min || sd->status.base_level > max) {
+			script_pushint(st, 0);
+			return SCRIPT_CMD_SUCCESS;
+		}
+
+		count++;
+	}
+
+	script_pushint(st, count >= amount);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * instance_check_guild
+ * Values:
+ * guild_id : Guild ID of the invoking character. [Required Parameter]
+ * amount : Amount of needed Guild members for the Instance. [Optional Parameter]
+ * min : Minimum Level needed to join the Instance. [Optional Parameter]
+ * max : Maximum Level allowed to join the Instance. [Optional Parameter]
+ * Example: instance_check_guild (getcharid(2){,amount}{,min}{,max});
+ * Example 2: instance_check_guild (getcharid(2),1,1,99);
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_check_guild)
+{
+	int32 amount, min, max, i, guild_id = 0, c = 0;
+
+	amount = script_hasdata(st,3) ? script_getnum(st,3) : 1; // Amount of needed Guild members for the Instance.
+	min = script_hasdata(st,4) ? script_getnum(st,4) : 1; // Minimum Level needed to join the Instance.
+	max  = script_hasdata(st,5) ? script_getnum(st,5) : MAX_LEVEL; // Maximum Level allowed to join the Instance.
+
+	if (min < 1 || min > MAX_LEVEL) {
+		ShowError("buildin_instance_check_guild: Invalid min level, %d\n", min);
+		return SCRIPT_CMD_FAILURE;
+	} else if (max < 1 || max > MAX_LEVEL) {
+		ShowError("buildin_instance_check_guild: Invalid max level, %d\n", max);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st,2))
+		guild_id = script_getnum(st,2);
+	else
+		return SCRIPT_CMD_FAILURE;
+
+	auto g = guild_search(guild_id);
+	if (!g) {
+		script_pushint(st, 0); // Returns false if guild does not exist.
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	for(i = 0; i < MAX_GUILD; i++) {
+		map_session_data *pl_sd;
+
+		if ((pl_sd = g->guild.member[i].sd)) {
+			if (map_id2bl(pl_sd->id) && !pl_sd->state.autotrade) {
+				if (pl_sd->status.base_level < min) {
+					script_pushint(st, 0);
+					return SCRIPT_CMD_SUCCESS;
+				} else if (pl_sd->status.base_level > max) {
+					script_pushint(st, 0);
+					return SCRIPT_CMD_SUCCESS;
+				}
+				c++;
+			}
+		}
+	}
+
+	if (c < amount)
+		script_pushint(st, 0); // Not enough Members in the Guild to join Instance.
+	else
+		script_pushint(st, 1);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * instance_check_clan
+ * Values:
+ * clan_id : Clan ID of the invoking character. [Required Parameter]
+ * amount : Amount of needed Clan members for the Instance. [Optional Parameter]
+ * min : Minimum Level needed to join the Instance. [Optional Parameter]
+ * max : Maximum Level allowed to join the Instance. [Optional Parameter]
+ * Example: instance_check_clan (getcharid(5){,amount}{,min}{,max});
+ * Example 2: instance_check_clan (getcharid(5),1,1,99);
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_check_clan)
+{
+	int32 amount, min, max, i, clan_id = 0, c = 0;
+	struct clan *cd = nullptr;
+
+	amount = script_hasdata(st,3) ? script_getnum(st,3) : 1; // Amount of needed Clan members for the Instance.
+	min = script_hasdata(st,4) ? script_getnum(st,4) : 1; // Minimum Level needed to join the Instance.
+	max  = script_hasdata(st,5) ? script_getnum(st,5) : MAX_LEVEL; // Maximum Level allowed to join the Instance.
+
+	if (min < 1 || min > MAX_LEVEL) {
+		ShowError("buildin_instance_check_clan: Invalid min level, %d\n", min);
+		return SCRIPT_CMD_FAILURE;
+	} else if (max < 1 || max > MAX_LEVEL) {
+		ShowError("buildin_instance_check_clan: Invalid max level, %d\n", max);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (script_hasdata(st,2))
+		clan_id = script_getnum(st,2);
+	else
+		return SCRIPT_CMD_FAILURE;
+
+	if (!(cd = clan_search(clan_id))) {
+		script_pushint(st, 0); // Returns false if clan does not exist.
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	for(i = 0; i < MAX_CLAN; i++) {
+		map_session_data *pl_sd;
+
+		if ((pl_sd = cd->members[i])) {
+			if (map_id2bl(pl_sd->id) && !pl_sd->state.autotrade) {
+				if (pl_sd->status.base_level < min) {
+					script_pushint(st, 0);
+					return SCRIPT_CMD_SUCCESS;
+				} else if (pl_sd->status.base_level > max) {
+					script_pushint(st, 0);
+					return SCRIPT_CMD_SUCCESS;
+				}
+				c++;
+			}
+		}
+	}
+
+	if (c < amount)
+		script_pushint(st, 0); // Not enough Members in the Clan to join Instance.
+	else
+		script_pushint(st, 1);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+* instance_info
+* Values:
+* name : name of the instance you want to look up. [Required Parameter]
+* type : type of information you want to look up for the specified instance. [Required Parameter]
+* index : index of the map in the instance. [Optional Parameter]
+*------------------------------------------*/
+BUILDIN_FUNC(instance_info)
+{
+	const char* name = script_getstr(st, 2);
+	int32 type = script_getnum(st, 3);
+	int32 index = 0;
+	std::shared_ptr<s_instance_db> db = instance_search_db_name(name);
+
+	if (!db) {
+		ShowError( "buildin_instance_info: Unknown instance name \"%s\".\n", name );
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	switch( type ){
+		case IIT_ID:
+			script_pushint(st, db->id);
+			break;
+		case IIT_TIME_LIMIT:
+			script_pushint(st, db->limit);
+			break;
+		case IIT_IDLE_TIMEOUT:
+			script_pushint(st, db->timeout);
+			break;
+		case IIT_ENTER_MAP:
+			script_pushstrcopy(st, map_mapid2mapname(db->enter.map));
+			break;
+		case IIT_ENTER_X:
+			script_pushint(st, db->enter.x);
+			break;
+		case IIT_ENTER_Y:
+			script_pushint(st, db->enter.y);
+			break;
+		case IIT_MAPCOUNT:
+			script_pushint(st, db->maplist.size());
+			break;
+		case IIT_MAP:
+			if( !script_hasdata(st, 4) || script_isstring(st, 4) ){
+				ShowError( "buildin_instance_info: Type IIT_MAP requires a numeric index argument.\n" );
+				script_pushconststr(st, "");
+				return SCRIPT_CMD_FAILURE;
+			}
+			
+			index = script_getnum(st, 4);
+
+			if( index < 0 ){
+				ShowError( "buildin_instance_info: Type IIT_MAP does not support a negative index argument.\n" );
+				script_pushconststr(st, "");
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			if( index > UINT8_MAX ){
+				ShowError( "buildin_instance_info: Type IIT_MAP does only support up to index %hu.\n", UINT8_MAX );
+				script_pushconststr(st, "");
+				return SCRIPT_CMD_FAILURE;
+			}
+
+			script_pushstrcopy(st, map_mapid2mapname(db->maplist[index]));
+			break;
+
+		default:
+			ShowError("buildin_instance_info: Unknown instance information type \"%d\".\n", type );
+			script_pushint(st, -1);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*------------------------------------------
+*instance_live_info( <info type>{, <instance id>} );
+- ILI_NAME : Instance Name
+- ILI_MODE : Instance Mode
+- ILI_OWNER : owner id
+*------------------------------------------*/
+BUILDIN_FUNC(instance_live_info)
+{
+	int32 type = script_getnum(st, 2);
+	int32 id = 0;
+
+	if (type < ILI_NAME || type > ILI_OWNER) {
+		ShowError("buildin_instance_live_info: Unknown instance information type \"%d\".\n", type);
+		script_pushint(st, -1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!script_hasdata(st, 3))
+		id = script_instancegetid(st);
+	else
+		id = script_getnum(st, 3);
+
+	std::shared_ptr<s_instance_db> db = nullptr;
+	std::shared_ptr<s_instance_data> im = nullptr;
+
+	if (id > 0 && id < INT_MAX) {
+		im = util::umap_find(instances, id);
+
+		if (im)
+			db = instance_db.find(im->id);
+	}
+
+	if (!im || !db) {
+		if (type == ILI_NAME)
+			script_pushconststr(st, "");
+		else
+			script_pushint(st, -1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch( type ) {
+	case ILI_NAME:
+		script_pushstrcopy(st, db->name.c_str());
+		break;
+	case ILI_MODE:
+		script_pushint(st, im->mode);
+		break;
+	case ILI_OWNER:
+		script_pushint(st, im->owner_id);
+		break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ * instance_list(<"map name">{,<instance mode>});
+ * set '.@instance_list' to a list of the live instance ids for the map with the mode.
+ * return the array size of '.@instance_list'
+ *------------------------------------------*/
+BUILDIN_FUNC(instance_list)
+{
+	int32 src_id = map_mapname2mapid(script_getstr(st, 2));
+	if (src_id == 0) {
+		ShowError("buildin_instance_list: map '%s' doesn't exist\n", script_getstr(st, 2));
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	e_instance_mode mode = IM_MAX;
+	if (script_hasdata(st, 3)) {
+		mode = static_cast<e_instance_mode>(script_getnum(st, 3));
+		if (mode < IM_NONE || mode >= IM_MAX) {
+			ShowError("buildin_instance_list: Unknown instance mode %d for '%s'\n", mode, script_getstr(st, 3));
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	int32 j = 0;
+	for (int32 i = instance_start; i < map_num; i++) {
+		struct map_data* mapdata = &map[i];
+		if (mapdata->instance_src_map == src_id) {
+			std::shared_ptr<s_instance_data> idata = util::umap_find(instances, mapdata->instance_id);
+			if (idata && (mode == IM_MAX || idata->mode == mode)) {
+				setd_sub_num(st, nullptr, ".@instance_list", j, mapdata->instance_id, nullptr);
+				j++;
+			}
+		}
+	}
+	script_pushint(st, j);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Custom Fonts
+ *------------------------------------------*/
+BUILDIN_FUNC(setfont)
+{
+	map_session_data *sd;
+	int32 font;
+
+	if( !script_rid2sd(sd) )
+		return SCRIPT_CMD_SUCCESS;
+
+	font = script_getnum(st,2);
+
+	if( sd->status.font != font )
+		sd->status.font = font;
+	else
+		sd->status.font = 0;
+
+	clif_font(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+static int32 buildin_mobuseskill_sub(block_list *bl,va_list ap)
+{
+	TBL_MOB* md		= (TBL_MOB*)bl;
+	block_list *tbl;
+	int32 mobid		= va_arg(ap,int32);
+	uint16 skill_id	= va_arg(ap,int32);
+	uint16 skill_lv	= va_arg(ap,int32);
+	int32 casttime	= va_arg(ap,int32);
+	int32 cancel		= va_arg(ap,int32);
+	int32 emotion		= va_arg(ap,int32);
+	int32 target		= va_arg(ap,int32);
+
+	if( md->mob_id != mobid )
+		return 0;
+
+	// 0:self, 1:target, 2:master, default:random
+	switch( target ) {
+		case 0: tbl = map_id2bl(md->id); break;
+		case 1: tbl = map_id2bl(md->target_id); break;
+		case 2: tbl = map_id2bl(md->master_id); break;
+		default:tbl = battle_getenemy(md, DEFAULT_ENEMY_TYPE(md), skill_get_range2(md, skill_id, skill_lv, true)); break;
+	}
+
+	if( !tbl )
+		return 0;
+
+	if( md->ud.skilltimer != INVALID_TIMER ) // Cancel the casting skill.
+		unit_skillcastcancel(bl,0);
+
+	if( skill_get_casttype(skill_id) == CAST_GROUND )
+		unit_skilluse_pos2(md, tbl->x, tbl->y, skill_id, skill_lv, casttime, cancel);
+	else
+		unit_skilluse_id2(md, tbl->id, skill_id, skill_lv, casttime, cancel);
+
+	clif_emotion(*md, static_cast<emotion_type>(emotion));
+
+	return 1;
+}
+
+/*==========================================
+ * areamobuseskill "<Map Name>",<x>,<y>,<range>,"<Mob name>"/<Mob ID>,"<Skill Name>"/<Skill ID>,<Skill Lv>,<Cast Time>,<Cancelable>,<Emotion>,<Target Type>;
+ *------------------------------------------*/
+BUILDIN_FUNC(areamobuseskill)
+{
+	block_list center;
+	int16 m;
+
+	if( (m = map_mapname2mapid(script_getstr(st,2))) < 0 ) {
+		ShowError("areamobuseskill: invalid map name.\n");
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	center.m = m;
+	center.x = script_getnum(st,3);
+	center.y = script_getnum(st,4);
+	int32 range = script_getnum( st,5 );
+	uint16 mobid;
+
+	if( script_isstring( st, 6 ) ){
+		const char* name = script_getstr( st, 6 );
+
+		std::shared_ptr<s_mob_db> mob = mobdb_search_aegisname( name );
+
+		if( mob == nullptr ){
+			ShowWarning( "buildin_areamobuseskill: Attempted to use skill of non-existing monster \"%s\"\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		mobid = mob->id;
+	}else{
+		mobid = script_getnum( st, 6 );
+
+		if( !mob_db.exists( mobid ) ){
+			ShowWarning( "buildin_areamobuseskill: Attempted to use skill of non-existing monster class %d\n", mobid );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	int32 skill_id;
+
+	if (script_isstring(st, 7)) {
+		const char *name = script_getstr(st, 7);
+
+		if (!(skill_id = skill_name2id(name))) {
+			ShowError("buildin_areamobuseskill: Invalid skill name %s.\n", name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	} else {
+		skill_id = script_getnum(st, 7);
+
+		if (!skill_get_index(skill_id)) {
+			ShowError("buildin_areamobuseskill: Invalid skill ID %d.\n", skill_id);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+

@@ -1,0 +1,500 @@
+void clif_hat_effects( const block_list& bl, enum send_target target, const block_list& tbl ){
+#if PACKETVER_MAIN_NUM >= 20150507 || PACKETVER_RE_NUM >= 20150429 || defined(PACKETVER_ZERO)
+	if( map_data* mdata = map_getmapdata( bl.m ); mdata != nullptr && mdata->getMapFlag( MF_NOCOSTUME ) ){
+		return;
+	}
+
+	const unit_data* ud = unit_bl2ud( &bl );
+	
+	if( ud == nullptr ){
+		return;
+	}
+
+	if( ud->hatEffects.empty() ){
+		return;
+	}
+
+	PACKET_ZC_EQUIPMENT_EFFECT* p = reinterpret_cast<PACKET_ZC_EQUIPMENT_EFFECT*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_EQUIPMENT_EFFECT;
+	p->packetLength = sizeof( *p );
+	p->aid = bl.id;
+	p->status = 1;
+
+	for( size_t i = 0; i < ud->hatEffects.size(); i++ ){
+		p->effects[i] = ud->hatEffects[i];
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->effects[0] ) );
+	}
+
+	clif_send( p, p->packetLength, &tbl, target );
+#endif
+}
+
+/// Send a single hat effect to the client.
+/// 0A3B <Length>.W <AID>.L <Status>.B { <HatEffectId>.W } (ZC_EQUIPMENT_EFFECT)
+void clif_hat_effect_single( const block_list& bl, uint16 effectId, bool enable ){
+#if PACKETVER_MAIN_NUM >= 20150507 || PACKETVER_RE_NUM >= 20150429 || defined(PACKETVER_ZERO)
+	if( map_data* mdata = map_getmapdata( bl.m ); mdata != nullptr && mdata->getMapFlag( MF_NOCOSTUME ) ){
+		return;
+	}
+
+	PACKET_ZC_EQUIPMENT_EFFECT* p = reinterpret_cast<PACKET_ZC_EQUIPMENT_EFFECT*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_EQUIPMENT_EFFECT;
+	p->packetLength = sizeof( *p );
+	p->aid = bl.id;
+	p->status = enable;
+	p->effects[0] = effectId;
+	p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->effects[0] ) );
+
+	clif_send( p, p->packetLength, &bl, AREA );
+#endif
+}
+
+
+/// Notify the client that a sale has started
+/// 09b2 <item id>.W <remaining time>.L (ZC_NOTIFY_BARGAIN_SALE_SELLING)
+void clif_sale_start( const sale_item_data* sale_item, const block_list* bl, enum send_target target ){
+#if PACKETVER_SUPPORTS_SALES
+	PACKET_ZC_NOTIFY_BARGAIN_SALE_SELLING p = {};
+
+	p.packetType = HEADER_ZC_NOTIFY_BARGAIN_SALE_SELLING;
+	p.itemId = client_nameid( sale_item->nameid );
+	p.remainingTime = (uint32)(sale_item->end - time(nullptr)); // time in S
+
+	clif_send( &p, sizeof( p ), bl, target );
+#endif
+}
+
+/// Notify the client that a sale has ended
+/// 09b3 <item id>.W (ZC_NOTIFY_BARGAIN_SALE_CLOSE)
+void clif_sale_end( const sale_item_data* sale_item, const block_list* bl, enum send_target target ){
+#if PACKETVER_SUPPORTS_SALES
+	PACKET_ZC_NOTIFY_BARGAIN_SALE_CLOSE p = {};
+
+	p.packetType = HEADER_ZC_NOTIFY_BARGAIN_SALE_CLOSE;
+	p.itemId = client_nameid( sale_item->nameid );
+
+	clif_send( &p, sizeof( p ), bl, target );
+#endif
+}
+
+/// Update the remaining amount of a sale item.
+/// 09c4 <item id>.W <amount>.L (ZC_ACK_COUNT_BARGAIN_SALE_ITEM)
+void clif_sale_amount( const sale_item_data* sale_item, const block_list* bl, enum send_target target ){
+#if PACKETVER_SUPPORTS_SALES
+	PACKET_ZC_ACK_COUNT_BARGAIN_SALE_ITEM p = {};
+
+	p.packetType = HEADER_ZC_ACK_COUNT_BARGAIN_SALE_ITEM;
+	p.itemId = client_nameid( sale_item->nameid );
+	p.amount = sale_item->amount;
+
+	clif_send( &p, sizeof( p ), bl, target );
+#endif
+}
+
+/// The client requested a refresh of the current remaining count of a sale item
+/// 09ac <account id>.L <item id>.W (CZ_REQ_CASH_BARGAIN_SALE_ITEM_INFO)
+void clif_parse_sale_refresh( int32 fd, map_session_data* sd ){
+#if PACKETVER_SUPPORTS_SALES
+	const PACKET_CZ_REQ_CASH_BARGAIN_SALE_ITEM_INFO* p = reinterpret_cast<PACKET_CZ_REQ_CASH_BARGAIN_SALE_ITEM_INFO*>( RFIFOP( fd, 0 ) );
+
+	struct sale_item_data* sale;
+
+	if( p->AID != sd->status.account_id ){
+		return;
+	}
+
+	sale = sale_find_item( p->itemId, true );
+
+	if( sale == nullptr ){
+		return;
+	}
+
+	clif_sale_amount(sale, sd, SELF);
+#endif
+}
+
+/// Opens the sale administration window on the client
+/// 09b5 (ZC_OPEN_BARGAIN_SALE_TOOL)
+void clif_sale_open( map_session_data* sd ){
+#if PACKETVER_SUPPORTS_SALES
+	nullpo_retv(sd);
+
+	if( sd->state.sale_open ){
+		return;
+	}
+
+	sd->state.sale_open = true;
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, 2);
+	WFIFOW(fd, 0) = 0x9b5;
+	WFIFOSET(fd, 2);
+#endif
+}
+
+/// Client request to open the sale administration window.
+/// This is sent by /limitedsale
+/// 09b4 <account id>.L (CZ_OPEN_BARGAIN_SALE_TOOL)
+void clif_parse_sale_open( int32 fd, map_session_data* sd ){
+#if PACKETVER_SUPPORTS_SALES
+	nullpo_retv(sd);
+
+	if( RFIFOL(fd, 2) != sd->status.account_id ){
+		return;
+	}
+
+	char command[CHAT_SIZE_MAX];
+
+	safesnprintf( command, sizeof(command), "%climitedsale", atcommand_symbol );
+
+	is_atcommand(fd, sd, command, 1);
+#endif
+}
+
+/// Closes the sale administration window on the client.
+/// 09bd (ZC_CLOSE_BARGAIN_SALE_TOOL)
+void clif_sale_close(map_session_data* sd) {
+#if PACKETVER_SUPPORTS_SALES
+	nullpo_retv(sd);
+
+	if( !sd->state.sale_open ){
+		return;
+	}
+
+	sd->state.sale_open = false;
+
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, 2);
+	WFIFOW(fd, 0) = 0x9bd;
+	WFIFOSET(fd, 2);
+#endif
+}
+
+/// Client request to close the sale administration window.
+/// 09bc (CZ_CLOSE_BARGAIN_SALE_TOOL)
+void clif_parse_sale_close(int32 fd, map_session_data* sd) {
+#if PACKETVER_SUPPORTS_SALES
+	nullpo_retv(sd);
+
+	if( RFIFOL(fd, 2) != sd->status.account_id ){
+		return;
+	}
+
+	clif_sale_close(sd);
+#endif
+}
+
+/// Reply to a item search request for item sale administration.
+/// 09ad <result>.W <item id>.W <price>.L (ZC_ACK_CASH_BARGAIN_SALE_ITEM_INFO)
+void clif_sale_search_reply( map_session_data* sd, std::shared_ptr<s_cash_item> item ){
+#if PACKETVER_SUPPORTS_SALES
+	PACKET_ZC_ACK_CASH_BARGAIN_SALE_ITEM_INFO p = {};
+
+	p.packetType = HEADER_ZC_ACK_CASH_BARGAIN_SALE_ITEM_INFO;
+
+	if( item != nullptr ){
+		p.result = 0;
+		p.itemId = client_nameid( item->nameid );
+		p.price = item->price;
+	}else{
+		p.result = 1;
+		p.itemId = 0;
+		p.price = 0;
+	}
+
+	clif_send( &p, sizeof( p ), sd, SELF );
+#endif
+}
+
+/// Search request for an item sale administration.
+/// 09ac <length>.W <account id>.L <item name>.?B (CZ_REQ_CASH_BARGAIN_SALE_ITEM_INFO)
+void clif_parse_sale_search( int32 fd, map_session_data* sd ){
+#if PACKETVER_SUPPORTS_SALES
+	char item_name[ITEM_NAME_LENGTH];
+
+	nullpo_retv(sd);
+
+	if( RFIFOL(fd, 4) != sd->status.account_id ){
+		return;
+	}
+
+	if( !sd->state.sale_open ){
+		return;
+	}
+
+	safestrncpy( item_name, RFIFOCP(fd, 8), min(RFIFOW(fd, 2) - 7, ITEM_NAME_LENGTH) );
+
+	std::shared_ptr<item_data> id = item_db.searchname( item_name );
+
+	// not found
+	if( id == nullptr ){
+		clif_sale_search_reply( sd, nullptr );
+		return;
+	}
+
+	clif_sale_search_reply( sd, cash_shop_db.findItemInTab( CASHSHOP_TAB_SALE, id->nameid ) );
+#endif
+}
+
+/// Reply if an item was successfully put on sale or not.
+/// 09af <result>.W (ZC_ACK_APPLY_BARGAIN_SALE_ITEM)
+void clif_sale_add_reply( map_session_data* sd, enum e_sale_add_result result ){
+#if PACKETVER_SUPPORTS_SALES
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, 4);
+	WFIFOW(fd, 0) = 0x9af;
+	WFIFOW(fd, 2) = (uint16)result;
+	WFIFOSET(fd, 4);
+#endif
+}
+
+/// A client request to put an item on sale.
+/// 09ae <account id>.L <item id>.W <amount>.L <start time>.L <hours on sale>.B (CZ_REQ_APPLY_BARGAIN_SALE_ITEM)
+/// 0a3d <account id>.L <item id>.W <amount>.L <start time>.L <hours on sale>.W (CZ_REQ_APPLY_BARGAIN_SALE_ITEM2)
+void clif_parse_sale_add( int32 fd, map_session_data* sd ){
+#if PACKETVER_SUPPORTS_SALES
+	nullpo_retv( sd );
+
+	const PACKET_CZ_REQ_APPLY_BARGAIN_SALE_ITEM* p = reinterpret_cast<PACKET_CZ_REQ_APPLY_BARGAIN_SALE_ITEM*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd->status.account_id ){
+		return;
+	}
+
+	if( !sd->state.sale_open ){
+		return;
+	}
+	
+	time_t endTime = p->startTime + p->hours * 60 * 60;
+
+	clif_sale_add_reply( sd, sale_add_item( p->itemId, p->amount, p->startTime, endTime ) );
+#endif
+}
+
+/// Reply to an item removal from sale.
+/// 09b1 <result>.W (ZC_ACK_REMOVE_BARGAIN_SALE_ITEM)
+void clif_sale_remove_reply( map_session_data* sd, bool failed ){
+#if PACKETVER_SUPPORTS_SALES
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, 4);
+	WFIFOW(fd, 0) = 0x9b1;
+	WFIFOW(fd, 2) = failed;
+	WFIFOSET(fd, 4);
+#endif
+}
+
+/// Request to remove an item from sale.
+/// 09b0 <account id>.L <item id>.W (CZ_REQ_REMOVE_BARGAIN_SALE_ITEM)
+void clif_parse_sale_remove( int32 fd, map_session_data* sd ){
+#if PACKETVER_SUPPORTS_SALES
+	nullpo_retv( sd );
+
+	const PACKET_CZ_REQ_REMOVE_BARGAIN_SALE_ITEM* p = reinterpret_cast<PACKET_CZ_REQ_REMOVE_BARGAIN_SALE_ITEM*>( RFIFOP( fd, 0 ) );
+
+	if( p->AID != sd->status.account_id ){
+		return;
+	}
+
+	if( !sd->state.sale_open ){
+		return;
+	}
+
+	clif_sale_remove_reply( sd, !sale_remove_item( p->itemId ) );
+#endif
+}
+
+/// Achievement System
+/// Author: Luxuri, Aleos
+
+/**
+ * Sends all achievement data to the client (ZC_ALL_ACH_LIST).
+ * 0a23 <packetLength>.W <ACHCount>.L <ACHPoint>.L
+ */
+void clif_achievement_list_all( map_session_data *sd )
+{
+	nullpo_retv(sd);
+
+	if (!battle_config.feature_achievement) {
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,772),false,SELF); // Achievements are disabled.
+		return;
+	}
+
+	int32 count = sd->achievement_data.count; // All achievements should be sent to the client
+
+	if (count == 0)
+		return;
+
+	int32 len = (50 * count) + 22;
+	int32 fd = sd->fd;
+	int32 *info = achievement_level(sd, true);
+
+	WFIFOHEAD(fd,len);
+	WFIFOW(fd, 0) = 0xa23;
+	WFIFOW(fd, 2) = len;
+	WFIFOL(fd, 4) = count; // Amount of achievements the player has in their list (started/completed)
+	WFIFOL(fd, 8) = sd->achievement_data.total_score; // Top number
+	WFIFOW(fd, 12) = sd->achievement_data.level; // Achievement Level (gold circle)
+	WFIFOL(fd, 14) = info[0]; // Achievement EXP (left number in bar)
+	WFIFOL(fd, 18) = info[1]; // Achievement EXP TNL (right number in bar)
+
+	for (int32 i = 0; i < count; i++) {
+		WFIFOL(fd, i * 50 + 22) = (uint32)sd->achievement_data.achievements[i].achievement_id;
+		WFIFOB(fd, i * 50 + 26) = (uint32)sd->achievement_data.achievements[i].completed > 0;
+		for (int32 j = 0; j < MAX_ACHIEVEMENT_OBJECTIVES; j++) 
+			WFIFOL(fd, (i * 50) + 27 + (j * 4)) = (uint32)sd->achievement_data.achievements[i].count[j];
+		WFIFOL(fd, i * 50 + 67) = (uint32)sd->achievement_data.achievements[i].completed;
+		WFIFOB(fd, i * 50 + 71) = sd->achievement_data.achievements[i].rewarded > 0;
+	}
+	WFIFOSET(fd, len);
+}
+
+/**
+ * Sends a single achievement's data to the client (ZC_ACH_UPDATE).
+ * 0a24 <ACHPoint>.L
+ */
+void clif_achievement_update( map_session_data *sd, const achievement *ach, int32 count )
+{
+	nullpo_retv(sd);
+
+	if (!battle_config.feature_achievement) {
+		clif_messagecolor(sd,color_table[COLOR_RED],msg_txt(sd,772),false,SELF); // Achievements are disabled.
+		return;
+	}
+
+	int32 fd = sd->fd;
+	int32 *info = achievement_level(sd, true);
+
+	WFIFOHEAD(fd, packet_len(0xa24));
+	WFIFOW(fd, 0) = 0xa24;
+	WFIFOL(fd, 2) = sd->achievement_data.total_score; // Total Achievement Points (top of screen)
+	WFIFOW(fd, 6) = sd->achievement_data.level; // Achievement Level (gold circle)
+	WFIFOL(fd, 8) = info[0]; // Achievement EXP (left number in bar)
+	WFIFOL(fd, 12) = info[1]; // Achievement EXP TNL (right number in bar)
+	if (ach) {
+		WFIFOL(fd, 16) = ach->achievement_id; // Achievement ID
+		WFIFOB(fd, 20) = ach->completed > 0; // Is it complete?
+		for (int32 i = 0; i < MAX_ACHIEVEMENT_OBJECTIVES; i++)
+			WFIFOL(fd, 21 + (i * 4)) = (uint32)ach->count[i]; // 1~10 pre-reqs
+		WFIFOL(fd, 61) = (uint32)ach->completed; // Epoch time
+		WFIFOB(fd, 65) = ach->rewarded > 0; // Got reward?
+	} else
+		memset(WFIFOP(fd, 16), 0, 40);
+	WFIFOSET(fd, packet_len(0xa24));
+}
+
+/**
+ * Checks if an achievement reward can be rewarded (CZ_REQ_ACH_REWARD).
+ * 0a25 <achievementID>.L
+ */
+void clif_parse_AchievementCheckReward(int32 fd, map_session_data *sd)
+{
+	nullpo_retv(sd);
+
+	if( sd->achievement_data.save )
+		intif_achievement_save(sd);
+
+	achievement_check_reward(sd, RFIFOL(fd,2));
+}
+
+/**
+ * Returns the result of achievement_check_reward (ZC_REQ_ACH_REWARD_ACK).
+ * 0a26 <result>.W <achievementID>.L
+ */
+void clif_achievement_reward_ack(int32 fd, unsigned char result, int32 achievement_id)
+{
+	WFIFOHEAD(fd, packet_len(0xa26));
+	WFIFOW(fd, 0) = 0xa26;
+	WFIFOB(fd, 2) = result;
+	WFIFOL(fd, 3) = achievement_id;
+	WFIFOSET(fd, packet_len(0xa26));
+}
+
+/// Process the pet evolution request
+/// 09fb <packetType>.W <packetLength>.W <evolutionPetEggITID>.W (CZ_PET_EVOLUTION)
+void clif_parse_pet_evolution( int32 fd, map_session_data *sd ){
+#if PACKETVER >= 20141008
+	const PACKET_CZ_PET_EVOLUTION* p = reinterpret_cast<PACKET_CZ_PET_EVOLUTION*>( RFIFOP( fd, 0 ) );
+
+	auto pet = pet_db_search( p->EvolvedPetEggID, PET_EGG );
+
+	if (!pet) {
+		clif_pet_evolution_result(sd, e_pet_evolution_result::FAIL_NOT_PETEGG);
+		return;
+	}
+
+	pet_evolution(sd, pet->class_);
+#endif
+}
+
+/// Sends the result of the evolution to the client.
+/// 09fc <result>.L (ZC_PET_EVOLUTION_RESULT)
+void clif_pet_evolution_result( const map_session_data* sd, e_pet_evolution_result result ){
+#if PACKETVER >= 20141008
+	int32 fd = sd->fd;
+
+	WFIFOHEAD(fd, packet_len(0x9fc));
+	WFIFOW(fd, 0) = 0x9fc;
+	WFIFOL(fd, 2) = static_cast<uint32>(result);
+	WFIFOSET(fd, packet_len(0x9fc));
+#endif
+}
+
+/*
+ * This packet is sent by /changedress or /nocosplay
+ *
+ * 0ae8
+ */
+void clif_parse_changedress( int32 fd, map_session_data* sd ){
+#if PACKETVER >= 20180103
+	char command[CHAT_SIZE_MAX];
+
+	safesnprintf( command, sizeof(command), "%cchangedress", atcommand_symbol );
+	
+	is_atcommand( fd, sd, command, 1 );
+#endif
+}
+
+/// Opens an UI window of the given type and initializes it with the given data
+/// 0AE2 <type>.B <data>.L
+void clif_ui_open( map_session_data& sd, enum out_ui_type ui_type, int32 data ){
+#if PACKETVER >= 20151202
+	// If the UI requires state tracking
+	switch( ui_type ){
+		case OUT_UI_STYLIST:
+			sd.state.stylist_open = true;
+			break;
+		case OUT_UI_ENCHANTGRADE:
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+			sd.state.enchantgrade_open = true;
+			break;
+#else
+			return;
+#endif
+	}
+
+	PACKET_ZC_UI_OPEN p = {};
+
+	p.PacketType = HEADER_ZC_UI_OPEN;
+	p.UIType = ui_type;
+#if PACKETVER >= 20171122
+	p.data = data;
+#endif
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+/// Request to open an UI window of the given type
+/// 0A68 <type>.B
+void clif_parse_open_ui( int32 fd, map_session_data* sd ){
+	switch( RFIFOB(fd,2) ){
+		case IN_UI_ATTENDANCE:
+			if( !pc_has_permission( sd, PC_PERM_ATTENDANCE ) ){
+				clif_messagecolor( sd, color_table[COLOR_RED], msg_txt( sd, 791 ), false, SELF ); // You are not allowed to use the attendance system.

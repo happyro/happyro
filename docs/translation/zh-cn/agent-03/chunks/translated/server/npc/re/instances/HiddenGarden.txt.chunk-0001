@@ -1,0 +1,500 @@
+//===== rAthena Script =======================================
+//= Hidden Flower Garden
+//===== Description: =========================================
+//= [Walkthrough Conversion]
+//= Episode 17.2 Hidden Flower Garden
+//= Episode 17.2 Security Area 1 & 2
+//= Note:
+// - NPC_LOCKON_LASER skill is currently no implemented.
+//===== Changelog: ===========================================
+//= 1.0 Initial release [crazyarashi]
+//= 1.1 Optimizations and cleanup [Everade]
+//= 1.2 Cleanup [Capuche]
+//= 1.3 Updated monsters spawn times (significantly reduced). [Atemo]
+//============================================================
+
+ba_maison,120,320,0	script	#herbs_chk	HIDDEN_WARP_NPC,3,3,{
+	end;
+OnTouch:
+	//You can start this quest without registering on alpha
+	if (isbegin_quest(12497) == 0) {	// story
+		cloakoffnpcself( "#he_admin1" );
+		specialeffect EF_WHITEBODY, AREA, "#he_admin1";
+		npctalk "请远离安全区域边界。禁止外来者进入。", "#he_admin1", bc_self;
+		end;
+	}
+	// daily
+	cloakoffnpcself( "#he_admin2" );
+	specialeffect EF_WHITEBODY, AREA, "#he_admin2";
+	end;
+}
+
+ba_maison,120,321,5	script(CLOAKED)	#he_admin1	MD_ASSISTANT,{
+	if (ep17_2_main < 1)
+		end;
+	mes "[Flower Garden Manager]";
+	mes "检测到未登记访客。";
+	next;
+	.@party_id = getcharid(1);
+	if (!is_party_leader()) {
+		mes "[Flower Garden Manager]";
+		mes "没有队长权限，无法继续下一步。";
+		close;
+	}
+	.@party_name$ = getpartyname(.@party_id);
+	mes "[Flower Garden Manager]";
+	mes "如果你是失去权限的管理员，可以通过身份认证重新获得权限。";
+	next;
+	.@md_name$ = "Hidden Flower Garden";
+
+	if (instance_live_info(ILI_NAME,instance_id(IM_PARTY)) == .@md_name$)
+		.@menu$ = "^FF0000Enter^000000";
+
+	switch( select( "退出并退后。", "认证身份", .@menu$ ) ) {
+	case 1:
+		mes "[Flower Garden Manager]";
+		mes "明智的选择。";
+		close;
+	case 2:
+		if (instance_create(.@md_name$) == -3)
+			dispbottom "The reservation of the instance '" + .@md_name$ + "' has failed due to an active instance.";
+		end;
+	case 3:
+		if (!is_party_leader()) {	// shouldn't happen
+			mes "[Flower Garden Manager]";
+			mes "没有队长权限，无法继续下一步。";
+			close;
+		}
+		if (instance_enter(.@md_name$) != IE_OK) {
+			mes "[Flower Garden Manager]";
+			mes "只有队伍管理员完成全部许可后才能进入。请重新确认分配给你的访问区域。";
+			close;
+		}
+		mapannounce "ba_maison", "" + strcharinfo(0) + " of the party, " + .@party_name$ + ", is entering the " + .@md_name$ + ".", bc_map, "0x00FF99";
+		end;
+	}
+	end;
+}
+
+ba_maison,120,321,5	script(CLOAKED)	#he_admin2	MD_ASSISTANT,{
+	if (ep17_2_main < 1)
+		end;
+	if (isbegin_quest(12497) != 2)
+		end;
+	switch( checkquest(12498,PLAYTIME) ) {
+	case -1:
+		break;
+	case 0:
+	case 1:
+		mes "[Flower Garden Manager]";
+		mes "你刚进入安全区域。";
+		mes "请按照西格玛的命令休息一天。";
+		close;
+	case 2:
+		erasequest 12498;
+		break;
+	}
+	mes "[Flower Garden Manager]";
+	mes "身份已确认。你可以进入安全区域。需要什么帮助？";
+	next;
+	if (BaseLevel >= 150)
+		.@menu$[0] = "1st Security Zone.";
+	if (BaseLevel >= 180)
+		.@menu$[1] = "^FF00002nd Security Zone.^000000";
+
+	switch( select( "退后。", "身份认证", "进入区域" ) ) {
+	case 1:
+		mes "[Flower Garden Manager]";
+		mes "好的。";
+		close;
+	case 2:
+		switch( select( "退后。", .@menu$[0], .@menu$[1] ) ) {
+		case 1:
+			mes "[Flower Garden Manager]";
+			mes "好的。";
+			close;
+		case 2:
+			.@md_name$ = "Security Area 1";
+			break;
+		case 3:
+			.@md_name$ = "Security Area 2";
+			break;
+		}
+		if (!is_party_leader()) {
+			mes "[Flower Garden Manager]";
+			mes "只有队长可以开始身份验证。交给负责人处理吧。";
+			close;
+		}
+		if (instance_create(.@md_name$) == -3)
+			dispbottom "The reservation of the instance '" + .@md_name$ + "' has failed due to an active instance.";
+		end;
+	case 3:
+		switch( select( .@menu$[0], .@menu$[1] ) ) {
+		case 1:
+			.@md_name$ = "Security Area 1";
+			.@qid = 12499;
+			.@qid2 = 12500;
+			break;
+		case 2:
+			.@md_name$ = "Security Area 2";
+			.@qid = 12500;
+			.@qid2 = 12499;
+			break;
+		}
+		if (instance_enter(.@md_name$) != IE_OK) {
+			mes "[Flower Garden Manager]";
+			mes "只有队伍管理员完成全部许可后才能进入。请重新确认分配给你的访问区域。";
+			close;
+		}
+		setquest 12498;
+		if (isbegin_quest(.@qid) > 0)
+			erasequest .@qid;
+		if (isbegin_quest(.@qid2) > 0)
+			erasequest .@qid2;
+		setquest .@qid;
+		mapannounce "ba_maison", "" + strcharinfo(0) + " of the party, " + getpartyname( getcharid(1) ) + ", is entering the " + .@md_name$ + ".", bc_map, "0x00FF99";
+		end;
+	}
+	end;
+}
+
+
+1@herbs,1,1,0	script	#hidden_flower_garden_control	-1,{
+	end;
+OnInstanceInit:
+	'map_herbs$ = instance_mapname("1@herbs");
+
+	// story
+	'action = 0;
+	'pimp = 0;
+	'guard_count = 0;
+	'hidden_garden = 0;
+	'npc_is_talking = false;
+
+	// daily
+	'room = 0;
+	deletearray 'spawn_mobs;
+	deletearray 'summon;
+	end;
+}
+
+1@herbs,56,278,4	script	#BMD000001	4_SYS_MSG,{
+	if ('npc_is_talking)
+		end;
+	if ('hidden_garden == 0) {
+		mes "这似乎是自动人偶的全息影像。中间面板上有一块奇怪的玻璃，写着^0000FF[在触摸屏输入图案]^000000，旁边还有几个按钮。";
+		while(1) {
+			next;
+			if (select( "不管它", "触摸屏幕", .@menu$ ) == 1) {
+				mes "全息影像消失了。";
+				close;
+			}
+			specialeffect EF_AGIUP2;
+			progressbar_npc "3131FF",1;
+			if (.@menu$ != "" || rand(1,5) == 1)
+				break;
+			specialeffect EF_HALLUTIME;
+			mes "^FF0000ERROR^000000";
+			mes "^FF0000图案不匹配。^000000";
+			.@menu$ = "^FF0000Try entering a different pattern^000000";
+		}
+		specialeffect EF_GUARD4;
+		mes "^0000FF图案已识别。^000000";
+		mes "正在运行睡眠模式解除协议。^0000CD" + strcharinfo(0) + "^000000输入的图案已识别。";
+		close2;
+		'admin$ = strcharinfo(0);
+		donpcevent instance_npcname("#BMD000001") + "::OnTalk01";
+		end;
+	}
+	if ('hidden_garden == 1) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		setpcblock PCBLOCK_NPC, true;
+		npctalk "我是自动人偶，只有你的魔力与瓦尔蒙特的魔力同步率达到一定程度时才能工作。";
+		sleep2 5000;
+		npctalk "[" + 'admin$ + "]" + "与瓦尔蒙特的魔力相似度为73.6%。你究竟是谁，[" + 'admin$ + "]？";
+		sleep2 5000;
+		setpcblock PCBLOCK_NPC, false;
+		select("偶然来到这里的冒险者");
+		setpcblock PCBLOCK_NPC, true;
+		npctalk "真奇怪。我从未见过与瓦尔蒙特魔力模式相似度超过70%的外来者。";
+		sleep2 5000;
+		setpcblock PCBLOCK_NPC, false;
+		.@s = select( "我以前有机会见过瓦尔蒙特。", "我不知道原因。" );
+		setpcblock PCBLOCK_NPC, true;
+		sleep2 1000;
+		if (.@s == 1) {
+			npctalk "你可能因为经常以某种形式与他接触，才拥有相似的魔力模式。";
+			sleep2 5000;
+		}
+		while(1) {
+			npctalk "好的。从现在起，我将[" + 'admin$ + "]设为临时管理员并据此行动。你同意吗？";
+			sleep2 5000;
+			setpcblock PCBLOCK_NPC, false;
+			switch( select( "我是临时管理员？为什么？", "拒绝！", "当然" ) ) {
+			case 1:
+				setpcblock PCBLOCK_NPC, true;
+				sleep2 1000;
+				npctalk "自动人偶负责维护花园，并分别执行分配的任务。";
+				sleep2 5000;
+				npctalk "瓦尔蒙特大人在时，任务进度通过个人报告和每周现场评估进行检查。";
+				sleep2 5000;
+				npctalk "目前，瓦尔蒙特大人已经离开超过一百万小时。";
+				sleep2 5000;
+				npctalk "虽然你不是瓦尔蒙特大人，但你的魔力模式相似度超过70%，我想请你评估我们的任务。";
+				sleep2 5000;
+				npctalk "请理解，这是防止任务偏离正轨所必需的管理。";
+				continue;
+			case 2:
+				sleep2 1000;
+				npctalk "我会等你许可。";
+				specialeffect EF_MARKING_USE_CHANGEMONSTER;
+				setpcblock PCBLOCK_NPC, false;
+				end;
+			case 3:
+				break;
+			}
+			break;
+		}
+		setpcblock PCBLOCK_NPC, true;
+		sleep2 1000;
+		npctalk "感谢你的许可。从现在起，我会将[" + 'admin$ + "]视为临时管理员。";
+		sleep2 5000;
+		npctalk "首先选择用于控制这台自动人偶的代号。系统会随机提供一些过去常用的名字。";
+
+		setarray .@names$[0],"Lisa","Barbara","Jennifer","Dorothy","Jun","Yeongchun","Susan","Martha","Hannah","Helen","Chunja","Karen","How do I stop this?";
+		.@size = getarraysize(.@names$);
+		.@menu$[0] = "Quit";	// note: script continues regardless of the selection
+		for ( .@i = 1; .@i < 4; ++.@i ) {
+			.@r = rand(.@size);
+			.@menu$[.@i] = .@names$[.@r];
+			deletearray .@names$[.@r],1;
+			.@size--;
+		}
+		setpcblock PCBLOCK_NPC, false;
+		.@s = select( .@menu$[0], .@menu$[1], .@menu$[2], .@menu$[3] ) - 1;
+		setpcblock PCBLOCK_NPC, true;
+		.@guide_name$ = .@menu$[.@s];
+		.@guide_id = getnpcid(0, instance_npcname("#BMD000001"));
+
+		npctalk "已收到指令。";
+		sleep2 3000;
+		npctalk "自动人偶BMD000001的代号是[" + .@guide_name$ + "]。";
+		sleep2 5000;
+		npctalk "我们将根据临时管理员响应协议开始花园现场检查。";
+		sleep2 5000;
+		if ('hidden_garden == 1) {
+			'guide_id = .@guide_id;
+			'guide_name$ = .@guide_name$;
+			'hidden_garden = 2;
+			disablenpc instance_npcname("#mc_device");
+			setpcblock PCBLOCK_NPC, false;
+			npctalk "请注意脚下，跟我来。";
+			npcspeed 200;
+			unitwalk 'guide_id,63,290, instance_npcname("#BMD000001") + "::OnEvent01";
+		}
+		end;
+	}
+	if ('hidden_garden == 3) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		mes "[" + 'guide_name$ + "]";
+		mes "请评估花园的景观、水质和整体布局。";
+		next;
+		while(true) {
+			switch( select( "等一下。", "这里真美。", "希望能多种些树。", "为什么四周都是水？" ) ) {
+			case 1:
+				npctalk "我会停止引导。未经自动人偶[" + 'guide_name$ + "]检查评估的自动人偶和物品不得外出。";
+				end;
+			case 2:
+				npctalk "那么，这里的管理已达到要求。";
+				break;
+			case 3:
+				'trees = 1;
+				npctalk "明白了，我们今后会增加树木。";
+				break;
+			case 4:
+				npctalk "因为这是水上花园，所以区域四周都是水。";
+				sleep2 5000;
+				npctalk "不能改成非水上花园，因为这超出了瓦尔蒙特大人的审美。";
+				break;
+			}
+			break;
+		}
+		'hidden_garden = 4;
+		unitwalk 'guide_id,63,288, instance_npcname("#BMD000001") + "::OnEvent02";
+		end;
+	}
+	end;
+
+OnTalk01:
+	'npc_is_talking = true;
+	npctalk "本产品是花园导览自动人偶，序列号为BMD000001。";
+	sleep 5000;
+	npctalk "与瓦尔蒙特魔力模式的相似度检查为73.6%。切换至花园导览模式。";
+	sleep 5000;
+	npctalk "操作将在3秒后开始。";
+	progressbar_npc "3131FF",3;
+	setnpcdisplay instance_npcname("#BMD000001"),20622;	// MD_ASSISTANT
+	specialeffect EF_FLOWERCAST;
+	npctalk "睡眠模式解除协议已完成。除已识别目标外，我还会检查瓦尔蒙特大人是否在附近。";
+	sleep 5000;
+	npctalk "搜索中……";
+	progressbar_npc "3131FF",3;
+	sleep 1000;
+	npctalk "网络内未检测到瓦尔蒙特大人。";
+	specialeffect EF_MARKING_USE_CHANGEMONSTER;
+	if ('hidden_garden == 0)
+		'hidden_garden = 1;
+	'npc_is_talking = false;
+	end;
+
+OnEvent01:
+	npctalk "你可以从花园入口开始评估。";
+	sleep 3000;
+	npctalk "客观评估能减少管理此处的自动人偶工作错误，帮助它们近乎完美地履行职责。";
+	sleep 6000;
+	npctalk "[" + 'admin$ + "]，请使用临时管理员权限判断花园任务是否得到忠实执行。";
+	sleep 6000;
+	'hidden_garden = 3;
+	specialeffect EF_MARKING_USE_CHANGEMONSTER;
+	end;
+
+OnEvent02:
+	if (!'trees) {
+		sleep 5000;
+		npctalk "我们已满足临时管理员[" + 'admin$ + "]的标准，将维持当前管理流程。";
+	}
+	sleep 5000;
+		npctalk "[" + 'admin$ + "]，请继续检查剩余区域。";
+	unitwalk 'guide_id,82,300, instance_npcname("#BMD000001") + "::OnEvent03";
+	end;
+
+OnEvent03:
+	npctalk "这里没有连接各区域的桥。";
+	sleep 6000;
+	npctalk "瓦尔蒙特大人可以无视地形移动，所以建造花园时没有为普通人设置单独结构。";
+	sleep 6000;
+	npctalk "不过考虑到临时管理员能力有限，我会提供空间跳跃服务。";
+	sleep 6000;
+	enablenpc instance_npcname("#BMD000002");
+	enablenpc instance_npcname("#carota");
+	instance_warpall 'map_herbs$,111,275,instance_id();
+	sleep 1000;
+	removespecialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000002");
+	specialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000002");
+	disablenpc instance_npcname("#BMD000001");
+	end;
+}
+
+1@herbs,56,278,4	duplicate(dummy_npc)	#mc_device	1_SHADOW_NPC
+
+
+1@herbs,110,275,4	script(DISABLED)	#BMD000002	MD_ASSISTANT,3,3,{
+	if ('hidden_garden == 4) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		'hidden_garden = 5;
+		npctalk "瓦尔蒙特大人为每台自动人偶分配了研究项目。";
+		sleep 5000;
+		npctalk "但我们这些人偶不知道研究目的，只能自行决定今后如何处理。";
+		sleep 5000;
+		npctalk "花园分为几个研究区域，每个区域都有不同的研究课题。";
+		npcspeed 200;
+		'guide_id = getnpcid(0, instance_npcname("#BMD000002"));
+		unitwalk 'guide_id,124,275, instance_npcname("#BMD000002") + "::OnEvent00";
+		end;
+	}
+	end;
+
+OnEvent00:
+	unitwalk 'guide_id,124,281, instance_npcname("#BMD000002") + "::OnEvent01";
+	end;
+
+OnEvent01:
+	unitwalk 'guide_id,125,280, instance_npcname("#BMD000002") + "::OnEvent02";
+	npctalk "在研究区域中，这里奉瓦尔蒙特大人之命种植一种叫芜菁的植物。";
+	end;
+
+OnEvent02:
+	unitwalk 'guide_id,137,280, instance_npcname("#BMD000002") + "::OnEvent03";
+	end;
+
+OnEvent03:
+	unitwalk 'guide_id,137,276, instance_npcname("#BMD000002") + "::OnEvent04";
+	end;
+
+OnEvent04:
+	sleep 3000;
+	npctalk "请允许我介绍CAROTA-88型号自动人偶。";
+	sleep 4000;
+	npctalk "......";
+	sleep 2000;
+	npctalk "[错误：CAROTA-88超出控制范围。需要追踪对应物体坐标。]";
+	sleep 5000;
+	npctalk "[正在追踪坐标……]";
+	progressbar_npc "3131FF",4;
+	npctalk "CAROTA-88，请尽快返回原位置。必要时我会采取强制手段。";
+	'carota = getnpcid(0, instance_npcname("#carota"));
+	donpcevent instance_npcname("#carota") + "::OnAction";
+	end;
+
+OnEvent05:
+	npctalk "我们前往下一个区域。", instance_npcname("#BMD000002");
+	'hidden_garden = 7;
+	sleep 2000;
+	enablenpc instance_npcname("#BMD000003");
+	enablenpc instance_npcname("#pimp25");
+	donpcevent instance_npcname("#pimp25") + "::OnWalk";
+	instance_warpall 'map_herbs$,254,282,instance_id();
+	sleep 1000;
+	removespecialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000003");
+	specialeffect EF_MARKING_USE_CHANGEMONSTER, AREA, instance_npcname("#BMD000003");
+	disablenpc();
+	end;
+
+OnTouch:
+	if ('hidden_garden == 4) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		specialeffect EF_MARKING_USE_CHANGEMONSTER;
+	}
+	end;
+}
+
+1@herbs,137,269,4	script(DISABLED)	#carota	CLEAR_NPC,3,3,{
+	if ('npc_is_talking)
+		end;
+	if ('hidden_garden == 6) {
+		removespecialeffect EF_MARKING_USE_CHANGEMONSTER;
+		select("报告你的工作详情。");
+		setpcblock PCBLOCK_NPC, true;
+		sleep2 1000;
+		npctalk "瓦尔蒙特大人，录入芜菁生物数据后没有进一步指示。这台自动人偶处于无人看管状态。";
+		sleep2 5000;
+		npctalk "5076小时内没有进一步指示。这台自动人偶的AI收集了芜菁的网络信息。";
+		sleep2 5000;
+		npctalk "正在获取可食用植物信息。发现芜菁栽培的古代记录。";
+		sleep2 5000;
+		npctalk "经过约18816小时比较和记录，优化了芜菁的发芽、生长与播种。";
+		sleep2 5000;
+		npctalk "超过一百万小时过去了。收集芜菁栽培与收获数据，以及育种方法信息。";
+		sleep2 5000;
+		npctalk "年产量2吨。病虫害防治成功率99.9%。因人工操作错误损失0.2%。";
+		sleep2 5000;
+		npctalk "花园产芜菁在附近大城市以高价售出，为花园和宅邸维护费用作出贡献。";
+		sleep2 5000;
+		setpcblock PCBLOCK_NPC, false;
+		npctalk "这台自动人偶的研究方向应改进、继续还是废弃？等待管理员决定。";
+		mes "^0000AA评估CAROTA-88目前的工作。^000000";
+		next;
+		if (select( "产量充足，状态良好。", "改进育种。", "只是农业，所以一切都很好。" ) == 3)
+			'talk_bool = true;
+		else
+			'talk_bool = false;
+		close2;
+		donpcevent instance_npcname("#carota") + "::OnTalk01";
+		end;
+	}
+	end;
+
+OnTalk01:
+	'npc_is_talking = true;
+	sleep 1000;
+	npctalk "已收到评估……";

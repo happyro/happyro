@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "char_mapif.hpp"
+
+#include <cstdlib>
+#include <cstring> //memcpy
+#include <memory>
+
+#include <common/malloc.hpp>
+#include <common/showmsg.hpp>
+#include <common/socket.hpp>
+#include <common/sql.hpp>
+#include <common/strlib.hpp>
+#include <common/timer.hpp>
+#include <common/utilities.hpp>
+
+#include "char.hpp"
+#include "char_logif.hpp"
+#include "inter.hpp"
+
+using namespace rathena;
+
+/**
+ * Packet send to all map-servers, attach to ourself
+ * @param buf: packet to send in form of an array buffer
+ * @param len: size of packet
+ * @return : the number of map-serv the packet was sent to
+ */
+int32 chmapif_sendall(unsigned char *buf, uint32 len){
+	int32 i, c;
+
+	c = 0;
+	for(i = 0; i < ARRAYLENGTH(map_server); i++) {
+		int32 fd;
+		if (session_isValid(fd = map_server[i].fd)) {
+			WFIFOHEAD(fd,len);
+			memcpy(WFIFOP(fd,0), buf, len);
+			WFIFOSET(fd,len);
+			c++;
+		}
+	}
+
+	return c;
+}
+
+/**
+ * Packet send to all map-servers, except one. (wos: without our self) attach to ourself
+ * @param sfd: fd to discard sending to
+ * @param buf: packet to send in form of an array buffer
+ * @param len: size of packet
+ * @return : the number of map-serv the packet was sent to
+ */
+int32 chmapif_sendallwos(int32 sfd, unsigned char *buf, uint32 len){
+	int32 i, c;
+
+	c = 0;
+	for(i = 0; i < ARRAYLENGTH(map_server); i++) {
+		int32 fd;
+		if (session_isValid(fd = map_server[i].fd) && fd != sfd) {
+			WFIFOHEAD(fd,len);
+			memcpy(WFIFOP(fd,0), buf, len);
+			WFIFOSET(fd,len);
+			c++;
+		}
+	}
+
+	return c;
+}
+
+/**
+ * Packet send to all char-servers, except one. (wos: without our self)
+ * @param fd: fd to send packet too
+ * @param buf: packet to send in form of an array buffer
+ * @param len: size of packet
+ * @return : the number of map-serv the packet was sent to (O|1)
+ */
+int32 chmapif_send(int32 fd, unsigned char *buf, uint32 len){
+	if (session_isValid(fd)) {
+		int32 i;
+		ARR_FIND( 0, ARRAYLENGTH(map_server), i, fd == map_server[i].fd );
+		if( i < ARRAYLENGTH(map_server) )
+		{
+			WFIFOHEAD(fd,len);
+			memcpy(WFIFOP(fd,0), buf, len);
+			WFIFOSET(fd,len);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+
+
+/**
+ * Send map-servers fames ranking lists
+ *  Defaut fame list are 32B, (id+point+names)
+ *  S <len>.W <len bs + alchi>.W <len bs>.W <smith_rank>?B <alchi_rank>?B <taek_rank>?B
+ * @param fd: fd to send packet too (map-serv) if -1 send to all
+ * @return : 0 success
+ */
+int32 chmapif_send_fame_list(int32 fd){
+	int32 i, len = 8;
+	unsigned char buf[32000];
+
+	WBUFW(buf,0) = 0x2b1b;
+
+	for(i = 0; i < fame_list_size_smith && smith_fame_list[i].id; i++) {
+		memcpy(WBUFP(buf, len), &smith_fame_list[i], sizeof(struct fame_list));
+		len += sizeof(struct fame_list);
+	}
+	// add blacksmith's block length
+	WBUFW(buf, 6) = len;
+
+	for(i = 0; i < fame_list_size_chemist && chemist_fame_list[i].id; i++) {
+		memcpy(WBUFP(buf, len), &chemist_fame_list[i], sizeof(struct fame_list));
+		len += sizeof(struct fame_list);
+	}
+	// add alchemist's block length
+	WBUFW(buf, 4) = len;
+
+	for(i = 0; i < fame_list_size_taekwon && taekwon_fame_list[i].id; i++) {
+		memcpy(WBUFP(buf, len), &taekwon_fame_list[i], sizeof(struct fame_list));
+		len += sizeof(struct fame_list);
+	}
+	// add total packet length
+	WBUFW(buf, 2) = len;
+
+	if (session_isValid(fd))
+		chmapif_send(fd, buf, len);
+	else
+		chmapif_sendall(buf, len);
+
+	return 0;
+}
+
+/**
+ * Send to map-servers the updated fame ranking lists
+ *  We actually just send this one when we only need to update rankpoint but pos didn't change
+ * @param type: ranking type
+ * @param index: position in the ranking
+ * @param fame: number of points
+ */
+void chmapif_update_fame_list(int32 type, int32 index, int32 fame) {
+	unsigned char buf[8];
+	WBUFW(buf,0) = 0x2b22;
+	WBUFB(buf,2) = type;
+	WBUFB(buf,3) = index;
+	WBUFL(buf,4) = fame;
+	chmapif_sendall(buf, 8);
+}
+
+/**
+ * Send to map-servers the users count on this char-serv, (meaning the total of all mapserv)
+ * @param users: number of players on this char-serv
+ */
+void chmapif_sendall_playercount(int32 users){
+	uint8 buf[6];
+	// send number of players to all map-servers
+	WBUFW(buf,0) = 0x2b00;
+	WBUFL(buf,2) = users;
+	chmapif_sendall(buf,6);
+}
+
+/**
+ * Send some misc info to new map-server.
+ * - Server name for whisper name
+ * - Default map
+ * HZ 0x2afb <size>.W <status>.B <whisper name>.24B <server name>.24B
+ * @param fd
+ **/
+void chmapif_send_misc(int32 fd) {
+	uint16 offs = 5;
+	unsigned char buf[5+NAME_LENGTH+NAME_LENGTH];
+
+	memset(buf, '\0', sizeof(buf));
+	WBUFW(buf, 0) = 0x2afb;
+	// 0 succes, 1:failure
+	WBUFB(buf, 4) = 0;
+	// Send name for wisp to player
+	safestrncpy( WBUFCP( buf, offs ), charserv_config.wisp_server_name, NAME_LENGTH );
+	offs += NAME_LENGTH;
+	safestrncpy( WBUFCP( buf, offs ), charserv_config.server_name, sizeof( charserv_config.server_name ) );
+	offs += NAME_LENGTH;
+
+	// Length
+	WBUFW(buf, 2) = offs;
+	chmapif_send(fd, buf, offs);
+}
+
+/**
+ * Sends maps to all map-server
+ * HZ 0x2b04 <size>.W <ip>.L <port>.W { <map>.?B }.?B
+ * @param fd
+ * @param map_id
+ * @param count Number of map from new map-server has
+ **/
+void chmapif_send_maps( int32 fd, int32 map_id, size_t count, unsigned char* mapbuf ){
+	uint16 x;
+
+	if (count == 0) {
+		ShowWarning("Map-server %d has NO maps.\n", map_id);
+	}
+	else {
+		unsigned char buf[INT16_MAX];
+		// Transmitting maps information to the other map-servers
+		WBUFW(buf,0) = 0x2b04;
+		WBUFW( buf, 2 ) = static_cast<int16>( count * MAP_NAME_LENGTH_EXT + 10 );
+		WBUFL(buf,4) = htonl(map_server[map_id].ip);
+		WBUFW(buf,8) = htons(map_server[map_id].port);
+		memcpy( WBUFP( buf, 10 ), mapbuf, count * MAP_NAME_LENGTH_EXT );
+		chmapif_sendallwos(fd, buf, WBUFW(buf,2));
+	}
+
+	// Transmitting the maps of the other map-servers to the new map-server
+	for (x = 0; x < ARRAYLENGTH(map_server); x++) {
+		if (session_isValid(map_server[x].fd) && x != map_id) {
+			WFIFOHEAD( fd, 10 + MAP_NAME_LENGTH_EXT * map_server[x].maps.size() );
+			WFIFOW(fd,0) = 0x2b04;
+			WFIFOL(fd,4) = htonl(map_server[x].ip);
+			WFIFOW(fd,8) = htons(map_server[x].port);
+			uint16 j = 0;
+			for( std::string& map : map_server[x].maps ){
+				safestrncpy( WFIFOCP( fd, 10 + j * MAP_NAME_LENGTH_EXT ), map.c_str(), MAP_NAME_LENGTH_EXT );
+				j++;
+			}
+
+			if (j > 0) {
+				WFIFOW( fd, 2 ) = j * MAP_NAME_LENGTH_EXT + 10;
+				WFIFOSET(fd,WFIFOW(fd,2));
+			}
+		}
+	}
+}
+
+/**
+ * This function is called when the map-serv initialise is chrif interface.
+ * Map-serv sent us his map indexes so we can transfert a player from a map-serv to another when necessary
+ * We reply by sending back the char_serv_wisp_name  fame list and
+ * @param fd: which fd to parse from
+ * @param id: which map_serv id
+ * @return : 0 not enough data received, 1 success
+ */
+int32 chmapif_parse_getmapname(int32 fd, int32 id){
+	int32 i = 0;
+	unsigned char *mapbuf;
+
+	if (RFIFOREST(fd) < 4 || RFIFOREST(fd) < RFIFOW(fd,2))
+		return 0;
+
+	//Retain what map-index that map-serv contains
+	map_server[id].maps.clear();
+
+	for( int32 i = 4; i < RFIFOW( fd, 2 ); i += MAP_NAME_LENGTH_EXT ){
+		char mapname[MAP_NAME_LENGTH_EXT];
+
+		safestrncpy( mapname, RFIFOCP( fd, i ), sizeof( mapname ) );
+
+		map_server[id].maps.push_back( mapname );
+	}
+
+	mapbuf = RFIFOP(fd,4);
+	RFIFOSKIP(fd,RFIFOW(fd,2));
+
+	ShowStatus("Map-Server %d connected: %" PRIuPTR " maps, from IP %d.%d.%d.%d port %d.\n",
+				id, map_server[id].maps.size(), CONVIP(map_server[id].ip), map_server[id].port);
+	ShowStatus("Map-server %d loading complete.\n", id);
+
+	chmapif_send_misc(fd);
+	chmapif_send_fame_list(fd); //Send fame list.
+	chmapif_send_maps(fd, id, map_server[id].maps.size(), mapbuf);
+
+	return 1;
+}
+
+/**
+ * Map-serv requesting to send the list of sc_data the player has saved
+ * @author [Skotlex]
+ * @param fd: which fd to parse from
+ * @return : 0 not enough data received, 1 success
+ */
+int32 chmapif_parse_askscdata(int32 fd){
+	if (RFIFOREST(fd) < 10)
+		return 0;
+	else {
+#ifdef ENABLE_SC_SAVING
+		int32 aid, cid;
+		aid = RFIFOL(fd,2);
+		cid = RFIFOL(fd,6);
+		if( SQL_ERROR == Sql_Query(sql_handle, "SELECT type, tick, val1, val2, val3, val4 from `%s` WHERE `account_id` = '%d' AND `char_id`='%d'",
+			schema_config.scdata_db, aid, cid) )
+		{
+			Sql_ShowDebug(sql_handle);
+			return 1;
+		}
+		if( Sql_NumRows(sql_handle) > 0 )
+		{
+			struct status_change_data scdata;
+			int32 count;
+			char* data;
+
+			WFIFOHEAD(fd,14+50*sizeof(struct status_change_data));
+			WFIFOW(fd,0) = 0x2b1d;
+			WFIFOL(fd,4) = aid;
+			WFIFOL(fd,8) = cid;
+			for( count = 0; count < 50 && SQL_SUCCESS == Sql_NextRow(sql_handle); ++count )
+			{
+				Sql_GetData(sql_handle, 0, &data, nullptr); scdata.type = atoi(data);
+				Sql_GetData(sql_handle, 1, &data, nullptr); scdata.tick = strtoll( data, nullptr, 10 );
+				Sql_GetData(sql_handle, 2, &data, nullptr); scdata.val1 = atoi(data);
+				Sql_GetData(sql_handle, 3, &data, nullptr); scdata.val2 = atoi(data);
+				Sql_GetData(sql_handle, 4, &data, nullptr); scdata.val3 = atoi(data);
+				Sql_GetData(sql_handle, 5, &data, nullptr); scdata.val4 = atoi(data);
+				memcpy(WFIFOP(fd, 14+count*sizeof(struct status_change_data)), &scdata, sizeof(struct status_change_data));
+			}
+			if (count >= 50)
+				ShowWarning("Too many status changes for %d:%d, some of them were not loaded.\n", aid, cid);
+			if (count > 0)
+			{
+				WFIFOW( fd, 2 ) = static_cast<int16>( 14 + count * sizeof( struct status_change_data ) );
+				WFIFOW(fd,12) = count;
+				WFIFOSET(fd,WFIFOW(fd,2));
+			}
+		} else { // No Status Changes to load but still send a response
+			WFIFOHEAD(fd,14);
+			WFIFOW(fd,0) = 0x2b1d;
+			WFIFOW(fd,2) = 14;
+			WFIFOL(fd,4) = aid;
+			WFIFOL(fd,8) = cid;
+			WFIFOW(fd,12) = 0;
+			WFIFOSET(fd,WFIFOW(fd,2));
+		}
+		Sql_FreeResult(sql_handle);
+#endif
+		RFIFOSKIP(fd, 10);
+	}
+	return 1;
+}
+
+/**
+ * Map-serv sent us his new users count, updating info
+ * @param fd: which fd to parse from
+ * @param id: which map_serv id
+ * @return : 0 not enough data received, 1 success
+ */
+int32 chmapif_parse_getusercount(int32 fd, int32 id){
+	if (RFIFOREST(fd) < 4)
+		return 0;
+	if (RFIFOW(fd,2) != map_server[id].users) {
+		map_server[id].users = RFIFOW(fd,2);
+		ShowInfo("User Count: %d (Server: %d)\n", map_server[id].users, id);
+	}
+	RFIFOSKIP(fd, 4);
+	return 1;
+}
+
+/**
+ * Map-serv sent us all his users info, (aid and cid) so we can update online_char_db
+ * @param fd: which fd to parse from
+ * @param id: which map_serv id
+ * @return : 0 not enough data received, 1 success
+ */
+int32 chmapif_parse_regmapuser(int32 fd, int32 id){
+	if (RFIFOREST(fd) < 6 || RFIFOREST(fd) < RFIFOW(fd,2))
+		return 0;
+	else {
+		//TODO: When data mismatches memory, update guild/party online/offline states.
+		map_server[id].users = RFIFOW(fd,4);
+
+		// Set all chars from this server as 'unknown'
+		for( const auto& pair : char_get_onlinedb() ){
+			char_db_setoffline( pair.second, id );
+		}
+
+		for( int32 i = 0; i < map_server[id].users; i++ ){
+			uint32 aid = RFIFOL(fd,6+i*8);
+			uint32 cid = RFIFOL(fd,6+i*8+4);
+
+			std::shared_ptr<struct online_char_data> character = util::umap_find( char_get_onlinedb(), aid );
+
+			if( character != nullptr ){
+				if( character->server > -1 && character->server != id ){
+					ShowNotice("Set map user: Character (%d:%d) marked on map server %d, but map server %d claims to have (%d:%d) online!\n",
+						character->account_id, character->char_id, character->server, id, aid, cid);
+					mapif_disconnectplayer(map_server[character->server].fd, character->account_id, character->char_id, 2);
+				}
+			}else{
+				character = std::make_shared<struct online_char_data>( aid );
+				char_get_onlinedb()[aid] = character;
+			}
+
+			character->server = id;
+			character->char_id = cid;
+		}
+		//If any chars remain in -2, they will be cleaned in the cleanup timer.
+		RFIFOSKIP(fd,RFIFOW(fd,2));
+	}
+	return 1;
+}
+
+/**
+ * Map-serv request to save mmo_char_status in sql
+ * Receive character data from map-server for saving
+ * @param fd: which fd to parse from
+ * @param id: which map_serv id
+ * @return : 0 not enough data received, 1 success
+ */
+int32 chmapif_parse_reqsavechar(int32 fd, int32 id){
+	if (RFIFOREST(fd) < 4 || RFIFOREST(fd) < RFIFOW(fd,2))
+		return 0;
+	else {
+		uint32 aid = RFIFOL( fd, 4 ), cid = RFIFOL( fd, 8 );
+		uint16 size = RFIFOW( fd, 2 );
+
+		if (size - 13 != sizeof(struct mmo_charstatus))
+		{
+			ShowError("parse_from_map (save-char): Size mismatch! %d != %" PRIuPTR "\n", size-13, sizeof(struct mmo_charstatus));
+			RFIFOSKIP(fd,size);
+			return 1;
+		}
+
+		std::shared_ptr<struct online_char_data> character = util::umap_find( char_get_onlinedb(), aid );
+
+		//Check account only if this ain't final save. Final-save goes through because of the char-map reconnect
+		if( RFIFOB( fd, 12 ) || RFIFOB( fd, 13 ) || ( character != nullptr && character->char_id == cid ) ){
+			struct mmo_charstatus char_dat;
+			memcpy(&char_dat, RFIFOP(fd,13), sizeof(struct mmo_charstatus));
+			char_mmo_char_tosql(cid, &char_dat);
+		} else {	//This may be valid on char-server reconnection, when re-sending characters that already logged off.
+			ShowError("parse_from_map (save-char): Received data for non-existant/offline character (%d:%d).\n", aid, cid);
+			char_set_char_online(id, cid, aid);
+		}
+
+		if (RFIFOB(fd,12))
+		{	//Flag, set character offline after saving. [Skotlex]
+			char_set_char_offline(cid, aid);
+			WFIFOHEAD(fd,10);
+			WFIFOW(fd,0) = 0x2b21; //Save ack only needed on final save.
+			WFIFOL(fd,2) = aid;
+			WFIFOL(fd,6) = cid;
+			WFIFOSET(fd,10);
+		}
+		RFIFOSKIP(fd,size);
+	}
+	return 1;
+}
+
+/**
+ * Inform mapserv of a new character selection request
+ * @param fd : FD link tomapserv
+ * @param aid : Player account id
+ * @param res : result, 0=not ok, 1=ok
+ */
+void chmapif_charselres(int32 fd, uint32 aid, uint8 res){
+	WFIFOHEAD(fd,7);
+	WFIFOW(fd,0) = 0x2b03;
+	WFIFOL(fd,2) = aid;
+	WFIFOB(fd,6) = res;
+	WFIFOSET(fd,7);
+}
+
+/**
+ * Player Requesting char-select from map_serv
+ * @param fd: which fd to parse from
+ * @return : 0 not enough data received, 1 success
+ */
+int32 chmapif_parse_authok(int32 fd){
+	if( RFIFOREST(fd) < 18 )
+		return 0;
+	else{
+		uint32 account_id = RFIFOL(fd,2);
+		uint32 login_id1 = RFIFOL(fd,6);
+		uint32 login_id2 = RFIFOL(fd,10);
+		uint32 ip = RFIFOL(fd,14);
+		RFIFOSKIP(fd,18);
+
+		if( !global_core->is_running() ){
+			chmapif_charselres(fd,account_id,0);
+		}else{
+			// create temporary auth entry
+			std::shared_ptr<struct auth_node> node = std::make_shared<struct auth_node>();
+
+			node->account_id = account_id;
+			node->char_id = 0;
+			node->login_id1 = login_id1;
+			node->login_id2 = login_id2;
+			//node->sex = 0;
+			node->ip = ntohl(ip);
+			//node->expiration_time = 0; // unlimited/unknown time by default (not display in map-server)
+			//node->gmlevel = 0;
+
+			char_get_authdb()[node->account_id] = node;
+
+			//Set char to "@ char select" in online db [Kevin]
+			char_set_charselect(account_id);
+			
+			std::shared_ptr<struct online_char_data> character = util::umap_find( char_get_onlinedb(), account_id );
+
+			if( character != nullptr ){
+				character->pincode_success = true;

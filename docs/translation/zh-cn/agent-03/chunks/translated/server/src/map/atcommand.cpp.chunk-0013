@@ -1,0 +1,500 @@
+	memset(new_email, '\0', sizeof(new_email));
+
+	if (!message || !*message || sscanf(message, "%99s %99s", actual_email, new_email) < 2) {
+		clif_displaymessage(fd, msg_txt(sd,1151)); // Please enter 2 emails (usage: @email <actual@email> <new@email>).
+		return -1;
+	}
+
+	if (e_mail_check(actual_email) == 0) {
+		clif_displaymessage(fd, msg_txt(sd,144)); // Invalid actual email. If you have default e-mail, give a@a.com.
+		return -1;
+	} else if (e_mail_check(new_email) == 0) {
+		clif_displaymessage(fd, msg_txt(sd,145)); // Invalid new email. Please enter a real e-mail.
+		return -1;
+	} else if (strcmpi(new_email, "a@a.com") == 0) {
+		clif_displaymessage(fd, msg_txt(sd,146)); // New email must be a real e-mail.
+		return -1;
+	} else if (strcmpi(actual_email, new_email) == 0) {
+		clif_displaymessage(fd, msg_txt(sd,147)); // New email must be different of the actual e-mail.
+		return -1;
+	}
+
+	chrif_changeemail(sd->status.account_id, actual_email, new_email);
+	clif_displaymessage(fd, msg_txt(sd,148)); // Information sent to login-server via char-server.
+	return 0;
+}
+
+/*==========================================
+ *@effect
+ *------------------------------------------*/
+ACMD_FUNC(effect)
+{
+	int32 type = EF_NONE;
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message || sscanf(message, "%11d", &type) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1152)); // Please enter an effect number (usage: @effect <effect number>).
+		return -1;
+	}
+
+	if( type <= EF_NONE || type >= EF_MAX ){
+		sprintf(atcmd_output, msg_txt(sd,1152),EF_NONE+1,EF_MAX-1); // Please enter a valid effect id in the range from %d to %d.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	clif_specialeffect(sd, type, ALL_CLIENT);
+	clif_displaymessage(fd, msg_txt(sd,229)); // Your effect has changed.
+	return 0;
+}
+
+/*==========================================
+ * @killer by MouseJstr
+ * enable killing players even when not in pvp
+ *------------------------------------------*/
+ACMD_FUNC(killer)
+{
+	nullpo_retr(-1, sd);
+	sd->state.killer = !sd->state.killer;
+
+	if(sd->state.killer)
+		clif_displaymessage(fd, msg_txt(sd,241)); // You can now attack and kill players freely.
+	else {
+		clif_displaymessage(fd, msg_txt(sd,292)); // Killer state reset.
+		unit_stop_attack(sd);
+	}
+	return 0;
+}
+
+/*==========================================
+ * @killable by MouseJstr
+ * enable other people killing you
+ *------------------------------------------*/
+ACMD_FUNC(killable)
+{
+	nullpo_retr(-1, sd);
+	sd->state.killable = !sd->state.killable;
+
+	if(sd->state.killable)
+		clif_displaymessage(fd, msg_txt(sd,242)); // You can now be attacked and killed by players.
+	else {
+		clif_displaymessage(fd, msg_txt(sd,288)); // You are no longer killable.
+		map_foreachinallrange(unit_stopattack,sd, AREA_SIZE, BL_CHAR, sd->id);
+	}
+	return 0;
+}
+
+/*==========================================
+ * @skillon by MouseJstr
+ * turn skills on for the map
+ *------------------------------------------*/
+ACMD_FUNC(skillon)
+{
+	nullpo_retr(-1, sd);
+	map_setmapflag(sd->m, MF_NOSKILL, false);
+	clif_displaymessage(fd, msg_txt(sd,244)); // Skills have been enabled on this map.
+	return 0;
+}
+
+/*==========================================
+ * @skilloff by MouseJstr
+ * Turn skills off on the map
+ *------------------------------------------*/
+ACMD_FUNC(skilloff)
+{
+	nullpo_retr(-1, sd);
+	map_setmapflag(sd->m, MF_NOSKILL, true);
+	clif_displaymessage(fd, msg_txt(sd,243)); // Skills have been disabled on this map.
+	return 0;
+}
+
+/*==========================================
+ * @npcmove by MouseJstr
+ * move a npc
+ *------------------------------------------*/
+ACMD_FUNC(npcmove)
+{
+	int16 x = 0, y = 0;
+	npc_data *nd = 0;
+	char npc_name[NPC_NAME_LENGTH];
+
+	nullpo_retr(-1, sd);
+	memset(npc_name, '\0', sizeof npc_name);
+
+	if (!message || !*message || sscanf(message, "%6hd %6hd %49[^\n]", &x, &y, npc_name) < 3) {
+		clif_displaymessage(fd, msg_txt(sd,1153)); // Usage: @npcmove <X> <Y> <npc_name>
+		return -1;
+	}
+
+	if ((nd = npc_name2id(npc_name)) == nullptr)
+	{
+		clif_displaymessage(fd, msg_txt(sd,111)); // This NPC doesn't exist.
+		return -1;
+	}
+
+	if ( npc_movenpc( nd, x, y ) ) 
+	{ //actually failed to move
+		clif_displaymessage(fd, msg_txt(sd,1154)); // NPC is not on this map.
+		return -1;	//Not on a map.
+	} else
+		clif_displaymessage(fd, msg_txt(sd,1155)); // NPC moved
+
+	return 0;
+}
+
+/*==========================================
+ * @addwarp by MouseJstr
+ * Create a new static warp point.
+ *------------------------------------------*/
+ACMD_FUNC(addwarp)
+{
+	char mapname[MAP_NAME_LENGTH_EXT], warpname[NPC_NAME_LENGTH];
+	int16 x,y;
+	uint16 m;
+	npc_data* nd;
+
+	nullpo_retr(-1, sd);
+	memset(warpname, '\0', sizeof(warpname));
+
+	if (!message || !*message || sscanf(message, "%15s %6hd %6hd %49[^\n]", mapname, &x, &y, warpname) < 4) {
+		clif_displaymessage(fd, msg_txt(sd,1156)); // Usage: @addwarp <mapname> <X> <Y> <npc name>
+		return -1;
+	}
+
+	m = mapindex_name2id(mapname);
+	if( m == 0 )
+	{
+		sprintf(atcmd_output, msg_txt(sd,1157), mapname); // Unknown map '%s'.
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	nd = npc_add_warp(warpname, sd->m, sd->x, sd->y, 2, 2, m, x, y);
+	if( nd == nullptr )
+		return -1;
+
+	sprintf(atcmd_output, msg_txt(sd,1158), nd->exname); // New warp NPC '%s' created.
+	clif_displaymessage(fd, atcmd_output);
+	return 0;
+}
+
+/*==========================================
+ * @follow by [MouseJstr]
+ * Follow a player .. staying no more then 5 spaces away
+ *------------------------------------------*/
+ACMD_FUNC(follow)
+{
+	map_session_data* pl_sd = nullptr;
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		if (sd->followtarget == -1)
+			return -1;
+
+		pc_stop_following (sd);
+		clif_displaymessage(fd, msg_txt(sd,1159)); // Follow mode OFF.
+		return 0;
+	}
+
+	if ( (pl_sd = map_nick2sd(atcmd_player_name,true)) == nullptr )
+	{
+		clif_displaymessage(fd, msg_txt(sd,3)); // Character not found.
+		return -1;
+	}
+
+	if (sd->followtarget == pl_sd->id) {
+		pc_stop_following (sd);
+		clif_displaymessage(fd, msg_txt(sd,1159)); // Follow mode OFF.
+	} else {
+		pc_follow(sd, pl_sd->id);
+		clif_displaymessage(fd, msg_txt(sd,1160)); // Follow mode ON.
+	}
+
+	return 0;
+}
+
+
+/*==========================================
+ * @dropall by [MouseJstr] and [Xantara]
+ * Drops all your possession on the ground based on item type
+ *------------------------------------------*/
+ACMD_FUNC(dropall)
+{
+	int8 type = -1;
+	uint16 i, count = 0, count2 = 0;
+
+	nullpo_retr(-1, sd);
+	
+	if( message[0] ) {
+		type = atoi(message);
+		if( type != -1 && type != IT_HEALING && type != IT_USABLE && type != IT_ETC && type != IT_WEAPON &&
+			type != IT_ARMOR && type != IT_CARD && type != IT_PETEGG && type != IT_PETARMOR && type != IT_AMMO )
+		{
+			clif_displaymessage(fd, msg_txt(sd,1492)); // Usage: @dropall {<type>}
+			clif_displaymessage(fd, msg_txt(sd,1493)); // Type List: (default) all = -1, healing = 0, usable = 2, etc = 3, armor = 4, weapon = 5, card = 6, petegg = 7, petarmor = 8, ammo = 10
+			return -1;
+		}
+	}
+
+	for( i = 0; i < MAX_INVENTORY; i++ ) {
+		if( sd->inventory.u.items_inventory[i].amount ) {
+			std::shared_ptr<item_data> id = item_db.find(sd->inventory.u.items_inventory[i].nameid);
+
+			if( id == nullptr ) {
+				ShowDebug("Non-existant item %d on dropall list (account_id: %d, char_id: %d)\n", sd->inventory.u.items_inventory[i].nameid, sd->status.account_id, sd->status.char_id);
+				continue;
+			}
+			if( !pc_candrop(sd,&sd->inventory.u.items_inventory[i]) )
+				continue;
+
+			if( type == -1 || type == (uint8)id->type ) {
+				if( sd->inventory.u.items_inventory[i].equip != 0 )
+					pc_unequipitem(sd, i, 3);
+				if( itemdb_ishatched_egg( &sd->inventory.u.items_inventory[i] ) ){
+					pet_return_egg( sd, sd->pd );
+				}
+				pc_equipswitch_remove(sd, i);
+
+				int32 amount = sd->inventory.u.items_inventory[i].amount;
+
+				if(pc_dropitem(sd, i, amount))
+					count += amount;
+				else count2 += amount;
+			}
+		}
+	}
+	sprintf(atcmd_output, msg_txt(sd,1494), count,count2); // %d items are dropped (%d skipped)!
+	clif_displaymessage(fd, atcmd_output); 
+	return 0;
+}
+
+/*==========================================
+ * @stockall by [Hanashi]
+ * transfer items from cart to inventory
+ *------------------------------------------*/
+ACMD_FUNC(stockall)
+{
+	nullpo_retr(-1, sd);
+	
+	if (!pc_iscarton(sd)) {
+		clif_displaymessage(fd, msg_txt(sd,1533)); // You do not have a cart.
+		return -1;
+	}
+
+	int8 type = -1;
+	if ( message[0] ) {
+		type = atoi(message);
+		switch (type) {
+			case -1:
+			case IT_HEALING:
+			case IT_USABLE:
+			case IT_ETC:
+			case IT_WEAPON:
+			case IT_ARMOR:
+			case IT_CARD:
+			case IT_PETEGG:
+			case IT_PETARMOR:
+			case IT_AMMO:
+				break;
+
+			default:
+				clif_displaymessage(fd, msg_txt(sd, 1534)); // Usage: @stockall {<type>}
+				clif_displaymessage(fd, msg_txt(sd, 1493)); // Type List: (default) all = -1, healing = 0, usable = 2, etc = 3, armor = 4, weapon = 5, card = 6, petegg = 7, petarmor = 8, ammo = 10
+				return -1;
+		}
+	}
+
+	int32 count = 0, count2 = 0;
+	for ( uint16 i = 0; i < MAX_CART; i++ ) {
+		if ( sd->cart.u.items_cart[i].amount > 0 ) {
+			std::shared_ptr<item_data> id = item_db.find(sd->cart.u.items_cart[i].nameid);
+			if ( id == nullptr ) {
+				ShowDebug("Non-existent item %u on stockall list (account_id: %d, char_id: %d)\n", sd->cart.u.items_cart[i].nameid, sd->status.account_id, sd->status.char_id);
+				continue;
+			}
+			if ( type == -1 || static_cast<item_types>(type) == id->type ) {
+				int32 amount = sd->cart.u.items_cart[i].amount;
+
+				if( pc_getitemfromcart( sd, i, amount ) ){
+					count += amount;
+				}else{
+					count2 += amount;
+				}
+			}
+		}
+	}
+	sprintf(atcmd_output, msg_txt(sd,1535), count,count2); // %d items are transferred (%d skipped)!
+	clif_displaymessage(fd, atcmd_output); 
+	return 0;
+}
+
+/*==========================================
+ * @storeall by [MouseJstr]
+ * Put everything into storage
+ *------------------------------------------*/
+ACMD_FUNC(storeall)
+{
+	int32 i;
+	nullpo_retr(-1, sd);
+
+	if (sd->state.storage_flag != 1)
+	{	//Open storage.
+		if( storage_storageopen(sd) == 1 ) {
+			clif_displaymessage(fd, msg_txt(sd,1161)); // You currently cannot open your storage.
+			return -1;
+		}
+	}
+
+	for (i = 0; i < MAX_INVENTORY; i++) {
+		if (sd->inventory.u.items_inventory[i].amount) {
+			if(sd->inventory.u.items_inventory[i].equip != 0)
+				pc_unequipitem(sd, i, 3);
+			if( itemdb_ishatched_egg( &sd->inventory.u.items_inventory[i] ) ){
+				pet_return_egg( sd, sd->pd );
+			}
+			pc_equipswitch_remove(sd, i);
+			storage_storageadd(sd, &sd->storage, i, sd->inventory.u.items_inventory[i].amount);
+		}
+	}
+	storage_storageclose(sd);
+
+	clif_displaymessage(fd, msg_txt(sd,1162)); // All items stored.
+	return 0;
+}
+
+ACMD_FUNC(clearstorage)
+{
+	int32 i, j;
+	nullpo_retr(-1, sd);
+
+	if (sd->state.storage_flag == 1) {
+		clif_displaymessage(fd, msg_txt(sd,250)); // You have already opened your storage. Close it first.
+		return -1;
+	}
+	if (sd->state.storage_flag == 3) {
+		clif_displaymessage(fd, msg_txt(sd,250)); // You have already opened your storage. Close it first.
+		return -1;
+	}
+
+	j = sd->storage.amount;
+	for (i = 0; i < j; ++i) {
+		storage_delitem(sd, &sd->storage, i, sd->storage.u.items_storage[i].amount);
+	}
+	sd->state.storage_flag = 1;
+	storage_storageclose(sd);
+
+	clif_displaymessage(fd, msg_txt(sd,1394)); // Your storage was cleaned.
+	return 0;
+}
+
+ACMD_FUNC(cleargstorage)
+{
+	int32 i, j;
+	struct s_storage *gstorage;
+	nullpo_retr(-1, sd);
+
+	if (!sd->guild) {
+		clif_displaymessage(fd, msg_txt(sd,43)); // You're not in a guild.
+		return -1;
+	}
+
+	if (sd->state.storage_flag == 1) {
+		clif_displaymessage(fd, msg_txt(sd,250)); // You have already opened your storage. Close it first.
+		return -1;
+	}
+
+	if (sd->state.storage_flag == 2) {
+		clif_displaymessage(fd, msg_txt(sd,251)); // You have already opened your guild storage. Close it first.
+		return -1;
+	}
+
+	if (sd->state.storage_flag == 3) {
+		clif_displaymessage(fd, msg_txt(sd,250)); // You have already opened your storage. Close it first.
+		return -1;
+	}
+
+	gstorage = guild2storage2(sd->status.guild_id);
+	if (gstorage == nullptr) { // Doesn't have opened @gstorage yet, so we skip the deletion since *shouldn't* have any item there.
+		return -1;
+	}
+
+	j = gstorage->amount;
+	gstorage->lock = true; // Lock @gstorage: do not allow any item to be retrieved or stored from any guild member
+	for (i = 0; i < j; ++i) {
+		storage_guild_delitem(sd, gstorage, i, gstorage->u.items_guild[i].amount);
+	}
+	storage_guild_storageclose(sd);
+	gstorage->lock = false; // Cleaning done, release lock
+
+	clif_displaymessage(fd, msg_txt(sd,1395)); // Your guild storage was cleaned.
+	return 0;
+}
+
+ACMD_FUNC(clearcart)
+{
+	int32 i;
+	nullpo_retr(-1, sd);
+
+	if (pc_iscarton(sd) == 0) {
+		clif_displaymessage(fd, msg_txt(sd,1396)); // You do not have a cart to be cleaned.
+		return -1;
+	}
+
+	if (sd->state.vending == 1) { //Somehow...
+		return -1;
+	}
+
+	for (i = 0; i < MAX_CART; i++) {
+		if (sd->cart.u.items_cart[i].nameid > 0)
+			pc_cart_delitem(sd, i, sd->cart.u.items_cart[i].amount, 1, LOG_TYPE_OTHER);
+	}
+
+	clif_clearcart(fd);
+	clif_updatestatus(*sd,SP_CARTINFO);
+
+	clif_displaymessage(fd, msg_txt(sd,1397)); // Your cart was cleaned.
+	return 0;
+}
+
+/*==========================================
+ * @skillid by [MouseJstr]
+ * lookup a skill by name
+ *------------------------------------------*/
+#define MAX_SKILLID_PARTIAL_RESULTS 5
+#define MAX_SKILLID_PARTIAL_RESULTS_LEN 74 // "skill " (6) + "%d:" (up to 5) + "%s" (up to 30) + " (%s)" (up to 33)
+ACMD_FUNC(skillid) {
+	int32 i, found = 0;
+	char partials[MAX_SKILLID_PARTIAL_RESULTS][MAX_SKILLID_PARTIAL_RESULTS_LEN];
+
+	nullpo_retr(-1, sd);
+
+	if (!message || !*message) {
+		clif_displaymessage(fd, msg_txt(sd,1163)); // Please enter a skill name to look up (usage: @skillid <skill name>).
+		return -1;
+	}
+
+	size_t skillen = strlen( message );
+
+	for(const auto & skill : skill_db) {
+		uint16 skill_id = skill.second->nameid;
+		uint16 idx = skill_get_index(skill_id);
+		const char *name = skill.second->name;
+		const char *desc = skill.second->desc;
+
+		if (strnicmp(name, message, skillen) == 0 || strnicmp(desc, message, skillen) == 0) {
+			sprintf(atcmd_output, msg_txt(sd,1164), skill_id, desc, name); // skill %d: %s (%s)
+			clif_displaymessage(fd, atcmd_output);
+		} else if ( found < MAX_SKILLID_PARTIAL_RESULTS && ( stristr(name,message) || stristr(desc,message) ) ) {
+			snprintf(partials[found++], MAX_SKILLID_PARTIAL_RESULTS_LEN, msg_txt(sd,1164), skill_id, desc, name); // // skill %d: %s (%s)
+		}
+	}
+
+	if( found ) {
+		sprintf(atcmd_output, msg_txt(sd,1398), found); // -- Displaying first %d partial matches
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	for(i = 0; i < found; i++) { /* partials */
+		clif_displaymessage(fd, partials[i]);
