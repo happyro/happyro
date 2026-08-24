@@ -35,6 +35,7 @@ class Target:
     output_path: str
     global_name: str
     data_path: tuple[str, ...] = ()
+    entrypoint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,37 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def render_source(target: Target, rendered: str) -> str:
+    source = f"{target.global_name} = {rendered}\n"
+    if target.entrypoint == "towninfo":
+        source += (
+            "function main()\n"
+            f"  for mapName, entries in pairs({target.global_name}) do\n"
+            "    for _, entry in ipairs(entries) do\n"
+            "      AddTownInfo(mapName, entry.name, entry.X, entry.Y, entry.TYPE)\n"
+            "    end\n"
+            "  end\n"
+            "end\n"
+        )
+    elif target.entrypoint == "mapinfo":
+        source += (
+            "function main()\n"
+            f"  for mapName, entry in pairs({target.global_name}) do\n"
+            "    AddMapDisplayName(mapName, entry.displayName or '', entry.notifyEnter or false)\n"
+            "    if entry.signName then\n"
+            "      AddMapSignName(mapName, entry.signName.subTitle, entry.signName.mainTitle)\n"
+            "    end\n"
+            "    if entry.backgroundBmp then\n"
+            "      AddMapBackgroundBmp(mapName, entry.backgroundBmp)\n"
+            "    end\n"
+            "  end\n"
+            "end\n"
+        )
+    elif target.entrypoint is not None:
+        raise BuildError(f"unknown target entrypoint: {target.entrypoint}")
+    return source
 
 
 def replace_once(path: Path, old: str, new: str) -> None:
@@ -445,7 +477,7 @@ def build_targets(
         output_path = output_root / target.output_path
         source_path = output_path.with_suffix(".lua")
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path.write_text(f"{target.global_name} = {rendered}\n", encoding="ascii")
+        source_path.write_text(render_source(target, rendered), encoding="ascii")
         run([str(luac), "-s", "-o", str(output_path), str(source_path)])
         header = output_path.read_bytes()[: len(expected_header(version))]
         if header != expected_header(version):
@@ -457,6 +489,24 @@ def build_targets(
             verify.write(COMPARE_LUA)
             verify.write(f"local expected = {rendered}\n")
             verify.write(f"compare({target.global_name}, expected, {lua_string(target.global_name)})\n")
+            if target.entrypoint == "towninfo":
+                verify.write(
+                    "local actual = {}\n"
+                    "function AddTownInfo(mapName, name, X, Y, TYPE)\n"
+                    "  local entries = actual[mapName] or {}\n"
+                    "  actual[mapName] = entries\n"
+                    "  entries[#entries + 1] = {name = name, X = X, Y = Y, TYPE = TYPE}\n"
+                    "end\n"
+                    "main()\n"
+                    "compare(actual, expected, 'main()')\n"
+                )
+            elif target.entrypoint == "mapinfo":
+                verify.write(
+                    "function AddMapDisplayName() return true end\n"
+                    "function AddMapSignName() return true end\n"
+                    "function AddMapBackgroundBmp() return true end\n"
+                    "main()\n"
+                )
         try:
             run([str(lua), str(verify_path)])
         finally:
