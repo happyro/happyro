@@ -23,7 +23,7 @@
 
 ## 最终收集
 
-修复完成后，协调者将所有 `fixed/` 收集到 `work/translation-repair/repair-20260824/`，应用到临时译文基线，再分别执行：
+修复完成后，协调者将所有 `fixed/` 收集到 `work/translation-repair/repair/20260824/`，应用到临时译文基线，再分别执行：
 
 ```text
 validate chunks
