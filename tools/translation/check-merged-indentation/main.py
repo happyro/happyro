@@ -9,9 +9,12 @@ default; repetitive dialogue commands can be included with --include-dialogue.
 
 Examples:
     python3 tools/translation/check-merged-indentation/main.py \
-        --agent agent-03 --merged-root work/translation-merge-test
+        --agent agent-03 \
+        --merged-root work/translation-merge/client-server/batch-01/merged/files
     python3 tools/translation/check-merged-indentation/main.py \
-        --agent agent-03 --merged-root work/merged --include-dialogue
+        --agent agent-03 \
+        --merged-root docs/translation/zh-cn/client-server/merged/files \
+        --include-dialogue
 """
 
 from __future__ import annotations
@@ -79,8 +82,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--merged-root",
         type=Path,
-        default=Path("work/translation-merge"),
-        help="Root containing <agent>/<repo>/<path> merged files",
+        default=Path("work/translation-merge/client-server/latest/merged/files"),
+        help="Root containing <repo>/<path> merged files",
     )
     parser.add_argument(
         "--repo-root",
@@ -247,7 +250,7 @@ def check_agent(
         if base_root is None:
             result.errors.append(f"{repo}/{logical_path}: no base repository mapping")
             continue
-        merged_path = merged_root / agent_dir.name / repo / logical_path
+        merged_path = merged_root / repo / logical_path
         if not merged_path.is_file():
             result.errors.append(f"missing merged file: {display(merged_path)}")
             continue
