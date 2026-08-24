@@ -1,0 +1,500 @@
+ *	1 : store that skill_unit in array
+ *	2 : clear that skill_unit
+ *	4 : call_on_left
+ *------------------------------------------*/
+int32 skill_unit_move_sub(block_list* bl, va_list ap)
+{
+	skill_unit* unit = (skill_unit *)bl;
+	block_list* target = va_arg(ap,block_list*);
+	t_tick tick = va_arg(ap,t_tick);
+	int32 flag = va_arg(ap,int32);
+	bool dissonance;
+	uint16 skill_id;
+
+	nullpo_ret(unit);
+	nullpo_ret(target);
+
+	if( !unit->alive || target->prev == nullptr )
+		return 0;
+
+	std::shared_ptr<s_skill_unit_group> group = unit->group;
+
+	if (group == nullptr)
+		return 0;
+
+	if( flag&1 && ( group->skill_id == PF_SPIDERWEB || group->skill_id == GN_THORNS_TRAP ) )
+		return 0; // Fiberlock is never supposed to trigger on skill_unit_move. [Inkfish]
+
+	dissonance = skill_dance_switch(unit, false);
+
+	//Necessary in case the group is deleted after calling on_place/on_out [Skotlex]
+	skill_id = group->skill_id;
+
+	if( group->interval != -1 && !skill_get_unit_flag(skill_id, UF_DUALMODE) && skill_id != BD_LULLABY ) //Lullaby is the exception, bugreport:411
+	{	//Non-dualmode unit skills with a timer don't trigger when walking, so just return
+		if( dissonance ) {
+			skill_dance_switch(unit, true);
+			int32 result = skill_unit_onout(unit, target, tick);
+			// This activates the 20 seconds countdown from leaving the song/dance due to dissonance
+			if (result > 0)
+				skill_unit_onleft(result, target, tick);
+		}
+		return 0;
+	}
+
+	//Target-type check.
+	if( !(group->bl_flag&target->type && battle_check_target(unit,target,group->target_flag) > 0) ) {
+		status_change* tsc = status_get_sc( target );
+
+		// Ensemble check to see if the caster or the partner went out/in of the area
+		if( group->state.song_dance&0x2 && ( group->src_id == target->id || ( tsc != nullptr && tsc->getSCE( SC_DANCING ) != nullptr && group->src_id == tsc->getSCE( SC_DANCING )->val4 ) ) ){
+			if( flag&1 ) {
+				if( flag&2 ) { //Clear this skill id.
+					util::vector_erase_if_exists(skill_unit_cell, skill_id);
+				}
+			} else {
+				if( flag&2 ) { //Store this skill id.
+					skill_unit_cell.push_back(skill_id);
+				}
+			}
+
+			if( flag&4 )
+				skill_unit_onleft(skill_id,target,tick);
+		}
+
+		if( dissonance )
+			skill_dance_switch(unit, true);
+
+		return 0;
+	} else {
+		if( flag&1 ) {
+			int32 result = skill_unit_onplace(unit,target,tick);
+
+			if( flag&2 && result > 0 ) { //Clear skill ids we have stored in onout.
+				util::vector_erase_if_exists(skill_unit_cell, result);
+			}
+		} else {
+			int32 result = skill_unit_onout(unit,target,tick);
+
+			if( flag&2 && result > 0 ) { //Store this unit id.
+				skill_unit_cell.push_back(skill_id);
+			}
+		}
+
+		//TODO: Normally, this is dangerous since the unit and group could be freed
+		//inside the onout/onplace functions. Currently it is safe because we know song/dance
+		//cells do not get deleted within them. [Skotlex]
+		if( dissonance )
+			skill_dance_switch(unit, true);
+
+		if( flag&4 )
+			skill_unit_onleft(skill_id,target,tick);
+
+		return 1;
+	}
+}
+
+/*==========================================
+ * Invoked when a char has moved and unit cells must be invoked (onplace, onout, onleft)
+ * Flag values:
+ * flag&1: invoke skill_unit_onplace (otherwise invoke skill_unit_onout)
+ * flag&2: this function is being invoked twice as a bl moves, store in memory the affected
+ * units to figure out when they have left a group.
+ * flag&4: Force a onleft event (triggered when the bl is killed, for example)
+ *------------------------------------------*/
+int32 skill_unit_move(block_list *bl, t_tick tick, int32 flag)
+{
+	nullpo_ret(bl);
+
+	if( bl->prev == nullptr )
+		return 0;
+
+	if( flag&2 && !(flag&1) ) //Onout, clear data
+		skill_unit_cell.clear();
+
+	map_foreachincell(skill_unit_move_sub,bl->m,bl->x,bl->y,BL_SKILL,bl,tick,flag);
+
+	if( flag&2 && flag&1 ) { //Onplace, check any skill units you have left.
+		for (const auto &it : skill_unit_cell) {
+			skill_unit_onleft(it, bl, tick);
+		}
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * Moves skill unit to map m with coordinates x & y (example when knocked back)
+ * @param bl Skill unit
+ * @param m Map
+ * @param dx
+ * @param dy
+ *------------------------------------------*/
+void skill_unit_move_unit(block_list *bl, int32 dx, int32 dy) {
+	t_tick tick = gettick();
+	skill_unit *su;
+
+	if (bl->type != BL_SKILL)
+		return;
+	if (!(su = (skill_unit *)bl))
+		return;
+	if (!su->alive)
+		return;
+
+	if (su->group && skill_get_unit_flag(su->group->skill_id, UF_ENSEMBLE))
+		return; //Ensembles may not be moved around.
+
+	if (!bl->prev) {
+		bl->x = dx;
+		bl->y = dy;
+		return;
+	}
+
+	map_moveblock(bl, dx, dy, tick);
+	map_foreachincell(skill_unit_effect,bl->m,bl->x,bl->y,su->group->bl_flag,bl,tick,1);
+	skill_getareachar_skillunit_visibilty(su, AREA);
+	return;
+}
+
+/**
+ * Moves skill unit group to map m with coordinates x & y (example when knocked back)
+ * @param group Skill Group
+ * @param m Map
+ * @param dx
+ * @param dy
+ */
+void skill_unit_move_unit_group(std::shared_ptr<s_skill_unit_group> group, int16 m, int16 dx, int16 dy)
+{
+	int32 i, j;
+	t_tick tick = gettick();
+	int32 *m_flag;
+	skill_unit *unit1;
+	skill_unit *unit2;
+
+	if (group == nullptr)
+		return;
+
+	if (group->unit_count <= 0)
+		return;
+
+	if (group->unit == nullptr)
+		return;
+
+	if (skill_get_unit_flag(group->skill_id, UF_ENSEMBLE))
+		return; //Ensembles may not be moved around.
+
+	m_flag = (int32 *) aCalloc(group->unit_count, sizeof(int32));
+	//    m_flag
+	//		0: Neither of the following (skill_unit_onplace & skill_unit_onout are needed)
+	//		1: Unit will move to a slot that had another unit of the same group (skill_unit_onplace not needed)
+	//		2: Another unit from same group will end up positioned on this unit (skill_unit_onout not needed)
+	//		3: Both 1+2.
+	for(i = 0; i < group->unit_count; i++) {
+		unit1 =& group->unit[i];
+		if (!unit1->alive || unit1->m != m)
+			continue;
+		for(j = 0; j < group->unit_count; j++) {
+			unit2 = &group->unit[j];
+			if (!unit2->alive)
+				continue;
+			if (unit1->x+dx == unit2->x && unit1->y+dy == unit2->y)
+				m_flag[i] |= 0x1;
+			if (unit1->x-dx == unit2->x && unit1->y-dy == unit2->y)
+				m_flag[i] |= 0x2;
+		}
+	}
+
+	j = 0;
+
+	for (i = 0; i < group->unit_count; i++) {
+		unit1 = &group->unit[i];
+		if (!unit1->alive)
+			continue;
+		if (!(m_flag[i]&0x2)) {
+			if (group->state.song_dance&0x1) {//Cancel dissonance effect.
+				skill_dance_overlap(*unit1, OVERLAP_REMOVE);
+			}
+			map_foreachincell(skill_unit_effect,unit1->m,unit1->x,unit1->y,group->bl_flag,unit1,tick,4);
+		}
+		//Move Cell using "smart" criteria (avoid useless moving around)
+		switch(m_flag[i]) {
+			case 0:
+			//Cell moves independently, safely move it.
+				map_foreachinmovearea(clif_outsight, unit1, AREA_SIZE, dx, dy, BL_PC, unit1);
+				map_moveblock(unit1, unit1->x+dx, unit1->y+dy, tick);
+				break;
+			case 1:
+			//Cell moves unto another cell, look for a replacement cell that won't collide
+			//and has no cell moving into it (flag == 2)
+				for(; j < group->unit_count; j++) {
+					int32 dx2, dy2;
+					if(m_flag[j] != 2 || !group->unit[j].alive)
+						continue;
+					//Move to where this cell would had moved.
+					unit2 = &group->unit[j];
+					dx2 = unit2->x + dx - unit1->x;
+					dy2 = unit2->y + dy - unit1->y;
+					map_foreachinmovearea(clif_outsight, unit1, AREA_SIZE, dx2, dy2, BL_PC, unit1);
+					map_moveblock(unit1, unit2->x+dx, unit2->y+dy, tick);
+					j++; //Skip this cell as we have used it.
+					break;
+				}
+				break;
+			case 2:
+			case 3:
+				break; //Don't move the cell as a cell will end on this tile anyway.
+		}
+		if (!(m_flag[i]&0x2)) { //We only moved the cell in 0-1
+			if (group->state.song_dance&0x1) //Check for dissonance effect.
+				skill_dance_overlap(*unit1, OVERLAP_SET);
+			skill_getareachar_skillunit_visibilty(unit1, AREA);
+			map_foreachincell(skill_unit_effect,unit1->m,unit1->x,unit1->y,group->bl_flag,unit1,tick,1);
+		}
+	}
+
+	aFree(m_flag);
+}
+
+/**
+ * Checking product requirement in player's inventory.
+ * Checking if player has the item or not, the amount, and the weight limit.
+ * @param sd Player
+ * @param nameid Product requested
+ * @param trigger Trigger criteria to match will 'ItemLv'
+ * @param qty Amount of item will be created
+ * @return 0 If failed or Index+1 of item found on skill_produce_db[]
+ */
+int16 skill_can_produce_mix(map_session_data *sd, t_itemid nameid, int32 trigger, int32 qty)
+{
+	nullpo_ret(sd);
+
+	if (!item_db.exists(nameid))
+		return 0;
+
+	int16 i, j;
+
+	for (i = 0; i < MAX_SKILL_PRODUCE_DB; i++) {
+		if (skill_produce_db[i].nameid == nameid) {
+			if ((j = skill_produce_db[i].req_skill) > 0 &&
+				pc_checkskill(sd,j) < skill_produce_db[i].req_skill_lv)
+				continue; // must iterate again to check other skills that produce it. [malufett]
+			if (j > 0 && sd->menuskill_id > 0 && sd->menuskill_id != j)
+				continue; // special case
+			break;
+		}
+	}
+
+	if (nameid == ITEMID_HOMUNCULUS_SUPPLEMENT) { // Temporary check since the produce_db specifically wants the Pharmacy skill to use
+		if (pc_checkskill(sd, AM_BIOETHICS) == 0)
+			return 0;
+	}
+
+	if (i >= MAX_SKILL_PRODUCE_DB)
+		return 0;
+
+	// Cannot carry the produced stuff
+	if (pc_checkadditem(sd, nameid, qty) == CHKADDITEM_OVERAMOUNT)
+		return 0;
+
+	// Matching the requested produce list
+	if (trigger >= 0) {
+		if (trigger > 20) { // Non-weapon, non-food item (itemlv must match)
+			if (skill_produce_db[i].itemlv != trigger)
+				return 0;
+		} else if (trigger > 10) { // Food (any item level between 10 and 20 will do)
+			if (skill_produce_db[i].itemlv <= 10 || skill_produce_db[i].itemlv > 20)
+				return 0;
+		} else { // Weapon (itemlv must be higher or equal)
+			if (skill_produce_db[i].itemlv > trigger)
+				return 0;
+		}
+	}
+
+	// Check on player's inventory
+	for (j = 0; j < MAX_PRODUCE_RESOURCE; j++) {
+		t_itemid nameid_produce;
+
+		if (!(nameid_produce = skill_produce_db[i].mat_id[j]))
+			continue;
+		if (skill_produce_db[i].mat_amount[j] == 0) {
+			if (pc_search_inventory(sd,nameid_produce) < 0)
+				return 0;
+		} else {
+			uint16 idx, amt;
+
+			for (idx = 0, amt = 0; idx < MAX_INVENTORY; idx++)
+				if (sd->inventory.u.items_inventory[idx].nameid == nameid_produce)
+					amt += sd->inventory.u.items_inventory[idx].amount;
+			if (amt < qty * skill_produce_db[i].mat_amount[j])
+				return 0;
+		}
+	}
+	return i + 1;
+}
+
+/**
+ * Attempt to produce an item
+ * @param sd Player
+ * @param skill_id Skill used
+ * @param nameid Requested product
+ * @param slot1
+ * @param slot2
+ * @param slot3
+ * @param qty Amount of requested item
+ * @param produce_idx Index of produce entry in skill_produce_db[]. (Optional. Assumed the requirements are complete, checked somewhere)
+ * @return True is success, False if failed
+ */
+bool skill_produce_mix(map_session_data *sd, uint16 skill_id, t_itemid nameid, int32 slot1, int32 slot2, int32 slot3, int32 qty, int16 produce_idx)
+{
+	int32 slot[3];
+	int32 i, sc, ele, idx, equip, wlv, make_per = 0, flag = 0, skill_lv = 0;
+	int32 num = -1; // exclude the recipe
+
+	nullpo_ret(sd);
+
+	status_data* status = status_get_status_data(*sd);
+
+	if( sd->skill_id_old == skill_id )
+		skill_lv = sd->skill_lv_old;
+
+	if (produce_idx == -1) {
+		if( !(idx = skill_can_produce_mix(sd,nameid,-1, qty)) )
+			return false;
+
+		idx--;
+	}
+	else
+		idx = produce_idx;
+
+	if (qty < 1)
+		qty = 1;
+
+	if (!skill_id) //A skill can be specified for some override cases.
+		skill_id = skill_produce_db[idx].req_skill;
+
+	if( skill_id == GC_RESEARCHNEWPOISON )
+		skill_id = GC_CREATENEWPOISON;
+
+	slot[0] = slot1;
+	slot[1] = slot2;
+	slot[2] = slot3;
+
+	for (i = 0, sc = 0, ele = 0; i < 3; i++) { //Note that qty should always be one if you are using these!
+		int16 j;
+		if (slot[i] <= 0)
+			continue;
+		j = pc_search_inventory(sd,slot[i]);
+		if (j < 0)
+			continue;
+		if (slot[i] == ITEMID_STAR_CRUMB) {
+			pc_delitem(sd,j,1,1,0,LOG_TYPE_PRODUCE);
+			sc++;
+		}
+		if (slot[i] >= ITEMID_FLAME_HEART && slot[i] <= ITEMID_GREAT_NATURE && ele == 0) {
+			static const int32 ele_table[4] = { ELE_FIRE, ELE_WATER, ELE_WIND, ELE_EARTH };
+			pc_delitem(sd,j,1,1,0,LOG_TYPE_PRODUCE);
+			ele = ele_table[slot[i]-ITEMID_FLAME_HEART];
+		}
+	}
+
+	for (i = 0; i < MAX_PRODUCE_RESOURCE; i++) {
+		int16 x, j;
+		t_itemid id = skill_produce_db[idx].mat_id[i];
+
+		if (!item_db.exists(id))
+			continue;
+		num++;
+		x = (skill_id == RK_RUNEMASTERY ? 1 : qty) * skill_produce_db[idx].mat_amount[i];
+		do {
+			int32 y = 0;
+
+			j = pc_search_inventory(sd,id);
+
+			if (j >= 0) {
+				y = sd->inventory.u.items_inventory[j].amount;
+				if (y > x)
+					y = x;
+				pc_delitem(sd,j,y,0,0,LOG_TYPE_PRODUCE);
+			} else {
+				ShowError("skill_produce_mix: material item error\n");
+				return false;
+			}
+			x -= y;
+		} while( j >= 0 && x > 0 );
+	}
+
+	if ((equip = (itemdb_isequip(nameid) && skill_id != GN_CHANGEMATERIAL && skill_id != GN_MAKEBOMB)) && itemdb_type(nameid) == IT_WEAPON )
+		wlv = itemdb_wlv(nameid);
+	else
+		wlv = 0;
+
+	if (!equip) {
+		switch (skill_id) {
+			case BS_IRON:
+			case BS_STEEL:
+			case BS_ENCHANTEDSTONE:
+				// Ores & Metals Refining - skill bonuses are straight from kRO website [DracoRPG]
+				i = pc_checkskill(sd,skill_id);
+				//Base chance
+				make_per = sd->status.job_level * 20;
+				make_per += status->dex * 10;
+				make_per += status->luk * 10;
+				make_per += rnd_value(1, 100) * 10;
+				switch (nameid) {
+					case ITEMID_IRON:
+						make_per += 4000+i*500; // Temper Iron bonus: +45/+50/+55/+60/+65
+						break;
+					case ITEMID_STEEL:
+						make_per += 3000+i*500; // Temper Steel bonus: +35/+40/+45/+50/+55
+						break;
+					case ITEMID_STAR_CRUMB:
+						make_per = 100000; // Star Crumbs are 100% success crafting rate? (made 1000% so it succeeds even after penalties) [Skotlex]
+						break;
+					default: // Enchanted Stones
+						make_per += 1000+i*500; // Enchanted stone Craft bonus: +15/+20/+25/+30/+35
+						break;
+				}
+				break;
+			case ASC_CDP:
+				make_per = (2000 + 40*status->dex + 20*status->luk);
+				break;
+			case AL_HOLYWATER:
+			case AB_ANCILLA:
+				make_per = 100000; //100% success
+				break;
+			case AM_PHARMACY: // Potion Preparation - reviewed with the help of various Ragnainfo sources [DracoRPG]
+			case AM_TWILIGHT1:
+			case AM_TWILIGHT2:
+			case AM_TWILIGHT3:
+				make_per = pc_checkskill(sd,AM_LEARNINGPOTION)*50
+					+ pc_checkskill(sd,AM_PHARMACY)*300 + sd->status.job_level*20
+					+ (status->int_/2)*10 + status->dex*10+status->luk*10;
+				if (hom_is_active(sd->hd)) {//Player got a homun
+					int32 skill;
+					if ((skill = hom_checkskill(sd->hd,HVAN_INSTRUCT)) > 0) //His homun is a vanil with instruction change
+						make_per += skill*100; //+1% bonus per level
+				}
+				switch(nameid){
+					case ITEMID_RED_POTION:
+					case ITEMID_YELLOW_POTION:
+					case ITEMID_WHITE_POTION:
+						make_per += (1+rnd()%100)*10 + 2000;
+						break;
+					case ITEMID_ALCOHOL:
+						make_per += (1+rnd()%100)*10 + 1000;
+						break;
+					case ITEMID_FIRE_BOTTLE:
+					case ITEMID_ACID_BOTTLE:
+					case ITEMID_MAN_EATER_BOTTLE:
+					case ITEMID_MINI_BOTTLE:
+						make_per += (1+rnd()%100)*10;
+						break;
+					case ITEMID_YELLOW_SLIM_POTION:
+						make_per -= (1+rnd()%50)*10;
+						break;
+					case ITEMID_WHITE_SLIM_POTION:
+					case ITEMID_COATING_BOTTLE:
+						make_per -= (1+rnd()%100)*10;
+						break;
+					//Common items, receive no bonus or penalty, listed just because they are commonly produced
+					case ITEMID_BLUE_POTION:

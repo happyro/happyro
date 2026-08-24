@@ -1,0 +1,500 @@
+ * - 'type' (permanent numeric char reg)
+ * - '#type' (permanent numeric account reg)
+ * - '##type' (permanent numeric account reg2)
+ **/
+bool pc_setregistry(map_session_data *sd, int64 reg, int64 val)
+{
+	struct script_reg_num *p = nullptr;
+	const char *regname = get_str(script_getvarid(reg));
+	uint32 index = script_getvaridx(reg);
+
+	if ( !reg_load && !sd->vars_ok ) {
+		ShowError("pc_setregistry : refusing to set %s until vars are received.\n", regname);
+		return false;
+	}
+
+	if ((p = (struct script_reg_num *)i64db_get(sd->regs.vars, reg))) {
+		if( val ) {
+			if( !p->value && index ) /* its a entry that was deleted, so we reset array */
+				script_array_update(&sd->regs, reg, false);
+			p->value = val;
+		} else {
+			p->value = 0;
+			if( index )
+				script_array_update(&sd->regs, reg, true);
+		}
+		if (!reg_load)
+			p->flag.update = 1;/* either way, it will require either delete or replace */
+	} else if( val ) {
+		DBData prev;
+
+		if( index )
+			script_array_update(&sd->regs, reg, false);
+
+		p = ers_alloc(num_reg_ers, struct script_reg_num);
+
+		p->value = val;
+		if (!reg_load)
+			p->flag.update = 1;
+
+		if (sd->regs.vars->put(sd->regs.vars, db_i642key(reg), db_ptr2data(p), &prev)) {
+			p = (struct script_reg_num *)db_data2ptr(&prev);
+			ers_free(num_reg_ers, p);
+		}
+	}
+
+	if (!reg_load && p)
+		sd->vars_dirty = true;
+
+	return true;
+}
+
+/**
+ * Serves the following variable types:
+ * - 'type$' (permanent str char reg)
+ * - '#type$' (permanent str account reg)
+ * - '##type$' (permanent str account reg2)
+ **/
+bool pc_setregistry_str(map_session_data *sd, int64 reg, const char *val)
+{
+	struct script_reg_str *p = nullptr;
+	const char *regname = get_str(script_getvarid(reg));
+	uint32 index = script_getvaridx(reg);
+	size_t vlen = 0;
+
+	if (!reg_load && !sd->vars_ok) {
+		ShowError("pc_setregistry_str : refusing to set %s until vars are received.\n", regname);
+		return false;
+	}
+
+	if ( !script_check_RegistryVariableLength(1, val, &vlen ) )
+	{
+		ShowError("pc_check_RegistryVariableLength: Variable value length is too long (aid: %d, cid: %d): '%s' sz=%zu\n", sd->status.account_id, sd->status.char_id, val, vlen);
+		return false;
+	}
+
+	if( (p = (struct script_reg_str *)i64db_get(sd->regs.vars, reg) ) ) {
+		if( val[0] ) {
+			if( p->value )
+				aFree(p->value);
+			else if ( index ) // an entry that was deleted, so we reset
+				script_array_update(&sd->regs, reg, false);
+			p->value = aStrdup(val);
+		} else {
+			if (p->value)
+				aFree(p->value);
+			p->value = nullptr;
+			if( index )
+				script_array_update(&sd->regs, reg, true);
+		}
+		if( !reg_load )
+			p->flag.update = 1; // either way, it will require either delete or replace
+	} else if( val[0] ) {
+		DBData prev;
+
+		if( index )
+			script_array_update(&sd->regs, reg, false);
+
+		p = ers_alloc(str_reg_ers, struct script_reg_str);
+
+		p->value = aStrdup(val);
+		if( !reg_load )
+			p->flag.update = 1;
+		p->flag.type = 1;
+
+		if( sd->regs.vars->put(sd->regs.vars, db_i642key(reg), db_ptr2data(p), &prev) ) {
+			p = (struct script_reg_str *)db_data2ptr(&prev);
+			if( p->value )
+				aFree(p->value);
+			ers_free(str_reg_ers, p);
+		}
+	}
+
+	if( !reg_load && p )
+		sd->vars_dirty = true;
+
+	return true;
+}
+
+/**
+ * Set value of player variable
+ * @param sd Player
+ * @param reg Variable name
+ * @param value
+ * @return True if success, false if failed.
+ **/
+bool pc_setreg2( map_session_data* sd, const char *reg, int64 val ) {
+	char prefix = reg[0];
+
+	nullpo_retr(false, sd);
+
+	if( is_string_variable( reg ) ){
+		ShowError( "pc_setreg2: Invalid variable '%s'. String type variables are not supported.\n", reg );
+		return false;
+	}
+
+	if( !not_server_variable( prefix ) ){
+		ShowError( "pc_setreg2: Invalid variable scope '%s'.\n", reg );
+		return false;
+	}
+
+	val = cap_value(val, INT_MIN, INT_MAX);
+
+	switch (prefix) {
+		case '@':
+			return pc_setreg(sd, add_str(reg), val);
+		case '#':
+			return (reg[1] == '#') ? pc_setaccountreg2(sd, add_str(reg), val) : pc_setaccountreg(sd, add_str(reg), val);
+		default:
+			return pc_setglobalreg(sd, add_str(reg), val);
+	}
+}
+
+/**
+ * Get value of player variable
+ * @param sd Player
+ * @param reg Variable name
+ * @return Variable value or 0 if failed.
+ **/
+int64 pc_readreg2( const map_session_data* sd, const char *reg ) {
+	char prefix = reg[0];
+
+	nullpo_ret(sd);
+
+	if( is_string_variable( reg ) ){
+		ShowError( "pc_readreg2: Invalid variable '%s'. String type variables are not supported.\n", reg );
+		return 0;
+	}
+
+	if( !not_server_variable( prefix ) ){
+		ShowError( "pc_readreg2: Invalid variable scope '%s'.\n", reg );
+		return 0;
+	}
+
+	switch (prefix) {
+		case '@':
+			return pc_readreg(sd, add_str(reg));
+		case '#':
+			return (reg[1] == '#') ? pc_readaccountreg2(sd, add_str(reg)) : pc_readaccountreg(sd, add_str(reg));
+		default:
+			return pc_readglobalreg(sd, add_str(reg));
+	}
+}
+
+/*==========================================
+ * Exec eventtimer for player sd (retrieved from map_session (id))
+ *------------------------------------------*/
+static TIMER_FUNC(pc_eventtimer){
+	map_session_data *sd=map_id2sd(id);
+	char *p = (char *)data;
+	int32 i;
+	if(sd==nullptr)
+		return 0;
+
+	ARR_FIND( 0, MAX_EVENTTIMER, i, sd->eventtimer[i] == tid );
+	if( i < MAX_EVENTTIMER )
+	{
+		sd->eventtimer[i] = INVALID_TIMER;
+		sd->eventcount--;
+		npc_event(sd,p,0);
+	}
+	else
+		ShowError("pc_eventtimer: no such event timer\n");
+
+	if (p) aFree(p);
+	return 0;
+}
+
+/*==========================================
+ * Add eventtimer for player sd ?
+ *------------------------------------------*/
+bool pc_addeventtimer(map_session_data *sd,int32 tick,const char *name)
+{
+	int32 i;
+	nullpo_retr(false,sd);
+
+	ARR_FIND( 0, MAX_EVENTTIMER, i, sd->eventtimer[i] == INVALID_TIMER );
+	if( i == MAX_EVENTTIMER )
+		return false;
+
+	sd->eventtimer[i] = add_timer(gettick()+tick, pc_eventtimer, sd->id, (intptr_t)aStrdup(name));
+	sd->eventcount++;
+
+	return true;
+}
+
+/*==========================================
+ * Del eventtimer for player sd ?
+ *------------------------------------------*/
+bool pc_deleventtimer(map_session_data *sd,const char *name)
+{
+	char* p = nullptr;
+	int32 i;
+
+	nullpo_retr(false,sd);
+	if (sd->eventcount == 0)
+		return false;
+
+	// find the named event timer
+	ARR_FIND( 0, MAX_EVENTTIMER, i,
+		sd->eventtimer[i] != INVALID_TIMER &&
+		(p = (char *)(get_timer(sd->eventtimer[i])->data)) != nullptr &&
+		strcmp(p, name) == 0
+	);
+	if( i == MAX_EVENTTIMER )
+		return false; // not found
+
+	delete_timer(sd->eventtimer[i],pc_eventtimer);
+	sd->eventtimer[i] = INVALID_TIMER;
+	if(sd->eventcount > 0)
+		sd->eventcount--;
+	aFree(p);
+
+	return true;
+}
+
+/*==========================================
+ * Update eventtimer count for player sd
+ *------------------------------------------*/
+void pc_addeventtimercount(map_session_data *sd,const char *name,int32 tick)
+{
+	int32 i;
+
+	nullpo_retv(sd);
+
+	for(i=0;i<MAX_EVENTTIMER;i++)
+		if( sd->eventtimer[i] != INVALID_TIMER && strcmp(
+			(char *)(get_timer(sd->eventtimer[i])->data), name)==0 ){
+				addtick_timer(sd->eventtimer[i],tick);
+				break;
+		}
+}
+
+/*==========================================
+ * Remove all eventtimer for player sd
+ *------------------------------------------*/
+void pc_cleareventtimer(map_session_data *sd)
+{
+	int32 i;
+
+	nullpo_retv(sd);
+
+	if (sd->eventcount == 0)
+		return;
+
+	for(i=0;i<MAX_EVENTTIMER;i++){
+		if( sd->eventtimer[i] != INVALID_TIMER ){
+			char *p = (char *)(get_timer(sd->eventtimer[i])->data);
+			delete_timer(sd->eventtimer[i],pc_eventtimer);
+			sd->eventtimer[i] = INVALID_TIMER;
+			if(sd->eventcount > 0) //avoid looping to max val
+				sd->eventcount--;
+			if (p) aFree(p);
+		}
+	}
+}
+
+/**
+ * Called when an item with combo is worn
+ * @param sd: Player data
+ * @param data: Item data
+ * @return Number of succeeded combo(s)
+ */
+static int32 pc_checkcombo(map_session_data *sd, item_data *data) {
+	int32 success = 0;
+
+	for (const auto &item_combo : data->combos) {
+		bool do_continue = false;
+
+		// Ensure this isn't a duplicate combo
+		for (const auto player_combo : sd->combos) {
+			if (player_combo->id == item_combo->id) {
+				do_continue = true;
+				break;
+			}
+		}
+
+		// Combo already equipped
+		if (do_continue)
+			continue;
+
+		size_t nb_itemCombo = item_combo->nameid.size();
+
+		if (nb_itemCombo < 2) // A combo with less then 2 item?
+			continue;
+
+		struct s_itemchk {
+			int32 idx;
+			t_itemid nameid, card[MAX_SLOTS];
+
+			s_itemchk() : idx(0), nameid(0), card() {};
+		};
+		std::vector<s_itemchk> combo_idx(nb_itemCombo);
+		size_t j;
+		uint32 pos = 0;
+
+		for (j = 0; j < nb_itemCombo; j++) {
+			t_itemid id = item_combo->nameid[j];
+			bool found = false;
+
+			for (int16 k = 0; k < EQI_MAX; k++) {
+				int16 index = sd->equip_index[k];
+
+				if (index < 0)
+					continue;
+				if (pc_is_same_equip_index((equip_index)k, sd->equip_index, index))
+					continue;
+				if (!sd->inventory_data[index])
+					continue;
+
+				if (itemdb_type(id) != IT_CARD) {
+					if (sd->inventory_data[index]->nameid != id)
+						continue;
+
+					if (j > 0) { // Check if this item not already used
+						do_continue = false;
+
+						for (size_t z = 0; z < nb_itemCombo - 1; z++) {
+							if (combo_idx[z].idx == index && combo_idx[z].nameid == id) { // Index already recorded
+								do_continue = true;
+								break;
+							}
+						}
+
+						if (do_continue)
+							continue;
+					}
+
+					combo_idx[j].nameid = id;
+					combo_idx[j].idx = index;
+					pos |= sd->inventory.u.items_inventory[index].equip;
+					found = true;
+					break;
+				} else { // Cards and enchants
+					if (itemdb_isspecial(sd->inventory.u.items_inventory[index].card[0]))
+						continue;
+					for (uint8 z = 0; z < MAX_SLOTS; z++) {
+						do_continue = false;
+
+						if (sd->inventory.u.items_inventory[index].card[z] != id)
+							continue;
+
+						if (j > 0) {
+							for (size_t c1 = 0; c1 < nb_itemCombo - 1; c1++) {
+								if (combo_idx[c1].idx == index && combo_idx[c1].nameid == id) {
+									for (uint8 c2 = 0; c2 < MAX_SLOTS; c2++) {
+										if (combo_idx[c1].card[c2] == id) { // Card already recorded (at this same idx)
+											do_continue = true;
+											break;
+										}
+									}
+								}
+							}
+						}
+
+						if (do_continue)
+							continue;
+
+						combo_idx[j].nameid = id;
+						combo_idx[j].idx = index;
+						combo_idx[j].card[z] = id;
+						pos |= sd->inventory.u.items_inventory[index].equip;
+						found = true;
+						break;
+					}
+				}
+			}
+
+			if (!found)
+				break; // Unable to found all the IDs for this combo, return
+		}
+
+		// Broke out of the count loop without finding all IDs, move to the next combo
+		if (j < nb_itemCombo)
+			continue;
+
+		// All items in the combo are matching
+		auto entry = std::make_shared<s_combos>();
+
+		entry->bonus = item_combo->script;
+		entry->id = item_combo->id;
+		entry->pos = pos;
+		sd->combos.push_back(entry);
+		combo_idx.clear();
+		success++;
+	}
+
+	return success;
+}
+
+/**
+ * Called when an item with combo is removed
+ * @param sd: Player data
+ * @param data: Item data
+ * @return Number of removed combo(s)
+ */
+static int32 pc_removecombo(map_session_data *sd, item_data *data ) {
+
+	if (sd->combos.empty())
+		return 0; // Nothing to do here, player has no combos
+
+	int32 retval = 0;
+
+	for (const auto &item_combo : data->combos) {
+		std::shared_ptr<s_combos> del_combo = nullptr;
+
+		// Check if this combo exists on this player
+		for (const auto &player_combo : sd->combos) {
+			if (player_combo->id == item_combo->id) {
+				del_combo = player_combo;
+				break;
+			}
+		}
+
+		// No match, skip this combo
+		if (del_combo == nullptr)
+			continue;
+
+		util::vector_erase_if_exists(sd->combos, del_combo);
+		retval++;
+
+		// Check if combo requirements still fit
+		if (pc_checkcombo(sd, data))
+			continue;
+
+		// It's empty, clear all the memory
+		if (sd->combos.empty()) {
+			sd->combos.clear();
+			return retval; // Return at this point as there are no more combos to check
+		}
+	}
+
+	return retval;
+}
+
+/**
+ * Load combo data(s) of player
+ * @param sd: Player data
+ * @return ret numbers of succeed combo
+ */
+int32 pc_load_combo(map_session_data *sd) {
+	int32 ret = 0;
+
+	for (int16 i = 0; i < EQI_MAX; i++) {
+		item_data *id;
+		int16 idx = sd->equip_index[i];
+
+		if (idx < 0 || !(id = sd->inventory_data[idx]))
+			continue;
+
+		if (!id->combos.empty())
+			ret += pc_checkcombo(sd, id);
+
+		if (!itemdb_isspecial(sd->inventory.u.items_inventory[idx].card[0])) {
+			for (uint8 j = 0; j < MAX_SLOTS; j++) {
+				if (!sd->inventory.u.items_inventory[idx].card[j])
+					continue;
+
+				std::shared_ptr<item_data> data = item_db.find(sd->inventory.u.items_inventory[idx].card[j]);
+
+				if (data != nullptr) {

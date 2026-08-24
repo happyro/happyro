@@ -1,0 +1,500 @@
+		base_status->hit += skill * 3;
+	if((sd->status.weapon == W_MACE || sd->status.weapon == W_2HMACE) && (skill = pc_checkskill(sd,NC_TRAININGAXE)) > 0)
+		base_status->hit += skill * 2;
+	if (pc_checkskill(sd, SU_POWEROFLIFE) > 0)
+		base_status->hit += 20;
+	if ((skill = pc_checkskill_imperial_guard(sd, 2)) > 0)// IG_SPEAR_SWORD_M
+		base_status->hit += skill * 3;
+	if (sd->status.weapon == W_BOOK && (skill = pc_checkskill(sd, SKE_WAR_BOOK_MASTERY)) > 0)
+		base_status->hit += skill * 3;
+
+	if ((skill = pc_checkskill(sd, SU_SOULATTACK)) > 0)
+		base_status->rhw.range += skill_get_range2(sd, SU_SOULATTACK, skill, true);
+
+// ----- FLEE CALCULATION -----
+
+	// Absolute modifiers from passive skills
+	if((skill=pc_checkskill(sd,TF_MISS))>0)
+		base_status->flee += skill*(sd->class_&JOBL_2 && (sd->class_&MAPID_FIRSTMASK) == MAPID_THIEF? 4 : 3);
+	if((skill=pc_checkskill(sd,MO_DODGE))>0)
+		base_status->flee += (skill*3) / 2;
+	if (pc_checkskill(sd, SU_POWEROFLIFE) > 0)
+		base_status->flee += 20;
+	if ((skill = pc_checkskill(sd, SHC_SHADOW_SENSE)) > 0)
+		base_status->flee += skill * 10;
+
+// ----- CRITICAL CALCULATION -----
+
+#ifdef RENEWAL
+	if ((skill = pc_checkskill(sd, DC_DANCINGLESSON)) > 0)
+		base_status->cri += skill * 10;
+	if ((skill = pc_checkskill(sd, PR_MACEMASTERY)) > 0 && (sd->status.weapon == W_MACE || sd->status.weapon == W_2HMACE))
+		base_status->cri += skill * 10;
+#endif
+	if ((skill = pc_checkskill(sd, SHC_SHADOW_SENSE)) > 0)
+	{
+		if (sd->status.weapon == W_DAGGER || sd->status.weapon == W_DOUBLE_DD || 
+			sd->status.weapon == W_DOUBLE_DS || sd->status.weapon == W_DOUBLE_DA)
+			base_status->cri += 100 + skill * 40;
+		else if (sd->status.weapon == W_KATAR)
+			base_status->cri += 50 + skill * 20;
+	}
+
+// ----- P.Atk/S.Matk CALCULATION -----
+	if ((skill = pc_checkskill(sd, TR_STAGE_MANNER)) > 0 && (sd->status.weapon == W_BOW || sd->status.weapon == W_MUSICAL || sd->status.weapon == W_WHIP)) {
+		base_status->patk += skill * 3;
+		base_status->smatk += skill * 3;
+	}
+	if ((skill = pc_checkskill(sd, HN_SELFSTUDY_TATICS)) > 0)
+		base_status->patk += skill;
+	if ((skill = pc_checkskill(sd, HN_SELFSTUDY_SOCERY)) > 0)
+		base_status->smatk += skill;
+	if ((skill = pc_checkskill(sd, NW_P_F_I)) > 0 && (sd->status.weapon >= W_REVOLVER && sd->status.weapon <= W_GRENADE))
+		base_status->patk += skill + 2;
+	if ((skill = pc_checkskill(sd, SOA_TALISMAN_MASTERY)) > 0)
+		base_status->smatk += skill;
+	if (sd->status.weapon == W_BOOK && (skill = pc_checkskill(sd, SKE_WAR_BOOK_MASTERY)) > 0)
+		base_status->patk += skill+2;
+
+	// 2-Handed Staff Mastery
+	if( sd->status.weapon == W_2HSTAFF && ( skill = pc_checkskill( sd, AG_TWOHANDSTAFF ) ) > 0 ){
+		base_status->smatk += skill * 2;
+	}
+
+	if ((skill = pc_checkskill(sd, SH_MYSTICAL_CREATURE_MASTERY)) > 0) {
+		base_status->smatk += skill * 15 / 10;
+		base_status->patk += skill * 15 / 10;
+	}
+
+// ----- PHYSICAL RESISTANCE CALCULATION -----
+	if ((skill = pc_checkskill_imperial_guard(sd, 1)) > 0)// IG_SHIELD_MASTERY
+		base_status->res += skill * 3;
+
+// ----- EQUIPMENT-DEF CALCULATION -----
+
+	// Apply relative modifiers from equipment
+	if(sd->def_rate < 0)
+		sd->def_rate = 0;
+	if(sd->def_rate != 100) {
+		i = base_status->def * sd->def_rate/100;
+		base_status->def = cap_value(i, DEFTYPE_MIN, DEFTYPE_MAX);
+	}
+
+	if(pc_ismadogear(sd) && pc_checkskill(sd, NC_MAINFRAME) > 0)
+		base_status->def += 20 + (pc_checkskill(sd, NC_MAINFRAME) * 20);
+
+#ifndef RENEWAL
+	if (!battle_config.weapon_defense_type && base_status->def > battle_config.max_def) {
+		base_status->def2 += battle_config.over_def_bonus*(base_status->def -battle_config.max_def);
+		base_status->def = (unsigned char)battle_config.max_def;
+	}
+#endif
+
+// ----- EQUIPMENT-MDEF CALCULATION -----
+
+	// Apply relative modifiers from equipment
+	if(sd->mdef_rate < 0)
+		sd->mdef_rate = 0;
+	if(sd->mdef_rate != 100) {
+		i =  base_status->mdef * sd->mdef_rate/100;
+		base_status->mdef = cap_value(i, DEFTYPE_MIN, DEFTYPE_MAX);
+	}
+
+#ifndef RENEWAL
+	if (!battle_config.magic_defense_type && base_status->mdef > battle_config.max_def) {
+		base_status->mdef2 += battle_config.over_def_bonus*(base_status->mdef -battle_config.max_def);
+		base_status->mdef = (signed char)battle_config.max_def;
+	}
+#endif
+
+// ----- ASPD CALCULATION -----
+
+	/// Unlike other stats, ASPD rate modifiers from skills/SCs/items/etc are first all added together, then the final modifier is applied
+
+	// Basic ASPD value
+	i = status_base_amotion_pc(sd,base_status);
+#ifdef RENEWAL_ASPD
+	// Renewal base value is actually ASPD and not amotion, so we need to convert it
+	i = AMOTION_ZERO_ASPD - i * AMOTION_INTERVAL;
+#endif
+	base_status->amotion = cap_value(i, pc_maxaspd(sd)/AMOTION_DIVIDER_PC, MIN_ASPD/AMOTION_DIVIDER_PC);
+
+	// Relative modifiers from passive skills
+	// Renewal modifiers are handled in status_base_amotion_pc
+#ifndef RENEWAL_ASPD
+	if((skill=pc_checkskill(sd,SA_ADVANCEDBOOK))>0 && sd->status.weapon == W_BOOK)
+		base_status->aspd_rate -= 5*skill;
+	if ((skill = pc_checkskill(sd,SG_DEVIL)) > 0 && ((sd->class_&MAPID_THIRDMASK) == MAPID_STAR_EMPEROR || pc_is_maxjoblv(sd)))
+		base_status->aspd_rate -= 30*skill;
+	if((skill=pc_checkskill(sd,GS_SINGLEACTION))>0 &&
+		(sd->status.weapon >= W_REVOLVER && sd->status.weapon <= W_GRENADE))
+		base_status->aspd_rate -= ((skill+1)/2) * 10;
+	if(pc_isriding(sd))
+		base_status->aspd_rate += 500-100*pc_checkskill(sd,KN_CAVALIERMASTERY);
+	else if(pc_isridingdragon(sd))
+		base_status->aspd_rate += 250-50*pc_checkskill(sd,RK_DRAGONTRAINING);
+#endif
+	base_status->adelay = AMOTION_DIVIDER_PC * base_status->amotion;
+
+
+// ----- DMOTION -----
+
+	i =  800-base_status->agi*4;
+	base_status->dmotion = cap_value(i, 400, 800);
+	if(battle_config.pc_damage_delay_rate != 100)
+		base_status->dmotion = base_status->dmotion*battle_config.pc_damage_delay_rate/100;
+
+// ----- MISC CALCULATIONS -----
+
+	// Weight
+	status_calc_weight(sd, CALCWT_MAXBONUS);
+	status_calc_cart_weight(sd, CALCWT_MAXBONUS);
+
+	if (pc_checkskill(sd, SM_MOVINGRECOVERY) > 0 || pc_ismadogear(sd))
+		sd->regen.state.walk = 1;
+	else
+		sd->regen.state.walk = 0;
+
+	// Skill SP cost
+	if((skill=pc_checkskill(sd,HP_MANARECHARGE))>0 )
+		sd->dsprate -= 4*skill;
+
+	if(sc->getSCE(SC_SERVICE4U))
+		sd->dsprate -= sc->getSCE(SC_SERVICE4U)->val3;
+
+	// Underflow protections.
+	if(sd->dsprate < 0)
+		sd->dsprate = 0;
+	if(sd->castrate < 0)
+		sd->castrate = 0;
+	if(sd->hprecov_rate < 0)
+		sd->hprecov_rate = 0;
+	if(sd->sprecov_rate < 0)
+		sd->sprecov_rate = 0;
+
+	// Anti-element and anti-race
+	if((skill=pc_checkskill(sd,CR_TRUST))>0)
+		sd->indexed_bonus.subele[ELE_HOLY] += skill*5;
+	if((skill=pc_checkskill(sd,BS_SKINTEMPER))>0) {
+		sd->indexed_bonus.subele[ELE_NEUTRAL] += skill;
+		sd->indexed_bonus.subele[ELE_FIRE] += skill*5;
+	}
+	if((skill=pc_checkskill(sd,SA_DRAGONOLOGY))>0) {
+		uint8 dragon_matk = skill * 2;
+
+		skill = skill * 4;
+
+		sd->right_weapon.addrace[RC_DRAGON]+=skill;
+		if( !battle_config.left_cardfix_to_right ){
+			sd->left_weapon.addrace[RC_DRAGON] += skill;
+		}
+		sd->indexed_bonus.magic_addrace[RC_DRAGON]+=dragon_matk;
+		sd->indexed_bonus.subrace[RC_DRAGON]+=skill;
+	}
+	if ((skill = pc_checkskill(sd, AB_EUCHARISTICA)) > 0) {
+		sd->right_weapon.addrace[RC_DEMON] += skill;
+		sd->right_weapon.addele[ELE_DARK] += skill;
+		if( !battle_config.left_cardfix_to_right ){
+			sd->left_weapon.addrace[RC_DEMON] += skill;
+			sd->left_weapon.addele[ELE_DARK] += skill;
+		}
+		sd->indexed_bonus.magic_addrace[RC_DEMON] += skill;
+		sd->indexed_bonus.magic_addele[ELE_DARK] += skill;
+		sd->indexed_bonus.subrace[RC_DEMON] += skill;
+		sd->indexed_bonus.subele[ELE_DARK] += skill;
+	}
+	if ((skill = pc_checkskill(sd, DK_TWOHANDDEF)) > 0 && (sd->status.weapon == W_2HSWORD || sd->status.weapon == W_2HSPEAR || sd->status.weapon == W_2HAXE)) {
+		uint8 defense_bonus[SZ_MAX][10] = {
+			{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, // SZ_SMALL
+			{ 2, 3, 5, 6, 8, 9, 11, 12, 14, 15 }, // SZ_MEDIUM
+			{ 3, 5, 7, 9, 10, 12, 13, 15, 16, 18 }, // SZ_BIG
+			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // SZ_ALL
+		};
+
+		for( uint8 size = SZ_SMALL; size < SZ_MAX; size++ ){
+			sd->indexed_bonus.weapon_subsize[size] += defense_bonus[size][skill - 1];
+		}
+	}
+	if ((skill = pc_checkskill(sd, IQ_WILL_OF_FAITH)) > 0 && sd->status.weapon == W_KNUCKLE) {
+		uint8 race_atk[10] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };
+		uint8 race_def[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+
+		sd->right_weapon.addrace[RC_UNDEAD] += race_atk[skill - 1];
+		sd->right_weapon.addrace[RC_DEMON] += race_atk[skill - 1];
+		if( !battle_config.left_cardfix_to_right ){
+			sd->left_weapon.addrace[RC_UNDEAD] += race_atk[skill - 1];
+			sd->left_weapon.addrace[RC_DEMON] += race_atk[skill - 1];
+		}
+		sd->indexed_bonus.subrace[RC_UNDEAD] += race_def[skill - 1];
+		sd->indexed_bonus.subrace[RC_DEMON] += race_def[skill - 1];
+	}
+	if ((skill = pc_checkskill(sd, CD_MACE_BOOK_M)) > 0 && (sd->status.weapon == W_MACE || sd->status.weapon == W_2HMACE || sd->status.weapon == W_BOOK)) {
+		uint8 attack_bonus[SZ_MAX][10] = {
+			{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, // SZ_SMALL
+			{ 2, 3, 5, 6, 8, 9, 11, 12, 14, 15 }, // SZ_MEDIUM
+			{ 3, 5, 7, 9, 10, 12, 13, 15, 16, 18 }, // SZ_BIG
+			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // SZ_ALL
+		};
+
+		for( uint8 size = SZ_SMALL; size < SZ_MAX; size++ ){
+			sd->right_weapon.addsize[size] += attack_bonus[size][skill - 1];
+			if( !battle_config.left_cardfix_to_right ){
+				sd->left_weapon.addsize[size] += attack_bonus[size][skill - 1];
+			}
+		}
+	}
+	if ((skill = pc_checkskill(sd, CD_FIDUS_ANIMUS)) > 0) {
+		uint8 holy_matk[10] = { 1, 3, 4, 6, 7, 9, 10, 12, 13, 15 };
+
+		sd->indexed_bonus.magic_atk_ele[ELE_HOLY] += holy_matk[skill - 1];
+	}
+	if ((skill = pc_checkskill(sd, MT_TWOAXEDEF)) > 0 && sd->status.weapon == W_2HAXE) {
+		uint8 defense_bonus[SZ_MAX][10] = {
+			{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, // SZ_SMALL
+			{ 2, 3, 5, 6, 8, 9, 11, 12, 14, 15 }, // SZ_MEDIUM
+			{ 3, 5, 7, 9, 10, 12, 13, 15, 16, 18 }, // SZ_BIG
+			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // SZ_ALL
+		};
+
+		for( uint8 size = SZ_SMALL; size < SZ_MAX; size++ ){
+				sd->indexed_bonus.weapon_subsize[size] += defense_bonus[size][skill - 1];
+		}
+	}
+	if ((skill = pc_checkskill(sd, ABC_DAGGER_AND_BOW_M)) > 0 && (sd->status.weapon == W_DAGGER || sd->status.weapon == W_BOW || sd->status.weapon == W_DOUBLE_DD || sd->status.weapon == W_DOUBLE_DS || sd->status.weapon == W_DOUBLE_DA)) {
+		uint8 attack_bonus[SZ_MAX][10] = {
+			{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }, // SZ_SMALL
+			{ 2, 3, 5, 6, 8, 9, 11, 12, 14, 15 }, // SZ_MEDIUM
+			{ 2, 4, 6, 8, 10, 12, 14, 16, 18, 20 }, // SZ_BIG
+			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // SZ_ALL
+		};
+
+		for( uint8 size = SZ_SMALL; size < SZ_MAX; size++ ){
+			sd->right_weapon.addsize[size] += attack_bonus[size][skill - 1];
+			if( !battle_config.left_cardfix_to_right ){
+				sd->left_weapon.addsize[size] += attack_bonus[size][skill - 1];
+			}
+		}
+	}
+	if ((skill = pc_checkskill(sd, ABC_MAGIC_SWORD_M)) > 0 && (sd->status.weapon == W_DAGGER || sd->status.weapon == W_1HSWORD || sd->status.weapon == W_DOUBLE_DD || sd->status.weapon == W_DOUBLE_SS || sd->status.weapon == W_DOUBLE_DS || sd->status.weapon == W_DOUBLE_DA || sd->status.weapon == W_DOUBLE_SA)) {
+		uint8 attack_bonus[SZ_MAX][10] = {
+			{ 2, 3, 5, 6, 8, 9, 11, 12, 14, 15 }, // SZ_SMALL
+			{ 2, 3, 5, 6, 8, 9, 11, 12, 14, 15 }, // SZ_MEDIUM
+			{ 2, 3, 5, 6, 8, 9, 11, 12, 14, 15 }, // SZ_BIG
+			{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 } // SZ_ALL
+		};
+
+		for( uint8 size = SZ_SMALL; size < SZ_MAX; size++ ){
+			sd->indexed_bonus.magic_addsize[size] += attack_bonus[size][skill - 1];
+		}
+	}
+	if ((skill = pc_checkskill(sd, EM_MAGIC_BOOK_M)) > 0 && sd->status.weapon == W_BOOK) {
+		sd->indexed_bonus.magic_atk_ele[ELE_WATER] += skill;
+		sd->indexed_bonus.magic_atk_ele[ELE_EARTH] += skill;
+		sd->indexed_bonus.magic_atk_ele[ELE_FIRE] += skill;
+		sd->indexed_bonus.magic_atk_ele[ELE_WIND] += skill;
+		sd->indexed_bonus.magic_atk_ele[ELE_POISON] += skill;
+	}
+
+	if(!sc->empty()) {
+		if(sc->getSCE(SC_CONCENTRATE)) { // Update the card-bonus data
+			sc->getSCE(SC_CONCENTRATE)->val3 = sd->indexed_bonus.param_bonus[1]; // Agi
+			sc->getSCE(SC_CONCENTRATE)->val4 = sd->indexed_bonus.param_bonus[4]; // Dex
+		}
+		if(sc->getSCE(SC_SIEGFRIED)) {
+			i = sc->getSCE(SC_SIEGFRIED)->val2;
+			sd->indexed_bonus.subele[ELE_WATER] += i;
+			sd->indexed_bonus.subele[ELE_EARTH] += i;
+			sd->indexed_bonus.subele[ELE_FIRE] += i;
+			sd->indexed_bonus.subele[ELE_WIND] += i;
+#ifndef RENEWAL
+			sd->indexed_bonus.subele[ELE_POISON] += i;
+			sd->indexed_bonus.subele[ELE_HOLY] += i;
+			sd->indexed_bonus.subele[ELE_DARK] += i;
+			sd->indexed_bonus.subele[ELE_GHOST] += i;
+			sd->indexed_bonus.subele[ELE_UNDEAD] += i;
+#endif
+		}
+#ifdef RENEWAL
+		if (sc->getSCE(SC_BASILICA)) {
+			i = sc->getSCE(SC_BASILICA)->val1 * 5;
+			sd->right_weapon.addele[ELE_DARK] += i;
+			sd->right_weapon.addele[ELE_UNDEAD] += i;
+			if( !battle_config.left_cardfix_to_right ){
+				sd->left_weapon.addele[ELE_DARK] += i;
+				sd->left_weapon.addele[ELE_UNDEAD] += i;
+			}
+			sd->indexed_bonus.magic_atk_ele[ELE_HOLY] += sc->getSCE(SC_BASILICA)->val1 * 3;
+		}
+		if (sc->getSCE(SC_FIREWEAPON))
+			sd->indexed_bonus.magic_atk_ele[ELE_FIRE] += sc->getSCE(SC_FIREWEAPON)->val1;
+		if (sc->getSCE(SC_WINDWEAPON))
+			sd->indexed_bonus.magic_atk_ele[ELE_WIND] += sc->getSCE(SC_WINDWEAPON)->val1;
+		if (sc->getSCE(SC_WATERWEAPON))
+			sd->indexed_bonus.magic_atk_ele[ELE_WATER] += sc->getSCE(SC_WATERWEAPON)->val1;
+		if (sc->getSCE(SC_EARTHWEAPON))
+			sd->indexed_bonus.magic_atk_ele[ELE_EARTH] += sc->getSCE(SC_EARTHWEAPON)->val1;
+#endif
+		if(sc->getSCE(SC_PROVIDENCE)) {
+			sd->indexed_bonus.subele[ELE_HOLY] += sc->getSCE(SC_PROVIDENCE)->val2;
+			sd->indexed_bonus.subrace[RC_DEMON] += sc->getSCE(SC_PROVIDENCE)->val2;
+		}
+		if( sc->getSCE(SC_FIRE_CLOAK_OPTION) ) {
+			i = sc->getSCE(SC_FIRE_CLOAK_OPTION)->val2;
+			sd->indexed_bonus.subele[ELE_FIRE] += i;
+			sd->indexed_bonus.subele[ELE_WATER] -= i;
+		}
+		if( sc->getSCE(SC_WATER_DROP_OPTION) ) {
+			i = sc->getSCE(SC_WATER_DROP_OPTION)->val2;
+			sd->indexed_bonus.subele[ELE_WATER] += i;
+			sd->indexed_bonus.subele[ELE_WIND] -= i;
+		}
+		if( sc->getSCE(SC_WIND_CURTAIN_OPTION) ) {
+			i = sc->getSCE(SC_WIND_CURTAIN_OPTION)->val2;
+			sd->indexed_bonus.subele[ELE_WIND] += i;
+			sd->indexed_bonus.subele[ELE_EARTH] -= i;
+		}
+		if( sc->getSCE(SC_STONE_SHIELD_OPTION) ) {
+			i = sc->getSCE(SC_STONE_SHIELD_OPTION)->val2;
+			sd->indexed_bonus.subele[ELE_EARTH] += i;
+			sd->indexed_bonus.subele[ELE_FIRE] -= i;
+		}
+		if (sc->getSCE(SC_LAUDARAMUS))
+			sd->bonus.crit_atk_rate += 5 * sc->getSCE(SC_LAUDARAMUS)->val1;
+#ifdef RENEWAL
+		if (sc->getSCE(SC_FORTUNE))
+			sd->bonus.crit_atk_rate += 2 * sc->getSCE(SC_FORTUNE)->val1;
+#endif
+		if (sc->getSCE(SC_SYMPHONYOFLOVER)) {
+			sd->indexed_bonus.subele[ELE_GHOST] += sc->getSCE(SC_SYMPHONYOFLOVER)->val1 * 3;
+			sd->indexed_bonus.subele[ELE_HOLY] += sc->getSCE(SC_SYMPHONYOFLOVER)->val1 * 3;
+		}
+		if (sc->getSCE(SC_PYREXIA) && sc->getSCE(SC_PYREXIA)->val3 == 0)
+			sd->bonus.crit_atk_rate += sc->getSCE(SC_PYREXIA)->val2;
+		if (sc->getSCE(SC_LUXANIMA)) {
+			pc_bonus2(sd, SP_ADDSIZE, SZ_ALL, sc->getSCE(SC_LUXANIMA)->val3);
+			sd->bonus.crit_atk_rate += sc->getSCE(SC_LUXANIMA)->val3;
+			sd->bonus.short_attack_atk_rate += sc->getSCE(SC_LUXANIMA)->val3;
+			sd->bonus.long_attack_atk_rate += sc->getSCE(SC_LUXANIMA)->val3;
+		}
+		if (sc->getSCE(SC_STRIKING))
+			sd->bonus.perfect_hit += 20 + 10 * pc_checkskill(sd, SO_STRIKING);
+
+		if( sc->getSCE( SC_RUSH_QUAKE2 ) ){
+			sd->bonus.short_attack_atk_rate += 5 * sc->getSCE( SC_RUSH_QUAKE2 )->val1;
+			sd->bonus.long_attack_atk_rate += 5 * sc->getSCE( SC_RUSH_QUAKE2 )->val1;
+		}
+		if (sc->getSCE(SC_HIDDEN_CARD))
+			sd->bonus.long_attack_atk_rate += sc->getSCE(SC_HIDDEN_CARD)->val3;
+		if (sc->getSCE(SC_DEADLY_DEFEASANCE))
+			sd->special_state.no_magic_damage = 0;
+		if (sc->getSCE(SC_CLIMAX_DES_HU))
+			sd->indexed_bonus.magic_atk_ele[ELE_WIND] += 30;
+		if (sc->getSCE(SC_CLIMAX_CRYIMP)) {
+			sd->indexed_bonus.subele[ELE_WATER] += 30;
+			sd->indexed_bonus.magic_atk_ele[ELE_WATER] += 30;
+		}
+		if (sc->getSCE(SC_SINCERE_FAITH))
+			sd->bonus.perfect_hit += sc->getSCE(SC_SINCERE_FAITH)->val3;
+		if (sc->getSCE(SC_HOLY_S)) {
+			sd->indexed_bonus.subele[ELE_DARK] += sc->getSCE(SC_HOLY_S)->val2;
+			sd->indexed_bonus.subele[ELE_UNDEAD] += sc->getSCE(SC_HOLY_S)->val2;
+			sd->indexed_bonus.magic_atk_ele[ELE_HOLY] += sc->getSCE(SC_HOLY_S)->val2;
+		}
+		if (sc->getSCE(SC_SUMMON_ELEMENTAL_ARDOR))
+			sd->indexed_bonus.magic_atk_ele[ELE_FIRE] += 10;
+		if (sc->getSCE(SC_SUMMON_ELEMENTAL_DILUVIO))
+			sd->indexed_bonus.magic_atk_ele[ELE_WATER] += 10;
+		if (sc->getSCE(SC_SUMMON_ELEMENTAL_PROCELLA))
+			sd->indexed_bonus.magic_atk_ele[ELE_WIND] += 10;
+		if (sc->getSCE(SC_SUMMON_ELEMENTAL_TERREMOTUS))
+			sd->indexed_bonus.magic_atk_ele[ELE_EARTH] += 10;
+		if (sc->getSCE(SC_SUMMON_ELEMENTAL_SERPENS))
+			sd->indexed_bonus.magic_atk_ele[ELE_POISON] += 10;
+		if (sc->getSCE(SC_FLAMEARMOR_OPTION)) {
+			sd->indexed_bonus.subele[ELE_FIRE] += 100;
+			sd->indexed_bonus.subele[ELE_WATER] -= 30;
+		}
+		if (sc->getSCE(SC_CRYSTAL_ARMOR_OPTION)) {
+			sd->indexed_bonus.subele[ELE_WATER] += 100;
+			sd->indexed_bonus.subele[ELE_WIND] -= 30;
+		}
+		if (sc->getSCE(SC_EYES_OF_STORM_OPTION)) {
+			sd->indexed_bonus.subele[ELE_WIND] += 100;
+			sd->indexed_bonus.subele[ELE_EARTH] -= 30;
+		}
+		if (sc->getSCE(SC_STRONG_PROTECTION_OPTION)) {
+			sd->indexed_bonus.subele[ELE_EARTH] += 100;
+			sd->indexed_bonus.subele[ELE_FIRE] -= 30;
+		}
+		if (sc->getSCE(SC_POISON_SHIELD_OPTION)) {
+			sd->indexed_bonus.subele[ELE_POISON] += 100;
+			sd->indexed_bonus.subele[ELE_HOLY] -= 30;
+		}
+		if (pc_checkskill(sd, SU_POWEROFLAND) > 0 && pc_checkskill_summoner(sd, SUMMONER_POWER_LAND) >= 20)
+			pc_bonus(sd, SP_MATK_RATE, 20);
+		if (sc->getSCE(SC_SHRIMP)) {
+			pc_bonus(sd, SP_ATK_RATE, sc->getSCE(SC_SHRIMP)->val2);
+			pc_bonus(sd, SP_MATK_RATE, sc->getSCE(SC_SHRIMP)->val2);
+		}
+		if (sc->getSCE(SC_INCMATKRATE))
+			pc_bonus(sd, SP_MATK_RATE, sc->getSCE(SC_INCMATKRATE)->val1);
+		if (sc->getSCE(SC_MINDBREAKER))
+			pc_bonus(sd, SP_MATK_RATE, sc->getSCE(SC_MINDBREAKER)->val2);
+		if (sc->getSCE(SC_CATNIPPOWDER))
+			pc_bonus(sd, SP_MATK_RATE, sc->getSCE(SC_CATNIPPOWDER)->val2);
+		if (sc->getSCE(SC_NIBELUNGEN) && sc->getSCE(SC_NIBELUNGEN)->val2 == RINGNBL_MATKRATE)
+			pc_bonus(sd, SP_MATK_RATE, 20);
+		if( sc->getSCE(SC_TALISMAN_OF_FIVE_ELEMENTS) != nullptr ) {
+			const std::vector<e_element> elements = { ELE_FIRE, ELE_WATER, ELE_WIND, ELE_EARTH, ELE_NEUTRAL };
+			int32 bonus = sc->getSCE(SC_TALISMAN_OF_FIVE_ELEMENTS)->val2;
+
+			for( const auto &element : elements ){
+				sd->indexed_bonus.magic_addele[element] += bonus;
+				sd->right_weapon.addele[element] += bonus;
+				if( !battle_config.left_cardfix_to_right ){
+					sd->left_weapon.addele[element] += bonus;
+				}
+			}
+		}
+		if( sc->getSCE(SC_HEAVEN_AND_EARTH) != nullptr ) {
+			i = sc->getSCE(SC_HEAVEN_AND_EARTH)->val2;
+			sd->indexed_bonus.magic_atk_ele[ELE_ALL] += i;
+			sd->bonus.short_attack_atk_rate += i;
+			sd->bonus.long_attack_atk_rate += i;
+		}
+	}
+	status_cpy(&sd->battle_status, base_status);
+
+// ----- CLIENT-SIDE REFRESH -----
+	if(!sd->prev) {
+		// Will update on LoadEndAck
+		calculating = 0;
+		return 0;
+	}
+	if(memcmp(b_skill,sd->status.skill,sizeof(sd->status.skill))) {
+#if PACKETVER_MAIN_NUM >= 20190807 || PACKETVER_RE_NUM >= 20190807 || PACKETVER_ZERO_NUM >= 20190918
+		// Client doesn't delete unavailable skills even if we refresh the skill tree, individually delete them.
+		for (i = 0; i < MAX_SKILL; i++) {
+			if (b_skill[i].id != 0 && sd->status.skill[i].id == 0)
+				clif_deleteskill(*sd, b_skill[i].id, true);
+		}
+#endif
+		clif_skillinfoblock(*sd);
+	}
+
+	// If the skill is learned, the status is infinite.
+	if (pc_checkskill(sd, SU_SPRITEMABLE) > 0 && !sd->sc.getSCE(SC_SPRITEMABLE))
+		sc_start(sd, sd, SC_SPRITEMABLE, 100, 1, INFINITE_TICK);
+	if (pc_checkskill(sd, SU_SOULATTACK) > 0 && !sd->sc.getSCE(SC_SOULATTACK))
+		sc_start(sd, sd, SC_SOULATTACK, 100, 1, INFINITE_TICK);
+
+	calculating = 0;
+
+	return 0;
+}
+
+/// Intermediate function since C++ does not have a try-finally syntax
+int32 status_calc_pc_( map_session_data* sd, uint8 opt ){
+	// Save the old script the player was attached to
+	struct script_state* previous_st = sd->st;
+

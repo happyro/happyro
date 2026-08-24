@@ -1,0 +1,370 @@
+		unsigned no_refine : 1;	// [celest]
+		unsigned delay_consume;	// [Skotlex]
+		struct {
+			bool drop, trade, trade_partner, sell, cart, storage, guild_storage, mail, auction;
+		} trade_restriction;	//Item restrictions mask [Skotlex]
+		unsigned autoequip: 1;
+		bool buyingstore;
+		bool dead_branch; // As dead branch item. Logged at `branchlog` table and cannot be used at 'nobranch' mapflag [Cydh]
+		bool group; // As item group container [Cydh]
+		unsigned guid : 1; // This item always be attached with GUID and make it as bound item! [Cydh]
+		bool broadcast; ///< Will be broadcasted if someone obtain the item [Cydh]
+		bool bindOnEquip; ///< Set item as bound when equipped
+		e_item_drop_effect dropEffect; ///< Drop Effect Mode
+		unsigned gradable : 1;
+	} flag;
+	struct {// item stacking limitation
+		uint16 amount;
+		bool inventory, cart, storage, guild_storage;
+	} stack;
+	struct {
+		uint16 override;
+		bool sitting;
+	} item_usage;
+	int16 gm_lv_trade_override;	//GM-level to override trade_restriction
+	std::vector<std::shared_ptr<s_item_combo>> combos;
+	struct {
+		uint32 duration;
+		sc_type sc; ///< Use delay group if any instead using player's item_delay data [Cydh]
+	} delay;
+
+	~item_data() {
+		if (this->script){
+			script_free_code(this->script);
+			this->script = nullptr;
+		}
+
+		if (this->equip_script){
+			script_free_code(this->equip_script);
+			this->equip_script = nullptr;
+		}
+
+		if (this->unequip_script){
+			script_free_code(this->unequip_script);
+			this->unequip_script = nullptr;
+		}
+
+		this->combos.clear();
+	}
+
+	bool isStackable() const;
+	int32 inventorySlotNeeded(int32 quantity);
+};
+
+class ItemDatabase : public TypesafeCachedYamlDatabase<t_itemid, item_data> {
+private:
+	std::unordered_map<std::string, std::shared_ptr<item_data>> nameToItemDataMap;
+	std::unordered_map<std::string, std::shared_ptr<item_data>> aegisNameToItemDataMap;
+
+	e_sex defaultGender( const ryml::NodeRef& node, std::shared_ptr<item_data> id );
+
+	std::string create_item_link(struct item& item, std::shared_ptr<item_data>& data);
+
+	struct s_pricevalue {
+		bool has_buy;
+		bool has_sell;
+	};
+
+	std::unordered_map<t_itemid, s_pricevalue> hasPriceValue;
+
+public:
+	ItemDatabase() : TypesafeCachedYamlDatabase("ITEM_DB", 3, 1) {
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+	void loadingFinished() override;
+	void clear() override{
+		TypesafeCachedYamlDatabase::clear();
+
+		this->nameToItemDataMap.clear();
+		this->aegisNameToItemDataMap.clear();
+	}
+
+	// Additional
+	std::shared_ptr<item_data> searchname( const char* name );
+	std::shared_ptr<item_data> search_aegisname( const char *name );
+	std::string create_item_link(struct item& item);
+	std::string create_item_link( std::shared_ptr<item_data>& data );
+	std::string create_item_link_for_mes( std::shared_ptr<item_data>& data, bool use_brackets, const char* name );
+	std::string create_item_icon_for_mes( std::shared_ptr<item_data>& data, const char* name );
+};
+
+extern ItemDatabase item_db;
+
+class ItemGroupDatabase : public TypesafeCachedYamlDatabase<uint16, s_item_group_db> {
+public:
+	ItemGroupDatabase() : TypesafeCachedYamlDatabase("ITEM_GROUP_DB", 5, 1) {
+
+	}
+
+	const std::string getDefaultLocation() override;
+	uint64 parseBodyNode(const ryml::NodeRef& node) override;
+	void loadingFinished() override;
+
+	// Additional
+	bool item_exists(uint16 group_id, t_itemid nameid);
+	int16 item_exists_pc(map_session_data *sd, uint16 group_id);
+	std::shared_ptr<s_item_group_entry> get_random_entry(uint16 group_id, uint8 sub_group, e_group_algorithm_type algorithm = GROUP_ALGORITHM_USEDB);
+	uint8 pc_get_itemgroup( uint16 group_id, bool identify, map_session_data& sd );
+
+private:
+	std::shared_ptr<s_item_group_entry> get_random_itemsubgroup(std::shared_ptr<s_item_group_random> random, e_group_algorithm_type algorithm = GROUP_ALGORITHM_USEDB);
+	void pc_get_itemgroup_sub( map_session_data& sd, bool identify, std::shared_ptr<s_item_group_entry> data );
+};
+
+extern ItemGroupDatabase itemdb_group;
+
+struct s_laphine_synthesis_requirement{
+	t_itemid item_id;
+	uint16 amount;
+};
+
+struct s_laphine_synthesis{
+	t_itemid item_id;
+	uint16 minimumRefine;
+	uint16 maximumRefine;
+	uint16 requiredRequirements;
+	std::unordered_map<t_itemid, std::shared_ptr<s_laphine_synthesis_requirement>> requirements;
+	uint16 rewardGroupId;
+};
+
+class LaphineSynthesisDatabase : public TypesafeYamlDatabase<t_itemid, s_laphine_synthesis>{
+public:
+	LaphineSynthesisDatabase() : TypesafeYamlDatabase( "LAPHINE_SYNTHESIS_DB", 1 ){
+
+	}
+
+	const std::string getDefaultLocation();
+	uint64 parseBodyNode( const ryml::NodeRef& node );
+};
+
+extern LaphineSynthesisDatabase laphine_synthesis_db;
+
+struct s_laphine_upgrade{
+	t_itemid item_id;
+	std::vector<t_itemid> target_item_ids;
+	uint16 minimumRefine;
+	uint16 maximumRefine;
+	uint16 requiredRandomOptions;
+	bool cardsAllowed;
+	std::shared_ptr<s_random_opt_group> randomOptionGroup;
+	uint16 resultRefine;
+	uint16 resultRefineMinimum;
+	uint16 resultRefineMaximum;
+};
+
+class LaphineUpgradeDatabase : public TypesafeYamlDatabase<t_itemid, s_laphine_upgrade>{
+public:
+	LaphineUpgradeDatabase() : TypesafeYamlDatabase( "LAPHINE_UPGRADE_DB", 1 ){
+
+	}
+
+	const std::string getDefaultLocation();
+	uint64 parseBodyNode( const ryml::NodeRef& node );
+};
+
+extern LaphineUpgradeDatabase laphine_upgrade_db;
+
+struct s_item_reform_base{
+	t_itemid item_id;
+	uint16 minimumRefine;
+	uint16 maximumRefine;
+	uint16 requiredRandomOptions;
+	bool cardsAllowed;
+	std::unordered_map<t_itemid, uint16> materials;
+	t_itemid resultItemId;
+	int16 refineChange;
+	std::shared_ptr<s_random_opt_group> randomOptionGroup;
+	bool clearSlots;
+	bool removeEnchantgrade;
+};
+
+struct s_item_reform{
+	t_itemid item_id;
+	std::unordered_map<t_itemid, std::shared_ptr<s_item_reform_base>> base_items;
+};
+
+class ItemReformDatabase : public TypesafeYamlDatabase<t_itemid, s_item_reform>{
+public:
+	ItemReformDatabase() : TypesafeYamlDatabase( "ITEM_REFORM_DB", 1 ){
+
+	}
+
+	const std::string getDefaultLocation();
+	uint64 parseBodyNode( const ryml::NodeRef& node );
+};
+
+extern ItemReformDatabase item_reform_db;
+
+struct s_item_enchant_normal_sub{
+	t_itemid item_id;
+	uint32 chance;
+};
+
+struct s_item_enchant_normal{
+	uint16 enchantgrade;
+	std::unordered_map<t_itemid, std::shared_ptr<s_item_enchant_normal_sub>> enchants;
+};
+
+struct s_item_enchant_perfect{
+	t_itemid item_id;
+	uint32 zeny;
+	std::unordered_map<t_itemid, uint16> materials;
+};
+
+struct s_item_enchant_upgrade{
+	t_itemid enchant_item_id;
+	t_itemid upgrade_item_id;
+	uint32 zeny;
+	std::unordered_map<t_itemid, uint16> materials;
+};
+
+struct s_item_enchant_slot{
+	uint16 slot;
+	struct{
+		uint32 zeny;
+		std::unordered_map<t_itemid, uint16> materials;
+		uint32 chance;
+		std::unordered_map<uint16, uint32> enchantgradeChanceIncrease;
+		std::unordered_map<uint16, std::shared_ptr<s_item_enchant_normal>> enchants;
+	} normal;
+	struct{
+		std::unordered_map<t_itemid, std::shared_ptr<s_item_enchant_perfect>> enchants;
+	} perfect;
+	struct{
+		std::unordered_map<t_itemid, std::shared_ptr<s_item_enchant_upgrade>> enchants;
+	} upgrade;
+};
+
+struct s_item_enchant{
+	uint64 id;
+	std::vector<t_itemid> target_item_ids;
+	uint16 minimumRefine;
+	uint16 minimumEnchantgrade;
+	bool allowRandomOptions;
+	struct {
+		uint32 zeny;
+		std::unordered_map<t_itemid, uint16> materials;
+		uint32 chance;
+	} reset;
+	std::vector<uint16> order;
+	std::unordered_map<uint16, std::shared_ptr<s_item_enchant_slot>> slots;
+};
+
+class ItemEnchantDatabase : public TypesafeYamlDatabase<uint64, s_item_enchant>{
+private:
+	bool parseMaterials( const ryml::NodeRef& node, std::unordered_map<t_itemid, uint16>& materials );
+
+public:
+	ItemEnchantDatabase() : TypesafeYamlDatabase( "ITEM_ENCHANT_DB", 1 ){
+
+	}
+
+	const std::string getDefaultLocation();
+	uint64 parseBodyNode( const ryml::NodeRef& node );
+};
+
+extern ItemEnchantDatabase item_enchant_db;
+
+struct s_item_package_item{
+	t_itemid item_id;
+	uint16 amount;
+	uint16 rentalhours;
+	uint16 refine;
+	uint16 grade;
+	std::shared_ptr<s_random_opt_group> randomOptionGroup;
+};
+
+struct s_item_package_group{
+	uint32 groupIndex;
+	std::unordered_map<t_itemid, std::shared_ptr<s_item_package_item>> items;
+};
+
+struct s_item_package{
+	t_itemid item_id;
+	std::unordered_map<uint32, std::shared_ptr<s_item_package_group>> groups;
+};
+
+class ItemPackageDatabase : public TypesafeYamlDatabase<t_itemid, s_item_package>{
+public:
+	ItemPackageDatabase() : TypesafeYamlDatabase( "ITEM_PACKAGE_DB", 2, 1 ){
+
+	}
+
+	const std::string getDefaultLocation();
+	uint64 parseBodyNode( const ryml::NodeRef& node );
+};
+
+extern ItemPackageDatabase item_package_db;
+
+uint16 itemdb_searchname_array(std::map<t_itemid, std::shared_ptr<item_data>> &data, uint16 size, const char *str);
+struct item_data* itemdb_search(t_itemid nameid);
+
+[[deprecated("Please upgrade your code to item_db.exists() or item_db.find()! This function will be dropped soon!")]]
+std::shared_ptr<item_data> itemdb_exists(t_itemid nameid);
+
+#define itemdb_name(n) itemdb_search(n)->name.c_str()
+#define itemdb_ename(n) itemdb_search(n)->ename.c_str()
+#define itemdb_type(n) itemdb_search(n)->type
+#define itemdb_subtype(n) itemdb_search(n)->subtype
+#define itemdb_atk(n) itemdb_search(n)->atk
+#define itemdb_def(n) itemdb_search(n)->def
+#define itemdb_look(n) itemdb_search(n)->look
+#define itemdb_weight(n) itemdb_search(n)->weight
+#define itemdb_equip(n) itemdb_search(n)->equip
+#define itemdb_usescript(n) itemdb_search(n)->script
+#define itemdb_equipscript(n) itemdb_search(n)->script
+#define itemdb_wlv(n) itemdb_search(n)->weapon_level
+#define itemdb_range(n) itemdb_search(n)->range
+#define itemdb_slots(n) itemdb_search(n)->slots
+#define itemdb_available(n) (itemdb_search(n)->flag.available)
+#define itemdb_traderight(n) (itemdb_search(n)->flag.trade_restriction)
+#define itemdb_viewid(n) (itemdb_search(n)->view_id)
+#define itemdb_autoequip(n) (itemdb_search(n)->flag.autoequip)
+#define itemdb_dropeffect(n) (itemdb_search(n)->flag.dropEffect)
+const char* itemdb_typename(enum item_types type);
+const char *itemdb_typename_ammo (e_ammo_type ammo);
+
+#define itemdb_value_buy(n) itemdb_search(n)->value_buy
+#define itemdb_value_sell(n) itemdb_search(n)->value_sell
+//Item trade restrictions [Skotlex]
+bool itemdb_isdropable_sub( const item_data *itd, int32 gmlv, int32 unused );
+bool itemdb_cantrade_sub( const item_data *itd, int32 gmlv, int32 gmlv2 );
+bool itemdb_canpartnertrade_sub( const item_data *itd, int32 gmlv, int32 gmlv2 );
+bool itemdb_cansell_sub( const item_data *itd, int32 gmlv, int32 unused );
+bool itemdb_cancartstore_sub( const item_data *itd, int32 gmlv, int32 unused );
+bool itemdb_canstore_sub( const item_data *itd, int32 gmlv, int32 unused );
+bool itemdb_canguildstore_sub( const item_data *itd, int32 gmlv, int32 unused );
+bool itemdb_canmail_sub( const item_data *itd, int32 gmlv, int32 unused );
+bool itemdb_canauction_sub( const item_data *itd, int32 gmlv, int32 unused );
+bool itemdb_isrestricted( const item* item, int32 gmlv, int32 gmlv2, bool (*func)(const item_data*, int32, int32) );
+bool itemdb_ishatched_egg( const item* item );
+#define itemdb_isdropable(item, gmlv) itemdb_isrestricted(item, gmlv, 0, itemdb_isdropable_sub)
+#define itemdb_cantrade(item, gmlv, gmlv2) itemdb_isrestricted(item, gmlv, gmlv2, itemdb_cantrade_sub)
+#define itemdb_canpartnertrade(item, gmlv, gmlv2) itemdb_isrestricted(item, gmlv, gmlv2, itemdb_canpartnertrade_sub)
+#define itemdb_cansell(item, gmlv) itemdb_isrestricted(item, gmlv, 0, itemdb_cansell_sub)
+#define itemdb_cancartstore(item, gmlv)  itemdb_isrestricted(item, gmlv, 0, itemdb_cancartstore_sub)
+#define itemdb_canstore(item, gmlv) itemdb_isrestricted(item, gmlv, 0, itemdb_canstore_sub)
+#define itemdb_canguildstore(item, gmlv) itemdb_isrestricted(item , gmlv, 0, itemdb_canguildstore_sub)
+#define itemdb_canmail(item, gmlv) itemdb_isrestricted(item , gmlv, 0, itemdb_canmail_sub)
+#define itemdb_canauction(item, gmlv) itemdb_isrestricted(item , gmlv, 0, itemdb_canauction_sub)
+
+bool itemdb_isequip2( const item_data *id);
+#define itemdb_isequip(nameid) itemdb_isequip2(itemdb_search(nameid))
+char itemdb_isidentified(t_itemid nameid);
+bool itemdb_isstackable2( const item_data *id );
+#define itemdb_isstackable(nameid) itemdb_isstackable2(itemdb_search(nameid))
+bool itemdb_isNoEquip( const item_data *id, uint16 m);
+
+bool itemdb_parse_roulette_db(void);
+
+void itemdb_gen_itemmoveinfo();
+
+void itemdb_reload(void);
+
+void do_final_itemdb(void);
+void do_init_itemdb(void);
+
+#endif /* ITEMDB_HPP */

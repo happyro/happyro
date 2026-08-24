@@ -1,0 +1,500 @@
+//===== rAthena Script =======================================
+//= Hall of Abyss - Core Scripts
+//===== By: ==================================================
+//= Euphy
+//===== Current Version: =====================================
+//= 1.1
+//===== Compatible With: =====================================
+//= rAthena Project
+//===== Description: =========================================
+//= [Official Conversion]
+//= Expansion for War of Emperium FE.
+//= Invest in each realm to unlock new maps:
+//= - Guild Dungeon F2, total 20,000,000z.
+//= - Hall of Abyss, total 70,000,000z.
+//===== Additional Comments: =================================
+//= 1.0 First version. Missing official times. [Euphy]
+//= 1.1 Added GM management function. [Euphy]
+//============================================================
+
+// Global Variables
+//============================================================
+// Note: an asterisk (*) represents any realm (prt, pay, gef, alde).
+/*
+$2011_agit_invest
+-- 0: Inactive.
+-- 1: Investment in progress.
+-- 2: Investment results calculating.
+-- 4: Investment calculations complete (only when at least one $*_invest_result is 3).
+-- 11-21: Tie, revote required.
+
+$agit_result_notice
+-- 0: Inactive.
+-- 1-12: Interim statements (displaying $@vfund_*x) available.
+
+$agit_result_timer
+-- 0: Inactive.
+-- 0-59: Time elapsed during investment (in hours).
+
+$agit_revoting_timer
+-- 0: Inactive.
+-- 0-29: Time elapsed during revote (in minutes).
+-- 30: Revote closed.
+-- 31: Revote results calculating.
+
+$*_invest_result
+-- 0: No data.
+-- 1: Realm not connected.
+-- 2: Guild Dungeon F2 open.
+-- 3: Abyss Gate (Hall of Abyss and Gulid Dungeon F2) open.
+
+$fund_*[01-05]
+-- Investment units per guild castle.
+$fund_*_extra
+-- Investment units per realm.
+
+$@vfund_*[01-05]
+$@vfund_*_extra
+-- Investment units, used in interim statements only.
+*/
+
+// Investment Functions & Controller
+//============================================================
+// Note: The times in this section are almost entirely custom.
+
+-	script	#invest_timer	-1,{
+OnClock0000:	// Open investments on Wednesday (1 hour after WoE)
+	if (gettime(DT_DAYOFWEEK) == WEDNESDAY && !agitcheck()) {
+		set $2011_agit_invest,1;
+		donpcevent "#fund_master::OnInvest_start";
+	}
+	end;
+OnClock1200:	// Close investments on Friday (60 hours after investments open)
+	if (gettime(DT_DAYOFWEEK) == FRIDAY && !agitcheck()) {
+		set $2011_agit_invest,2;
+		donpcevent "#fund_master::OnInvest_stop";
+	}
+	end;
+OnClock1235:	// Open dungeons on Friday (at least 31 minutes after investments close)
+	if (gettime(DT_DAYOFWEEK) == FRIDAY && !agitcheck())
+		donpcevent "#fund_master::OnResult";
+	end;
+OnClock2000:	// Close dungeons on Tuesday (1 hour before WoE)
+	if (gettime(DT_DAYOFWEEK) == TUESDAY)
+		donpcevent "#fund_master::OnReset";
+	end;
+}
+
+function	script	F_Invest_Status	{
+	set .@day, gettime(DT_DAYOFWEEK);
+	set .@hour, gettime(DT_HOUR);
+	set .@minute, gettime(DT_MINUTE);
+
+	// Inactive.
+	if (agitcheck())
+		return 0;
+
+	// Open for investments.
+	if (.@day >= WEDNESDAY && (.@day < FRIDAY || (.@day == FRIDAY && .@hour <= 12)))
+		return 1;
+
+	// Investments closed, calculating results.
+	if (.@day == FRIDAY && .@hour == 12 && .@minute < 35)
+		return 2;
+
+	// Calculations complete, dungeons open.
+	if ((.@day == FRIDAY && (.@hour > 12 || (.@hour == 12 && .@minute >= 35))) || .@day > FRIDAY ||
+	    .@day < TUESDAY || (.@day == TUESDAY && .@hour < 20))
+		return 3;
+
+	// Dungeons closed.
+	return 0;
+}
+
+//callfunc "F_Invest_Abyss","<variable>","<NPC name>"{,"<addon message>"};
+function	script	F_Invest_Abyss	{
+	.@npc_name$ = getarg(1);
+	mes "投资有两种方式：使用 Zeny，或使用猫手商会发放的投资凭证。";
+	mes "你想用哪种方式投资？";
+	next;
+	switch(select("使用 Zeny 投资。:使用投资凭证投资。:取消")) {
+	case 1:
+		mes .@npc_name$;
+		mes "你决定使用 Zeny 投资。";
+		mes "最低投资单位为^4d4dff10,000 Zeny^000000。";
+		mes "最多可投资50单位，即^4d4dff500,000 Zeny^000000。";
+		next;
+		switch(select("1单位 10,000 Zeny：10单位 100,000 Zeny：50单位 500,000 Zeny：其他数量：取消")) {
+		case 1:
+			set .@units,1;
+			break;
+		case 2:
+			set .@units,10;
+			break;
+		case 3:
+			set .@units,50;
+			break;
+		case 4:
+			mes .@npc_name$;
+			mes "请输入想要投资的数量。";
+			mes "请选择1到200之间的数量。";
+			mes "输入0取消。";
+			next;
+			input .@units;
+			if (.@units < 0 || .@units > 200) {
+				mes .@npc_name$;
+				mes "你超过了单次投资上限。";
+				mes "请重试。";
+				close;
+			} else if (.@units == 0) {
+				mes .@npc_name$;
+				mes "已取消。";
+				close;
+			} else
+				break;
+		case 5:
+			mes .@npc_name$;
+			mes "已取消。";
+			close;
+		}
+		set .@zeny, .@units * 10000;
+		if (Zeny < .@zeny) {
+			mes .@npc_name$;
+			mes "你的钱不够。";
+			close;
+		}
+		mes .@npc_name$;
+		mes "你已投资"+callfunc("F_InsertPlural",.@units,"unit")+"，共"+callfunc("F_InsertComma",.@zeny)+" Zeny"+getarg(2,"")+"。";
+		mes "礼物不多，但请收下。可以在绵绵岛兑换物品。";
+		set Zeny, Zeny-.@zeny;
+		setd getarg(0), getd(getarg(0)) + .@units;
+		getitem 6488,.@units; //Thanks_Invest_Ticket
+		close;
+	case 2:
+		mes .@npc_name$;
+		mes "哇，你带来了投资凭证。";
+		mes "要提交多少张凭证？";
+		next;
+		switch(select("1张投资凭证：5张投资凭证：其他数量：取消")) {
+		case 1:
+			set .@tickets,1;
+			break;
+		case 2:
+			set .@tickets,5;
+			break;
+		case 3:
+			mes .@npc_name$;
+			mes "请输入想提交的投资凭证数量。";
+			mes "请选择1到20之间的数量。";
+			mes "输入0取消。";
+			next;
+			input .@tickets;
+			if (.@tickets < 0 || .@tickets > 20) {
+				mes .@npc_name$;
+				mes "你超过了单次投资上限。";
+				mes "请重试。";
+				close;
+			} else if (.@tickets == 0) {
+				mes .@npc_name$;
+				mes "已取消。";
+				close;
+			} else
+				break;
+		case 4:
+			mes .@npc_name$;
+			mes "已取消。";
+			close;
+		}
+		if (countitem(6489) < .@tickets) {
+			mes .@npc_name$;
+			mes "你的投资凭证似乎少于想提交的数量。";
+			close;
+		}
+		set .@units, .@tickets * 10;
+		mes .@npc_name$;
+		mes .@tickets+"张投资凭证相当于"+.@units+"单位投资（"+((.@units < 100)?.@units:insertchar(""+.@units,",",1))+"0,000z）"+getarg(2,"")+"。";
+		mes "礼物不多，但请收下。可以在绵绵岛兑换物品。";
+		delitem 6489,.@tickets; //Cats_Invest_Certif
+		setd getarg(0), getd(getarg(0)) + .@units;
+		getitem 6488,.@units; //Thanks_Invest_Ticket
+		close;
+	case 3:
+		mes .@npc_name$;
+		mes "已取消。";
+		close;
+	}
+}
+
+// Script Core :: agit_fund
+//============================================================
+prt_gld,1,1,0	script	#fund_master	844,{
+	end;
+OnInit:
+	set .@invest_status, callfunc("F_Invest_Status");
+	if (.@invest_status == 1) {
+		set $2011_agit_invest,1;
+		end;
+	}
+	if ((.@invest_status == 2 && $2011_agit_invest == 1) ||
+	    (.@invest_status == 3 && ($2011_agit_invest == 1 || $2011_agit_invest == 2))) {
+		donpcevent "#fund_master::OnCalculate";
+		end;
+	}
+	end;
+OnCalculate_Election:
+	set .@force_vote,1;
+OnCalculate:
+	setarray .@cas$[0],"prt","pay","gef","alde";
+	for(set .@i,0; .@i<4; set .@i,.@i+1) {
+		// All funds per realm are summed.
+		set .@funds[.@i], getd("$fund_"+.@cas$[.@i]+"01")+getd("$fund_"+.@cas$[.@i]+"02")+getd("$fund_"+.@cas$[.@i]+"03")+getd("$fund_"+.@cas$[.@i]+"04")+getd("$fund_"+.@cas$[.@i]+"05")+getd("$fund_"+.@cas$[.@i]+"_extra");
+
+		// 70,000,000z opens Hall of Abyss and F2.
+		if (.@funds[.@i] >= 7000) {
+			setd "$"+.@cas$[.@i]+"_invest_result",3;
+			set .@total_7000,1;
+		}
+		// 20,000,000z opens F2 and a chance for Hall of Abyss.
+		else if (.@funds[.@i] >= 2000) {
+			setd "$"+.@cas$[.@i]+"_invest_result",2;
+			set .@total_2000,1;
+		}
+		// Anything below that opens nothing.
+		else
+			setd "$"+.@cas$[.@i]+"_invest_result",1;
+	}
+	// No further actions if 20,000,000z isn't reached.
+	if (!.@total_2000)
+		end;
+	// No further actions if any realm hits 70,000,000z.
+	if (.@total_7000) {
+		set $2011_agit_invest,4;
+		end;
+	}
+	// Otherwise, highest investment above 20,000,000z opens Hall of Abyss.
+	set .@max, .@funds[0];
+	for(set .@i,1; .@i<4; set .@i,.@i+1) {
+		if (.@funds[.@i] > .@max) {
+			set .@max, .@funds[.@i];
+			set .@ele, .@i;
+			deletearray .@rand$[0], getarraysize(.@rand$);
+		} else if (.@funds[.@i] == .@max && .@funds[.@i] >= 2000) {
+			if (!getarraysize(.@rand$))
+				set .@rand$[0], .@cas$[.@ele];
+			set .@rand$[getarraysize(.@rand$)], .@cas$[.@i];
+		}
+	}
+	if (.@max < 2000)
+		end;
+	if (getarraysize(.@rand$)) {
+
+		// Tie: declare a random winner.
+		if (!.@force_vote) {
+			set .@i, rand(getarraysize(.@rand$));
+			setd "$"+.@rand$[.@i]+"_invest_result",3;
+			set $2011_agit_invest,4;
+			end;
+		}
+
+		// Tie: initiate a 30-minute election.
+		set .@str$, implode(.@rand$,"|");
+		for(set .@i,0; .@i<4; set .@i,.@i+1) {
+			if (compare(.@str$,.@cas$[.@i]))
+				set .@election, .@election | (1<<.@i);
+		}
+		switch(.@election) {
+			case 3:  set $2011_agit_invest,11; break; //Prontera|Payon
+			case 9:  set $2011_agit_invest,12; break; //Prontera|Al De Baran
+			case 5:  set $2011_agit_invest,13; break; //Prontera|Geffen
+			case 10: set $2011_agit_invest,14; break; //Al De Baran|Payon
+			case 6:  set $2011_agit_invest,15; break; //Geffen|Payon
+			case 12: set $2011_agit_invest,16; break; //Al De Baran|Geffen
+			case 11: set $2011_agit_invest,17; break; //Prontera|Payon|Al De Baran
+			case 7:  set $2011_agit_invest,18; break; //Prontera|Payon|Geffen
+			case 13: set $2011_agit_invest,19; break; //Prontera|Al De Baran|Geffen
+			case 14: set $2011_agit_invest,20; break; //Al De Baran|Payon|Geffen
+			case 15: set $2011_agit_invest,21; break; //Prontera|Payon|Al De Baran|Geffen
+		}
+		if ($2011_agit_invest >= 11)
+			donpcevent "Revoting Manager#Invest1::OnStart";
+		end;
+	} else {
+		setd "$"+.@cas$[.@ele]+"_invest_result",3;
+		set $2011_agit_invest,4;
+		end;
+	}
+	end;
+OnInvest_start:
+	announce "现在开始投资，以连接攻城区域女武神领域、青林湖泊、露依娜和布里托尼亚的‘深渊之门’。",bc_all,0xFF0000; //FW_NORMAL 10
+	set $fund_prt01,0;
+	set $fund_prt02,0;
+	set $fund_prt03,0;
+	set $fund_prt04,0;
+	set $fund_prt05,0;
+	set $fund_pay01,0;
+	set $fund_pay02,0;
+	set $fund_pay03,0;
+	set $fund_pay04,0;
+	set $fund_pay05,0;
+	set $fund_gef01,0;
+	set $fund_gef02,0;
+	set $fund_gef03,0;
+	set $fund_gef04,0;
+	set $fund_gef05,0;
+	set $fund_alde01,0;
+	set $fund_alde02,0;
+	set $fund_alde03,0;
+	set $fund_alde04,0;
+	set $fund_alde05,0;
+	donpcevent "Investment_total#fund00::OnEnable";
+	end;
+OnInvest_stop:
+	announce "连接‘深渊之门’的投资已完成。",bc_all,0xFF0000; //FW_NORMAL 10
+	donpcevent "Investment_total#fund00::OnReset";
+	donpcevent "#fund_master::OnCalculate_Election";
+	end;
+OnResult:
+	announce "‘深渊之门’投资结果已经公布，可在各攻城区域的投资状态公告板查看。",bc_all,0xFF0000; //FW_NORMAL 10
+	if ($2011_agit_invest == 4) {
+		set $fund_prt01,0;
+		set $fund_prt02,0;
+		set $fund_prt03,0;
+		set $fund_prt04,0;
+		set $fund_prt05,0;
+		set $fund_prt_extra,0;
+		set $fund_pay01,0;
+		set $fund_pay02,0;
+		set $fund_pay03,0;
+		set $fund_pay04,0;
+		set $fund_pay05,0;
+		set $fund_pay_extra,0;
+		set $fund_gef01,0;
+		set $fund_gef02,0;
+		set $fund_gef03,0;
+		set $fund_gef04,0;
+		set $fund_gef05,0;
+		set $fund_gef_extra,0;
+		set $fund_alde01,0;
+		set $fund_alde02,0;
+		set $fund_alde03,0;
+		set $fund_alde04,0;
+		set $fund_alde05,0;
+		set $fund_alde_extra,0;
+	} else if ($2011_agit_invest == 2)
+		donpcevent "#fund_master::OnCalculate";
+	end;
+OnReset:
+	set $2011_agit_invest,0;
+	donpcevent "Investment_total#fund00::OnReset";
+	end;
+}
+
+prt_gld,2,2,0	script	Investment_total#fund00	844,{
+	callfunc "F_GM_NPC";
+	mes "这里运行不正常吗？";
+	next;
+	if (callfunc("F_GM_NPC",1854,0) == 1) {
+		mes "如果投资计时器停止了，请调整计时器。";
+		next;
+		switch(select("开启计时器：取消")) {
+		case 1:
+			donpcevent "Investment_total#fund00::OnTimerReset";
+			mes "你已开启计时器。";
+			close;
+		case 2:
+			mes "已取消。";
+			close;
+		}
+	} else {
+		mes "现在不需要调整任何东西。";
+		close;
+	}
+
+OnInit:
+	if (callfunc("F_Invest_Status") == 1) {
+		initnpctimer;
+		donpcevent "Investment_total#fund00::OnVarInit";
+	} else {
+		set $agit_result_timer,0;
+		set $agit_result_notice,0;
+	}
+	end;
+OnVarInit:
+	setarray .@cas$[0],"prt","pay","gef","alde";
+	for(set .@i,0; .@i<4; set .@i,.@i+1) {
+		setd "$@vfund_"+.@cas$[.@i]+"01", getd("$fund_"+.@cas$[.@i]+"01");
+		setd "$@vfund_"+.@cas$[.@i]+"02", getd("$fund_"+.@cas$[.@i]+"02");
+		setd "$@vfund_"+.@cas$[.@i]+"03", getd("$fund_"+.@cas$[.@i]+"03");
+		setd "$@vfund_"+.@cas$[.@i]+"04", getd("$fund_"+.@cas$[.@i]+"04");
+		setd "$@vfund_"+.@cas$[.@i]+"05", getd("$fund_"+.@cas$[.@i]+"05");
+		setd "$@vfund_"+.@cas$[.@i]+"_extra", getd("$fund_"+.@cas$[.@i]+"_extra");
+	}
+	end;
+OnEnable:
+	set $agit_result_timer,0;
+	set $agit_result_notice,0;
+	initnpctimer;
+	end;
+OnReset:
+	set $agit_result_timer,0;
+	set $agit_result_notice,0;
+	stopnpctimer;
+	end;
+OnTimerReset:
+	initnpctimer;
+	end;
+OnTimer3600000:
+	if (callfunc("F_Invest_Status") == 1) {
+		if ($agit_result_timer < 59) {
+			set $agit_result_timer, $agit_result_timer+1;
+
+			// Trigger on multiples of 5 up to 55, and 58.
+			if ($agit_result_timer % 10 == 5 || $agit_result_timer % 10 == 0 || $agit_result_timer == 58) {
+				set $agit_result_notice, $agit_result_notice+1;
+				donpcevent "Investment_total#fund00::OnVarInit";
+				announce "第"+$agit_result_notice+"号中期报告现已公布，可在各攻城区域的投资状态公告板查看。",bc_all,0xFF0000; //FW_NORMAL 10
+			}
+
+			donpcevent "Investment_total#fund00::OnTimerReset";
+		} else
+			stopnpctimer;
+		end;
+	} else {
+		donpcevent "Investment_total#fund00::OnReset";
+		end;
+	}
+}
+
+prt_gld,164,98,3	script	Revoting Manager#Invest1	421,{
+	mes "[重新投票管理员]";
+	mes "目前不接受追加投票。";
+	mes "请等待结果公布。";
+	close;
+OnInit:
+	set .@invest_status, callfunc("F_Invest_Status");
+	if (.@invest_status == 2 && $2011_agit_invest >= 11 && $agit_revoting_timer < 30) {
+		donpcevent "Revoting Manager#Invest2::OnEnable";
+		initnpctimer;
+	} else if (.@invest_status == 3 && $2011_agit_invest >= 11)
+		donpcevent "Revoting Manager#Invest1::OnCalculate";
+	donpcevent "Revoting Manager#Invest1::OnDisable";
+	end;
+OnCalculate:
+	switch($2011_agit_invest) {
+		case 11: setarray.@cas$[0],"prt","pay"; break;
+		case 12: setarray.@cas$[0],"prt","alde"; break;
+		case 13: setarray.@cas$[0],"prt","gef"; break;
+		case 14: setarray.@cas$[0],"alde","pay"; break;
+		case 15: setarray.@cas$[0],"gef","pay"; break;
+		case 16: setarray.@cas$[0],"alde","gef"; break;
+		case 17: setarray.@cas$[0],"prt","pay","alde"; break;
+		case 18: setarray.@cas$[0],"prt","pay","gef"; break;
+		case 19: setarray.@cas$[0],"prt","alde","gef"; break;
+		case 20: setarray.@cas$[0],"alde","pay","gef"; break;
+		case 21: setarray.@cas$[0],"prt","pay","alde","gef"; break;
+		default: end;
+	}
+	set .@max, getd("$fund_"+.@cas$[0]+"_extra");
+	for(set .@i,1; .@i<getarraysize(.@cas$); set .@i,.@i+1) {
+		set .@funds, getd("$fund_"+.@cas$[.@i]+"_extra");
+		if (.@funds > .@max) {

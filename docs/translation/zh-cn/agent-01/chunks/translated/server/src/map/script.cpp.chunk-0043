@@ -1,0 +1,500 @@
+			color = QMARK_NONE;
+		}
+	}
+
+	struct script_code *script = nullptr;
+
+	if (script_hasdata(st, 4)) {
+		const char *str = script_getstr(st, 4);
+
+		if (str) {
+			std::string condition(str);
+
+			if (condition.find( "achievement_condition" ) == std::string::npos)
+				condition = "achievement_condition( " + condition + " );";
+
+			script = parse_script(condition.c_str(), "questinfoparsing", 0, SCRIPT_IGNORE_EXTERNAL_BRACKETS);
+			if (!script) {
+				st->state = END;
+				return SCRIPT_CMD_FAILURE;
+			}
+		}
+	}
+
+	std::shared_ptr<s_questinfo> qi = std::make_shared<s_questinfo>();
+
+	qi->icon = static_cast<e_questinfo_types>(icon);
+	qi->color = static_cast<e_questinfo_markcolor>(color);
+	qi->condition = script;
+
+	nd->qi_data.push_back(qi);
+
+	struct map_data *mapdata = map_getmapdata(nd->m);
+
+	if (mapdata && !util::vector_exists(mapdata->qi_npc, nd->id))
+		mapdata->qi_npc.push_back(nd->id);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * questinfo_refresh {<char_id>};
+ **/
+BUILDIN_FUNC(questinfo_refresh)
+{
+	map_session_data *sd;
+
+	if (!script_charid2sd(2, sd))
+		return SCRIPT_CMD_FAILURE;
+
+	pc_show_questinfo(sd); 
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * setquest <ID>{,<char_id>};
+ **/
+BUILDIN_FUNC(setquest)
+{
+	map_session_data *sd;
+	int32 quest_id;
+
+	quest_id = script_getnum(st, 2);
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( quest_add(sd, quest_id)  == -1 ){
+		script_reportsrc(st);
+		script_reportfunc(st);
+	}
+
+	//20120410 or 20090218 ? no reason that shouldn't work for 2009
+	pc_show_questinfo(sd); 
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * erasequest <ID>{,<char_id>};
+ **/
+BUILDIN_FUNC(erasequest)
+{
+	map_session_data *sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( quest_delete(sd, script_getnum(st, 2))  == -1 ){
+		script_reportsrc(st);
+		script_reportfunc(st);
+	}
+	pc_show_questinfo(sd); 
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * completequest <ID>{,<char_id>};
+ **/
+BUILDIN_FUNC(completequest)
+{
+	map_session_data *sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	quest_update_status(sd, script_getnum(st, 2), Q_COMPLETE);
+	//20120410 or 20090218
+	pc_show_questinfo(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * changequest <ID>,<ID2>{,<char_id>};
+ **/
+BUILDIN_FUNC(changequest)
+{
+	map_session_data *sd;
+	
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	if( quest_change(sd, script_getnum(st, 2),script_getnum(st, 3)) == -1 ){
+		script_reportsrc(st);
+		script_reportfunc(st);
+	}
+
+	//20120410 or 20090218
+	pc_show_questinfo(sd);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * checkquest(<ID>{,PLAYTIME|HUNTING{,<char_id>}})
+ **/
+BUILDIN_FUNC(checkquest)
+{
+	map_session_data *sd;
+	e_quest_check_type type = HAVEQUEST;
+
+	if( script_hasdata(st, 3) )
+		type = (e_quest_check_type)script_getnum(st, 3);
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	script_pushint(st, quest_check(sd, script_getnum(st, 2), type));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * isbegin_quest(<ID>{,<char_id>})
+ **/
+BUILDIN_FUNC(isbegin_quest)
+{
+	map_session_data *sd;
+
+	if (!script_charid2sd(3,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	int32 i = quest_check(sd, script_getnum(st, 2), HAVEQUEST);
+	script_pushint(st, i + (i < 1));
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * showevent <icon>{,<mark color>{,<char_id>}}
+ **/
+BUILDIN_FUNC(showevent)
+{
+	TBL_PC *sd;
+
+	if (!script_charid2sd(4,sd))
+		return SCRIPT_CMD_FAILURE;
+
+	npc_data *nd = map_id2nd(st->oid);
+
+	if (!nd)
+		return SCRIPT_CMD_SUCCESS;
+
+	int32 color = QMARK_NONE;
+	int32 icon = script_getnum(st, 2);
+
+	if (script_hasdata(st, 3)) {
+		color = script_getnum(st, 3);
+		if (color < QMARK_NONE || color >= QMARK_MAX) {
+			ShowWarning("buildin_showevent: Invalid color '%d', defaulting to QMARK_NONE.\n",color);
+			script_reportfunc(st);
+			color = QMARK_NONE;
+		}
+	}
+
+#if PACKETVER >= 20120410
+	if (icon < 0 || (icon > 8 && icon != QTYPE_NONE) || icon == 7)
+		icon = QTYPE_NONE; // Default to nothing if icon id is invalid.
+#else
+	if (icon < 0 || icon > 7)
+		icon = 0;
+	else
+		icon = icon + 1;
+#endif
+
+	clif_quest_show_event(sd, nd, static_cast<e_questinfo_types>(icon), static_cast<e_questinfo_markcolor>(color));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * BattleGround System
+ *------------------------------------------*/
+BUILDIN_FUNC(waitingroom2bg)
+{
+	npc_data *nd;
+	chat_data *cd;
+	const char *map_name;
+	int32 mapindex = 0, bg_id;
+	unsigned char i,c=0;
+	struct s_battleground_team team;
+
+	if( script_hasdata(st,7) )
+		nd = npc_name2id(script_getstr(st,7));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if( nd == nullptr || (cd = (chat_data *)map_id2bl(nd->chat_id)) == nullptr )
+	{
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	map_name = script_getstr(st,2);
+	if (strcmp(map_name, "-") != 0 && (mapindex = mapindex_name2id(map_name)) == 0)
+	{ // Invalid Map
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	team.warp_x = script_getnum(st,3);
+	team.warp_y = script_getnum(st,4);
+	if (script_hasdata(st,5)) {
+		team.quit_event = script_getstr(st,5); // Logout Event
+		check_event(st, team.quit_event.c_str());
+	} else
+		team.quit_event = "";
+	if (script_hasdata(st,6)) {
+		team.death_event = script_getstr(st,6); // Die Event
+		check_event(st, team.death_event.c_str());
+	} else
+		team.death_event = "";
+
+	if( (bg_id = bg_create(mapindex, &team)) == 0 )
+	{ // Creation failed
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	for (i = 0; i < cd->users; i++) { // Only add those who are in the chat room
+		map_session_data *sd;
+		if( (sd = cd->usersd[i]) != nullptr && bg_team_join(bg_id, sd, false) ){
+			mapreg_setreg(reference_uid(add_str("$@arenamembers"), c), sd->id);
+			++c;
+		}
+	}
+
+	mapreg_setreg(add_str("$@arenamembersnum"), c);
+	script_pushint(st,bg_id);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(waitingroom2bg_single)
+{
+	const char* map_name;
+	npc_data *nd;
+	chat_data *cd;
+	map_session_data *sd;
+	int32 x, y, mapindex, bg_id = script_getnum(st,2);
+	std::shared_ptr<s_battleground_data> bg = util::umap_find(bg_team_db, bg_id);
+
+	if (!bg) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	if (script_hasdata(st, 3)) {
+		map_name = script_getstr(st, 3);
+		if ((mapindex = mapindex_name2id(map_name)) == 0) {
+			script_pushint(st, false);
+			return SCRIPT_CMD_SUCCESS; // Invalid Map
+		}
+		x = script_getnum(st, 4);
+		y = script_getnum(st, 5);
+	}
+	else {
+		mapindex = bg->cemetery.map;
+		x = bg->cemetery.x;
+		y = bg->cemetery.y;
+	}
+	if (!map_getmapflag(map_mapindex2mapid(mapindex), MF_BATTLEGROUND)) {
+		ShowWarning("buildin_waitingroom2bg_single: Map %s requires the mapflag MF_BATTLEGROUND.\n", mapindex_id2name(mapindex));
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	nd = npc_name2id(script_getstr(st,6));
+
+	if( nd == nullptr || (cd = (chat_data *)map_id2bl(nd->chat_id)) == nullptr || cd->users <= 0 )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( (sd = cd->usersd[0]) == nullptr )
+		return SCRIPT_CMD_SUCCESS;
+
+	if( bg_team_join(bg_id, sd, false) && pc_setpos(sd, mapindex, x, y, CLR_TELEPORT) == SETPOS_OK)
+	{
+		script_pushint(st, true);
+	}
+	else
+		script_pushint(st, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/// Creates an instance of battleground battle group.
+/// *bg_create("<map name>",<x>,<y>{,"<On Quit Event>","<On Death Event>"});
+/// @author [secretdataz]
+BUILDIN_FUNC(bg_create) {
+	const char *map_name;
+	int32 mapindex = 0;
+	struct s_battleground_team team;
+
+	map_name = script_getstr(st, 2);
+	if (strcmp(map_name, "-") != 0 && (mapindex = mapindex_name2id(map_name)) == 0)
+	{ // Invalid Map
+		script_pushint(st, 0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	team.warp_x = script_getnum(st,3);
+	team.warp_y = script_getnum(st,4);
+	if (script_hasdata(st,5)) {
+		team.quit_event = script_getstr(st,5); // Logout Event
+		check_event(st, team.quit_event.c_str());
+	} else
+		team.quit_event = "";
+	if (script_hasdata(st,6)) {
+		team.death_event = script_getstr(st,6); // Die Event
+		check_event(st, team.death_event.c_str());
+	} else
+		team.death_event = "";
+
+	script_pushint(st, bg_create(mapindex, &team));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Adds attached player or <char id> (if specified) to an existing 
+/// battleground group and warps it to the specified coordinates on
+/// the given map.
+/// bg_join(<battle group>,{"<map name>",<x>,<y>{,<char id>}});
+/// @author [secretdataz]
+BUILDIN_FUNC(bg_join) {
+	const char* map_name;
+	map_session_data *sd;
+	int32 x, y, mapindex, bg_id = script_getnum(st, 2);
+	std::shared_ptr<s_battleground_data> bg = util::umap_find(bg_team_db, bg_id);
+
+	if (!bg) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	if (script_hasdata(st, 3)) {
+		map_name = script_getstr(st, 3);
+		if ((mapindex = mapindex_name2id(map_name)) == 0) {
+			script_pushint(st, false);
+			return SCRIPT_CMD_SUCCESS; // Invalid Map
+		}
+		x = script_getnum(st, 4);
+		y = script_getnum(st, 5);
+	} else {
+		mapindex = bg->cemetery.map;
+		x = bg->cemetery.x;
+		y = bg->cemetery.y;
+	}
+
+	if (!script_charid2sd(6, sd)) {
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if (!map_getmapflag(map_mapindex2mapid(mapindex), MF_BATTLEGROUND)) {
+		ShowWarning("buildin_bg_join: Map %s requires the mapflag MF_BATTLEGROUND.\n", mapindex_id2name(mapindex));
+		script_pushint(st, false);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (bg_team_join(bg_id, sd, false) && pc_setpos(sd, mapindex, x, y, CLR_TELEPORT) == SETPOS_OK)
+	{
+		script_pushint(st, true);
+	}
+	else
+		script_pushint(st, false);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_team_setxy)
+{
+	int32 bg_id = script_getnum(st,2);
+	std::shared_ptr<s_battleground_data> bg = util::umap_find(bg_team_db, bg_id);
+
+	if (bg) {
+		bg->cemetery.x = script_getnum(st, 3);
+		bg->cemetery.y = script_getnum(st, 4);
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_warp)
+{
+	int32 x, y, mapindex, bg_id;
+	const char* map_name;
+
+	bg_id = script_getnum(st,2);
+	map_name = script_getstr(st,3);
+	if( (mapindex = mapindex_name2id(map_name)) == 0 )
+		return SCRIPT_CMD_SUCCESS; // Invalid Map
+	x = script_getnum(st,4);
+	y = script_getnum(st,5);
+	bg_team_warp(bg_id, mapindex, x, y);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_monster)
+{
+	int32 class_ = 0, x = 0, y = 0, bg_id = 0;
+	const char *str,*mapname, *evt="";
+
+	bg_id  = script_getnum(st,2);
+	mapname    = script_getstr(st,3);
+	x      = script_getnum(st,4);
+	y      = script_getnum(st,5);
+	str    = script_getstr(st,6);
+	class_ = script_getnum(st,7);
+	if( script_hasdata(st,8) ) evt = script_getstr(st,8);
+	check_event(st, evt);
+	script_pushint(st, mob_spawn_bg(mapname,x,y,str,class_,evt,bg_id));
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_monster_set_team)
+{
+	mob_data *md;
+	block_list *mbl;
+	int32 id = script_getnum(st,2),
+		bg_id = script_getnum(st,3);
+
+	if( id == 0 || (mbl = map_id2bl(id)) == nullptr || mbl->type != BL_MOB )
+		return SCRIPT_CMD_SUCCESS;
+	md = (TBL_MOB *)mbl;
+	md->bg_id = bg_id;
+
+	unit_stop_attack( md );
+	unit_stop_walking( md, USW_NONE );
+	md->target_id = md->attacked_id = 0;
+	clif_name_area(md);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_leave)
+{
+	map_session_data *sd = nullptr;
+	bool deserter = false;
+
+	if( !script_charid2sd(2,sd) || !sd->bg_id )
+		return SCRIPT_CMD_SUCCESS;
+
+	if (!strcmp(script_getfuncname(st), "bg_desert"))
+		deserter = true;
+
+	bg_team_leave(sd, false, deserter);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_destroy)
+{
+	int32 bg_id = script_getnum(st,2);
+	bg_team_delete(bg_id);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(bg_getareausers)
+{
+	const char *str = script_getstr(st, 3);
+	int16 m, x0, y0, x1, y1;
+	int32 bg_id = script_getnum(st, 2), c = 0;
+	std::shared_ptr<s_battleground_data> bg = util::umap_find(bg_team_db, bg_id);
+
+	if (!bg || (m = map_mapname2mapid(str)) < 0) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}

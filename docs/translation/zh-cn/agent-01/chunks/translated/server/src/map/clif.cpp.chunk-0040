@@ -1,0 +1,500 @@
+///     0 = no "next" label
+///     1 = "next" label to retrieve more results
+void clif_search_store_info_ack( const map_session_data& sd ){
+#if PACKETVER_MAIN_NUM >= 20100817 || PACKETVER_RE_NUM >= 20100706 || defined(PACKETVER_ZERO)
+	if (!battle_config.feature_search_stores)
+		return;
+
+	uint32 start = sd.searchstore.pages * SEARCHSTORE_RESULTS_PER_PAGE ;
+	uint32 end = umin( static_cast<uint32>( sd.searchstore.items.size() ), start + SEARCHSTORE_RESULTS_PER_PAGE );
+
+	PACKET_ZC_SEARCH_STORE_INFO_ACK* p = reinterpret_cast<PACKET_ZC_SEARCH_STORE_INFO_ACK*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_SEARCH_STORE_INFO_ACK;
+	p->packetLength = sizeof( *p );
+	p->firstPage = !sd.searchstore.pages;
+	p->nextPage = searchstore_querynext( sd );
+	p->usesCount = static_cast<decltype(p->usesCount)>( std::min<decltype(sd.searchstore.uses)>( sd.searchstore.uses, std::numeric_limits<decltype(p->usesCount)>::max() ) );
+
+	for( int32 i = 0, count = 0; i < end - start; i++ ){
+		std::shared_ptr<s_search_store_info_item> ssitem = sd.searchstore.items[start + i];
+
+		if( ssitem == nullptr ){
+			continue;
+		}
+
+
+		PACKET_ZC_SEARCH_STORE_INFO_ACK_sub& entry = p->items[count];
+
+		entry.storeId = ssitem->store_id;
+		entry.AID = ssitem->account_id;
+		safestrncpy( entry.shopName, ssitem->store_name, MESSAGE_SIZE );
+		entry.itemId = client_nameid( ssitem->nameid );
+		entry.itemType = itemtype( ssitem->nameid );
+		entry.price = ssitem->price;
+		entry.amount = ssitem->amount;
+		entry.refine = ssitem->refine;
+
+		// make-up an item for clif_addcards
+		struct item it = {};
+
+		for( int32 j = 0; j < MAX_SLOTS; j++ ){
+			it.card[j] = ssitem->card[j];
+		}
+		it.nameid = ssitem->nameid;
+		it.amount = ssitem->amount;
+
+		clif_addcards( &entry.slot, &it );
+#if PACKETVER >= 20150226
+		clif_add_random_options( entry.option_data, it );
+#if PACKETVER_MAIN_NUM >= 20200916 || PACKETVER_RE_NUM >= 20200724
+		entry.grade = ssitem->enchantgrade;
+#endif
+#endif
+
+		p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( entry ) );
+		count++;
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+#endif
+}
+
+
+/// Notification of failure when searching for stores.
+/// 0837 <reason>.B (ZC_SEARCH_STORE_INFO_FAILED)
+void clif_search_store_info_failed(const map_session_data& sd, e_searchstore_failure reason){
+#if PACKETVER_MAIN_NUM >= 20100601 || PACKETVER_RE_NUM >= 20100601 || defined(PACKETVER_ZERO)
+	if (!battle_config.feature_search_stores)
+		return;
+
+	PACKET_ZC_SEARCH_STORE_INFO_FAILED packet{};
+
+	packet.packetType = HEADER_ZC_SEARCH_STORE_INFO_FAILED;
+	packet.reason = static_cast<decltype(packet.reason)>(reason);
+
+	clif_send(&packet, sizeof(packet), &sd, SELF);
+#endif
+}
+
+
+/// Request to display next page of results.
+/// 0838  (CZ_SEARCH_STORE_INFO_NEXT_PAGE)
+static void clif_parse_SearchStoreInfoNextPage(int32 fd, map_session_data* sd){
+	if (!battle_config.feature_search_stores)
+		return;
+
+	searchstore_next(*sd);
+}
+
+
+/// Opens the search store window.
+/// 083a <effect>.W <remaining uses>.B (ZC_OPEN_SEARCH_STORE_INFO)
+void clif_open_search_store_info( const map_session_data& sd ){
+#if PACKETVER_MAIN_NUM >= 20100701 || PACKETVER_RE_NUM >= 20100701 || defined(PACKETVER_ZERO)
+	if (!battle_config.feature_search_stores)
+		return;
+
+	PACKET_ZC_OPEN_SEARCH_STORE_INFO packet{};
+
+	packet.packetType = HEADER_ZC_OPEN_SEARCH_STORE_INFO;
+	packet.effect = static_cast<decltype(packet.effect)>(sd.searchstore.effect);
+#if PACKETVER_MAIN_NUM >= 20100701 || PACKETVER_RE_NUM >= 20100701 || defined(PACKETVER_ZERO)
+	packet.remainingUses = static_cast<decltype(packet.remainingUses)>( std::min<decltype(sd.searchstore.uses)>( sd.searchstore.uses, std::numeric_limits<decltype(packet.remainingUses)>::max() ) );
+#endif
+
+	clif_send(&packet, sizeof(packet), &sd, SELF);
+#endif
+}
+
+
+/// Request to close the store search window.
+/// 083b (CZ_CLOSE_SEARCH_STORE_INFO)
+static void clif_parse_CloseSearchStoreInfo(int32 fd, map_session_data* sd){
+	if (!battle_config.feature_search_stores)
+		return;
+
+	searchstore_close(*sd);
+}
+
+
+/// Request to invoke catalog effect on a store from search results.
+/// 083c <account id>.L <store id>.L <nameid>.W (CZ_SSILIST_ITEM_CLICK)
+static void clif_parse_SearchStoreInfoListItemClick( int32 fd, map_session_data* sd ){
+	if (!battle_config.feature_search_stores)
+		return;
+
+	const PACKET_CZ_SSILIST_ITEM_CLICK* p = reinterpret_cast<PACKET_CZ_SSILIST_ITEM_CLICK*>( RFIFOP( fd, 0 ) );
+
+	searchstore_click( *sd, p->AID, p->storeId, p->itemId );
+}
+
+
+/// Notification of the store position on current map.
+/// 083d <xPos>.W <yPos>.W (ZC_SSILIST_ITEM_CLICK_ACK)
+void clif_search_store_info_click_ack(map_session_data& sd, int16 x, int16 y){
+#if PACKETVER_MAIN_NUM >= 20100608 || PACKETVER_RE_NUM >= 20100608 || defined(PACKETVER_ZERO)
+	if (!battle_config.feature_search_stores)
+		return;
+
+	PACKET_ZC_SSILIST_ITEM_CLICK_ACK packet{};
+
+	packet.packetType = HEADER_ZC_SSILIST_ITEM_CLICK_ACK;
+	packet.x = x;
+	packet.y = y;
+
+	clif_send(&packet, sizeof(packet), &sd, SELF);
+#endif
+}
+
+
+/// Parse function for packet debugging.
+void clif_parse_debug(int32 fd,map_session_data *sd)
+{
+	int16 packet_len;
+
+	// clif_parse ensures, that there is at least 2 bytes of data
+	uint16 cmd = RFIFOW(fd,0);
+
+	if( sd ) {
+		packet_len = packet_db[cmd].len;
+
+		if( packet_len == 0 )
+		{// unknown
+			packet_len = static_cast<decltype(packet_len)>( RFIFOREST(fd) );
+		}
+		else if( packet_len == -1 )
+		{// variable length
+			packet_len = RFIFOW(fd,2);  // clif_parse ensures, that this amount of data is already received
+		}
+		ShowDebug("Packet debug of 0x%04X (length %d), %s session #%d, %d/%d (AID/CID)\n", cmd, packet_len, sd->state.active ? "authed" : "unauthed", fd, sd->status.account_id, sd->status.char_id);
+	}
+	else
+	{
+		packet_len = static_cast<decltype(packet_len)>( RFIFOREST(fd) );
+		ShowDebug("Packet debug of 0x%04X (length %d), session #%d\n", cmd, packet_len, fd);
+	}
+
+	ShowDump(RFIFOP(fd,0), packet_len);
+}
+/*==========================================
+ * Server tells client to display a window similar to Magnifier (item) one
+ * Server populates the window with available elemental converter options according to player's inventory
+ *------------------------------------------*/
+void clif_elementalconverter_list( map_session_data& sd ){
+	PACKET_ZC_MAKINGARROW_LIST* p = reinterpret_cast<PACKET_ZC_MAKINGARROW_LIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_MAKINGARROW_LIST;
+	p->packetLength = sizeof( *p );
+
+	int32 count = 0;
+	for( int32 i = 0; i < MAX_SKILL_PRODUCE_DB; i++ ){
+		if( skill_can_produce_mix( &sd, skill_produce_db[i].nameid, 23, 1 ) ){
+			p->items[count].itemId = client_nameid( skill_produce_db[i].nameid );
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+			count++;
+		}
+	}
+
+	clif_send( p, p->packetLength, &sd, SELF );
+
+	if( count > 0 ){
+		sd.menuskill_id = SA_CREATECON;
+		sd.menuskill_val = count;
+	}
+}
+
+/**
+ * Rune Knight
+ **/
+void clif_millenniumshield( const block_list& bl, int16 shields ){
+#if PACKETVER >= 20081126
+	PACKET_ZC_MILLENNIUMSHIELD packet{};
+
+	packet.packetType = HEADER_ZC_MILLENNIUMSHIELD;
+	packet.aid = bl.id;
+	packet.num = shields;
+	packet.state = 0;
+
+	clif_send( &packet, sizeof( packet ), &bl, AREA );
+#endif
+}
+
+/**
+ * Mechanic
+ **/
+/*==========================================
+ * Magic Decoy Material List
+ *------------------------------------------*/
+void clif_magicdecoy_list( map_session_data& sd, uint16 skill_lv, int16 x, int16 y ){
+	PACKET_ZC_MAKINGARROW_LIST* p = reinterpret_cast<PACKET_ZC_MAKINGARROW_LIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_MAKINGARROW_LIST;
+	p->packetLength = sizeof( *p );
+
+	size_t count = 0;
+	for( size_t i = 0; i < MAX_INVENTORY; i++ ){
+		if( itemdb_group.item_exists( IG_ELEMENT, sd.inventory.u.items_inventory[i].nameid ) ){
+			p->items[count].itemId = client_nameid( sd.inventory.u.items_inventory[i].nameid );
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+			count++;
+		}
+	}
+
+	if( count > 0 ){
+		clif_send( p, p->packetLength, &sd, SELF );
+
+		sd.menuskill_id = NC_MAGICDECOY;
+		sd.menuskill_val = skill_lv;
+		sd.sc.comet_x = x;
+		sd.sc.comet_y = y;
+	}else{
+		clif_skill_fail( sd, NC_MAGICDECOY );
+	}
+}
+/*==========================================
+ * Guillotine Cross Poisons List
+ *------------------------------------------*/
+void clif_poison_list( map_session_data& sd, uint16 skill_lv ){
+	PACKET_ZC_MAKINGARROW_LIST* p = reinterpret_cast<PACKET_ZC_MAKINGARROW_LIST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_MAKINGARROW_LIST;
+	p->packetLength = sizeof( *p );
+
+	size_t count = 0;
+	for( size_t i = 0; i < MAX_INVENTORY; i++ ){
+		if( itemdb_group.item_exists( IG_POISON, sd.inventory.u.items_inventory[i].nameid ) ){
+			p->items[count].itemId = client_nameid( sd.inventory.u.items_inventory[i].nameid );
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->items[0] ) );
+			count++;
+		}
+	}
+
+	if( count > 0 ){
+		clif_send( p, p->packetLength, &sd, SELF );
+
+		sd.menuskill_id = GC_POISONINGWEAPON;
+		sd.menuskill_val = skill_lv;
+	}else{
+		clif_skill_fail( sd, GC_POISONINGWEAPON, USESKILL_FAIL_GUILLONTINE_POISON );
+	}
+}
+
+/// 0442 <Length>.W <why>.L { <Skill_Id>.W }* (ZC_SKILL_SELECT_REQUEST).
+void clif_autoshadowspell_list( map_session_data& sd ){
+#if PACKETVER >= 20081210
+	if( sd.menuskill_id == SC_AUTOSHADOWSPELL )
+		return;
+
+	PACKET_ZC_SKILL_SELECT_REQUEST* p = reinterpret_cast<PACKET_ZC_SKILL_SELECT_REQUEST*>( packet_buffer );
+
+	p->packetType = HEADER_ZC_SKILL_SELECT_REQUEST;
+	p->packetLength = sizeof( *p );
+	p->flag = 1; // enum PACKET_ZC_SKILL_SELECT_REQUEST::enumWHY::WHY_SC_AUTOSHADOWSPELL =  0x1
+	
+	size_t count = 0;
+	for( size_t i = 0; i < MAX_SKILL; i++ ){
+		if( sd.status.skill[i].flag == SKILL_FLAG_PLAGIARIZED && sd.status.skill[i].id > 0 &&
+			skill_get_inf2(sd.status.skill[i].id, INF2_ISAUTOSHADOWSPELL))
+		{
+			p->skillIds[count] = sd.status.skill[i].id;
+			p->packetLength += static_cast<decltype(p->packetLength)>( sizeof( p->skillIds[0] ) );
+			count++;
+		}
+	}
+
+	if( count > 0 ) {
+		clif_send( p, p->packetLength, &sd, SELF );
+
+		sd.menuskill_id = SC_AUTOSHADOWSPELL;
+		sd.menuskill_val = static_cast<decltype(sd.menuskill_val)>( count );
+	} else {
+		status_change_end( &sd, SC_STOP );
+		clif_skill_fail( sd, SC_AUTOSHADOWSPELL, USESKILL_FAIL_IMITATION_SKILL_NONE );
+	}
+#endif
+}
+
+/*===========================================
+ * Skill list for Four Elemental Analysis
+ * and Change Material skills.
+ * 07e3 <type>.L (ZC_ITEMLISTWIN_OPEN).
+ *------------------------------------------*/
+int32 clif_skill_itemlistwindow( map_session_data *sd, uint16 skill_id, uint16 skill_lv ) {
+#if PACKETVER >= 20090922
+	int32 fd = sd->fd;
+
+	nullpo_ret(sd);
+
+	sd->menuskill_id = skill_id; // To prevent hacking.
+	sd->menuskill_val = skill_lv;
+
+	if( skill_id == GN_CHANGEMATERIAL )
+		skill_lv = 0; // Changematerial
+
+	WFIFOHEAD(fd, packet_len(0x7e3));
+	WFIFOW(fd,0) = 0x7e3;
+	WFIFOL(fd,2) = skill_lv;
+	WFIFOSET(fd, packet_len(0x7e3));
+#endif
+	return 1;
+}
+
+/*==========================================
+ * Select a skill into a given list (used by SA_AUTOSPELL/SC_AUTOSHADOWSPELL)
+ * 0443 <type>.L <skill_id>.W (CZ_SKILL_SELECT_RESPONSE)
+ *------------------------------------------*/
+void clif_parse_SkillSelectMenu(int32 fd, map_session_data *sd) {
+#if PACKETVER >= 20081210
+	if( sd == nullptr ){
+		return;
+	}
+
+	const PACKET_CZ_SKILL_SELECT_RESPONSE* p = reinterpret_cast<PACKET_CZ_SKILL_SELECT_RESPONSE*>( RFIFOP( fd, 0 ) );
+
+	if (sd->menuskill_id == SA_AUTOSPELL) {
+		sd->state.workinprogress = WIP_DISABLE_NONE;
+		skill_autospell(sd, p->selectedSkillId);
+	} else if (sd->menuskill_id == SC_AUTOSHADOWSPELL) {
+		if (pc_istrading(sd)) {
+			clif_skill_fail( *sd, sd->ud.skill_id );
+			clif_menuskill_clear(sd);
+			return;
+		}
+
+		skill_select_menu(*sd, p->selectedSkillId);
+	} else
+		return;
+
+	clif_menuskill_clear(sd);
+#endif
+}
+
+
+/// Kagerou/Oboro amulet spirit.
+/// 08cf <id>.L <type>.W <num>.W (ZC_SPIRITS_ATTRIBUTE)
+void clif_spiritcharm( const map_session_data& sd ){
+#if PACKETVER >= 20111102
+	PACKET_ZC_SPIRITS_ATTRIBUTE packet{};
+
+	packet.packetType = HEADER_ZC_SPIRITS_ATTRIBUTE;
+	packet.aid = sd.id;
+	packet.spiritsType = static_cast<decltype(packet.spiritsType)>(sd.spiritcharm_type);
+	packet.num = static_cast<decltype(packet.num)>(sd.spiritcharm);
+
+	clif_send( &packet, sizeof( packet ), &sd, AREA );
+#endif
+}
+
+
+/// Move Item from or to Personal Tab
+/// 0907 <index>.W <type>.B (CZ_INVENTORY_TAB)
+/// type:
+/// 	0 = move item to personal tab
+/// 	1 = move item to normal tab
+void clif_parse_MoveItem( int32 fd, map_session_data* sd ){
+// TODO: Check for correct packet version
+#if PACKETVER >= 20120410
+	/* can't move while dead. */
+	if(pc_isdead(sd)) {
+		return;
+	}
+
+	const PACKET_CZ_INVENTORY_TAB* p = reinterpret_cast<PACKET_CZ_INVENTORY_TAB*>( RFIFOP( fd, 0 ) );
+
+	uint16 index = server_index( p->index );
+
+	if( index >= MAX_INVENTORY ){
+		return;
+	}
+
+	if ( sd->inventory.u.items_inventory[index].favorite != 0 && p->favorite == true )
+		sd->inventory.u.items_inventory[index].favorite = 0;
+	else if( p->favorite == false )
+		sd->inventory.u.items_inventory[index].favorite = 1;
+	else
+		return;/* nothing to do. */
+
+	clif_favorite_item( *sd, index );
+#endif
+}
+
+
+/// Items that are in favorite tab of inventory.
+/// 0908 <index>.W <favorite>.B (ZC_INVENTORY_TAB)
+static void clif_favorite_item( map_session_data& sd, uint16 index ){
+// TODO: Check for correct packet version
+#if PACKETVER >= 20111122
+	PACKET_ZC_INVENTORY_TAB p = {};
+
+	p.packetType = HEADER_ZC_INVENTORY_TAB;
+	p.index = client_index( index );
+	p.favorite = ( sd.inventory.u.items_inventory[index].favorite == 1 ) ? false : true;
+
+	clif_send( &p, sizeof( p ), &sd, SELF );
+#endif
+}
+
+
+/// 08d2 <id>.L <Pos X>.W <Pos Y>.W (ZC_FASTMOVE).
+void clif_snap( const block_list* bl, int16 x, int16 y ) {
+	unsigned char buf[10];
+
+	WBUFW(buf,0) = 0x8d2;
+	WBUFL(buf,2) = bl->id;
+	WBUFW(buf,6) = x;
+	WBUFW(buf,8) = y;
+
+	if( disguised(bl) )
+	{
+		clif_send(buf, packet_len(0x8d2), bl, AREA_WOS);
+		WBUFL(buf,2) = disguised_bl_id(bl->id);
+		clif_send(buf, packet_len(0x8d2), bl, SELF);
+	} else
+		clif_send(buf,packet_len(0x8d2),bl, AREA);
+}
+
+/// 0977 <id>.L <HP>.L <maxHP>.L (ZC_HP_INFO).
+void clif_monster_hp_bar( const mob_data* md, int32 fd ) {
+#if PACKETVER >= 20120404
+	WFIFOHEAD(fd,packet_len(0x977));
+
+	WFIFOW(fd,0)  = 0x977;
+	WFIFOL(fd,2)  = md->id;
+	WFIFOL(fd,6)  = md->status.hp;
+	WFIFOL(fd,10) = md->status.max_hp;
+
+	WFIFOSET(fd,packet_len(0x977));
+#endif
+}
+
+/* [Ind] placeholder for unsupported incoming packets (avoids server disconnecting client) */
+void __attribute__ ((unused)) clif_parse_dull(int32 fd, map_session_data *sd) {
+	return;
+}
+
+/// Ack world info (ZC_ACK_BEFORE_WORLD_INFO)
+/// 0979 <world name>.24B <char name>.24B
+void clif_ackworldinfo(map_session_data* sd) {
+	int32 fd;
+
+	nullpo_retv(sd);
+	fd = sd->fd;
+
+	WFIFOHEAD(fd,packet_len(0x979));
+	WFIFOW(fd,0)=0x979;
+	//AID -> world name ?
+	safestrncpy(WFIFOCP(fd,2), "" /* World name */, 24);
+	safestrncpy(WFIFOCP(fd,26), sd->status.name, NAME_LENGTH);
+	WFIFOSET(fd,packet_len(0x979));
+}
+
+/// req world info (CZ_REQ_BEFORE_WORLD_INFO)
+/// 0978 <AID>.L
+void clif_parse_reqworldinfo(int32 fd,map_session_data *sd) {
+	//uint32 aid = RFIFOL(fd,2); //should we trust client ?
+	if(sd) 
+		clif_ackworldinfo(sd);
+}
+
+static void clif_loadConfirm( map_session_data *sd ){

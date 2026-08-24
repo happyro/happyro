@@ -1,0 +1,500 @@
+				clif_skill_fail( *sd, skill_id );
+			return false;
+		}
+	}
+
+	return true;
+}
+
+/**
+ * Calculates heal value of skill's effect
+ * @param src: Unit casting heal
+ * @param target: Target of src
+ * @param skill_id: Skill ID used
+ * @param skill_lv: Skill Level used
+ * @param heal: True if it's the heal part or false if it's the damage part of the skill
+ * @return modified heal value
+ */
+int32 skill_calc_heal(block_list *src, block_list *target, uint16 skill_id, uint16 skill_lv, bool heal) {
+	int32 skill, hp = 0;
+#ifdef RENEWAL
+	int32 hp_bonus = 0;
+	double global_bonus = 1;
+#endif
+	map_session_data *sd = BL_CAST(BL_PC, src);
+	map_session_data *tsd = BL_CAST(BL_PC, target);
+	status_change *sc, *tsc;
+
+	sc = status_get_sc(src);
+	tsc = status_get_sc(target);
+
+	switch( skill_id ) {
+#ifndef RENEWAL
+		case BA_APPLEIDUN:
+			hp = 30 + 5 * skill_lv + (status_get_vit(src) / 2); // HP recovery
+			if (sd)
+				hp += 5 * pc_checkskill(sd, BA_MUSICALLESSON);
+			break;
+#endif
+		case PR_SANCTUARY:
+			hp = (skill_lv > 6) ? 777 : skill_lv * 100;
+			break;
+		case NPC_EVILLAND:
+			hp = (skill_lv > 6) ? 666 : skill_lv * 100;
+			break;
+		case AB_HIGHNESSHEAL:
+#ifdef RENEWAL
+			hp = ((status_get_int(src) + status_get_lv(src)) / 5) * 30;
+
+			if (sd && ((skill = pc_checkskill(sd, HP_MEDITATIO)) > 0))
+				hp_bonus += skill * 2;
+#else
+			hp = ((status_get_lv(src) + status_get_int(src)) / 8) * (4 + ((sd ? pc_checkskill(sd, AL_HEAL) : 1) * 8));
+			hp = (hp * (17 + 3 * skill_lv)) / 10;
+#endif
+			break;
+		case SU_FRESHSHRIMP:
+			hp = (status_get_lv(src) + status_get_int(src)) / 5 * 6;
+			break;
+		case SU_BUNCHOFSHRIMP:
+			hp = (status_get_lv(src) + status_get_int(src)) / 5 * 15;
+			break;
+		case CD_MEDIALE_VOTUM:// Does the learned level of heal affect this skill?
+		case CD_DILECTIO_HEAL:// Same question for this one too. [Rytech]
+			//hp = (status_get_lv(src) + status_get_int(src)) / 5 * 30 * pc_checkskill(sd, AL_HEAL) / 10;
+			hp = (status_get_lv(src) + status_get_int(src)) / 5 * 30;
+#ifdef RENEWAL
+			if (sd && ((skill = pc_checkskill(sd, HP_MEDITATIO)) > 0))
+				hp_bonus += skill * 2;
+#endif
+			break;
+
+		case SOA_TALISMAN_OF_PROTECTION:
+			hp = (500 + pc_checkskill(sd,SOA_TALISMAN_MASTERY) * 50) * skill_lv * status_get_lv(src) / 100;
+			hp += (status_get_lv(src) + status_get_int(src)) / 5 * 30 * status_get_crt(src) / 100;
+			break;
+
+		default:
+			if (skill_lv >= battle_config.max_heal_lv)
+				return battle_config.max_heal;
+#ifdef RENEWAL
+			/**
+			 * Renewal Heal Formula
+			 * Formula: ( [(Base Level + INT) / 5] x 30 ) x (Heal Level / 10) x (Modifiers) + MATK
+			 */
+			hp = (status_get_lv(src) + status_get_int(src)) / 5 * 30 * skill_lv / 10;
+#else
+			hp = (status_get_lv(src) + status_get_int(src)) / 8 * (4 + (skill_lv * 8));
+#endif
+
+			if (sd && ((skill = pc_checkskill(sd, HP_MEDITATIO)) > 0))
+#ifdef RENEWAL
+				hp_bonus += skill * 2;
+#else
+				hp += hp * skill * 2 / 100;
+#endif
+			else if (src->type == BL_HOM && (skill = hom_checkskill(((TBL_HOM*)src), HLIF_BRAIN)) > 0)
+#ifdef RENEWAL
+				hp_bonus += skill * 2;
+#else
+				hp += hp * skill * 2 / 100;
+#endif
+			if (sd && tsd && sd->status.partner_id == tsd->status.char_id && (sd->class_&MAPID_SECONDMASK) == MAPID_SUPER_NOVICE && sd->status.sex == 0)
+				hp *= 2;
+			break;
+	}
+
+	if( (!heal || (target && target->type == BL_MER)) && skill_id != NPC_EVILLAND )
+		hp /= 2;
+
+	if (sd) {
+		if (pc_checkskill(sd, SU_POWEROFSEA) > 0) {
+#ifdef RENEWAL
+			hp_bonus += 10;
+#else
+			hp += hp * 10 / 100;
+#endif
+
+			if (pc_checkskill_summoner(sd, SUMMONER_POWER_SEA) >= 20)
+#ifdef RENEWAL
+				hp_bonus += 20;
+#else
+				hp += hp * 20 / 100;
+#endif
+		}
+
+		if ((skill = pc_checkskill(sd, NV_BREAKTHROUGH)) > 0)
+#ifdef RENEWAL
+			hp_bonus += 2 * skill;
+#else
+			hp += hp * skill * 2 / 100;
+#endif
+
+		if ((skill = pc_checkskill(sd, NV_TRANSCENDENCE)) > 0)
+#ifdef RENEWAL
+			hp_bonus += 3 * skill;
+#else
+			hp += hp * skill * 3 / 100;
+#endif
+
+		if (skill = pc_skillheal_bonus(sd, skill_id))
+#ifdef RENEWAL
+			hp_bonus += skill;
+#else
+			hp += hp * skill / 100;
+#endif
+	}
+
+	if (tsd && (skill = pc_skillheal2_bonus(tsd, skill_id)))
+#ifdef RENEWAL
+		hp_bonus += skill;
+#else
+		hp += hp * skill / 100;
+#endif
+
+	if (sc != nullptr && !sc->empty()) {
+		if (sc->getSCE(SC_OFFERTORIUM) && (skill_id == AB_HIGHNESSHEAL || skill_id == AB_CHEAL || skill_id == NPC_CHEAL || skill_id == PR_SANCTUARY || skill_id == AL_HEAL ||
+			skill_id == CD_DILECTIO_HEAL || skill_id == CD_MEDIALE_VOTUM ))
+#ifdef RENEWAL
+			hp_bonus += sc->getSCE(SC_OFFERTORIUM)->val2;
+#else
+			hp += hp * sc->getSCE(SC_OFFERTORIUM)->val2 / 100;
+#endif
+#ifdef RENEWAL
+		if (sc->getSCE(SC_MEDIALE) && skill_id == CD_MEDIALE_VOTUM)
+			hp_bonus += sc->getSCE(SC_MEDIALE)->val2;
+#endif
+	}
+
+	if (tsc != nullptr && !tsc->empty()) {
+		if (skill_id != NPC_EVILLAND && skill_id != BA_APPLEIDUN) {
+			if (tsc->getSCE(SC_INCHEALRATE))
+#ifdef RENEWAL
+				hp_bonus += tsc->getSCE(SC_INCHEALRATE)->val1; //Only affects Heal, Sanctuary and PotionPitcher.(like bHealPower) [Inkfish]
+#else
+				hp += hp * tsc->getSCE(SC_INCHEALRATE)->val1 / 100;
+#endif
+			if (tsc->getSCE(SC_ANCILLA))
+#ifdef RENEWAL
+				hp_bonus += tsc->getSCE(SC_ANCILLA)->val1;
+#else
+				hp += hp * tsc->getSCE(SC_ANCILLA)->val1 / 100;
+			if (tsc->getSCE(SC_WATER_INSIGNIA) && tsc->getSCE(SC_WATER_INSIGNIA)->val1 == 2)
+				hp += hp / 10;
+#endif
+#ifdef RENEWAL
+			if (tsc->getSCE(SC_ASSUMPTIO))
+				hp_bonus += tsc->getSCE(SC_ASSUMPTIO)->val1 * 2;
+#endif
+		}
+	}
+
+#ifdef RENEWAL
+	if (hp_bonus && skill_id != SOA_TALISMAN_OF_PROTECTION)
+		hp += hp * hp_bonus / 100;
+
+	// MATK part of the RE heal formula [malufett]
+	// Note: in this part matk bonuses from items or skills are not applied
+	switch( skill_id ) {
+		case BA_APPLEIDUN:
+		case PR_SANCTUARY:
+		case NPC_EVILLAND:
+			break;
+		default:
+			{
+				status_data* status = status_get_status_data(*src);
+				int32 min, max;
+
+				min = status_base_matk_min(src, status, status_get_lv(src));
+				max = status_base_matk_max(src, status, status_get_lv(src));
+				if( status->rhw.matk > 0 ){
+					int32 wMatk, variance;
+					wMatk = status->rhw.matk;
+					variance = wMatk * status->rhw.wlv / 10;
+					min += wMatk - variance;
+					max += wMatk + variance;
+				}
+
+				if( sc && sc->getSCE(SC_RECOGNIZEDSPELL) )
+					min = max;
+
+				if( sd && sd->right_weapon.overrefine > 0 ){
+					min++;
+					max += sd->right_weapon.overrefine - 1;
+				}
+
+				if(max > min)
+					hp += min+rnd()%(max-min);
+				else
+					hp += min;
+			}
+	}
+
+	// Global multipliers are applied after the MATK is applied
+	if (tsc != nullptr && !tsc->empty()) {
+		if (skill_id != NPC_EVILLAND && skill_id != BA_APPLEIDUN) {
+			if (tsc->getSCE(SC_WATER_INSIGNIA) && tsc->getSCE(SC_WATER_INSIGNIA)->val1 == 2)
+				global_bonus *= 1.1f;
+		}
+	}
+
+	if (skill_id == AB_HIGHNESSHEAL)
+		global_bonus *= 2 + 0.3f * (skill_lv - 1);
+	else if (skill_id == CD_DILECTIO_HEAL)// Description says its 10% on Lv 1 but thats clearly a typo. [Rytech]
+		global_bonus *= 1 + 0.15f + 0.05f * skill_lv;
+#endif
+
+	if (heal && tsc != nullptr && !tsc->empty()) {
+		uint8 penalty = 0;
+
+		if (tsc->getSCE(SC_CRITICALWOUND))
+			penalty += tsc->getSCE(SC_CRITICALWOUND)->val2;
+		if (tsc->getSCE(SC_DEATHHURT) && tsc->getSCE(SC_DEATHHURT)->val3 == 1)
+			penalty += 20;
+		if (tsc->getSCE(SC_NORECOVER_STATE))
+			penalty = 100;
+		if (penalty > 0) {
+#ifdef RENEWAL
+			penalty = cap_value(penalty, 1, 100);
+			global_bonus *= (100 - penalty) / 100.f;
+#else
+			hp -= hp * penalty / 100;
+#endif
+		}
+	}
+
+#ifdef RENEWAL
+	hp = (int32)(hp * global_bonus);
+
+	// Final heal increased by HPlus.
+	// Is this the right place for this??? [Rytech]
+	if ( sd && status_get_hplus(src) > 0 && skill_id != SOA_TALISMAN_OF_PROTECTION)
+		hp += hp * status_get_hplus(src) / 100;
+
+	return (heal) ? max(1, hp) : hp;
+#else
+	return hp;
+#endif
+}
+
+/**
+ * Making Plagiarism and Reproduce check their own function
+ * Previous prevention for NPC skills, Wedding skills, and INF3_DIS_PLAGIA are removed since we use skill_db.yml [Cydh]
+ * @param sd: Player who will copy the skill
+ * @param skill_id: Target skill
+ * @return 0 - Cannot be copied; 1 - Can be copied by Plagiarism 2 - Can be copied by Reproduce
+ * @author Aru - for previous check; Jobbie for class restriction idea; Cydh expands the copyable skill
+ */
+int8 skill_isCopyable(map_session_data *sd, uint16 skill_id) {
+	uint16 skill_idx = skill_get_index(skill_id);
+
+	if (!skill_idx)
+		return 0;
+
+	// Only copy skill that player doesn't have or the skill is old clone
+	if (sd->status.skill[skill_idx].id != 0 && sd->status.skill[skill_idx].flag != SKILL_FLAG_PLAGIARIZED)
+		return 0;
+
+	s_skill_copyable copyable = skill_db.find(skill_id)->copyable;
+
+	//Reproduce can copy skill if SC__REPRODUCE is active and the skill is copyable by Reproduce
+	if (copyable.option & SKILL_COPY_REPRODUCE && pc_checkskill(sd,SC_REPRODUCE) && sd->sc.getSCE(SC__REPRODUCE) && sd->sc.getSCE(SC__REPRODUCE)->val1)
+		return 2;
+
+	//Plagiarism only able to copy skill while SC_PRESERVE is not active and skill is copyable by Plagiarism
+	if (copyable.option & SKILL_COPY_PLAGIARISM && pc_checkskill(sd,RG_PLAGIARISM) > 0 && sd->sc.getSCE(SC_PRESERVE) == nullptr)
+		return 1;
+
+	return 0;
+}
+
+/**
+ * Check if the skill is ok to cast and when.
+ * Done before skill_check_condition_castbegin, requirement
+ * @param skill_id: Skill ID that casted
+ * @param sd: Player who casted
+ * @return true: Skill cannot be used, false: otherwise
+ * @author [MouseJstr]
+ */
+bool skill_isNotOk( uint16 skill_id, map_session_data& sd ){
+	if (pc_has_permission(&sd,PC_PERM_SKILL_UNCONDITIONAL))
+		return false; // can do any damn thing they want
+
+	if (skill_id == AL_TELEPORT && sd.skillitem == skill_id && sd.skillitemlv > 2)
+		return false; // Teleport lv 3 bypasses this check.[Inkfish]
+
+	struct map_data *mapdata = map_getmapdata(sd.m);
+
+	if (mapdata->getMapFlag(MF_NOSKILL) && skill_id != ALL_EQSWITCH && !sd.skillitem) //Item skills bypass noskill
+		return true;
+
+	// Epoque:
+	// This code will compare the player's attack motion value which is influenced by ASPD before
+	// allowing a skill to be cast. This is to prevent no-delay ACT files from spamming skills such as
+	// AC_DOUBLE which do not have a skill delay and are not regarded in terms of attack motion.
+	if (!sd.state.autocast && sd.skillitem != skill_id && sd.canskill_tick &&
+		DIFF_TICK(gettick(),sd.canskill_tick) < (sd.battle_status.amotion * (battle_config.skill_amotion_leniency) / 100))
+	{// attempted to cast a skill before the attack motion has finished
+		return true;
+	}
+
+	if (util::umap_exists(sd.scd, skill_id)) {
+		clif_skill_fail( sd, skill_id, USESKILL_FAIL_SKILLINTERVAL );
+		return true;
+	}
+
+	/**
+	 * It has been confirmed on a official server (thanks to Yommy) that item-cast skills bypass all mapflag restrictions
+	 * Also, without this check, an exploit where an item casting + healing (or any other kind buff) isn't deleted after used on a restricted map
+	 */
+	if( sd.skillitem == skill_id && !sd.skillitem_keep_requirement && !sd.state.abra_flag)
+		return false;
+
+	uint32 skill_nocast = skill_get_nocast(skill_id);
+	// Check skill restrictions [Celest]
+	if( (skill_nocast&1 && !mapdata_flag_vs2(mapdata)) ||
+		(skill_nocast&2 && mapdata->getMapFlag(MF_PVP)) ||
+		(skill_nocast&4 && mapdata_flag_gvg2_no_te(mapdata)) ||
+		(skill_nocast&8 && mapdata->getMapFlag(MF_BATTLEGROUND)) ||
+		(skill_nocast&16 && mapdata_flag_gvg2_te(mapdata)) || // WOE:TE
+		(mapdata->zone && skill_nocast&(mapdata->zone) && mapdata->getMapFlag(MF_RESTRICTED)) ){
+			clif_msg_color( sd, MSI_IMPOSSIBLE_SKILL_AREA, color_table[COLOR_CYAN] ); // This skill cannot be used within this area.
+			return true;
+	}
+
+	if( sd.sc.getSCE(SC_ALL_RIDING) )
+		return true; //You can't use skills while in the new mounts (The client doesn't let you, this is to make cheat-safe)
+
+	switch (skill_id) {
+		case AL_WARP:
+		case RETURN_TO_ELDICASTES:
+		case ALL_GUARDIAN_RECALL:
+		case ECLAGE_RECALL:
+		case ALL_NIFLHEIM_RECALL:
+		case ALL_PRONTERA_RECALL:
+		case ALL_GLASTHEIM_RECALL:
+		case ALL_THANATOS_RECALL:
+		case ALL_LIGHTHALZEN_RECALL:
+			if(mapdata->getMapFlag(MF_NOWARP)) {
+				clif_skill_teleportmessage( sd, NOTIFY_MAPINFO_CANT_TP );
+				return true;
+			}
+			return false;
+		case AL_TELEPORT:
+		case NPC_FATALMENACE:
+		case SC_DIMENSIONDOOR:
+		case ALL_ODINS_RECALL:
+		case WE_CALLALLFAMILY:
+			if(mapdata->getMapFlag(MF_NOTELEPORT)) {
+				clif_skill_teleportmessage( sd, NOTIFY_MAPINFO_CANT_TP );
+				return true;
+			}
+			return false; // gonna be checked in 'skill_castend_nodamage_id'
+		case WE_CALLPARTNER:
+		case WE_CALLPARENT:
+		case WE_CALLBABY:
+			if (mapdata->getMapFlag(MF_NOMEMO)) {
+				clif_skill_teleportmessage( sd, NOTIFY_MAPINFO_CANT_MEMO );
+				return true;
+			}
+			break;
+		case MC_VENDING:
+			if (map_getmapflag(sd.m, MF_NOVENDING)) {
+				clif_displaymessage(sd.fd, msg_txt(&sd, 276)); // "You can't open a shop on this map"
+				clif_skill_fail( sd, skill_id );
+				return true;
+			}
+			if (map_getcell(sd.m, sd.x, sd.y, CELL_CHKNOVENDING)) {
+				clif_displaymessage(sd.fd, msg_txt(&sd, 204)); // "You can't open a shop on this cell."
+				clif_skill_fail( sd, skill_id );
+				return true;
+			}
+			if (npc_isnear(&sd)) {
+				// uncomment to send msg_txt.
+				//char output[150];
+				//sprintf(output, msg_txt(662), battle_config.min_npc_vendchat_distance);
+				//clif_displaymessage(sd.fd, output);
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_THERE_ARE_NPC_AROUND );
+				return true;
+			}
+			break;
+		case ALL_BUYING_STORE:
+			if( map_getmapflag(sd.m, MF_NOBUYINGSTORE) ) {
+				clif_displaymessage (sd.fd, msg_txt(&sd,276)); // "You can't open a shop on this map"
+				clif_skill_fail( sd, skill_id );
+				return true;
+			}
+			if( map_getcell(sd.m,sd.x,sd.y,CELL_CHKNOBUYINGSTORE) ) {
+				clif_displaymessage (sd.fd, msg_txt(&sd,204)); // "You can't open a shop on this cell."
+				clif_skill_fail( sd, skill_id );
+				return true;
+			}
+			if( npc_isnear(&sd) ) {
+				// uncomment to send msg_txt.
+				//char output[150];
+				//sprintf(output, msg_txt(662), battle_config.min_npc_vendchat_distance);
+				//clif_displaymessage(sd.fd, output);
+				clif_skill_fail( sd, skill_id, USESKILL_FAIL_THERE_ARE_NPC_AROUND );
+				return true;
+			}
+			break;
+		case MC_IDENTIFY:
+			return false; // always allowed
+		case WZ_ICEWALL:
+			// noicewall flag [Valaris]
+			if (mapdata->getMapFlag(MF_NOICEWALL)) {
+				clif_skill_fail( sd, skill_id );
+				return true;
+			}
+			break;
+		case GC_DARKILLUSION:
+			if( mapdata_flag_gvg2(mapdata) ) {
+				clif_skill_fail( sd, skill_id );
+				return true;
+			}
+			break;
+		case GD_EMERGENCYCALL:
+		case GD_ITEMEMERGENCYCALL:
+			if (
+				!(battle_config.emergency_call&((is_agit_start())?2:1)) ||
+				!(battle_config.emergency_call&(mapdata_flag_gvg2(mapdata)?8:4)) ||
+				(battle_config.emergency_call&16 && mapdata->getMapFlag(MF_NOWARPTO) && !(mapdata->getMapFlag(MF_GVG_CASTLE) || mapdata->getMapFlag(MF_GVG_TE_CASTLE)))
+			)	{
+				clif_skill_fail( sd, skill_id );
+				return true;
+			}
+			break;
+		case WM_SIRCLEOFNATURE:
+		case WM_SOUND_OF_DESTRUCTION:
+		case WM_LULLABY_DEEPSLEEP:
+		case WM_GLOOMYDAY:
+		case WM_SATURDAY_NIGHT_FEVER:
+			if( !mapdata_flag_vs(mapdata) ) {
+				clif_skill_teleportmessage( sd, NOTIFY_MAPINFO_CANT_USE_SKILL );	// This skill cannot be used in this area
+				return true;
+			}
+			break;
+
+	}
+	return false;
+}
+
+/**
+ * Check if the homunculus skill is ok to be processed
+ * After checking from Homunculus side, also check the master condition
+ * @param hd: Homunculus who casted
+ * @param skill_id: Skill ID casted
+ * @param skill_lv: Skill level casted
+ * @return true: Skill cannot be used, false: otherwise
+ */
+bool skill_isNotOk_hom(homun_data *hd, uint16 skill_id, uint16 skill_lv)
+{
+	nullpo_retr(true, hd);
+
+	int8 spiritball = skill_get_spiritball(skill_id, skill_lv);
+	map_session_data* sd = hd->master;
+	status_change* sc = status_get_sc(hd);
+
+	if (!sd)
+		return true;
+

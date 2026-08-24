@@ -1,0 +1,213 @@
+//===== rAthena Script =======================================
+//= 高级精炼师
+//===== Description: =========================================
+//= [Official Conversion]
+//= 使用浓缩矿石提高升级成功率的精炼师。
+//= - Dialog is only partly official to iRO.
+//= - Uses the iRO position for this NPC.
+//===== Changelog: ===========================================
+//= 1.0 First Version. [L0ne_W0lf]
+//= 1.1 Fixed a weird carriage return. o_o [L0ne_W0lf]
+//= 1.2 Optimizing refine method [Zephyrus]
+//= 1.3 Typo fixes [Yommy]
+//= 1.4 Removed unnecessary dialogs [Zephyrus]
+//= 1.4a Added 'disable_items' command. [Euphy]
+//= 1.4b Fixed coordinates. [Euphy]
+//= 1.5 Some official script updates. [Euphy]
+//= 1.6 Added VIP features. [Euphy]
+//= 1.7 Removed re-roll behavior. [Secret]
+//============================================================
+
+payon,157,146,6	script	Suhnbi#cash	85,{
+	disable_items;
+	mes "[Suhnbi]";
+	mes "我是武器工匠。";
+	mes "我可以精炼各种武器、";
+	mes "防具和装备，告诉我";
+	mes "你想精炼什么吧。";
+	next;
+
+	setarray .@indices[1], EQI_HEAD_TOP, EQI_ARMOR, EQI_HAND_L, EQI_HAND_R, EQI_GARMENT, EQI_SHOES, EQI_ACC_L, EQI_ACC_R, EQI_HEAD_MID, EQI_HEAD_LOW;
+	for(set .@i,1; .@i<=10; set .@i,.@i+1) {
+		if (getequipisequiped(.@indices[.@i])) {
+			set .@menu$, .@menu$ + F_getpositionname(.@indices[.@i]) + "-[" + getequipname(.@indices[.@i]) + "]";
+			set .@equipped,1;
+		}
+		set .@menu$, .@menu$ + ":";
+	}
+	if (.@equipped == 0) {
+		mes "[Suhnbi]";
+		mes "我想我无法精炼你拥有的任何物品……";
+		close;
+	}
+	set .@part, .@indices[ select(.@menu$) ];
+
+	if (!getequipisequiped(.@part)) //custom check
+		close;
+	if (!getequipisenableref(.@part)) {
+		mes "[Suhnbi]";
+		mes "去找其他铁匠吧。我无法精炼这件物品。";
+		close;
+	}
+	if (getequiprefinerycnt(.@part) >= 10) {
+		mes "[Suhnbi]";
+		mes "嗯……有人已经把它精炼到极致了。我无法再继续处理。";
+		close;
+	}
+
+	.@refineitemid = getequipid(.@part); // save id of the item
+	.@refinerycnt = getequiprefinerycnt(.@part); //save refinery count
+	.@price = getequiprefinecost(.@part, REFINE_COST_ENRICHED, REFINE_ZENY_COST);
+	.@material = getequiprefinecost(.@part, REFINE_COST_ENRICHED, REFINE_MATERIAL_ID);
+	.@itemtype = getiteminfo( .@refineitemid, ITEMINFO_TYPE );
+
+	// Make sure you have the necessary items and Zeny to refine your items
+	// Determines chance of failure and verifies that you want to continue.
+	callsub S_RefineValidate,.@itemtype,.@material,.@price,.@part,.@refineitemid,.@refinerycnt;
+
+	mes "[Suhnbi]";
+	mes "铿！铿！铿！";
+	if (getequippercentrefinery(.@part, true) > rand(100)) {
+		successrefitem .@part;
+		next;
+		emotion ET_BEST;
+		mes "[Suhnbi]";
+		mes "好了！完成了。";
+		mes "我已经很久没打造过这么好的"+((.@itemtype == IT_WEAPON)?"武器":"防具")+"了。它变强了，你一定很高兴！";
+		close;
+	}
+	failedrefitem .@part;
+	next;
+	emotion (!rand(5))?ET_MONEY:ET_HUK;
+	mes "[Suhnbi]";
+	mes "呜呜呜呜呜呜呜呜呜！！！";
+	next;
+	mes "[Suhnbi]";
+	mes "...";
+	mes ".....";
+	mes ".......Huhuhuhuhu~";
+	mes "……这是你的选择，也是我的能力，别后悔。";
+	close;
+
+S_RefineValidate:
+	.@itemtype = getarg(0);
+	.@item_req = getarg(1);
+	.@price = getarg(2);
+	.@part = getarg(3);
+	setarray .@card[0], getequipcardid(.@part,0), getequipcardid(.@part,1), getequipcardid(.@part,2), getequipcardid(.@part,3);
+
+	if( .@itemtype == IT_ARMOR ){
+		.@equip_lv = getequiparmorlv( .@part );
+
+		// If the VIP system is enabled, the prices for non-VIP players are considerably higher.
+		if (VIP_SCRIPT && !vip_status(VIP_STATUS_ACTIVE)) {
+			switch(.@equip_lv) {
+				case 1:
+					set .@price, .@price * 10;
+					break;
+				default:
+					// TODO:
+					close;
+			}
+		}
+	}else if( .@itemtype == IT_WEAPON ){
+		.@equip_lv = getequipweaponlv( .@part );
+
+		// If the VIP system is enabled, the prices for non-VIP players are considerably higher.
+		if (VIP_SCRIPT && !vip_status(VIP_STATUS_ACTIVE)) {
+			switch( .@equip_lv ){
+				case 1:
+					set .@price, .@price * 40;
+					break;
+				case 2:
+					set .@price, .@price * 50;
+					break;
+				case 3:
+					set .@price, .@price * 2;
+					break;
+				case 4:
+					set .@price, .@price * 2;
+					break;
+				default:
+					// TODO:
+					close;
+			}
+		}
+	}else{
+		// TODO:
+		close;
+	}
+
+	mes "[Suhnbi]";
+	if (.@itemtype == IT_WEAPON)
+	mes "你想精炼一把 "+ .@equip_lv +" 级武器？";
+	mes "要精炼它，你需要一件 ^ff9999"+ getitemname(.@item_req) +"^000000 和 "+ .@price +" Zeny。";
+	mes "要继续吗？";
+	next;
+	if(select("是:否") == 1) {
+		if (getequippercentrefinery(.@part) < 100) {
+			if (.@itemtype == IT_WEAPON) {
+				mes "[Suhnbi]";
+				mes "哇！！";
+				mes "这把武器看起来";
+				mes "已经精炼过……";
+				mes "很多次了……";
+				mes "如果再次精炼，";
+				mes "可能会损坏。";
+				next;
+				mes "如果它损坏，";
+				mes "你就再也无法使用了！";
+				mes "其中的卡片和属性^ff0000都会丢失^000000！";
+				mes "^ff0000此外，装备也会损坏！^000000";
+				mes "你确定还要继续吗？";
+				next;
+				if(select("是:否") == 2) {
+					mes "[Suhnbi]";
+					mes "很好。";
+					mes "因为武器因不当精炼损坏的话，我的心情也会变差。";
+					close;
+				}
+			} else {
+				mes "[Suhnbi]";
+				mes "咯咯。咯咯。哦，你真有胆量，竟敢精炼这个。";
+				mes "你知道这相当危险吧？";
+				next;
+				mes "如果你的防具损坏，就再也无法使用了。";
+				mes "连卡片和改造属性也会^ff0000完全消失^000000。";
+				//mes "Everything will disappear. As in... GONE!";
+				mes "你真的要继续吗？";
+				next;
+				if(select("是:否") == 2) {
+					mes "[Suhnbi]";
+					mes "胡说八道。你浪费了我宝贵的时间。";
+					mes "滚开，小鬼。";
+					close;
+				}
+			}
+		}
+		if (countitem(.@item_req) > 0 && Zeny > .@price) {
+			delitem .@item_req,1;
+			set Zeny, Zeny - .@price;
+
+			// anti-hack
+			if (callfunc("F_IsEquipIDHack", .@part, getarg(4)) ||
+				callfunc("F_IsEquipRefineHack", .@part, getarg(5)) || callfunc("F_IsEquipCardHack", .@part, .@card[0], .@card[1], .@card[2], .@card[3])) {
+				mes "[Suhnbi]";
+				emotion ET_FRET;
+				mes "等一下……";
+				mes "你以为我傻吗？！";
+				mes "你趁我没注意调换了物品！滚出去！";
+				close;
+			}
+
+			return;
+		}
+		mes "[Suhnbi]";
+		mes "这就是你拥有的全部吗？";
+		mes "非常抱歉，没有全部材料我什么也做不了。而且，我的工作也该得到报酬，对吧？";
+		close;
+	}
+	mes "[Suhnbi]";
+	mes "即使你不高兴，我也无能为力……";
+	close;
+}

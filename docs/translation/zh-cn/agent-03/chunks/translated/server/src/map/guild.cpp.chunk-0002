@@ -1,0 +1,500 @@
+				castle->warp_enabled = false;
+				continue;
+			}
+
+			if( castle->warp_x == 0 ){
+				ShowWarning( "Warping to castle %d is enabled, but no WarpX is set. Disabling...\n", castle->castle_id );
+				castle->warp_enabled = false;
+				continue;
+			}
+
+			if( castle->warp_y == 0 ){
+				ShowWarning( "Warping to castle %d is enabled, but no WarpY is set. Disabling...\n", castle->castle_id );
+				castle->warp_enabled = false;
+				continue;
+			}
+		}
+	}
+}
+
+/// lookup: guild id -> guild
+std::shared_ptr<MapGuild> guild_search(int32 guild_id) {
+	return util::umap_find(guild_db, guild_id);
+}
+
+/// lookup: guild name -> guild
+std::shared_ptr<MapGuild> guild_searchname(const char* str) {
+	if (!str)
+		return nullptr;
+	for (const auto &it : guild_db) {
+		if (it.second && (strcmp(it.second->guild.name, str) == 0))
+			return it.second;
+	}
+
+	return nullptr;
+}
+
+/**
+ * Helper function to find a guild via a string
+ * The string might be a guild_id, so test names first then id
+*/
+std::shared_ptr<MapGuild> guild_searchnameid(const char *str) {
+	if (!str)
+		return nullptr;
+
+	auto g = guild_searchname(str);
+	if (g)
+		return g;
+
+	return guild_search(atoi(str));
+}
+
+/// lookup: map index -> castle*
+std::shared_ptr<guild_castle> CastleDatabase::mapindex2gc(int16 mapindex) {
+	for (const auto &it : *this) {
+		if (it.second->mapindex == mapindex)
+			return it.second;
+	}
+	return nullptr;
+}
+
+/// lookup: map name -> castle*
+std::shared_ptr<guild_castle> CastleDatabase::mapname2gc(const char* mapname) {
+	return castle_db.mapindex2gc(mapindex_name2id(mapname));
+}
+
+std::shared_ptr<guild_castle> CastleDatabase::find_by_clientid( uint16 client_id ){
+	for( const auto &it : *this ){
+		if( it.second->client_id == client_id ){
+			return it.second;
+		}
+	}
+
+	return nullptr;
+}
+
+map_session_data* guild_getavailablesd(const struct mmo_guild &g) {
+	int32 i;
+
+	ARR_FIND( 0, g.max_member, i, g.member[i].sd != nullptr );
+	return( i < g.max_member ) ? g.member[i].sd : nullptr;
+}
+
+/// lookup: player AID/CID -> member index
+int32 guild_getindex(const struct mmo_guild &g, uint32 account_id, uint32 char_id) {
+	int32 i;
+
+	ARR_FIND( 0, g.max_member, i, g.member[i].account_id == account_id && g.member[i].char_id == char_id );
+	return( i < g.max_member ) ? i : -1;
+}
+
+/// lookup: player sd -> member position
+int32 guild_getposition(const map_session_data& sd) {
+	int32 i;
+
+	if (!sd.guild)
+		return -1;
+
+	const auto &g = sd.guild->guild;
+
+	ARR_FIND( 0, g.max_member, i, g.member[i].account_id == sd.status.account_id && g.member[i].char_id == sd.status.char_id );
+	return( i < g.max_member ) ? g.member[i].position : -1;
+}
+
+//Creation of member information
+void guild_makemember( struct guild_member& m, map_session_data& sd ){
+	m.account_id = sd.status.account_id;
+	m.char_id = sd.status.char_id;
+	m.hair = sd.status.hair;
+	m.hair_color = sd.status.hair_color;
+	m.gender = sd.status.sex;
+	m.class_ = sd.status.class_;
+	m.lv = sd.status.base_level;
+	m.exp = 0;
+	m.online = 1;
+	m.position = MAX_GUILDPOSITION - 1;
+	safestrncpy( m.name, sd.status.name, NAME_LENGTH );
+	m.last_login = static_cast<decltype(m.last_login)>( time( nullptr ) );
+}
+
+/**
+ * Server cache to be flushed to inter the Guild EXP
+ * @see DBApply
+ */
+int32 guild_payexp_timer_sub(DBKey key, DBData *data, va_list ap) {
+	int32 i;
+	struct guild_expcache *c;
+
+	c = (struct guild_expcache *)db_data2ptr(data);
+
+	auto g = guild_search(c->guild_id);
+
+	if (!g || (i = guild_getindex(g->guild, c->account_id, c->char_id)) < 0) {
+		ers_free(expcache_ers, c);
+		return 0;
+	}
+
+	g->guild.member[i].exp = util::safe_addition_cap(g->guild.member[i].exp, c->exp, MAX_GUILD_EXP);
+
+	intif_guild_change_memberinfo(g->guild.guild_id,c->account_id,c->char_id,
+		GMI_EXP,&g->guild.member[i].exp,sizeof(g->guild.member[i].exp));
+	c->exp=0;
+
+	ers_free(expcache_ers, c);
+	return 0;
+}
+
+TIMER_FUNC(guild_payexp_timer){
+	guild_expcache_db->clear(guild_expcache_db,guild_payexp_timer_sub);
+	return 0;
+}
+
+/**
+ * Send xy coords to a guild
+ * @param g Reference to a guild
+ */
+int32 guild_send_xy_timer_sub(const struct mmo_guild& g) {
+	if (g.connect_member <= 0) {
+		// no members connected to this guild so do not iterate
+		return 0;
+	}
+
+	for (int32 i = 0; i < g.max_member; i++) {
+		map_session_data* sd = g.member[i].sd;
+		if( sd != nullptr && sd->fd && (sd->guild_x != sd->x || sd->guild_y != sd->y) && !sd->bg_id ) {
+			clif_guild_xy( *sd );
+			sd->guild_x = sd->x;
+			sd->guild_y = sd->y;
+		}
+	}
+	return 0;
+}
+
+//Code from party_send_xy_timer [Skotlex]
+static TIMER_FUNC(guild_send_xy_timer){
+	for (const auto &it : guild_db) {
+		if (it.second)
+			guild_send_xy_timer_sub(it.second->guild);
+	}
+	return 0;
+}
+
+int32 guild_send_dot_remove(map_session_data *sd) {
+	if (sd->status.guild_id)
+		clif_guild_xy_remove( *sd );
+	return 0;
+}
+//------------------------------------------------------------------------
+
+bool guild_create( map_session_data& sd, const char* name ){
+	char tname[NAME_LENGTH];
+
+	safestrncpy(tname, name, NAME_LENGTH);
+	trim(tname);
+
+	// empty name
+	if( !tname[0] ){
+		return false;
+	}
+
+	if( sd.status.guild_id ) {
+		// already in a guild
+		clif_guild_created( sd, 1 );
+		return false;
+	}
+
+	if( battle_config.guild_emperium_check && pc_search_inventory( &sd, ITEMID_EMPERIUM ) == -1 ){
+		// item required
+		clif_guild_created( sd, 3 );
+		return false;
+	}
+
+	struct guild_member m = {};
+
+	guild_makemember( m, sd );
+	m.position=0;
+	intif_guild_create(name,&m);
+
+	return true;
+}
+
+//Whether or not to create guild
+int32 guild_created(uint32 account_id,int32 guild_id) {
+	map_session_data *sd=map_id2sd(account_id);
+
+	if(sd==nullptr)
+		return 0;
+	if(!guild_id) {
+		clif_guild_created( *sd, 2 ); // Creation failure (presence of the same name Guild)
+		return 0;
+	}
+
+	sd->status.guild_id = guild_id;
+	clif_guild_created( *sd, 0 );
+
+	if(battle_config.guild_emperium_check){
+		int32 index = pc_search_inventory(sd,ITEMID_EMPERIUM);
+
+		if( index > 0 )
+			pc_delitem(sd,index,1,0,0,LOG_TYPE_CONSUME);	//emperium consumption
+	}
+	return 0;
+}
+
+//Information request
+int32 guild_request_info(int32 guild_id) {
+	return intif_guild_request_info(guild_id);
+}
+
+//Information request with event
+int32 guild_npc_request_info(int32 guild_id,const char *event) {
+	if( guild_search(guild_id) ) {
+		if( event && *event )
+			npc_event_doall(event);
+
+		return 0;
+	}
+
+	if( event && *event ) {
+		struct eventlist *ev;
+		DBData prev;
+		ev=(struct eventlist *)aCalloc(sizeof(struct eventlist),1);
+		safestrncpy(ev->name,event,EVENT_NAME_LENGTH);
+		//The one in the db (if present) becomes the next event from this.
+		if (guild_infoevent_db->put(guild_infoevent_db, db_i2key(guild_id), db_ptr2data(ev), &prev))
+			ev->next = (struct eventlist *)db_data2ptr(&prev);
+	}
+
+	return guild_request_info(guild_id);
+}
+
+/**
+ * Close trade window if party member is kicked when trade a party bound item
+ * @param sd
+ **/
+static void guild_trade_bound_cancel( map_session_data& sd ){
+#ifdef BOUND_ITEMS
+	if( sd.state.isBoundTrading&(1<<BOUND_GUILD))
+		trade_tradecancel( &sd );
+#endif
+}
+
+//Confirmation of the character belongs to guild
+int32 guild_check_member(const struct mmo_guild &g) {
+	int32 i;
+	map_session_data *sd;
+	struct s_mapiterator* iter;
+
+	iter = mapit_getallusers();
+	for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter) ) {
+		if( sd->status.guild_id != g.guild_id )
+			continue;
+
+		i = guild_getindex(g,sd->status.account_id,sd->status.char_id);
+		if (i < 0) {
+			sd->guild = nullptr;
+			sd->status.guild_id=0;
+			sd->guild_emblem_id=0;
+			ShowWarning("guild: check_member %d[%s] is not member\n",sd->status.account_id,sd->status.name);
+		}
+	}
+	mapit_free(iter);
+
+	return 0;
+}
+
+//Delete association with guild_id for all characters
+int32 guild_recv_noinfo(int32 guild_id) {
+	map_session_data *sd;
+	struct s_mapiterator* iter;
+
+	iter = mapit_getallusers();
+	for( sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); sd = (TBL_PC*)mapit_next(iter) ) {
+		if( sd->status.guild_id == guild_id )
+			sd->status.guild_id = 0; // erase guild
+	}
+	mapit_free(iter);
+
+	return 0;
+}
+
+//Get and display information for all member
+int32 guild_recv_info(const struct mmo_guild &sg) {
+	struct mmo_guild before;
+	int32 i,bm,m;
+	DBData data;
+	map_session_data *sd;
+	bool guild_new = false;
+
+	auto g = guild_search(sg.guild_id);
+
+	if (!g) {
+		g = std::make_shared<MapGuild>();
+		guild_new = true;
+		guild_db.insert({sg.guild_id, g});
+		before = sg;
+		//Perform the check on the user because the first load
+		guild_check_member(sg);
+		if ((sd = map_nick2sd(sg.master,false)) != nullptr) {
+#ifndef RENEWAL
+			//If the guild master is online the first time the guild_info is received,
+			//that means he was the first to join, so apply guild skill blocking here.
+			if( battle_config.guild_skill_relog_delay )
+				guild_block_skill(sd, battle_config.guild_skill_relog_delay);
+#endif
+
+			//Also set the guild master flag.
+			sd->state.gmaster_flag = 1;
+			clif_guild_masterormember(*sd);
+		}
+	} else {
+		before = g->guild;
+	}
+	memcpy(&g->guild, &sg, sizeof(struct mmo_guild));
+
+	if(g->guild.max_member > MAX_GUILD) {
+		ShowError("guild_recv_info: Received guild with %d members, but MAX_GUILD is only %d. Extra guild-members have been lost!\n", g->guild.max_member, MAX_GUILD);
+		g->guild.max_member = MAX_GUILD;
+	}
+
+	for(i=bm=m=0;i<g->guild.max_member;i++){
+		if(g->guild.member[i].account_id>0){
+			sd = g->guild.member[i].sd = guild_sd_check(g->guild.guild_id, g->guild.member[i].account_id, g->guild.member[i].char_id);
+			m++;
+		}else
+			g->guild.member[i].sd=nullptr;
+		if(before.member[i].account_id>0)
+			bm++;
+	}
+
+	for (i = 0; i < g->guild.max_member; i++) { //Transmission of information at all members
+		sd = g->guild.member[i].sd;
+		if( sd==nullptr )
+			continue;
+		if( sd->guild == nullptr || sd->guild != g ){
+			sd->guild = g;
+			clif_name_area(sd);
+		}
+		if(channel_config.ally_tmpl.name[0] && (channel_config.ally_tmpl.opt&CHAN_OPT_AUTOJOIN)) {
+			channel_gjoin(sd,3); //make all member join guildchan+allieschan
+		}
+
+		if (before.guild_lv != g->guild.guild_lv || bm != m ||
+			before.max_member != g->guild.max_member) {
+			clif_guild_basicinfo( *sd ); //Submit basic information
+			clif_guild_emblem(*sd, g->guild); //Submit emblem
+		}
+
+		if (bm != m) { //Send members information
+			clif_guild_memberlist( *sd );
+		}
+
+		if (before.skill_point != g->guild.skill_point)
+			clif_guild_skillinfo( *sd ); // Submit information skills
+
+		if (guild_new) { // Send information and affiliation if unsent
+#if PACKETVER >= 20200902
+			// Clients after this version need this packet to show the guild name on alt+a
+			clif_guild_basicinfo( *sd );
+#endif
+			clif_guild_belonginfo( *sd );
+			clif_guild_notice( *sd );
+			sd->guild_emblem_id = g->guild.emblem_id;
+		}
+		if (g->instance_id > 0)
+			instance_reqinfo(sd, g->instance_id);
+	}
+
+	//Occurrence of an event
+	if (guild_infoevent_db->remove(guild_infoevent_db, db_i2key(sg.guild_id), &data)) {
+		struct eventlist *ev = (struct eventlist *)db_data2ptr(&data), *ev2;
+		while(ev) {
+			npc_event_do(ev->name);
+			ev2=ev->next;
+			aFree(ev);
+			ev=ev2;
+		}
+	}
+
+	return 0;
+}
+
+/*=============================================
+ * Player sd send a guild invatation to player tsd to join his guild
+ *--------------------------------------------*/
+bool guild_invite( map_session_data& sd, map_session_data* tsd ){
+	// No nullpo_retr, because its valid that target players might not exist or are not online
+	if( tsd == nullptr ){
+		return false;
+	}
+
+	auto& g = sd.guild;
+
+	if( g == nullptr ){
+		return false;
+	}
+
+	if( g->instance_id && battle_config.instance_block_invite ){
+		return false;
+	}
+
+	// Guild locked.
+	if( map_getmapflag( sd.m, MF_GUILDLOCK ) ){
+		clif_displaymessage( sd.fd, msg_txt( &sd, 228 ) ); // Guild modification is disabled on this map.
+		return false;
+	}
+
+	// @noask [LuzZza]
+	if( tsd->state.noask ){
+		clif_noask_sub( sd, *tsd, 395 ); // Autorejected guild invite from %s.
+		return false;
+	}
+
+	// Players in a clan can not join a guild
+	if( tsd->clan ){
+		// TODO: message?
+		return false;
+	}
+
+	// Invite permission.
+	if( !guild_has_permission( sd, GUILD_PERM_INVITE ) ){
+		// TODO: message?
+		return false;
+	}
+
+	// Checking if there no other invitation pending
+	if( !battle_config.invite_request_check && ( tsd->party_invite > 0 || tsd->state.trading || tsd->adopt_invite ) ){
+		clif_guild_inviteack( sd, 0 );
+		return false;
+	}
+
+	// You can't invite someone who has already disconnected.
+	if( !session_isActive( tsd->fd ) ){
+		clif_guild_inviteack(sd,1);
+		return false;
+	}
+
+	// Can't invite people inside castles. [Skotlex]
+	if( tsd->status.guild_id > 0 || tsd->guild_invite > 0 || map_flag_gvg2( tsd->m ) ){
+		clif_guild_inviteack(sd,0);
+		return false;
+	}
+
+	int32 i;
+
+	//search an empty spot in guild
+	ARR_FIND( 0, g->guild.max_member, i, g->guild.member[i].account_id == 0 );
+	if( i == g->guild.max_member ){
+		clif_guild_inviteack(sd,3);
+		return false;
+	}
+
+	tsd->guild_invite = sd.status.guild_id;
+	tsd->guild_invite_account = sd.status.account_id;
+
+	clif_guild_invite(*tsd, g->guild);
+
+	return true;
+}
+
+/// Guild invitation reply.

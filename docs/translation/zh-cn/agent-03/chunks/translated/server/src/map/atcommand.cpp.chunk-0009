@@ -1,0 +1,500 @@
+ACMD_FUNC(breakguild)
+{
+	nullpo_retr(-1, sd);
+
+	if (sd->status.guild_id) { // Check if the player has a guild
+		if (sd->guild) { // Check if guild was found
+			if (sd->state.gmaster_flag) { // Check if player is guild master
+				// Break guild
+				int32 ret = guild_break( *sd, sd->guild->guild.name );
+
+				if (ret) { // Check if anything went wrong
+					return 0; // Guild was broken
+				} else {
+					return -1; // Something went wrong
+				}
+			} else { // Not guild master
+				clif_displaymessage(fd, msg_txt(sd,1181)); // You need to be a Guild Master to use this command.
+				return -1;
+			}
+		} else { // Guild was not found. HOW?
+			clif_displaymessage(fd, msg_txt(sd,252)); // You are not in a guild.
+			return -1;
+		}
+	} else { // Player does not have a guild
+		clif_displaymessage(fd, msg_txt(sd,252)); // You are not in a guild.
+		return -1;
+	}
+}
+
+/**
+ * Start WoE:FE
+ */
+ACMD_FUNC(agitstart)
+{
+	nullpo_retr(-1, sd);
+
+	if( guild_agit_start() ){
+		clif_displaymessage(fd, msg_txt(sd,72)); // War of Emperium has been initiated.
+		return 0;
+	}else{
+		clif_displaymessage(fd, msg_txt(sd,73)); // War of Emperium is currently in progress.
+		return -1;
+	}
+}
+
+/**
+ * Start WoE:SE
+ */
+ACMD_FUNC(agitstart2)
+{
+	nullpo_retr(-1, sd);
+
+	if( guild_agit2_start() ){
+		clif_displaymessage(fd, msg_txt(sd,403)); // "War of Emperium SE has been initiated."
+		return 0;
+	}else{
+		clif_displaymessage(fd, msg_txt(sd,404)); // "War of Emperium SE is currently in progress."
+		return -1;
+	}
+}
+
+/**
+ * Start WoE:TE
+ */
+ACMD_FUNC(agitstart3)
+{
+	nullpo_retr(-1, sd);
+
+	if( guild_agit3_start() ){
+		clif_displaymessage(fd, msg_txt(sd,749)); // "War of Emperium TE has been initiated."
+		return 0;
+	}else{
+		clif_displaymessage(fd, msg_txt(sd,750)); // "War of Emperium TE is currently in progress."
+		return -1;
+	}
+}
+
+/**
+ * End WoE:FE
+ */
+ACMD_FUNC(agitend)
+{
+	nullpo_retr(-1, sd);
+
+	if( guild_agit_end() ){
+		clif_displaymessage(fd, msg_txt(sd,74)); // War of Emperium has been ended.
+		return 0;
+	}else{
+		clif_displaymessage(fd, msg_txt(sd,75)); // War of Emperium is currently not in progress.
+		return -1;
+	}
+}
+
+/**
+ * End WoE:SE
+ */
+ACMD_FUNC(agitend2)
+{
+	nullpo_retr(-1, sd);
+
+	if( guild_agit2_end() ){
+		clif_displaymessage(fd, msg_txt(sd,405)); // "War of Emperium SE has been ended."
+		return 0;
+	}else{
+		clif_displaymessage(fd, msg_txt(sd,406)); // "War of Emperium SE is currently not in progress."
+		return -1;
+	}
+}
+
+/**
+ * End WoE:TE
+ */
+ACMD_FUNC(agitend3)
+{
+	nullpo_retr(-1, sd);
+
+	if( guild_agit3_end() ){
+		clif_displaymessage(fd, msg_txt(sd,751));// War of Emperium TE has been ended.
+		return 0;
+	}else{
+		clif_displaymessage(fd, msg_txt(sd,752));// War of Emperium TE is currently not in progress.
+		return -1;
+	}
+}
+
+/*==========================================
+ * @mapexit - shuts down the map server
+ *------------------------------------------*/
+ACMD_FUNC(mapexit)
+{
+	nullpo_retr(-1, sd);
+
+	global_core->signal_shutdown();
+
+	return 0;
+}
+
+/*==========================================
+ * idsearch <part_of_name>: revrited by [Yor]
+ *------------------------------------------*/
+ACMD_FUNC(idsearch)
+{
+	nullpo_retr(-1, sd);
+
+	char item_name[100];
+
+	memset(item_name, '\0', sizeof(item_name));
+
+	if (!message || !*message || sscanf(message, "%99s", item_name) < 0) {
+		clif_displaymessage(fd, msg_txt(sd,1031)); // Please enter part of an item name (usage: @idsearch <part_of_item_name>).
+		return -1;
+	}
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	sprintf(atcmd_output, msg_txt(sd,77), item_name); // The reference result of '%s' (name: id):
+	clif_displaymessage(fd, atcmd_output);
+
+	std::map<t_itemid, std::shared_ptr<item_data>> item_array = {};
+	uint16 match = itemdb_searchname_array(item_array, MAX_SEARCH, item_name);
+
+	if (match == MAX_SEARCH) {
+		sprintf(atcmd_output, msg_txt(sd,269), MAX_SEARCH); // Displaying first %d matches
+		clif_displaymessage(fd, atcmd_output);
+	}
+	for(const auto &result : item_array) {
+		std::shared_ptr<item_data> id = result.second;
+
+		sprintf(atcmd_output, msg_txt(sd,78), item_db.create_item_link( id ).c_str(), id->nameid); // %s: %u
+		clif_displaymessage(fd, atcmd_output);
+	}
+	sprintf(atcmd_output, msg_txt(sd,79), match); // It is %d affair above.
+	clif_displaymessage(fd, atcmd_output);
+
+	return 0;
+}
+
+/*==========================================
+ * Recall All Characters Online To Your Location
+ *------------------------------------------*/
+ACMD_FUNC(recallall)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+	int32 count;
+	nullpo_retr(-1, sd);
+
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (sd->m >= 0 && map_getmapflag(sd->m, MF_NOWARPTO) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) {
+		clif_displaymessage(fd, msg_txt(sd,1032)); // You are not authorized to warp someone to your current map.
+		return -1;
+	}
+
+	count = 0;
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if (sd->status.account_id != pl_sd->status.account_id && pc_get_group_level(sd) >= pc_get_group_level(pl_sd))
+		{
+			if (pl_sd->m == sd->m && pl_sd->x == sd->x && pl_sd->y == sd->y)
+				continue; // Don't waste time warping the character to the same place.
+			if (pl_sd->m >= 0 && map_getmapflag(pl_sd->m, MF_NOWARP) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE))
+				count++;
+			else {
+				if( pc_setpos(pl_sd, sd->mapindex, sd->x, sd->y, CLR_RESPAWN) == SETPOS_AUTOTRADE ){
+					count++;
+				}
+			}
+		}
+	}
+	mapit_free(iter);
+
+	clif_displaymessage(fd, msg_txt(sd,92)); // All characters recalled!
+	if (count) {
+		sprintf(atcmd_output, msg_txt(sd,1033), count); // Because you are not authorized to warp from some maps, %d player(s) have not been recalled.
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * Recall online characters of a guild to your location
+ *------------------------------------------*/
+ACMD_FUNC(guildrecall)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+	int32 count;
+	char guild_name[NAME_LENGTH];
+	nullpo_retr(-1, sd);
+
+	memset(guild_name, '\0', sizeof(guild_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", guild_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1034)); // Please enter a guild name/ID (usage: @guildrecall <guild_name/ID>).
+		return -1;
+	}
+
+	if (sd->m >= 0 && map_getmapflag(sd->m, MF_NOWARPTO) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) {
+		clif_displaymessage(fd, msg_txt(sd,1032)); // You are not authorized to warp someone to your current map.
+		return -1;
+	}
+
+	auto g = guild_searchnameid(guild_name);
+	if (!g) {
+		clif_displaymessage(fd, msg_txt(sd,94)); // Incorrect name/ID, or no one from the guild is online.
+		return -1;
+	}
+
+	count = 0;
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if (sd->status.account_id != pl_sd->status.account_id && pl_sd->status.guild_id == g->guild.guild_id)
+		{
+			if (pc_get_group_level(pl_sd) > pc_get_group_level(sd) || (pl_sd->m == sd->m && pl_sd->x == sd->x && pl_sd->y == sd->y))
+				continue; // Skip GMs greater than you...             or chars already on the cell
+			if (pl_sd->m >= 0 && map_getmapflag(pl_sd->m, MF_NOWARP) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE))
+				count++;
+			else{
+				if( pc_setpos(pl_sd, sd->mapindex, sd->x, sd->y, CLR_RESPAWN) == SETPOS_AUTOTRADE ){
+					count++;
+				}
+			}
+		}
+	}
+	mapit_free(iter);
+
+	sprintf(atcmd_output, msg_txt(sd,93), g->guild.name); // All online characters of the %s guild have been recalled to your position.
+	clif_displaymessage(fd, atcmd_output);
+	if (count) {
+		sprintf(atcmd_output, msg_txt(sd,1033), count); // Because you are not authorized to warp from some maps, %d player(s) have not been recalled.
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ * Recall online characters of a party to your location
+ *------------------------------------------*/
+ACMD_FUNC(partyrecall)
+{
+	map_session_data* pl_sd;
+	struct s_mapiterator* iter;
+	char party_name[NAME_LENGTH];
+	struct party_data *p;
+	int32 count;
+	nullpo_retr(-1, sd);
+
+	memset(party_name, '\0', sizeof(party_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", party_name) < 1) {
+		clif_displaymessage(fd, msg_txt(sd,1035)); // Please enter a party name/ID (usage: @partyrecall <party_name/ID>).
+		return -1;
+	}
+
+	if (sd->m >= 0 && map_getmapflag(sd->m, MF_NOWARPTO) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE)) {
+		clif_displaymessage(fd, msg_txt(sd,1032)); // You are not authorized to warp someone to your current map.
+		return -1;
+	}
+
+	if ((p = party_searchname(party_name)) == nullptr && // name first to avoid error when name begin with a number
+	    (p = party_search(atoi(message))) == nullptr)
+	{
+		clif_displaymessage(fd, msg_txt(sd,96)); // Incorrect name or ID, or no one from the party is online.
+		return -1;
+	}
+
+	count = 0;
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) )
+	{
+		if (sd->status.account_id != pl_sd->status.account_id && pl_sd->status.party_id == p->party.party_id)
+		{
+			if (pc_get_group_level(pl_sd) > pc_get_group_level(sd) || (pl_sd->m == sd->m && pl_sd->x == sd->x && pl_sd->y == sd->y))
+				continue; // Skip GMs greater than you...             or chars already on the cell
+			if (pl_sd->m >= 0 && map_getmapflag(pl_sd->m, MF_NOWARP) && !pc_has_permission(sd, PC_PERM_WARP_ANYWHERE))
+				count++;
+			else{
+				if( pc_setpos(pl_sd, sd->mapindex, sd->x, sd->y, CLR_RESPAWN) == SETPOS_AUTOTRADE ){
+					count++;
+				}
+			}
+		}
+	}
+	mapit_free(iter);
+
+	sprintf(atcmd_output, msg_txt(sd,95), p->party.name); // All online characters of the %s party have been recalled to your position.
+	clif_displaymessage(fd, atcmd_output);
+	if (count) {
+		sprintf(atcmd_output, msg_txt(sd,1033), count); // Because you are not authorized to warp from some maps, %d player(s) have not been recalled.
+		clif_displaymessage(fd, atcmd_output);
+	}
+
+	return 0;
+}
+
+/*==========================================
+ *
+ *------------------------------------------*/
+void atcommand_doload();
+
+ACMD_FUNC(reloadcashdb){
+	nullpo_retr(-1, sd);
+
+	cashshop_reloaddb();
+	clif_displaymessage( fd, msg_txt( sd, 832 ) ); // Cash shop database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloaditemdb){
+	nullpo_retr(-1, sd);
+
+	itemdb_reload();
+	clif_displaymessage(fd, msg_txt(sd,97)); // Item database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadmobdb){
+	nullpo_retr(-1, sd);
+
+	mob_reload();
+	pet_db.reload();
+	hom_reload();
+	mercenary_db.reload();
+	elemental_db.reload();
+	clif_displaymessage(fd, msg_txt(sd,98)); // Monster database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadskilldb){
+	nullpo_retr(-1, sd);
+
+	skill_reload();
+	homunculus_db.reload();
+	clif_displaymessage(fd, msg_txt(sd,99)); // Skill database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadscript){
+	nullpo_retr(-1, sd);
+
+	struct s_mapiterator* iter;
+	map_session_data* pl_sd;
+	//atcommand_broadcast( fd, sd, "@broadcast", "Server is reloading scripts..." );
+	//atcommand_broadcast( fd, sd, "@broadcast", "You will feel a bit of lag at this point !" );
+
+	iter = mapit_getallusers();
+	for( pl_sd = (TBL_PC*)mapit_first(iter); mapit_exists(iter); pl_sd = (TBL_PC*)mapit_next(iter) ){
+		pc_close_npc(pl_sd,1);
+		clif_cutin( *pl_sd, "", 255 );
+		pl_sd->state.block_action &= ~(PCBLOCK_ALL ^ PCBLOCK_IMMUNE);
+		bg_queue_leave(pl_sd);
+	}
+	mapit_free(iter);
+
+	for (auto &bg : bg_queues) {
+		for (auto &bg_sd : bg->teama_members)
+			bg_team_leave(bg_sd, false, false); // Kick Team A from battlegrounds
+		for (auto &bg_sd : bg->teamb_members)
+			bg_team_leave(bg_sd, false, false); // Kick Team B from battlegrounds
+		bg_queue_clear(bg, true);
+	}
+
+	flush_fifos();
+	map_reloadnpc(true); // reload config files seeking for npcs
+	script_reload();
+	npc_reload();
+
+	clif_displaymessage(fd, msg_txt(sd,100)); // Scripts have been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadatcommand){
+	nullpo_retr(-1, sd);
+
+	atcommand_doload();
+	pc_groups_reload();
+	clif_displaymessage(fd, msg_txt(sd,254)); // GM command configuration has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadbattleconf){
+	nullpo_retr(-1, sd);
+
+	struct Battle_Config prev_config;
+	memcpy(&prev_config, &battle_config, sizeof(prev_config));
+
+	battle_config_read(BATTLE_CONF_FILENAME);
+
+	if( prev_config.item_rate_mvp          != battle_config.item_rate_mvp
+	||  prev_config.item_rate_common       != battle_config.item_rate_common
+	||  prev_config.item_rate_common_boss  != battle_config.item_rate_common_boss
+	||  prev_config.item_rate_common_mvp   != battle_config.item_rate_common_mvp
+	||  prev_config.item_rate_card         != battle_config.item_rate_card
+	||  prev_config.item_rate_card_boss    != battle_config.item_rate_card_boss
+	||  prev_config.item_rate_card_mvp     != battle_config.item_rate_card_mvp
+	||  prev_config.item_rate_equip        != battle_config.item_rate_equip
+	||  prev_config.item_rate_equip_boss   != battle_config.item_rate_equip_boss
+	||  prev_config.item_rate_equip_mvp    != battle_config.item_rate_equip_mvp
+	||  prev_config.item_rate_heal         != battle_config.item_rate_heal
+	||  prev_config.item_rate_heal_boss    != battle_config.item_rate_heal_boss
+	||  prev_config.item_rate_heal_mvp     != battle_config.item_rate_heal_mvp
+	||  prev_config.item_rate_use          != battle_config.item_rate_use
+	||  prev_config.item_rate_use_boss     != battle_config.item_rate_use_boss
+	||  prev_config.item_rate_use_mvp      != battle_config.item_rate_use_mvp
+	||  prev_config.item_rate_treasure     != battle_config.item_rate_treasure
+	||  prev_config.item_rate_adddrop      != battle_config.item_rate_adddrop
+	||  prev_config.logarithmic_drops      != battle_config.logarithmic_drops
+	||  prev_config.item_drop_common_min   != battle_config.item_drop_common_min
+	||  prev_config.item_drop_common_max   != battle_config.item_drop_common_max
+	||  prev_config.item_drop_card_min     != battle_config.item_drop_card_min
+	||  prev_config.item_drop_card_max     != battle_config.item_drop_card_max
+	||  prev_config.item_drop_equip_min    != battle_config.item_drop_equip_min
+	||  prev_config.item_drop_equip_max    != battle_config.item_drop_equip_max
+	||  prev_config.item_drop_mvp_min      != battle_config.item_drop_mvp_min
+	||  prev_config.item_drop_mvp_max      != battle_config.item_drop_mvp_max
+	||  prev_config.item_drop_heal_min     != battle_config.item_drop_heal_min
+	||  prev_config.item_drop_heal_max     != battle_config.item_drop_heal_max
+	||  prev_config.item_drop_use_min      != battle_config.item_drop_use_min
+	||  prev_config.item_drop_use_max      != battle_config.item_drop_use_max
+	||  prev_config.item_drop_treasure_min != battle_config.item_drop_treasure_min
+	||  prev_config.item_drop_treasure_max != battle_config.item_drop_treasure_max
+	||  prev_config.base_exp_rate          != battle_config.base_exp_rate
+	||  prev_config.job_exp_rate           != battle_config.job_exp_rate
+	)
+	{	// Exp or Drop rates changed.
+		mob_reload(); //Needed as well so rate changes take effect.
+	}
+	clif_displaymessage(fd, msg_txt(sd,255)); // Battle configuration has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadstatusdb){
+	nullpo_retr(-1, sd);
+
+	status_readdb( true );
+	clif_displaymessage(fd, msg_txt(sd,256)); // Status database has been reloaded.
+
+	return 0;
+}
+
+ACMD_FUNC(reloadpcdb){
+	nullpo_retr(-1, sd);
+
+	pc_readdb();

@@ -1,0 +1,500 @@
+		}
+	}
+	else { //other
+		switch(skill_id) {
+		case MH_TINDER_BREAKER:
+		case MH_CBC:
+		case MH_SONIC_CRAW:
+		case MH_SILVERVEIN_RUSH:
+			if(hd->homunculus.spiritball > 0) duration = 2000;
+				nodelay = 1;
+			break;
+		case MH_EQC:
+		case MH_MIDNIGHT_FRENZY:
+			if(hd->homunculus.spiritball >= 2) duration = 2000;
+				nodelay = 1;
+			break;
+		}
+	}
+
+	if (duration) { //Possible to chain
+		if(sd && duration==1) duration = DIFF_TICK(sd->ud.canact_tick, tick); //Auto calc duration
+		duration = i64max(status_get_amotion(src),duration); //Never less than aMotion
+		sc_start4(src,src,SC_COMBO,100,skill_id,target_id,nodelay,0,duration);
+		clif_combo_delay( *src, duration );
+	}
+}
+
+/**
+ * Copy skill by Plagiarism or Reproduce
+ * @param src: The caster
+ * @param bl: The target
+ * @param skill_id: Skill that casted
+ * @param skill_lv: Skill level of the casted skill
+ */
+static void skill_do_copy(block_list* src,block_list *bl, uint16 skill_id, uint16 skill_lv)
+{
+	TBL_PC *tsd = BL_CAST(BL_PC, bl);
+
+	if (!tsd || (!pc_checkskill(tsd,RG_PLAGIARISM) && !pc_checkskill(tsd,SC_REPRODUCE)))
+		return;
+	//If SC_PRESERVE is active and SC__REPRODUCE is not active, nothing to do
+	else if (tsd->sc.getSCE(SC_PRESERVE) && !tsd->sc.getSCE(SC__REPRODUCE))
+		return;
+	else {
+		uint16 idx;
+		uint8 lv;
+
+		skill_id = skill_dummy2skill_id(skill_id);
+
+		//Use skill index, avoiding out-of-bound array [Cydh]
+		if (!(idx = skill_get_index(skill_id)))
+			return;
+
+		switch ( skill_isCopyable(tsd, skill_id) ) {
+			case 1: //Copied by Plagiarism
+				//Delete reproduced skill when the plagiarized skill id is the same
+				if ( tsd->reproduceskill_idx && tsd->status.skill[tsd->reproduceskill_idx].flag == SKILL_FLAG_PLAGIARIZED && tsd->status.skill[tsd->reproduceskill_idx].id == skill_id ) {
+					pc_skill_plagiarism_reset(*tsd, 2);
+				}
+
+				pc_skill_plagiarism_reset(*tsd, 1);
+
+				//Cap level to RG_PLAGIARISM level
+				lv = min(skill_lv, pc_checkskill(tsd, RG_PLAGIARISM));
+
+				tsd->cloneskill_idx = idx;
+				pc_setglobalreg(tsd, add_str(SKILL_VAR_PLAGIARISM), skill_id);
+				pc_setglobalreg(tsd, add_str(SKILL_VAR_PLAGIARISM_LV), lv);
+				break;
+
+			case 2: //Copied by Reproduce
+				//Delete plagiarized skill when the reproduced skill id is the same
+				if ( tsd->cloneskill_idx > 0 && tsd->status.skill[tsd->cloneskill_idx].flag == SKILL_FLAG_PLAGIARIZED && tsd->status.skill[tsd->cloneskill_idx].id == skill_id ) {
+					pc_skill_plagiarism_reset(*tsd, 1);
+				}
+
+				pc_skill_plagiarism_reset(*tsd, 2);
+
+				//Copied skill level depends on the Reproduce level used
+				if( status_change* tsc = status_get_sc( bl ); tsc != nullptr && tsc->getSCE( SC__REPRODUCE ) != nullptr ) {
+					lv = tsc->getSCE( SC__REPRODUCE )->val1;
+				} else {
+					lv = 1;
+				}
+
+				//Cap level depending on the src type
+				if (src->type == BL_PC) 
+					lv = min(lv, skill_get_max(skill_id)); //If player, max skill level is skill_get_max(skill_id)
+				else
+					lv = min(lv, skill_lv); //Monster might used skill level > allowed player max skill lv. Ex. Drake with Waterball lv. 10
+
+				tsd->reproduceskill_idx = idx;
+				pc_setglobalreg(tsd, add_str(SKILL_VAR_REPRODUCE), skill_id);
+				pc_setglobalreg(tsd, add_str(SKILL_VAR_REPRODUCE_LV), lv);
+				break;
+
+			default: 
+				return;
+		}
+		tsd->status.skill[idx].id = skill_id;
+		tsd->status.skill[idx].lv = lv;
+		tsd->status.skill[idx].flag = SKILL_FLAG_PLAGIARIZED;
+		clif_addskill(*tsd,skill_id);
+	}
+}
+
+/**
+ * Knockback the target on skill_attack
+ * @param src is the master behind the attack
+ * @param dsrc is the actual originator of the damage, can be the same as src, or a BL_SKILL
+ * @param target is the target to be attacked.
+ * @param blewcount
+ * @param skill_id
+ * @param skill_lv
+ * @param damage
+ * @param tick
+ * @param flag can hold a bunch of information:
+ */
+void skill_attack_blow(block_list *src, block_list *dsrc, block_list *target, uint8 blewcount, uint16 skill_id, uint16 skill_lv, int64 damage, t_tick tick, int32 flag) {
+	int8 dir = -1; // Default direction
+	//Only knockback if it's still alive, otherwise a "ghost" is left behind. [Skotlex]
+	//Reflected spells do not bounce back (src == dsrc since it only happens for direct skills)
+	if (!blewcount || target == dsrc || status_isdead(*target))
+		return;
+
+	// Skill specific direction
+	switch (skill_id) {
+		case MG_FIREWALL:
+		case EL_FIRE_MANTLE:
+			dir = unit_getdir(target); // Backwards
+			break;
+		// This ensures the storm randomly pushes instead of exactly a cell backwards per official mechanics.
+		case NPC_STORMGUST2:
+		case WZ_STORMGUST:
+			if(!battle_config.stormgust_knockback)
+				dir = rnd()%8;
+			break;
+		case MC_CARTREVOLUTION:
+			if (battle_config.cart_revo_knockback)
+				dir = 6; // Official servers push target to the West
+			break;
+		case AC_SHOWER:
+		case WL_CRIMSONROCK:
+			if (!battle_config.arrow_shower_knockback && skill_id == AC_SHOWER)
+				dir = map_calc_dir(target, src->x, src->y);
+			else
+				dir = map_calc_dir(target, skill_area_temp[4], skill_area_temp[5]);
+			break;
+		case HT_PHANTASMIC: // issue #1378
+			if (status_get_hp(target) - damage <= 0) return;
+			break;
+	}
+
+	// Blown-specific handling
+	switch( skill_id ) {
+		case SR_KNUCKLEARROW:
+			// Ignore knockback damage bonus if in WOE (player cannot be knocked in WOE)
+			// Boss & Immune Knockback stay in place and don't get bonus damage
+			// Give knockback damage bonus only hits the wall. (bugreport:9096)
+			if (skill_blown(dsrc, target, blewcount, dir_ka, (enum e_skill_blown)(BLOWN_IGNORE_NO_KNOCKBACK|BLOWN_NO_KNOCKBACK_MAP|BLOWN_MD_KNOCKBACK_IMMUNE|BLOWN_TARGET_NO_KNOCKBACK|BLOWN_TARGET_BASILICA)) < blewcount)
+				skill_addtimerskill(src, tick + 300 * ((flag&2) ? 1 : 2), target->id, 0, 0, skill_id, skill_lv, BF_WEAPON, flag|4);
+			dir_ka = -1;
+			break;
+		case RL_R_TRIP:
+			if (skill_blown(dsrc,target,blewcount,dir,BLOWN_NONE) < blewcount)
+				skill_addtimerskill(src, tick + status_get_amotion(src), target->id, 0, 0, RL_R_TRIP_PLUSATK, skill_lv, BF_WEAPON, flag|SD_ANIMATION);
+			break;
+		default:
+			skill_blown(dsrc,target,blewcount,dir, BLOWN_NONE);
+			if (!blewcount && target->type == BL_SKILL && damage > 0) {
+				TBL_SKILL *su = (TBL_SKILL*)target;
+				if (su->group && su->group->skill_id == HT_BLASTMINE)
+					skill_blown(src, target, 3, -1, BLOWN_NONE);
+			}
+			break;
+	}
+
+	clif_fixpos( *target );
+}
+
+/*
+ * =========================================================================
+ * Does a skill attack with the given properties.
+ * @param src is the master behind the attack (player/mob/pet)
+ * @param dsrc is the actual originator of the damage, can be the same as src, or a BL_SKILL
+ * @param bl is the target to be attacked.
+ * @param flag can hold a bunch of information:
+ *        flag&1
+ *        flag&2 - Disable re-triggered by double casting
+ *        flag&4 - Skip to blow target (because already knocked back before skill_attack somewhere)
+ *        flag&8 - SC_COMBO state used to deal bonus damage
+ *
+ *        flag&0xFFF is passed to the underlying battle_calc_attack for processing.
+ *             (usually holds number of targets, or just 1 for simple splash attacks)
+ *
+ *        flag&0xF000 - Values from enum e_skill_display
+ *        flag&0x3F0000 - Values from enum e_battle_check_target
+ * 
+ *        flag&0x1000000 - Return 0 if damage was reflected
+ *-------------------------------------------------------------------------*/
+int64 skill_attack (int32 attack_type, block_list* src, block_list *dsrc, block_list *bl, uint16 skill_id, uint16 skill_lv, t_tick tick, int32 flag)
+{
+	struct Damage dmg;
+	status_change *sc, *tsc;
+	map_session_data *sd, *tsd;
+	int64 damage;
+	bool rmdamage = false;//magic reflected
+	int32 type;
+	enum e_damage_type dmg_type;
+	bool shadow_flag = false;
+	bool additional_effects = true;
+
+	if(skill_id > 0 && !skill_lv)
+		return 0;
+
+	nullpo_ret(src);	//Source is the master behind the attack (player/mob/pet)
+	nullpo_ret(dsrc);	//dsrc is the actual originator of the damage, can be the same as src, or a skill casted by src.
+	nullpo_ret(bl);		//Target to be attacked.
+
+	if (status_bl_has_mode(bl,MD_SKILLIMMUNE) || (status_get_class(bl) == MOBID_EMPERIUM && !skill_get_inf2(skill_id, INF2_TARGETEMPERIUM)))
+		return 0;
+
+	if (src != dsrc) {
+		//When caster is not the src of attack, this is a ground skill, and as such, do the relevant target checking. [Skotlex]
+		if (!status_check_skilluse(battle_config.skill_caster_check?src:nullptr, bl, skill_id, 2))
+			return 0;
+	} else if ((flag&SD_ANIMATION) && skill_get_nk(skill_id, NK_SPLASH)) {
+		//Note that splash attacks often only check versus the targetted mob, those around the splash area normally don't get checked for being hidden/cloaked/etc. [Skotlex]
+		if (!status_check_skilluse(src, bl, skill_id, 2))
+			return 0;
+	}
+
+	sd = BL_CAST(BL_PC, src);
+	tsd = BL_CAST(BL_PC, bl);
+
+	status_data* sstatus = status_get_status_data(*src);
+	status_data* tstatus = status_get_status_data(*bl);
+	sc= status_get_sc(src);
+	tsc= status_get_sc(bl);
+	if (tsc != nullptr && tsc->empty())
+		tsc = nullptr; //Don't need it.
+
+	 //Trick Dead protects you from damage, but not from buffs and the like, hence it's placed here.
+	if (tsc && tsc->getSCE(SC_TRICKDEAD))
+		return 0;
+
+#ifndef RENEWAL
+	//When Gravitational Field is active, damage can only be dealt by Gravitational Field and Autospells
+	if(sd && sc && sc->getSCE(SC_GRAVITATION) && sc->getSCE(SC_GRAVITATION)->val3 == BCT_SELF && skill_id != HW_GRAVITATION && !sd->state.autocast)
+		return 0;
+#endif
+
+	dmg = battle_calc_attack(attack_type,src,bl,skill_id,skill_lv,flag&0xFFF);
+
+	//If the damage source is a unit, the damage is not delayed
+	if (src != dsrc)
+		dmg.amotion = 0;
+
+	//! CHECKME: This check maybe breaks the battle_calc_attack, and maybe need better calculation.
+	// Adjusted to the new system [Skotlex]
+	if( src->type == BL_PET ) { // [Valaris]
+		pet_data *pd = (TBL_PET*)src;
+		if (pd->a_skill && pd->a_skill->div_ && pd->a_skill->id == skill_id) { //petskillattack2
+			if (battle_config.pet_ignore_infinite_def || !is_infinite_defense(bl,dmg.flag)) {
+				int32 element = skill_get_ele(skill_id, skill_lv);
+				/*if (skill_id == -1) Does it ever worked?
+					element = sstatus->rhw.ele;*/
+				if (element != ELE_NEUTRAL || !(battle_config.attack_attr_none&BL_PET))
+					dmg.damage = battle_attr_fix(src, bl, pd->a_skill->damage, element, tstatus->def_ele, tstatus->ele_lv);
+				else
+					dmg.damage = pd->a_skill->damage; // Fixed damage
+				
+			}
+			else
+				dmg.damage = 1*pd->a_skill->div_;
+			dmg.damage2 = 0;
+			dmg.div_= pd->a_skill->div_;
+		}
+	}
+
+	if( dmg.flag&BF_MAGIC && ( skill_id != NPC_EARTHQUAKE || (battle_config.eq_single_target_reflectable && (flag&0xFFF) == 1) ) )
+	{ // Earthquake on multiple targets is not counted as a target skill. [Inkfish]
+		if( (dmg.damage || dmg.damage2) && (type = skill_magic_reflect(src, bl, src==dsrc)) )
+		{	//Magic reflection, switch caster/target
+			block_list *tbl = bl;
+			rmdamage = true;
+			bl = src;
+			src = tbl;
+			dsrc = tbl;
+			sd = BL_CAST(BL_PC, src);
+			tsd = BL_CAST(BL_PC, bl);
+			tsc = status_get_sc(bl);
+			if (tsc != nullptr && tsc->empty())
+				tsc = nullptr; //Don't need it.
+			/* bugreport:2564 flag&2 disables double casting trigger */
+			flag |= 2;
+			//Reflected magic damage will not cause the caster to be knocked back [Playtester]
+			flag |= 4;
+			//Spirit of Wizard blocks Kaite's reflection
+			if( type == 2 && tsc && tsc->getSCE(SC_SPIRIT) && tsc->getSCE(SC_SPIRIT)->val2 == SL_WIZARD )
+			{	//Consume one Fragment per hit of the casted skill? [Skotlex]
+				type = tsd?pc_search_inventory (tsd, ITEMID_FRAGMENT_OF_CRYSTAL):0;
+				if (type >= 0) {
+					if ( tsd )
+						pc_delitem(tsd, type, 1, 0, 1, LOG_TYPE_CONSUME);
+					dmg.damage = dmg.damage2 = 0;
+					dmg.dmg_lv = ATK_MISS;
+					tsc->getSCE(SC_SPIRIT)->val3 = skill_id;
+					tsc->getSCE(SC_SPIRIT)->val4 = dsrc->id;
+				}
+			}
+
+			// Official Magic Reflection Behavior : damage reflected depends on gears caster wears, not target
+#if MAGIC_REFLECTION_TYPE
+#ifdef RENEWAL
+			if( dmg.dmg_lv != ATK_MISS ) { //Wiz SL cancelled and consumed fragment
+#else
+			// issue:6415 in pre-renewal Kaite reflected the entire damage received
+			// regardless of caster's equipment (Aegis 11.1)
+			if( dmg.dmg_lv != ATK_MISS && type == 1 ) { //Wiz SL cancelled and consumed fragment
+#endif
+				int16 s_ele = skill_get_ele(skill_id, skill_lv);
+
+				if (s_ele == ELE_WEAPON) // the skill takes the weapon's element
+					s_ele = sstatus->rhw.ele;
+				else if (s_ele == ELE_ENDOWED) //Use status element
+					s_ele = status_get_attack_sc_element(src,status_get_sc(src));
+				else if( s_ele == ELE_RANDOM) //Use random element
+					s_ele = rnd()%ELE_ALL;
+
+				if(type == 3)
+					dmg.flag = BF_WEAPON|BF_NORMAL|BF_SHORT;
+				dmg.damage = battle_attr_fix(bl, bl, dmg.damage, s_ele, status_get_element(bl), status_get_element_level(bl));
+
+				if( tsc && tsc->getSCE(SC_ENERGYCOAT) ) {
+					status_data* status = status_get_status_data(*bl);
+					int32 per = 100*status->sp / status->max_sp -1; //100% should be counted as the 80~99% interval
+					per /=20; //Uses 20% SP intervals.
+					//SP Cost: 1% + 0.5% per every 20% SP
+					if (!status_charge(bl, 0, (10+5*per)*status->max_sp/1000))
+						status_change_end(bl, SC_ENERGYCOAT);
+					//Reduction: 6% + 6% every 20%
+					dmg.damage -= dmg.damage * (6 * (1+per)) / 100;
+				}
+
+				int64 reduce = 0;
+
+				if (tsd && tsd->bonus.reduce_damage_return != 0) {
+					reduce += tsd->bonus.reduce_damage_return;
+				}
+				if (tsc && tsc->getSCE(SC_REFLECTDAMAGE)) {
+					reduce += (tsc->getSCE(SC_REFLECTDAMAGE)->val2);
+				}
+				if (tsc && tsc->getSCE(SC_REF_T_POTION))
+					reduce += 100;
+				if (dmg.damage > 0) {
+					dmg.damage -= dmg.damage * i64min(100, reduce) / 100;
+					dmg.damage = i64max(dmg.damage, dmg.div_);
+				}
+			}
+#endif
+		}
+
+		if(tsc && tsc->getSCE(SC_MAGICROD) && src == dsrc) {
+			int32 sp = skill_get_sp(skill_id,skill_lv);
+#ifndef RENEWAL 
+			clif_skill_nodamage(bl,*bl,SA_MAGICROD,skill_lv);
+#endif
+			dmg.damage = dmg.damage2 = 0;
+			dmg.dmg_lv = ATK_MISS; //This will prevent skill additional effect from taking effect. [Skotlex]
+			sp = sp * tsc->getSCE(SC_MAGICROD)->val2 / 100;
+			if(skill_id == WZ_WATERBALL && skill_lv > 1)
+				sp = sp/((skill_lv|1)*(skill_lv|1)); //Estimate SP cost of a single water-ball
+			status_heal(bl, 0, sp, 2);
+		}
+		if( (dmg.damage || dmg.damage2) && tsc && (tsc->getSCE(SC_HALLUCINATIONWALK) && rnd()%100 < tsc->getSCE(SC_HALLUCINATIONWALK)->val3 || tsc->getSCE(SC_NPC_HALLUCINATIONWALK) && rnd()%100 < tsc->getSCE(SC_NPC_HALLUCINATIONWALK)->val3) ) {
+			dmg.damage = dmg.damage2 = 0;
+			dmg.dmg_lv = ATK_MISS;
+		}
+	}
+
+	damage = dmg.damage + dmg.damage2;
+
+	if ((dmg.flag & BF_MAGIC) && tsc && tsc->getSCE(SC_MAXPAIN)) {
+		auto * sce = tsc->getSCE(SC_MAXPAIN);
+		sce->val3 = (int32)damage;
+		sce->val2 = 0;
+		if (!tsc->getSCE(SC_KYOMU)) //SC_KYOMU invalidates reflecting ability.
+			skill_castend_damage_id(bl, src, NPC_MAXPAIN_ATK, sce->val1, tick, flag);
+	}
+
+	if( (skill_id == AL_INCAGI || skill_id == AL_BLESSING ||
+		skill_id == CASH_BLESSING || skill_id == CASH_INCAGI ||
+		skill_id == MER_INCAGI || skill_id == MER_BLESSING) && tsc && tsc->getSCE(SC_CHANGEUNDEAD) )
+		damage = 1;
+
+	if( damage && tsc && tsc->getSCE(SC_GENSOU) && dmg.flag&BF_MAGIC ){
+		block_list *nbl;
+		nbl = battle_getenemyarea(bl,bl->x,bl->y,2,BL_CHAR,bl->id);
+		if( nbl ){ // Only one target is chosen.
+			damage = damage / 2; // Deflect half of the damage to a target nearby
+			clif_skill_damage( *bl, *nbl, tick, status_get_amotion(src), 0, battle_fix_damage(bl,nbl,damage,0,0), dmg.div_, OB_OBOROGENSOU_TRANSITION_ATK, -1, DMG_SINGLE );
+		}
+	}
+
+	//Skill hit type
+	dmg_type = (skill_id == 0) ? DMG_SPLASH : skill_get_hit(skill_id);
+
+	switch( skill_id ) {
+		case SC_TRIANGLESHOT:
+			if( rnd()%100 > (1 + skill_lv) )
+				dmg.blewcount = 0;
+			break;
+		default:
+			if (damage < dmg.div_ && skill_id != CH_PALMSTRIKE)
+				dmg.blewcount = 0; //only pushback when it hit for other
+			break;
+	}
+
+	switch( skill_id ) {
+		case CR_GRANDCROSS:
+		case NPC_GRANDDARKNESS:
+			if( battle_config.gx_disptype)
+				dsrc = src;
+			if( src == bl)
+				dmg_type = DMG_ENDURE;
+			else
+				flag|= SD_ANIMATION;
+			break;
+		case NJ_TATAMIGAESHI: //For correct knockback.
+			dsrc = src;
+			flag|= SD_ANIMATION;
+			break;
+		case TK_COUNTER: {	//bonus from SG_FRIEND [Komurka]
+			int32 level;
+			if( sd && sd->status.party_id > 0 && (level = pc_checkskill(sd,SG_FRIEND)) )
+				party_skill_check(sd, sd->status.party_id, TK_COUNTER,level);
+			}
+			break;
+		case SL_STIN:
+		case SL_STUN:
+			if (skill_lv >= 7) {
+				status_change *sc_cur = status_get_sc(src);
+				if (sc_cur && !sc_cur->getSCE(SC_SMA))
+					sc_start(src,src,SC_SMA,100,skill_lv,skill_get_time(SL_SMA, skill_lv));
+			}
+			break;
+		case DK_SERVANT_W_DEMOL:// Only give servant's per target after damage calculation.
+			pc_addservantball( *sd );
+			break;
+		case KN_PIERCE:
+		case LK_SPIRALPIERCE:
+		case RK_HUNDREDSPEAR:
+		case DK_MADNESS_CRUSHER:
+			if (sc && sc->getSCE(SC_CHARGINGPIERCE)) {
+				if (sc->getSCE(SC_CHARGINGPIERCE_COUNT)) {
+					if (sc->getSCE(SC_CHARGINGPIERCE_COUNT)->val1 < 10) // If the charge count is below 10, add 1.
+						sc_start(src, src, SC_CHARGINGPIERCE_COUNT, 100, sc->getSCE(SC_CHARGINGPIERCE_COUNT)->val1 + 1, skill_get_time2(DK_CHARGINGPIERCE, 1));
+					else { // If charge count is 10, bonus damage is applied for 1 attack and then the count status ends.
+						clif_specialeffect(bl, 1767, AREA);
+						status_change_end(src, SC_CHARGINGPIERCE_COUNT);
+					}
+				} else // No count status detected? Start charge count at 1.
+					sc_start(src, src, SC_CHARGINGPIERCE_COUNT, 100, 1, skill_get_time2(DK_CHARGINGPIERCE, 1));
+			}
+			break;
+		case MG_FIREWALL:
+			if (tstatus->def_ele == ELE_FIRE || battle_check_undead(tstatus->race, tstatus->def_ele)) {
+				// Fire and undead units hit by firewall cannot be stopped for 2 seconds
+				if (unit_data* ud = unit_bl2ud(bl); ud != nullptr)
+					ud->endure_tick = gettick() + 2000;
+			}
+			break;
+		case MH_BLAZING_AND_FURIOUS:
+			if (homun_data *hd = BL_CAST(BL_HOM, src); hd != nullptr) {
+				// TODO: no update on the client ?
+				hom_delspiritball(hd, MAX_SPIRITBALL, 1);
+			}
+			break;
+	}
+
+	//combo handling
+	skill_combo(src,dsrc,bl,skill_id,skill_lv,tick);
+
+	//Display damage.
+	switch( skill_id ) {
+		case PA_GOSPEL: //Should look like Holy Cross [Skotlex]
+			clif_skill_damage( *src, *bl, tick, dmg.amotion, dmg.dmotion, damage, dmg.div_, CR_HOLYCROSS, -1, DMG_SPLASH );
+			break;
+		//Skills that need be passed as a normal attack for the client to display correctly.
+		case NPC_SELFDESTRUCTION:
+			if(src->type == BL_PC)
+				dmg.blewcount = 10;
+			dmg.amotion = 0; //Disable delay or attack will do no damage since source is dead by the time it takes effect. [Skotlex]
+			[[fallthrough]];
+		case HVAN_EXPLOSION:
+		case KN_AUTOCOUNTER:
+		case NPC_CRITICALSLASH:
+		case TF_DOUBLE:
+		case GS_CHAINACTION:

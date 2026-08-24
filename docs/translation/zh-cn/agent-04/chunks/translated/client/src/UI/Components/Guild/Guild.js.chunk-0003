@@ -1,0 +1,436 @@
+
+Guild.setPoints = function setPoints(amount) {
+	const root = _root(this);
+	const el = root.querySelector('.skpoints_count');
+	if (el) {
+		el.textContent = amount;
+	}
+
+	if (!_skpoints === !amount) {
+		_skpoints = amount;
+		return;
+	}
+
+	_skpoints = amount;
+	const count = _skills.length;
+
+	for (let i = 0; i < count; ++i) {
+		const levelupEl = root.querySelector(`.skill.id${_skills[i].SKID} .levelup`);
+		if (levelupEl) {
+			levelupEl.style.display = _skills[i].upgradable && amount ? '' : 'none';
+		}
+	}
+};
+
+Guild.onLevelUp = function onLevelUp() {
+	if (_btnLevelUp) {
+		document.body.appendChild(_btnLevelUp);
+	}
+};
+
+function getSkillById(id) {
+	const count = _skills.length;
+
+	for (let i = 0; i < count; ++i) {
+		if (_skills[i].SKID === id) {
+			return _skills[i];
+		}
+	}
+
+	return null;
+}
+
+function onRequestSkillUp() {
+	const index = this.parentNode.parentNode.getAttribute('data-index');
+	Guild.onIncreaseSkill(parseInt(index, 10));
+}
+
+function onRequestUseSkill() {
+	let main = this.parentElement;
+
+	if (!main.classList.contains('skill')) {
+		main = main.parentElement;
+	}
+
+	Guild.useSkillID(parseInt(main.getAttribute('data-index'), 10));
+}
+
+function onRequestSkillInfo() {
+	let main = this.parentElement;
+	if (!main.classList.contains('skill')) {
+		main = main.parentElement;
+	}
+
+	const skill = getSkillById(parseInt(main.getAttribute('data-index'), 10));
+
+	if (SkillDescription.uid === skill.SKID) {
+		SkillDescription.remove();
+		return;
+	}
+
+	SkillDescription.append();
+	SkillDescription.setSkill(skill.SKID);
+}
+
+function onSkillFocus() {
+	let main = this.parentElement;
+
+	if (!main.classList.contains('skill')) {
+		main = main.parentElement;
+	}
+
+	const root = _root(Guild);
+	for (const el of root.querySelectorAll('.skill')) {
+		el.classList.remove('selected');
+	}
+	main.classList.add('selected');
+}
+
+function onSkillDragStart(event) {
+	const index = parseInt(this.getAttribute('data-index'), 10);
+	const skill = getSkillById(index);
+
+	if (!skill || !skill.level || !skill.type) {
+		event.stopImmediatePropagation();
+		return false;
+	}
+
+	const img = new Image();
+	img.decoding = 'async';
+	img.src = this.querySelector('.icon img')?.src || '';
+
+	event.dataTransfer.setDragImage(img, 12, 12);
+	event.dataTransfer.setData(
+		'Text',
+		JSON.stringify(
+			(window._OBJ_DRAG_ = {
+				type: 'skill',
+				from: 'Guild',
+				data: skill
+			})
+		)
+	);
+}
+
+function onSkillDragEnd() {
+	delete window._OBJ_DRAG_;
+}
+
+function skillLevelSelectUp(skill) {
+	const level = skill.selectedLevel ? skill.selectedLevel : skill.level;
+	if (level < skill.level) {
+		skill.selectedLevel = level + 1;
+		const root = _root(Guild);
+		const element = root.querySelector(`.skill.id${skill.SKID}`);
+		if (element) {
+			const current = element.querySelector('.level .current');
+			if (current) {
+				current.textContent = skill.selectedLevel;
+			}
+		}
+	}
+}
+
+function skillLevelSelectDown(skill) {
+	const level = skill.selectedLevel ? skill.selectedLevel : skill.level;
+	if (level > 1) {
+		skill.selectedLevel = level - 1;
+		const root = _root(Guild);
+		const element = root.querySelector(`.skill.id${skill.SKID}`);
+		if (element) {
+			const current = element.querySelector('.level .current');
+			if (current) {
+				current.textContent = skill.selectedLevel;
+			}
+		}
+	}
+}
+
+Guild.setNotice = function setNotice(subject, notice) {
+	const root = _root(this);
+	const subjectInput = root.querySelector('.content.notice .subject');
+	if (subjectInput) {
+		subjectInput.value = subject;
+	}
+	const noticeTextarea = root.querySelector('.content.notice textarea.notice');
+	if (noticeTextarea) {
+		noticeTextarea.value = notice;
+	}
+};
+
+Guild.setExpelList = function setExpelList(list) {
+	const root = _root(this);
+	const container = root.querySelector('.content.history tbody');
+	if (!container) {
+		return;
+	}
+	container.innerHTML = '';
+
+	for (let i = 0, count = list.length; i < count; ++i) {
+		const element = _expelViewTemplate.cloneNode(true);
+		const nameCell = element.querySelector('.name');
+		if (nameCell) {
+			nameCell.textContent = list[i].charname;
+		}
+		const reasonCell = element.querySelector('.reason');
+		if (reasonCell) {
+			reasonCell.textContent = list[i].reason;
+		}
+		container.appendChild(element);
+	}
+};
+
+Guild.setAccess = function setAccess(access) {
+	_guildAccess = access;
+};
+
+function onChangeTab(event) {
+	const tab = parseInt(this.getAttribute('data-flag'), 10);
+	const root = _root(Guild);
+
+	if (this.classList.contains('active') || (tab && !(_guildAccess & AccessTypeBit[tab]))) {
+		return false;
+	}
+
+	Guild.onGuildInfoRequest(tab);
+
+	for (const btn of root.querySelectorAll('.tabs button')) {
+		btn.classList.remove('active');
+	}
+	for (const content of root.querySelectorAll('.content')) {
+		content.style.display = 'none';
+	}
+
+	const targetClass = this.className.replace(/\s*active\s*/g, '').trim();
+	const targetContent = root.querySelector(`.content.${targetClass}`);
+	if (targetContent) {
+		targetContent.style.display = 'block';
+	}
+
+	const btnOk = root.querySelector('.footer .btn_ok');
+	if (btnOk) {
+		btnOk.style.display = 'none';
+	}
+
+	updateDisbandButton(root, targetClass);
+
+	if (targetClass === 'members') {
+		Renderer.render(renderMemberFaces);
+	} else {
+		Renderer.stop(renderMemberFaces);
+	}
+
+	this.classList.add('active');
+
+	return false;
+}
+
+function renderTendency(honor, virtue) {
+	const root = _root(Guild);
+	const canvas = root.querySelector('.content.info .tendency canvas');
+	if (!canvas) {
+		return;
+	}
+	const ctx = canvas.getContext('2d');
+
+	ctx.fillStyle = '#cecfce';
+	ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+	ctx.fillStyle = '#739eef';
+	ctx.fillRect(1, 1, canvas.width - 2, canvas.height - 2);
+
+	ctx.fillStyle = '#4261a5';
+	ctx.fillRect(canvas.width / 2 - 1, 1, 2, canvas.height - 2);
+	ctx.fillRect(1, canvas.height / 2 - 1, canvas.width - 2, 2);
+
+	ctx.fillStyle = '#ffffff';
+	ctx.fillRect(canvas.width / 2 - 1, canvas.height / 2 - 1, 2, 2);
+}
+
+const renderMemberFaces = (function renderMemberFacesClosure() {
+	let lastTick = 0;
+
+	return function renderMemberFace(tick) {
+		if (tick < lastTick + 1000) {
+			return;
+		}
+
+		lastTick = tick;
+		const root = _root(Guild);
+		const canvases = root.querySelectorAll('.content.members canvas');
+		Camera.direction = 4;
+
+		for (let i = 0, count = _members.length; i < count; ++i) {
+			if (!canvases[i]) {
+				continue;
+			}
+			const ctx = canvases[i].getContext('2d');
+			ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+			if (!_members[i].CurrentState) {
+				continue;
+			}
+
+			SpriteRenderer.bind2DContext(ctx, 15, 45);
+			_members[i].entity.renderEntity();
+		}
+	};
+})();
+
+function onValidate() {
+	const root = _root(Guild);
+	const visibleContent = Array.from(root.querySelectorAll('.content')).find(el => {
+		const d = el.style.display;
+		return d !== 'none' && getComputedStyle(el).display !== 'none';
+	});
+
+	if (!visibleContent) {
+		return;
+	}
+
+	let activeTab = '';
+	for (const cls of visibleContent.classList) {
+		if (cls !== 'content') {
+			activeTab = cls;
+			break;
+		}
+	}
+
+	switch (activeTab) {
+		case 'members': {
+			const list = [];
+			_members.forEach(member => {
+				list.push({
+					AID: member.AID,
+					GID: member.GID,
+					positionID: member.GPositionID
+				});
+			});
+			Guild.onChangeMemberPosRequest(list);
+			break;
+		}
+		case 'positions': {
+			const positionList = [];
+			const positions = root.querySelectorAll('.PositionView');
+
+			for (let i = 0, count = _positions.length; i < count; ++i) {
+				const position = positions[i];
+				if (!position) {
+					continue;
+				}
+
+				const posName = position.querySelector('.title input')?.value || '';
+				const payRate = parseInt(position.querySelector('.tax input')?.value || '0', 10);
+				let right = 0;
+
+				const inviteBtn = position.querySelector('.invite ui-button');
+				if (inviteBtn && inviteBtn.classList.contains('on')) {
+					right |= 0x01;
+				}
+
+				const punishBtn = position.querySelector('.punish ui-button');
+				if (punishBtn && punishBtn.classList.contains('on')) {
+					right |= 0x10;
+				}
+
+				if (
+					_positions[i].right !== right ||
+					_positions[i].posName !== posName ||
+					_positions[i].payRate !== payRate
+				) {
+					positionList.push({
+						positionID: _positions[i].positionID,
+						ranking: _positions[i].ranking,
+						right: right,
+						posName: posName,
+						payRate: payRate
+					});
+				}
+			}
+
+			Guild.onPositionUpdateRequest(positionList);
+			break;
+		}
+		case 'notice': {
+			const subject = root.querySelector('.content.notice input')?.value || '';
+			const content = root.querySelector('.content.notice textarea')?.value || '';
+			Guild.onNoticeUpdateRequest(subject, content);
+			break;
+		}
+	}
+
+	const btnOk = root.querySelector('.footer .btn_ok');
+	if (btnOk) {
+		btnOk.style.display = 'none';
+	}
+}
+
+function getActiveTab(root) {
+	const btn = root ? root.querySelector('.tabs button.active') : null;
+	return btn ? btn.className.replace(/\s*active\s*/g, '').trim() : '';
+}
+
+function updateDisbandButton(root, activeTab) {
+	if (!root) {
+		return;
+	}
+
+	const btn = root.querySelector('.footer .btn_disband');
+	if (!btn) {
+		return;
+	}
+
+	btn.style.display = activeTab === 'info' && Session.isGuildMaster ? 'block' : 'none';
+
+	if (!btn.dataset.bound) {
+		btn.dataset.bound = '1';
+		btn.addEventListener('click', () => {
+			Guild.promptDisbandGuild();
+		});
+	}
+}
+
+Guild.promptCreateGuild = function promptCreateGuild() {
+	GuildCompanion.toggleCreate();
+};
+
+Guild.promptDisbandGuild = function promptDisbandGuild() {
+	if (!Session.isGuildMaster) {
+		return;
+	}
+
+	UIManager.showMessageBox('如果你正在使用公会仓库，其中的所有物品都会消失。', 'ok', () => {
+		GuildCompanion.openDisband();
+	});
+};
+
+Guild.onGuildInfoRequest = function () {};
+Guild.onRequestCreateGuild = function () {};
+Guild.onRequestBreakGuild = function () {};
+Guild.onPositionUpdateRequest = function () {};
+Guild.onChangeMemberPosRequest = function () {};
+Guild.onNoticeUpdateRequest = function () {};
+Guild.onRequestMemberInfo = function () {};
+Guild.onRequestLeave = function () {};
+Guild.onRequestMemberExpel = function () {};
+Guild.onRequestDeleteRelation = function () {};
+Guild.onRequestAccess = function () {};
+
+Guild.updateSession = function (info) {
+	Session.hasGuild = true;
+	Session.guildName = info.guildname || '';
+	Session.Entity.GUID = info.GDID;
+	Session.Entity.GEmblemVer = info.emblemVersion;
+	if (Session.Entity.display.name === info.masterName) {
+		Session.isGuildMaster = true;
+	}
+};
+
+Guild.onRequestGuildEmblem = function () {};
+Guild.onSendEmblem = function () {};
+Guild.onUseSkill = function onUseItem() {};
+Guild.onIncreaseSkill = function onIncreaseSkill() {};
+Guild.onUpdateSkill = function onUpdateSkill() {};
+Guild.getSkillById = getSkillById;
+
+export default UIManager.addComponent(Guild);

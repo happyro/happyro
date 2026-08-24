@@ -1,0 +1,500 @@
+// Copyright (c) rAthena Dev Teams - Licensed under GNU GPL
+// For more information, see LICENCE in the main folder
+
+#include "strlib.hpp"
+
+#include <algorithm>
+#include <cstdlib>
+
+#include "cbasetypes.hpp"
+#include "malloc.hpp"
+#include "showmsg.hpp"
+
+// Function to suppress control characters in a string.
+int32 remove_control_chars(char* str)
+{
+	int32 i;
+	int32 change = 0;
+
+	for(i = 0; str[i]; i++) {
+		if (ISCNTRL(str[i])) {
+			str[i] = '_';
+			change = 1;
+		}
+	}
+
+	return change;
+}
+
+// Removes characters identified by ISSPACE from the start and end of the string
+// NOTE: make sure the string is not const!!
+char* trim(char* str)
+{
+	size_t start;
+	size_t end;
+
+	if( str == nullptr )
+		return str;
+
+	// get start position
+	for( start = 0; str[start] && ISSPACE(str[start]); ++start )
+		;
+	// get end position
+	for( end = strlen(str); start < end && str[end-1] && ISSPACE(str[end-1]); --end )
+		;
+	// trim
+	if( start == end )
+		*str = '\0';// empty string
+	else
+	{// move string with nul terminator
+		str[end] = '\0';
+		memmove(str,str+start,end-start+1);
+	}
+	return str;
+}
+
+// Converts one or more consecutive occurrences of the delimiters into a single space
+// and removes such occurrences from the beginning and end of string
+// NOTE: make sure the string is not const!!
+char* normalize_name(char* str,const char* delims)
+{
+	char* in = str;
+	char* out = str;
+	int32 put_space = 0;
+
+	if( str == nullptr || delims == nullptr )
+		return str;
+
+	// trim start of string
+	while( *in && strchr(delims,*in) )
+		++in;
+	while( *in )
+	{
+		if( put_space )
+		{// replace trim characters with a single space
+			*out = ' ';
+			++out;
+		}
+		// copy non trim characters
+		while( *in && !strchr(delims,*in) )
+		{
+			*out = *in;
+			++out;
+			++in;
+		}
+		// skip trim characters
+		while( *in && strchr(delims,*in) )
+			++in;
+		put_space = 1;
+	}
+	*out = '\0';
+	return str;
+}
+
+//stristr: Case insensitive version of strstr, code taken from
+//http://www.daniweb.com/code/snippet313.html, Dave Sinkula
+//
+const char* stristr(const char* haystack, const char* needle)
+{
+	if ( !*needle )
+	{
+		return haystack;
+	}
+	for ( ; *haystack; ++haystack )
+	{
+		if ( TOUPPER(*haystack) == TOUPPER(*needle) )
+		{
+			// matched starting char -- loop through remaining chars
+			const char *h, *n;
+			for ( h = haystack, n = needle; *h && *n; ++h, ++n )
+			{
+				if ( TOUPPER(*h) != TOUPPER(*n) )
+				{
+					break;
+				}
+			}
+			if ( !*n ) // matched all of 'needle' to null termination
+			{
+				return haystack; // return the start of the match
+			}
+		}
+	}
+	return 0;
+}
+
+#ifdef __WIN32
+char* _strtok_r(char *s1, const char *s2, char **lasts)
+{
+	char *ret;
+
+	if (s1 == nullptr)
+		s1 = *lasts;
+	while(*s1 && strchr(s2, *s1))
+		++s1;
+	if(*s1 == '\0')
+		return nullptr;
+	ret = s1;
+	while(*s1 && !strchr(s2, *s1))
+		++s1;
+	if(*s1)
+		*s1++ = '\0';
+	*lasts = s1;
+	return ret;
+}
+#endif
+
+#if !(defined(WIN32) && defined(_MSC_VER) && _MSC_VER >= 1400) && !defined(HAVE_STRNLEN)
+/* Find the length of STRING, but scan at most MAXLEN characters.
+   If no '\0' terminator is found in that many characters, return MAXLEN.  */
+size_t strnlen (const char* string, size_t maxlen)
+{
+  const char* end = (const char*)memchr(string, '\0', maxlen);
+  return end ? (size_t) (end - string) : maxlen;
+}
+#endif
+
+#if defined(WIN32) && defined(_MSC_VER) && _MSC_VER <= 1200
+uint64 strtoull(const char* str, char** endptr, int32 base)
+{
+	uint64 result;
+	int32 count;
+	int32 n;
+
+	if( base == 0 )
+	{
+		if( str[0] == '0' && (str[1] == 'x' || str[1] == 'X') )
+			base = 16;
+		else
+		if( str[0] == '0' )
+			base = 8;
+		else
+			base = 10;
+	}
+
+	if( base == 8 )
+		count = sscanf(str, "%I64o%n", &result, &n);
+	else
+	if( base == 10 )
+		count = sscanf(str, "%I64u%n", &result, &n);
+	else
+	if( base == 16 )
+		count = sscanf(str, "%I64x%n", &result, &n);
+	else
+		count = 0; // fail
+
+	if( count < 1 )
+	{
+		errno = EINVAL;
+		result = 0;
+		n = 0;
+	}
+
+	if( endptr )
+		*endptr = (char*)str + n;
+
+	return result;
+}
+#endif
+
+//----------------------------------------------------
+// E-mail check: return 0 (not correct) or 1 (valid).
+//----------------------------------------------------
+int32 e_mail_check(char* email)
+{
+	char ch;
+	char* last_arobas;
+	size_t len = strlen(email);
+
+	// athena limits
+	if (len < 3 || len > 39)
+		return 0;
+
+	// part of RFC limits (official reference of e-mail description)
+	if (strchr(email, '@') == nullptr || email[len-1] == '@')
+		return 0;
+
+	if (email[len-1] == '.')
+		return 0;
+
+	last_arobas = strrchr(email, '@');
+
+	if (strstr(last_arobas, "@.") != nullptr || strstr(last_arobas, "..") != nullptr)
+		return 0;
+
+	for(ch = 1; ch < 32; ch++)
+		if (strchr(last_arobas, ch) != nullptr)
+			return 0;
+
+	if (strchr(last_arobas, ' ') != nullptr || strchr(last_arobas, ';') != nullptr)
+		return 0;
+
+	// all correct
+	return 1;
+}
+
+//--------------------------------------------------
+// Return numerical value of a switch configuration
+// on/off, english, fran�ais, deutsch, espa�ol, portuguese
+//--------------------------------------------------
+int32 config_switch(const char* str)
+{
+	if (strcmpi(str, "on") == 0 || strcmpi(str, "yes") == 0 || strcmpi(str, "oui") == 0 || strcmpi(str, "ja") == 0 || strcmpi(str, "si") == 0 || strcmpi(str, "sim") == 0)
+		return 1;
+	if (strcmpi(str, "off") == 0 || strcmpi(str, "no") == 0 || strcmpi(str, "non") == 0 || strcmpi(str, "nein") == 0 || strcmpi(str, "nao") == 0)
+		return 0;
+
+	return (int32)strtol(str, nullptr, 0);
+}
+
+/// strncpy that always nul-terminates the string
+char* safestrncpy(char* dst, const char* src, size_t n)
+{
+	if( n > 0 )
+	{
+		char* d = dst;
+		const char* s = src;
+		d[--n] = '\0';/* nul-terminate string */
+		for( ; n > 0; --n )
+		{
+			if( (*d++ = *s++) == '\0' )
+			{/* nul-pad remaining bytes */
+				while( --n > 0 )
+					*d++ = '\0';
+				break;
+			}
+		}
+	}
+	return dst;
+}
+
+/// doesn't crash on null pointer
+size_t safestrnlen(const char* string, size_t maxlen)
+{
+	return ( string != nullptr ) ? strnlen(string, maxlen) : 0;
+}
+
+/// Works like snprintf, but always nul-terminates the buffer.
+/// Returns the size of the string (without nul-terminator)
+/// or -1 if the buffer is too small.
+///
+/// @param buf Target buffer
+/// @param sz Size of the buffer (including nul-terminator)
+/// @param fmt Format string
+/// @param ... Format arguments
+/// @return The size of the string or -1 if the buffer is too small
+int32 safesnprintf(char* buf, size_t sz, const char* fmt, ...)
+{
+	va_list ap;
+	int32 ret;
+
+	va_start(ap,fmt);
+	ret = vsnprintf(buf, sz, fmt, ap);
+	va_end(ap);
+	if( ret < 0 || (size_t)ret >= sz )
+	{// overflow
+		buf[sz-1] = '\0';// always nul-terminate
+		return -1;
+	}
+	return ret;
+}
+
+/// Returns the line of the target position in the string.
+/// Lines start at 1.
+int32 strline(const char* str, size_t pos)
+{
+	const char* target;
+	int32 line;
+
+	if( str == nullptr || pos == 0 )
+		return 1;
+
+	target = str+pos;
+	for( line = 1; ; ++line )
+	{
+		str = strchr(str, '\n');
+		if( str == nullptr || target <= str )
+			break;// found target line
+		++str;// skip newline
+	}
+	return line;
+}
+
+/// Produces the hexadecimal representation of the given input.
+/// The output buffer must be at least count*2+1 in size.
+/// Returns true on success, false on failure.
+///
+/// @param output Output string
+/// @param input Binary input buffer
+/// @param count Number of bytes to convert
+bool bin2hex(char* output, unsigned char* input, size_t count)
+{
+	char toHex[] = "0123456789abcdef";
+	size_t i;
+
+	for( i = 0; i < count; ++i )
+	{
+		*output++ = toHex[(*input & 0xF0) >> 4];
+		*output++ = toHex[(*input & 0x0F) >> 0];
+		++input;
+	}
+	*output = '\0';
+	return true;
+}
+
+
+
+/////////////////////////////////////////////////////////////////////
+/// Parses a single field in a delim-separated string.
+/// The delimiter after the field is skipped.
+///
+/// @param sv Parse state
+/// @return 1 if a field was parsed, 0 if already done, -1 on error.
+int32 sv_parse_next( s_svstate& sv ){
+	enum {
+		START_OF_FIELD,
+		PARSING_FIELD,
+		PARSING_C_ESCAPE,
+		END_OF_FIELD,
+		TERMINATE,
+		END
+	} state;
+
+	const char* str = sv.str;
+	size_t len = sv.len;
+	int32 opt = sv.opt;
+	char delim = sv.delim;
+
+	// check opt
+	if( delim == '\n' && (opt&(SV_TERMINATE_CRLF|SV_TERMINATE_LF)) )
+	{
+		ShowError("sv_parse_next: delimiter '\\n' is not compatible with options SV_TERMINATE_LF or SV_TERMINATE_CRLF.\n");
+		return -1;// error
+	}
+	if( delim == '\r' && (opt&(SV_TERMINATE_CRLF|SV_TERMINATE_CR)) )
+	{
+		ShowError("sv_parse_next: delimiter '\\r' is not compatible with options SV_TERMINATE_CR or SV_TERMINATE_CRLF.\n");
+		return -1;// error
+	}
+
+	if( sv.done || str == nullptr )
+	{
+		sv.done = true;
+		return 0;// nothing to parse
+	}
+
+#define IS_END() ( i >= len )
+#define IS_DELIM() ( str[i] == delim )
+#define IS_TERMINATOR() ( \
+	((opt&SV_TERMINATE_LF) && str[i] == '\n') || \
+	((opt&SV_TERMINATE_CR) && str[i] == '\r') || \
+	((opt&SV_TERMINATE_CRLF) && i+1 < len && str[i] == '\r' && str[i+1] == '\n') )
+#define IS_C_ESCAPE() ( (opt&SV_ESCAPE_C) && str[i] == '\\' )
+#define SET_FIELD_START() sv.start = i
+#define SET_FIELD_END() sv.end = i
+
+	size_t i = sv.off;
+	state = START_OF_FIELD;
+	while( state != END )
+	{
+		switch( state )
+		{
+		case START_OF_FIELD:// record start of field and start parsing it
+			SET_FIELD_START();
+			state = PARSING_FIELD;
+			break;
+
+		case PARSING_FIELD:// skip field character
+			if( IS_END() || IS_DELIM() || IS_TERMINATOR() )
+				state = END_OF_FIELD;
+			else if( IS_C_ESCAPE() )
+				state = PARSING_C_ESCAPE;
+			else
+				++i;// normal character
+			break;
+
+		case PARSING_C_ESCAPE:// skip escape sequence (validates it too)
+			{
+				++i;// '\\'
+				if( IS_END() )
+				{
+					ShowError("sv_parse_next: empty escape sequence\n");
+					return -1;
+				}
+				if( str[i] == 'x' )
+				{// hex escape
+					++i;// 'x'
+					if( IS_END() || !ISXDIGIT(str[i]) )
+					{
+						ShowError("sv_parse_next: \\x with no following hex digits\n");
+						return -1;
+					}
+					do{
+						++i;// hex digit
+					}while( !IS_END() && ISXDIGIT(str[i]));
+				}
+				else if( str[i] == '0' || str[i] == '1' || str[i] == '2' )
+				{// octal escape
+					++i;// octal digit
+					if( !IS_END() && str[i] >= '0' && str[i] <= '7' )
+						++i;// octal digit
+					if( !IS_END() && str[i] >= '0' && str[i] <= '7' )
+						++i;// octal digit
+				}
+				else if( strchr(SV_ESCAPE_C_SUPPORTED, str[i]) )
+				{// supported escape character
+					++i;
+				}
+				else
+				{
+					ShowError("sv_parse_next: unknown escape sequence \\%c\n", str[i]);
+					return -1;
+				}
+				state = PARSING_FIELD;
+				break;
+			}
+
+		case END_OF_FIELD:// record end of field and stop
+			SET_FIELD_END();
+			state = END;
+			if( IS_END() )
+				;// nothing else
+			else if( IS_DELIM() )
+				++i;// delim
+			else if( IS_TERMINATOR() )
+				state = TERMINATE;
+			break;
+
+		case TERMINATE:
+#if 0
+			// skip line terminator
+			if( (opt&SV_TERMINATE_CRLF) && i+1 < len && str[i] == '\r' && str[i+1] == '\n' )
+				i += 2;// CRLF
+			else
+				++i;// CR or LF
+#endif
+			sv.done = true;
+			state = END;
+			break;
+		}
+	}
+	if( IS_END() )
+		sv.done = true;
+	sv.off = i;
+
+#undef IS_END
+#undef IS_DELIM
+#undef IS_TERMINATOR
+#undef IS_C_ESCAPE
+#undef SET_FIELD_START
+#undef SET_FIELD_END
+
+	return 1;
+}
+
+
+/// Parses a delim-separated string.
+/// Starts parsing at startoff and fills the pos array with position pairs.
+/// out_pos[0] and out_pos[1] are the start and end of line.
+/// Other position pairs are the start and end of fields.
+/// Returns the number of fields found or -1 if an error occurs.
+///

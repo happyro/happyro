@@ -1,0 +1,500 @@
+		else
+			node = node->right;
+	}
+	db_free_unlock(db);
+	return retval;
+}
+
+/**
+ * Apply <code>func</code> to every entry in the database.
+ * Returns the sum of values returned by func.
+ * @param self Interface of the database
+ * @param func Function to be applied
+ * @param args Extra arguments for func
+ * @return Sum of the values returned by func
+ * @protected
+ * @see DBMap#vforeach
+ */
+static int32 db_obj_vforeach(DBMap* self, DBApply func, va_list args)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	uint32 i;
+	int32 sum = 0;
+	DBNode *node;
+	DBNode *parent;
+
+	DB_COUNTSTAT(db_vforeach);
+	if (db == nullptr) return 0; // nullpo candidate
+	if (func == nullptr) {
+		ShowError("db_foreach: Passed function is nullptr for db allocated at %s:%d\n",db->alloc_file, db->alloc_line);
+		return 0; // nullpo candidate
+	}
+
+	db_free_lock(db);
+	for (i = 0; i < HASH_SIZE; i++) {
+		// Apply func in the order: current node, left node, right node
+		node = db->ht[i];
+		while (node) {
+			if (!(node->deleted)) {
+				va_list argscopy;
+				va_copy(argscopy, args);
+				sum += func(node->key, &node->data, argscopy);
+				va_end(argscopy);
+			}
+			if (node->left) {
+				node = node->left;
+				continue;
+			}
+			if (node->right) {
+				node = node->right;
+				continue;
+			}
+			while (node) {
+				parent = node->parent;
+				if (parent && parent->right && parent->left == node) {
+					node = parent->right;
+					break;
+				}
+				node = parent;
+			}
+		}
+	}
+	db_free_unlock(db);
+	return sum;
+}
+
+/**
+ * Just calls {@link DBMap#vforeach}.
+ * Apply <code>func</code> to every entry in the database.
+ * Returns the sum of values returned by func.
+ * @param self Interface of the database
+ * @param func Function to be applied
+ * @param ... Extra arguments for func
+ * @return Sum of the values returned by func
+ * @protected
+ * @see DBMap#vforeach
+ * @see DBMap#foreach
+ */
+static int32 db_obj_foreach(DBMap* self, DBApply func, ...)
+{
+	va_list args;
+	int32 ret;
+
+	DB_COUNTSTAT(db_foreach);
+	if (self == nullptr) return 0; // nullpo candidate
+
+	va_start(args, func);
+	ret = self->vforeach(self, func, args);
+	va_end(args);
+	return ret;
+}
+
+/**
+ * Removes all entries from the database.
+ * Before deleting an entry, func is applied to it.
+ * Releases the key and the data.
+ * Returns the sum of values returned by func, if it exists.
+ * @param self Interface of the database
+ * @param func Function to be applied to every entry before deleting
+ * @param args Extra arguments for func
+ * @return Sum of values returned by func
+ * @protected
+ * @see DBMap#vclear
+ */
+static int32 db_obj_vclear(DBMap* self, DBApply func, va_list args)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	int32 sum = 0;
+	uint32 i;
+	DBNode *node;
+	DBNode *parent;
+
+	DB_COUNTSTAT(db_vclear);
+	if (db == nullptr) return 0; // nullpo candidate
+
+	db_free_lock(db);
+	db->cache = nullptr;
+	for (i = 0; i < HASH_SIZE; i++) {
+		// Apply the func and delete in the order: left tree, right tree, current node
+		node = db->ht[i];
+		db->ht[i] = nullptr;
+		while (node) {
+			parent = node->parent;
+			if (node->left) {
+				node = node->left;
+				continue;
+			}
+			if (node->right) {
+				node = node->right;
+				continue;
+			}
+			if (node->deleted) {
+				db_dup_key_free(db, node->key);
+			} else {
+				if (func)
+				{
+					va_list argscopy;
+					va_copy(argscopy, args);
+					sum += func(node->key, &node->data, argscopy);
+					va_end(argscopy);
+				}
+				db->release(node->key, node->data, DB_RELEASE_BOTH);
+				node->deleted = 1;
+			}
+			DB_COUNTSTAT(db_node_free);
+			if (parent) {
+				if (parent->left == node)
+					parent->left = nullptr;
+				else
+					parent->right = nullptr;
+			}
+			ers_free(db->nodes, node);
+			node = parent;
+		}
+		db->ht[i] = nullptr;
+	}
+	db->free_count = 0;
+	db->item_count = 0;
+	db_free_unlock(db);
+	return sum;
+}
+
+/**
+ * Just calls {@link DBMap#vclear}.
+ * Removes all entries from the database.
+ * Before deleting an entry, func is applied to it.
+ * Releases the key and the data.
+ * Returns the sum of values returned by func, if it exists.
+ * NOTE: This locks the database globally. Any attempt to insert or remove
+ * a database entry will give an error and be aborted (except for clearing).
+ * @param self Interface of the database
+ * @param func Function to be applied to every entry before deleting
+ * @param ... Extra arguments for func
+ * @return Sum of values returned by func
+ * @protected
+ * @see DBMap#vclear
+ * @see DBMap#clear
+ */
+static int32 db_obj_clear(DBMap* self, DBApply func, ...)
+{
+	va_list args;
+	int32 ret;
+
+	DB_COUNTSTAT(db_clear);
+	if (self == nullptr) return 0; // nullpo candidate
+
+	va_start(args, func);
+	ret = self->vclear(self, func, args);
+	va_end(args);
+	return ret;
+}
+
+/**
+ * Finalize the database, feeing all the memory it uses.
+ * Before deleting an entry, func is applied to it.
+ * Returns the sum of values returned by func, if it exists.
+ * NOTE: This locks the database globally. Any attempt to insert or remove
+ * a database entry will give an error and be aborted (except for clearing).
+ * @param self Interface of the database
+ * @param func Function to be applied to every entry before deleting
+ * @param args Extra arguments for func
+ * @return Sum of values returned by func
+ * @protected
+ * @see DBMap#vdestroy
+ */
+static int32 db_obj_vdestroy(DBMap* self, DBApply func, va_list args)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	int32 sum;
+
+	DB_COUNTSTAT(db_vdestroy);
+	if (db == nullptr) return 0; // nullpo candidate
+	if (db->global_lock) {
+		ShowError("db_vdestroy: Database is already locked for destruction. Aborting second database destruction.\n"
+				"Database allocated at %s:%d\n",
+				db->alloc_file, db->alloc_line);
+		return 0;
+	}
+	if (db->free_lock)
+		ShowWarning("db_vdestroy: Database is still in use, %u lock(s) left. Continuing database destruction.\n"
+				"Database allocated at %s:%d\n",
+				db->free_lock, db->alloc_file, db->alloc_line);
+
+#ifdef DB_ENABLE_STATS
+	switch (db->type) {
+		case DB_INT: DB_COUNTSTAT(db_int_destroy); break;
+		case DB_UINT: DB_COUNTSTAT(db_uint_destroy); break;
+		case DB_STRING: DB_COUNTSTAT(db_string_destroy); break;
+		case DB_ISTRING: DB_COUNTSTAT(db_istring_destroy); break;
+		case DB_INT64: DB_COUNTSTAT(db_int64_destroy); break;
+		case DB_UINT64: DB_COUNTSTAT(db_uint64_destroy); break;
+	}
+#endif /* DB_ENABLE_STATS */
+	db_free_lock(db);
+	db->global_lock = 1;
+	sum = self->vclear(self, func, args);
+	aFree(db->free_list);
+	db->free_list = nullptr;
+	db->free_max = 0;
+	ers_destroy(db->nodes);
+	db_free_unlock(db);
+	ers_free(db_alloc_ers, db);
+	return sum;
+}
+
+/**
+ * Just calls {@link DBMap#db_vdestroy}.
+ * Finalize the database, feeing all the memory it uses.
+ * Before deleting an entry, func is applied to it.
+ * Releases the key and the data.
+ * Returns the sum of values returned by func, if it exists.
+ * NOTE: This locks the database globally. Any attempt to insert or remove
+ * a database entry will give an error and be aborted.
+ * @param self Database
+ * @param func Function to be applied to every entry before deleting
+ * @param ... Extra arguments for func
+ * @return Sum of values returned by func
+ * @protected
+ * @see DBMap#vdestroy
+ * @see DBMap#destroy
+ */
+static int32 db_obj_destroy(DBMap* self, DBApply func, ...)
+{
+	va_list args;
+	int32 ret;
+
+	DB_COUNTSTAT(db_destroy);
+	if (self == nullptr) return 0; // nullpo candidate
+
+	va_start(args, func);
+	ret = self->vdestroy(self, func, args);
+	va_end(args);
+	return ret;
+}
+
+/**
+ * Return the size of the database (number of items in the database).
+ * @param self Interface of the database
+ * @return Size of the database
+ * @protected
+ * @see DBMap_impl#item_count
+ * @see DBMap#size
+ */
+static uint32 db_obj_size(DBMap* self)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	uint32 item_count;
+
+	DB_COUNTSTAT(db_size);
+	if (db == nullptr) return 0; // nullpo candidate
+
+	db_free_lock(db);
+	item_count = db->item_count;
+	db_free_unlock(db);
+
+	return item_count;
+}
+
+/**
+ * Return the type of database.
+ * @param self Interface of the database
+ * @return Type of the database
+ * @protected
+ * @see DBMap_impl#type
+ * @see DBMap#type
+ */
+static DBType db_obj_type(DBMap* self)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBType type;
+
+	DB_COUNTSTAT(db_type);
+	if (db == nullptr) return (DBType)-1; // nullpo candidate - TODO what should this return?
+
+	db_free_lock(db);
+	type = db->type;
+	db_free_unlock(db);
+
+	return type;
+}
+
+/**
+ * Return the options of the database.
+ * @param self Interface of the database
+ * @return Options of the database
+ * @protected
+ * @see DBMap_impl#options
+ * @see DBMap#options
+ */
+static DBOptions db_obj_options(DBMap* self)
+{
+	DBMap_impl* db = (DBMap_impl*)self;
+	DBOptions options;
+
+	DB_COUNTSTAT(db_options);
+	if (db == nullptr) return DB_OPT_BASE; // nullpo candidate - TODO what should this return?
+
+	db_free_lock(db);
+	options = db->options;
+	db_free_unlock(db);
+
+	return options;
+}
+
+/*****************************************************************************\
+ *  (5) Section with public functions.
+ *  db_fix_options     - Apply database type restrictions to the options.
+ *  db_default_cmp     - Get the default comparator for a type of database.
+ *  db_default_hash    - Get the default hasher for a type of database.
+ *  db_default_release - Get the default releaser for a type of database with the specified options.
+ *  db_custom_release  - Get a releaser that behaves a certain way.
+ *  db_alloc           - Allocate a new database.
+ *  db_i2key           - Manual cast from 'int' to 'DBKey'.
+ *  db_ui2key          - Manual cast from 'uint32' to 'DBKey'.
+ *  db_str2key         - Manual cast from 'unsigned char *' to 'DBKey'.
+ *  db_i642key         - Manual cast from 'int64' to 'DBKey'.
+ *  db_ui642key        - Manual cast from 'uin64' to 'DBKey'.
+ *  db_i2data          - Manual cast from 'int' to 'DBData'.
+ *  db_ui2data         - Manual cast from 'uint32' to 'DBData'.
+ *  db_ptr2data        - Manual cast from 'void*' to 'DBData'.
+ *  db_data2i          - Gets 'int' value from 'DBData'.
+ *  db_data2ui         - Gets 'uint32' value from 'DBData'.
+ *  db_data2ptr        - Gets 'void*' value from 'DBData'.
+ *  db_init            - Initializes the database system.
+ *  db_final           - Finalizes the database system.
+\*****************************************************************************/
+
+/**
+ * Returns the fixed options according to the database type.
+ * Sets required options and unsets unsupported options.
+ * For numeric databases DB_OPT_DUP_KEY and DB_OPT_RELEASE_KEY are unset.
+ * @param type Type of the database
+ * @param options Original options of the database
+ * @return Fixed options of the database
+ * @private
+ * @see #db_default_release(DBType,DBOptions)
+ * @see #db_alloc(const char *,int32,DBType,DBOptions,uint16)
+ */
+DBOptions db_fix_options(DBType type, DBOptions options)
+{
+	DB_COUNTSTAT(db_fix_options);
+	switch (type) {
+		case DB_INT:
+		case DB_UINT:
+		case DB_INT64:
+		case DB_UINT64: // Numeric database, do nothing with the keys
+			return (DBOptions)(options&~(DB_OPT_DUP_KEY|DB_OPT_RELEASE_KEY));
+
+		default:
+			ShowError("db_fix_options: Unknown database type %u with options %x\n", type, options);
+		[[fallthrough]];
+		case DB_STRING:
+		case DB_ISTRING: // String databases, no fix required
+			return options;
+	}
+}
+
+/**
+ * Returns the default comparator for the specified type of database.
+ * @param type Type of database
+ * @return Comparator for the type of database or nullptr if unknown database
+ * @public
+ * @see #db_int_cmp(DBKey,DBKey,uint16)
+ * @see #db_uint_cmp(DBKey,DBKey,uint16)
+ * @see #db_string_cmp(DBKey,DBKey,uint16)
+ * @see #db_istring_cmp(DBKey,DBKey,uint16)
+ * @see #db_int64_cmp(DBKey,DBKey,uint16)
+ * @see #db_uint64_cmp(DBKey,DBKey,uint16)
+ */
+DBComparator db_default_cmp(DBType type)
+{
+	DB_COUNTSTAT(db_default_cmp);
+	switch (type) {
+		case DB_INT:     return &db_int_cmp;
+		case DB_UINT:    return &db_uint_cmp;
+		case DB_STRING:  return &db_string_cmp;
+		case DB_ISTRING: return &db_istring_cmp;
+		case DB_INT64:   return &db_int64_cmp;
+		case DB_UINT64:  return &db_uint64_cmp;
+		default:
+			ShowError("db_default_cmp: Unknown database type %u\n", type);
+			return nullptr;
+	}
+}
+
+/**
+ * Returns the default hasher for the specified type of database.
+ * @param type Type of database
+ * @return Hasher of the type of database or nullptr if unknown database
+ * @public
+ * @see #db_int_hash(DBKey,uint16)
+ * @see #db_uint_hash(DBKey,uint16)
+ * @see #db_string_hash(DBKey,uint16)
+ * @see #db_istring_hash(DBKey,uint16)
+ * @see #db_int64_hash(DBKey,uint16)
+ * @see #db_uint64_hash(DBKey,uint16)
+ */
+DBHasher db_default_hash(DBType type)
+{
+	DB_COUNTSTAT(db_default_hash);
+	switch (type) {
+		case DB_INT:     return &db_int_hash;
+		case DB_UINT:    return &db_uint_hash;
+		case DB_STRING:  return &db_string_hash;
+		case DB_ISTRING: return &db_istring_hash;
+		case DB_INT64:   return &db_int64_hash;
+		case DB_UINT64:  return &db_uint64_hash;
+		default:
+			ShowError("db_default_hash: Unknown database type %u\n", type);
+			return nullptr;
+	}
+}
+
+/**
+ * Returns the default releaser for the specified type of database with the
+ * specified options.
+ * NOTE: the options are fixed with {@link #db_fix_options(DBType,DBOptions)}
+ * before choosing the releaser.
+ * @param type Type of database
+ * @param options Options of the database
+ * @return Default releaser for the type of database with the specified options
+ * @public
+ * @see #db_release_nothing(DBKey,DBData,DBRelease)
+ * @see #db_release_key(DBKey,DBData,DBRelease)
+ * @see #db_release_data(DBKey,DBData,DBRelease)
+ * @see #db_release_both(DBKey,DBData,DBRelease)
+ * @see #db_custom_release(DBRelease)
+ */
+DBReleaser db_default_release(DBType type, DBOptions options)
+{
+	DB_COUNTSTAT(db_default_release);
+	options = db_fix_options(type, options);
+	if (options&DB_OPT_RELEASE_DATA) { // Release data, what about the key?
+		if (options&(DB_OPT_DUP_KEY|DB_OPT_RELEASE_KEY))
+			return &db_release_both; // Release both key and data
+		return &db_release_data; // Only release data
+	}
+	if (options&(DB_OPT_DUP_KEY|DB_OPT_RELEASE_KEY))
+		return &db_release_key; // Only release key
+	return &db_release_nothing; // Release nothing
+}
+
+/**
+ * Returns the releaser that releases the specified release options.
+ * @param which Options that specified what the releaser releases
+ * @return Releaser for the specified release options
+ * @public
+ * @see #db_release_nothing(DBKey,DBData,DBRelease)
+ * @see #db_release_key(DBKey,DBData,DBRelease)
+ * @see #db_release_data(DBKey,DBData,DBRelease)
+ * @see #db_release_both(DBKey,DBData,DBRelease)
+ * @see #db_default_release(DBType,DBOptions)
+ */
+DBReleaser db_custom_release(DBRelease which)
+{
+	DB_COUNTSTAT(db_custom_release);
+	switch (which) {
+		case DB_RELEASE_NOTHING: return &db_release_nothing;
+		case DB_RELEASE_KEY:     return &db_release_key;
+		case DB_RELEASE_DATA:    return &db_release_data;
+		case DB_RELEASE_BOTH:    return &db_release_both;

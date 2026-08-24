@@ -3,8 +3,8 @@
 
 Examples:
     python3 tools/translation/check-output/main.py --agent agent-03
-    python3 tools/translation/check-output/main.py --all --root docs/zh-cn
-    python3 tools/translation/check-output/main.py --agent-dir docs/zh-cn/kro-20211105/agent-03
+    python3 tools/translation/check-output/main.py --all --root docs/translation/zh-cn
+    python3 tools/translation/check-output/main.py --agent-dir docs/translation/zh-cn/kro-20211105/agent-03
 
 Line-count differences are warnings by default. Use --strict-lines when they
 should make the check fail.
@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agent", action="append", help="Agent directory name, relative to --root; repeatable")
     parser.add_argument("--agent-dir", action="append", type=Path, help="Explicit agent directory; repeatable")
-    parser.add_argument("--root", type=Path, default=Path("docs/zh-cn"), help="Root containing agent directories")
+    parser.add_argument("--root", type=Path, default=Path("docs/translation/zh-cn"), help="Root containing agent directories")
     parser.add_argument("--all", action="store_true", help="Check every immediate subdirectory with manifest.tsv")
     parser.add_argument("--strict-lines", action="store_true", help="Treat line-count differences as errors")
     return parser.parse_args()

@@ -1,0 +1,500 @@
+	TBL_HOM *hd;
+	int32 type=script_getnum(st,2);
+
+	if (!script_charid2sd(3, sd) || !(hd = sd->hd)) {
+		if (type == 2)
+			script_pushconststr(st,"null");
+		else
+			script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch(type){
+		case 0: script_pushint(st,hd->homunculus.hom_id); break;
+		case 1: script_pushint(st,hd->homunculus.class_); break;
+		case 2: script_pushstrcopy(st,hd->homunculus.name); break;
+		case 3: script_pushint(st,hd->homunculus.intimacy); break;
+		case 4: script_pushint(st,hd->homunculus.hunger); break;
+		case 5: script_pushint(st,hd->homunculus.rename_flag); break;
+		case 6: script_pushint(st,hd->homunculus.level); break;
+		case 7: script_pushint(st,hd->id); break;
+		default:
+			script_pushint(st,0);
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(addhomintimacy)
+{
+	map_session_data *sd;
+	homun_data *hd;
+
+	if (!script_charid2sd(3, sd) || !(hd = sd->hd))
+		return SCRIPT_CMD_SUCCESS;
+
+	int32 value = script_getnum(st, 2);
+
+	if (value == 0) // Nothing to change
+		return SCRIPT_CMD_SUCCESS;
+
+	if (value > 0)
+		hom_increase_intimacy(hd, (uint32)value);
+	else
+		hom_decrease_intimacy(hd, (uint32)abs(value));
+
+	clif_send_homdata( *hd, SP_INTIMATE );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Retrieves information about character's mercenary
+/// getmercinfo <type>[,<char id>];
+BUILDIN_FUNC(getmercinfo)
+{
+	int32 type;
+	map_session_data* sd;
+	s_mercenary_data* md;
+
+	if( !script_charid2sd(3,sd) ){
+		script_pushnil(st);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	type = script_getnum(st,2);
+	md = sd->md;
+
+	if( md == nullptr ){
+		if( type == 2 )
+			script_pushconststr(st,"");
+		else
+			script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	switch( type )
+	{
+		case 0: script_pushint(st,md->mercenary.mercenary_id); break;
+		case 1: script_pushint(st,md->mercenary.class_); break;
+		case 2: script_pushstrcopy(st,md->db->name.c_str()); break;
+		case 3: script_pushint(st,mercenary_get_faith(md)); break;
+		case 4: script_pushint(st,mercenary_get_calls(md)); break;
+		case 5: script_pushint(st,md->mercenary.kill_count); break;
+		case 6: script_pushint(st,mercenary_get_lifetime(md)); break;
+		case 7: script_pushint(st,md->db->lv); break;
+		case 8: script_pushint(st,md->id); break;
+		default:
+			ShowError("buildin_getmercinfo: Invalid type %d (char_id=%d).\n", type, sd->status.char_id);
+			script_pushnil(st);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * Shows whether your inventory(and equips) contain
+   selected card or not.
+	checkequipedcard(4001);
+ *------------------------------------------*/
+BUILDIN_FUNC(checkequipedcard)
+{
+	TBL_PC *sd;
+
+	if(script_rid2sd(sd)){
+		int32 n,i,c=0;
+		c=script_getnum(st,2);
+
+		for(i=0;i<MAX_INVENTORY;i++){
+			if(sd->inventory.u.items_inventory[i].nameid > 0 && sd->inventory.u.items_inventory[i].amount && sd->inventory_data[i]){
+				if (itemdb_isspecial(sd->inventory.u.items_inventory[i].card[0]))
+					continue;
+				for (n=0; n < MAX_SLOTS; n++) {
+					if(sd->inventory.u.items_inventory[i].card[n] == c) {
+						script_pushint(st,1);
+						return SCRIPT_CMD_SUCCESS;
+					}
+				}
+			}
+		}
+	}
+	script_pushint(st,0);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(jump_zero)
+{
+	int64 sel=script_getnum64(st,2);
+	if(!sel) {
+		int32 pos;
+		if( !data_islabel(script_getdata(st,3)) ){
+			ShowError("script: jump_zero: not label !\n");
+			st->state=END;
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		pos=script_getnum(st,3);
+		st->pos=pos;
+		st->state=GOTO;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * movenpc [MouseJstr]
+ *------------------------------------------*/
+BUILDIN_FUNC(movenpc)
+{
+	TBL_NPC *nd = nullptr;
+	const char *npc;
+	int32 x,y;
+
+	npc = script_getstr(st,2);
+	x = script_getnum(st,3);
+	y = script_getnum(st,4);
+
+	if ((nd = npc_name2id(npc)) == nullptr){
+		ShowError("script: movenpc: NPC with ID '%s' was not found!\n", npc );
+		return -1;
+	}
+
+	if (script_hasdata(st,5))
+		nd->ud.dir = script_getnum(st,5) % 8;
+	npc_movenpc(nd, x, y);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * message [MouseJstr]
+ *------------------------------------------*/
+BUILDIN_FUNC(message)
+{
+	const char *msg,*player;
+	TBL_PC *pl_sd = nullptr;
+
+	player = script_getstr(st,2);
+	msg = script_getstr(st,3);
+
+	if((pl_sd=map_nick2sd((char *) player,false)) == nullptr)
+		return SCRIPT_CMD_SUCCESS;
+	clif_displaymessage(pl_sd->fd, msg);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * npctalk("<message>"{,"<NPC name>","<flag>"});
+ * @param flag: Specify target
+ *   BC_ALL  - Broadcast message is sent server-wide.
+ *   BC_MAP  - Message is sent to everyone in the same map as the source of the npc.
+ *   BC_AREA - Message is sent to players in the vicinity of the source (default).
+ *   BC_SELF - Message is sent only to player attached.
+ */
+BUILDIN_FUNC(npctalk)
+{
+	npc_data* nd = nullptr;
+	const char* str = script_getstr(st,2);
+	int32 color = 0xFFFFFF;
+
+	if (script_hasdata(st, 3) && strlen(script_getstr(st,3)) > 0)
+		nd = npc_name2id(script_getstr(st, 3));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if (script_hasdata(st, 5))
+		color = script_getnum(st, 5);
+
+	if (nd != nullptr) {
+		send_target target = AREA;
+		char message[CHAT_SIZE_MAX];
+
+		if (script_hasdata(st, 4)) {
+			switch(script_getnum(st, 4)) {
+				case BC_ALL:	target = ALL_CLIENT;	break;
+				case BC_MAP:	target = ALL_SAMEMAP;	break;
+				case BC_SELF:	target = SELF;			break;
+				case BC_AREA:
+				default:		target = AREA;			break;
+			}
+		}
+		safesnprintf(message, sizeof(message), "%s", str);
+		if (target != SELF)
+			clif_messagecolor(nd, color, message, true, target);
+		else {
+			TBL_PC *sd = map_id2sd(st->rid);
+			if (sd == nullptr)
+				return SCRIPT_CMD_FAILURE;
+			clif_messagecolor_target(nd, color, message, true, target, sd);
+		}
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Sends a message to the waitingroom of the invoking NPC.
+ * chatmes "<message>"{,"<NPC name>"};
+ * @author Jey
+ */
+BUILDIN_FUNC(chatmes)
+{
+	npc_data* nd = nullptr;
+	const char* str = script_getstr(st,2);
+
+	if (script_hasdata(st, 3))
+		nd = npc_name2id(script_getstr(st, 3));
+	else
+		nd = (npc_data *)map_id2bl(st->oid);
+
+	if (nd != nullptr && nd->chat_id) {
+		char message[256];
+		safesnprintf(message, sizeof(message), "%s", str);
+		clif_GlobalMessage( *map_id2bl( nd->chat_id ), message, CHAT_WOS );
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Change npc walkspeed.
+ * npcspeed <speed value> {,"<npc name>"};
+ */
+BUILDIN_FUNC(npcspeed)
+{
+	npc_data* nd;
+
+	if (script_hasdata(st, 3))
+		nd = npc_name2id(script_getstr(st, 3));
+	else
+		nd = map_id2nd(st->oid);
+
+	if (nd == nullptr) {
+		if (script_hasdata(st, 3))
+			ShowError("buildin_npcspeed: %s is a non-existing NPC.\n", script_getstr(st, 3));
+		else
+			ShowError("buildin_npcspeed: non-existing NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 speed = script_getnum(st, 2);
+
+	if (speed < MIN_WALK_SPEED || speed > MAX_WALK_SPEED) {
+		ShowError("buildin_npcspeed: invalid speed %d (min: %d, max: %d).\n", speed, MIN_WALK_SPEED, MAX_WALK_SPEED);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	nd->speed = speed;
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Make an npc walk to a position.
+ * npcwalkto <x>,<y> {,"<npc name>"} };
+ */
+BUILDIN_FUNC(npcwalkto)
+{
+	npc_data* nd;
+
+	if (script_hasdata(st, 4))
+		nd = npc_name2id(script_getstr(st, 4));
+	else
+		nd = map_id2nd(st->oid);
+
+	if (nd == nullptr) {
+		if (script_hasdata(st, 4))
+			ShowError("buildin_npcwalkto: %s is a non-existing NPC.\n", script_getstr(st, 4));
+		else
+			ShowError("buildin_npcwalkto: non-existing NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( nd->m < 0 ){
+		ShowError( "buildin_npcwalkto: NPC is not on a map.\n" );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	struct map_data* mapdata = map_getmapdata( nd->m );
+	int32 x = script_getnum(st, 2);
+	int32 y = script_getnum(st, 3);
+
+	if( x < 0 || x >= mapdata->xs || y < 0 || y >= mapdata->ys ){
+		ShowWarning( "buildin_npcwalkto: coordinates %d/%d are out of bounds in map %s(%dx%d).\n", x, y, mapdata->name, mapdata->xs, mapdata->ys );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!nd->status.hp)
+		status_calc_npc(nd, SCO_FIRST);
+	else
+		status_calc_npc(nd, SCO_NONE);
+	unit_walktoxy(nd,x,y,0);
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Stop an npc's movement.
+ * npcstop {"<npc name>", {"<flag>"}};
+ */
+BUILDIN_FUNC(npcstop)
+{
+	npc_data* nd;
+
+	if (script_hasdata(st, 2))
+		nd = npc_name2id(script_getstr(st, 2));
+	else
+		nd = map_id2nd(st->oid);
+
+	if (nd == nullptr) {
+		if (script_hasdata(st, 2))
+			ShowError("buildin_npcstop: %s is a non-existing NPC.\n", script_getstr(st, 2));
+		else
+			ShowError("buildin_npcstop: non-existing NPC.\n");
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 flag = USW_FIXPOS | USW_MOVE_FULL_CELL | USW_FORCE_STOP;
+
+	if (script_hasdata(st, 3)) {
+		flag = script_getnum(st, 3);
+
+		if (flag < USW_NONE || flag > USW_ALL) {
+			ShowError("buildin_npcstop: invalid flag %d.\n", flag);
+			return SCRIPT_CMD_FAILURE;
+		}
+
+		if (flag & USW_FORCE_STOP)
+			nd->ud.state.force_walk = false;
+	}
+
+	unit_stop_walking( nd, flag );
+
+	return SCRIPT_CMD_SUCCESS;
+}
+
+
+/**
+ * getlook(<type>{,<char_id>})
+ **/
+BUILDIN_FUNC(getlook)
+{
+	int32 type,val;
+	TBL_PC *sd;
+
+	if (!script_charid2sd(3,sd)) {
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	type=script_getnum(st,2);
+	val=-1;
+	switch(type) {
+		// TODO: implement LOOK_BASE as stated in script doc
+		case LOOK_HAIR:     	val=sd->status.hair; break; //1
+		case LOOK_WEAPON:   	val=sd->status.weapon; break; //2
+		case LOOK_HEAD_BOTTOM:	val=sd->status.head_bottom; break; //3
+		case LOOK_HEAD_TOP: 	val=sd->status.head_top; break; //4
+		case LOOK_HEAD_MID: 	val=sd->status.head_mid; break; //5
+		case LOOK_HAIR_COLOR:	val=sd->status.hair_color; break; //6
+		case LOOK_CLOTHES_COLOR:	val=sd->status.clothes_color; break; //7
+		case LOOK_SHIELD:   	val=sd->status.shield; break; //8
+		case LOOK_SHOES:    	break; //9
+		case LOOK_ROBE:     	val=sd->status.robe; break; //12
+		case LOOK_BODY2:		val=sd->status.body; break; //13
+	}
+
+	script_pushint(st,val);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * getsavepoint(<information type>{,<char_id>})
+ * @param type 0- map name, 1- x, 2- y
+ **/
+BUILDIN_FUNC(getsavepoint)
+{
+	TBL_PC* sd;
+	int32 type;
+
+	if (!script_charid2sd(3,sd)) {
+		script_pushint(st,0);
+		return SCRIPT_CMD_SUCCESS;
+	}
+
+	type = script_getnum(st,2);
+
+	switch(type) {
+		case 0: script_pushstrcopy( st, sd->status.save_point.map ); break;
+		case 1: script_pushint(st,sd->status.save_point.x); break;
+		case 2: script_pushint(st,sd->status.save_point.y); break;
+		default:
+			script_pushint(st,0);
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/**
+ * Get position for BL objects.
+ * getmapxy(<map name>,<x>,<y>,<type>{,<char name>});
+ * @param mapname: String variable for output map name
+ * @param x: Integer variable for output coord X
+ * @param y: Integer variable for output coord Y
+ * @param type: Type of object
+ *   BL_PC - Character coord
+ *   BL_NPC - NPC coord
+ *   BL_PET - Pet coord
+ *   BL_HOM - Homun coord
+ *   BL_MER - Mercenary coord
+ *   BL_ELEM - Elemental coord
+ * @param charname: Name object. If empty or "this" use the current object
+ * @return 0 - success; -1 - some error, MapName$,MapX,MapY contains unknown value.
+ */
+BUILDIN_FUNC(getmapxy)
+{
+	block_list *bl = nullptr;
+	TBL_PC *sd=nullptr;
+
+	int64 num;
+	const char *name;
+	char prefix;
+
+	int32 x,y,type = BL_PC;
+	char mapname[MAP_NAME_LENGTH];
+
+	if( !data_isreference(script_getdata(st,2)) ) {
+		ShowWarning("script: buildin_getmapxy: mapname value is not a variable.\n");
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if( !data_isreference(script_getdata(st,3)) ) {
+		ShowWarning("script: buildin_getmapxy: mapx value is not a variable.\n");
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+	if( !data_isreference(script_getdata(st,4)) ) {
+		ShowWarning("script: buildin_getmapxy: mapy value is not a variable.\n");
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( !is_string_variable(reference_getname(script_getdata(st, 2))) ) {
+		ShowWarning("script: buildin_getmapxy: %s is not a string variable.\n",reference_getname(script_getdata(st, 2)));
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( is_string_variable(reference_getname(script_getdata(st, 3))) ) {
+		ShowWarning("script: buildin_getmapxy: %s is a string variable, should be an INT.\n",reference_getname(script_getdata(st, 3)));
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if( is_string_variable(reference_getname(script_getdata(st, 4))) ) {
+		ShowWarning("script: buildin_getmapxy: %s is a string variable, should be an INT.\n",reference_getname(script_getdata(st, 4)));
+		script_pushint(st,-1);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	// Possible needly check function parameters on C_STR,C_INT,C_INT
+	if (script_hasdata(st, 5))
+		type = script_getnum(st, 5);
+

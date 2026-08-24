@@ -1,0 +1,232 @@
+//===== rAthena Script ======================================= 
+//= Ticket Refiner
+//===== By: ==================================================
+//= Euphy
+//===== Current Version: =====================================
+//= 1.1
+//===== Compatible With: =====================================
+//= rAthena Project
+//===== Description: =========================================
+//= [Official Conversion]
+//= Refiner that uses +5~9/+11 refine tickets to refine
+//= equipment with no chance of failure.
+//= NOTE: This NPC is currently disabled on official servers.
+//===== Additional Comments: =================================
+//= 1.0 First version. [Euphy]
+//= 1.1 Do not refine above ticket level. [Euphy]
+//============================================================
+
+// Main NPC :: safety_Ref_NPC
+//============================================================
+prontera,184,177,6	script	Refine Master	851,{
+	disable_items;
+	setarray .@cert_weapon[0],
+		6864,	// Guarantee_Weapon_19Up
+		6875,	// Guarantee_Weapon_18Up
+		6874,	// Guarantee_Weapon_17Up
+		6873,	// Guarantee_Weapon_16Up
+		6872,	// Guarantee_Weapon_15Up
+		6871,	// Guarantee_Weapon_14Up
+		6870,	// Guarantee_Weapon_13Up
+		6584,	// Guarantee_Weapon_12Up
+		6238,	// Guarantee_Weapon_11Up
+		6228,	// Guarantee_Weapon_9Up
+		6229,	// Guarantee_Weapon_8Up
+		6230,	// Guarantee_Weapon_7Up
+		6231,	// Guarantee_Weapon_6Up
+		6456;	// Guarantee_Weapon_5Up
+	setarray .@cert_armor[0],
+		6865,	// Guarantee_Armor_19Up
+		6881,	// Guarantee_Armor_18Up
+		6880,	// Guarantee_Armor_17Up
+		6879,	// Guarantee_Armor_16Up
+		6878,	// Guarantee_Armor_15Up
+		6877,	// Guarantee_Armor_14Up
+		6876,	// Guarantee_Armor_13Up
+		6585,	// Guarantee_Armor_12Up
+		6239,	// Guarantee_Armor_11Up
+		6232,	// Guarantee_Armor_9Up
+		6233,	// Guarantee_Armor_8Up
+		6234,	// Guarantee_Armor_7Up
+		6235,	// Guarantee_Armor_6Up
+		6457;	// Guarantee_Armor_5Up
+	setarray .@cert_level[0],19,18,17,16,15,14,13,12,11,9,8,7,6,5;
+	.@size_cert = getarraysize(.@cert_weapon);
+
+	for ( .@i = 0; .@i < .@size_cert; ++.@i ) {
+		if (countitem(.@cert_weapon[.@i]) > 0 || countitem(.@cert_armor[.@i]) > 0) {
+			.@check = 1;
+			break;
+		}
+	}
+
+	if (.@check == 0) {
+		mes "[精炼大师]";
+		mes "你好！";
+		mes "怎么了？";
+		mes "我是物品精炼专家，";
+		mes "负责精炼物品，";
+		mes "不过已经不再工作了。";
+		next;
+		switch(select("我先走了。:嗯……这让我有点好奇。")) {
+		case 1:
+			mes "[精炼大师]";
+			mes "保重，冒险者。";
+			close;
+		case 2:
+			mes "[精炼大师]";
+			mes "其实，我偶尔会为持有^006400精炼券^000000的冒险者提供精炼服务……";
+			mes "拜拜~！";
+			close;
+		}
+	}
+	emotion ET_SURPRISE;
+	mes "[精炼大师]";
+	mes "你好！";
+	mes "我可以把物品精炼到^006400与你的精炼券相同的等级^000000。";
+	mes "不用担心！物品绝不会损坏。";
+	next;
+	if(select("我稍后再来。:用精炼券精炼物品。") == 1) {
+		mes "[精炼大师]";
+		mes "好的。";
+		mes "你可以稍后再来。";
+		close;
+	}
+	mes "[精炼大师]";
+	mes "你想精炼哪件装备？";
+	next;
+	setarray .@position$[1],"头上","铠甲","左手","右手","披风","鞋子","饰品 1","饰品 2","头中","头下";
+	setarray .@indices[1], EQI_HEAD_TOP, EQI_ARMOR, EQI_HAND_L, EQI_HAND_R, EQI_GARMENT, EQI_SHOES, EQI_ACC_L, EQI_ACC_R, EQI_HEAD_MID, EQI_HEAD_LOW;
+	for ( .@i = 1; .@i <= 10; ++.@i )
+		.@menu$ += (getequipisequiped(.@indices[.@i]) ? getequipname(.@indices[.@i]) : .@position$[.@i] + "- [空]") + ":";
+
+	.@part = .@indices[ select(.@menu$) ];
+	if (!getequipisequiped(.@part)) {
+		mes "[精炼大师]";
+		mes "你必须装备想要精炼的物品。";
+		close;
+	}
+	if (!getequipisenableref(.@part)) {
+		emotion ET_OTL;
+		mes "[精炼大师]";
+		mes "哦，抱歉。";
+		mes "这件物品无法精炼。";
+		close;
+	}
+	.@refineitemid = getequipid(.@part); // save id of the item
+	.@refinerycnt = getequiprefinerycnt(.@part); //save refinery count
+	setarray .@card[0], getequipcardid(.@part,0), getequipcardid(.@part,1), getequipcardid(.@part,2), getequipcardid(.@part,3);
+	.@itemtype = getiteminfo( .@refineitemid, ITEMINFO_TYPE );
+	if( .@itemtype == IT_WEAPON ){
+		switch( getequipweaponlv( .@part ) ){
+			case 1:
+			case 2:
+			case 3:
+			case 4:
+				copyarray .@tickets[0], .@cert_weapon[0], .@size_cert;
+				.@type$ = "武器";
+				break;
+			default:
+				// TODO:
+				close;
+		}
+	}else if( .@itemtype == IT_ARMOR ){
+		switch( getequiparmorlv( .@part ) ){
+			case 1:
+				copyarray .@tickets[0], .@cert_armor[0], .@size_cert;
+				.@type$ = "防具";
+				break;
+			default:
+				// TODO:
+				close;
+		}
+	}else{
+		// TODO:
+		close;
+	}
+	.@check = 0;
+	for ( .@i = 0; .@i < .@size_cert; ++.@i ) {
+		if (countitem(.@tickets[.@i]) > 0) {
+			.@check = 1;
+			break;
+		}
+	}
+	if (.@check == 0) {
+		emotion ET_THINK;
+		mes "[精炼大师]";
+		mes "如果你想精炼这件^006400"+.@type$+"^000000，请带上^006400"+.@type$+"精炼券^000000。";
+		mes "下次见！";
+		close;
+	}
+	mes "[精炼大师]";
+	mes "请选择要使用的^006400"+.@type$+"精炼券^000000。";
+	next;
+	.@menu$ = "";
+	for ( .@i = 0; .@i < .@size_cert; ++.@i )
+		.@menu$ += getitemname(.@tickets[.@i]) + ":";
+	.@select = select(.@menu$)-1;
+	.@ticket_lv = .@cert_level[.@select];
+	.@ticket_id = .@tickets[.@select];
+
+	if (countitem(.@ticket_id) == 0) {
+		emotion ET_QUESTION;
+		mes "[精炼大师]";
+		mes getitemname(.@ticket_id)+"不在你的物品栏里。你把它放进仓库了吗？";
+		mes "请再次确认。";
+		mes "下次见！";
+		close;
+	}
+	if (getequiprefinerycnt(.@part) >= .@ticket_lv) {
+		emotion ET_PROFUSELY_SWEAT;
+		mes "[精炼大师]";
+		mes "^8B4513这件物品已经精炼到与你的券相同的等级。^000000";
+		mes "请带来精炼等级低于精炼券的物品。";
+		close;
+	}
+	mes "[精炼大师]";
+	mes "我将使用^006400"+getitemname(.@ticket_id)+"^000000把^006400"+getequipname(.@part)+"^8B4513精炼到 +"+.@ticket_lv+" 级^000000。";
+	mes "可以开始吗？";
+	next;
+	if(select("不可以。:可以。") == 1) {
+		emotion ET_THINK;
+		mes "[精炼大师]";
+		mes "哦，你改变主意了。";
+		mes "好吧。";
+		mes "你可以稍后再来。";
+		close;
+	}
+	mes "[精炼大师]";
+	mes "太好了。";
+	mes "如你所愿！";
+	mes "我有自己独特的精炼方法……";
+	mes "……轰！";
+	specialeffect EF_SUI_EXPLOSION;
+	if (countitem(.@ticket_id) < 1) {
+		next;
+		mes "错误！";
+		mes "请报告此问题。";
+		close;
+	}
+	delitem .@ticket_id,1;
+
+	// anti-hack
+	if (callfunc("F_IsEquipIDHack", .@part, .@refineitemid) ||
+		callfunc("F_IsEquipRefineHack", .@part, .@refinerycnt) || callfunc("F_IsEquipCardHack", .@part, .@card[0], .@card[1], .@card[2], .@card[3])) {
+		mes "[精炼大师]";
+		emotion ET_FRET;
+		mes "等一下……";
+		mes "你以为我傻吗？！";
+		mes "你趁我没注意调换了物品！滚出去！";
+		close;
+	}
+	successrefitem .@part, .@ticket_lv - getequiprefinerycnt(.@part);
+	next;
+	emotion ET_DELIGHT;
+	mes "[精炼大师]";
+	mes "好了，给你~";
+	mes "恭喜你，^0000FF"+strcharinfo(0)+"^000000！";
+	mes "恭喜你的"+.@type$+"闪耀升级。";
+	mes "看起来棒极了！";
+	mes "再见~！";
+	close;
+}

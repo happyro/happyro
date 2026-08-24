@@ -1,0 +1,500 @@
+
+	for( i = 0; i < g->guild.max_member; i++ ) {
+		if( (pl_sd = g->guild.member[i].sd) && pl_sd->state.size != size ) {
+			if( pl_sd->state.size ) {
+				pl_sd->state.size = SZ_SMALL;
+				pc_setpos(pl_sd, pl_sd->mapindex, pl_sd->x, pl_sd->y, CLR_TELEPORT);
+			}
+
+			pl_sd->state.size = size;
+			if( size == SZ_MEDIUM )
+				clif_specialeffect(pl_sd,EF_BABYBODY,AREA);
+			else if( size == SZ_BIG )
+				clif_specialeffect(pl_sd,EF_GIANTBODY,AREA);
+		}
+	}
+
+	clif_displaymessage(fd, msg_txt(sd,1303)); // Size change applied.
+	return 0;
+}
+
+/*==========================================
+ * @monsterignore
+ * => Makes monsters ignore you. [Valaris]
+ *------------------------------------------*/
+ACMD_FUNC(monsterignore)
+{
+	nullpo_retr(-1, sd);
+
+	if (sd->state.block_action & PCBLOCK_IMMUNE) {
+		sd->state.block_action &= ~PCBLOCK_IMMUNE;
+		clif_displaymessage(sd->fd, msg_txt(sd,1306)); // Returned to normal state.
+	} else {
+		sd->state.block_action |= PCBLOCK_IMMUNE;
+		clif_displaymessage(sd->fd, msg_txt(sd,1305)); // You are now immune to attacks.
+	}
+
+	return 0;
+}
+/*==========================================
+ * @fakename
+ * => Gives your character a fake name. [Valaris]
+ *------------------------------------------*/
+ACMD_FUNC(fakename)
+{
+	nullpo_retr(-1, sd);
+
+	if( !message || !*message )
+	{
+		if( sd->fakename[0] )
+		{
+			sd->fakename[0] = '\0';
+			clif_name_area(sd);
+			if (sd->disguise)
+				clif_name_self(sd);
+			clif_displaymessage(sd->fd, msg_txt(sd,1307)); // Returned to real name.
+			return 0;
+		}
+
+		clif_displaymessage(sd->fd, msg_txt(sd,1308)); // You must enter a name.
+		return -1;
+	}
+
+	if( strlen(message) < 2 )
+	{
+		clif_displaymessage(sd->fd, msg_txt(sd,1309)); // Fake name must be at least two characters.
+		return -1;
+	}
+
+	safestrncpy(sd->fakename, message, sizeof(sd->fakename));
+	clif_name_area(sd);
+	if (sd->disguise) // Another packet should be sent so the client updates the name for sd
+		clif_name_self(sd);
+	clif_displaymessage(sd->fd, msg_txt(sd,1310)); // Fake name enabled.
+
+	return 0;
+}
+
+/*==========================================
+ * Ragnarok Resources
+ *------------------------------------------*/
+ACMD_FUNC(mapflag) {
+	char flag_name[50];
+	int16 flag = 0, i, j;
+	std::string buf;
+
+	nullpo_retr(-1, sd);
+
+	memset(flag_name, '\0', sizeof(flag_name));
+
+	if (!message || !*message || (sscanf(message, "%49s %6hd", flag_name, &flag) < 1)) {
+		clif_displaymessage(sd->fd,msg_txt(sd,1311)); // Enabled Mapflags in this map:
+		clif_displaymessage(sd->fd,"----------------------------------");
+		for( i = MF_MIN; i < MF_MAX; i++ ){
+			union u_mapflag_args args = {};
+
+			if( map_getmapflag_name(static_cast<e_mapflag>(i), flag_name) && map_getmapflag_sub( sd->m, static_cast<e_mapflag>(i), &args ) ){
+				clif_displaymessage(sd->fd, flag_name);
+			}
+		}
+
+		clif_displaymessage(sd->fd," ");
+		clif_displaymessage(sd->fd,msg_txt(sd,1312)); // Usage: "@mapflag monster_noteleport 1" (0=Off | 1=On)
+		clif_displaymessage(sd->fd,msg_txt(sd,1313)); // Type "@mapflag available" to list the available mapflags.
+		return 1;
+	}
+
+	// Check if the list of mapflags was requested
+	if( strcasecmp(flag_name,"available") ){
+		for (i = 0; flag_name[i]; i++) flag_name[i] = (char)tolower(flag_name[i]); //lowercase
+
+		enum e_mapflag mapflag = map_getmapflag_by_name(flag_name);
+
+		if( mapflag != MF_INVALID ){
+			std::vector<e_mapflag> disabled_mf = { MF_NOSAVE,
+												MF_PVP_NIGHTMAREDROP,
+												MF_RESTRICTED,
+												MF_NOCOMMAND,
+												MF_BEXP,
+												MF_JEXP,
+												MF_BATTLEGROUND,
+												MF_SKILL_DAMAGE,
+												MF_SKILL_DURATION };
+
+			if (flag > 0 && util::vector_exists(disabled_mf, mapflag)) {
+				sprintf(atcmd_output,"[ @mapflag ] %s flag cannot be enabled as it requires unique values.", flag_name);
+				clif_displaymessage(sd->fd,atcmd_output);
+			} else {
+				map_setmapflag(sd->m, mapflag, flag != 0);
+				sprintf(atcmd_output,"[ @mapflag ] %s flag has been set to %s value = %hd",flag_name,flag?"On":"Off",flag);
+				clif_displaymessage(sd->fd,atcmd_output);
+			}
+			return 0;
+		}else{
+			clif_displaymessage(sd->fd, msg_txt(sd, 1314)); // Invalid flag name or flag.
+			clif_displaymessage(sd->fd, msg_txt(sd, 1313)); // Type "@mapflag available" to list the available mapflags.
+			return 1;
+		}
+	}
+
+	clif_displaymessage(sd->fd,msg_txt(sd,1315)); // Available Flags:
+	clif_displaymessage(sd->fd,"----------------------------------");
+	for( i = MF_MIN, j = 0; i < MF_MAX; i++ ){
+		if( map_getmapflag_name( static_cast<e_mapflag>(i), flag_name ) ){
+			buf.append(flag_name);
+
+			if( (i + 1) < MF_MAX )
+				buf.append(", ");
+
+			j++;
+		}
+
+		if( i > MF_MIN && ( j == 6 || ( i + 1 ) == MF_MAX ) ){
+			clif_displaymessage(sd->fd, buf.c_str() );
+			buf.clear();
+			j = 0;
+		}
+	}
+	clif_displaymessage(sd->fd, msg_txt(sd, 1312)); // Usage: "@mapflag monster_noteleport 1" (0=Off | 1=On)
+
+	return 0;
+}
+
+/*===================================
+ * Remove some messages
+ *-----------------------------------*/
+ACMD_FUNC(showexp)
+{
+	if (sd->state.showexp) {
+		sd->state.showexp = 0;
+		clif_displaymessage(fd, msg_txt(sd,1316)); // Gained exp will not be shown.
+		return 0;
+	}
+
+	sd->state.showexp = 1;
+	clif_displaymessage(fd, msg_txt(sd,1317)); // Gained exp is now shown.
+	return 0;
+}
+
+ACMD_FUNC(showzeny)
+{
+	if (sd->state.showzeny) {
+		sd->state.showzeny = 0;
+		clif_displaymessage(fd, msg_txt(sd,1318)); // Gained zeny will not be shown.
+		return 0;
+	}
+
+	sd->state.showzeny = 1;
+	clif_displaymessage(fd, msg_txt(sd,1319)); // Gained zeny is now shown.
+	return 0;
+}
+
+ACMD_FUNC(showdelay)
+{
+	if (sd->state.showdelay) {
+		sd->state.showdelay = 0;
+		clif_displaymessage(fd, msg_txt(sd,1320)); // Skill delay failures will not be shown.
+		return 0;
+	}
+
+	sd->state.showdelay = 1;
+	clif_displaymessage(fd, msg_txt(sd,1321)); // Skill delay failures are now shown.
+	return 0;
+}
+
+/*==========================================
+ * Duel organizing functions [LuzZza]
+ *
+ * @duel [limit|nick] - create a duel
+ * @invite <nick> - invite player
+ * @accept - accept invitation
+ * @reject - reject invitation
+ * @leave - leave duel
+ *------------------------------------------*/
+ACMD_FUNC(invite)
+{
+	size_t did = sd->duel_group;
+	map_session_data *target_sd = nullptr;
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+	memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		sprintf(atcmd_output, msg_txt(sd, 435), command); // Please enter a player name (usage: %s <char name>).
+		clif_displaymessage(fd, atcmd_output);
+		return -1;
+	}
+
+	if(did == 0 || !duel_exist(did) ) {
+		clif_displaymessage(fd, msg_txt(sd,350)); // "Duel: @invite without @duel."
+		return 0;
+	}
+
+	if( !duel_check_player_limit( duel_get_duelid(did) ) ){
+		clif_displaymessage(fd, msg_txt(sd,351)); // "Duel: Limit of players is reached."
+		return 0;
+	}
+
+	if((target_sd = map_nick2sd(atcmd_player_name, true)) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd,352)); // "Duel: Player not found."
+		return 0;
+	}
+
+	if(target_sd->duel_group > 0 || target_sd->duel_invite > 0) {
+		clif_displaymessage(fd, msg_txt(sd,353)); // "Duel: Player already in duel."
+		return 0;
+	}
+
+	if(battle_config.duel_only_on_same_map && target_sd->m != sd->m)
+	{
+		sprintf(atcmd_output, msg_txt(sd,364), atcmd_player_name); // Duel: You can't invite %s because he/she isn't on the same map.
+		clif_displaymessage(fd, atcmd_output);
+		return 0;
+	}
+
+	duel_invite(did, sd, target_sd);
+	clif_displaymessage(fd, msg_txt(sd,354)); // "Duel: Invitation has been sent."
+	return 0;
+}
+
+ACMD_FUNC(duel)
+{
+	uint32 maxpl = 0;
+
+	if(sd->duel_group > 0) {
+		duel_showinfo(sd->duel_group, sd);
+		return 0;
+	}
+
+	if(sd->duel_invite > 0) {
+		clif_displaymessage(fd, msg_txt(sd,355)); // "Duel: @duel without @reject."
+		return 0;
+	}
+
+	if(!duel_checktime(sd)) {
+		char output[CHAT_SIZE_MAX];
+		sprintf(output, msg_txt(sd,356), battle_config.duel_time_interval); // "Duel: You can take part in duel only one time per %d minutes."
+		clif_displaymessage(fd, output);
+		return 0;
+	}
+
+	if( message[0] ) {
+		if(sscanf(message, "%11u", &maxpl) >= 1) {
+			if(maxpl < 2 || maxpl > 65535) {
+				clif_displaymessage(fd, msg_txt(sd,357)); // "Duel: Invalid value."
+				return 0;
+			}
+			duel_create(sd, maxpl);
+		} else {
+			map_session_data *target_sd = nullptr;
+
+			memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+			memset(atcmd_output, '\0', sizeof(atcmd_output));
+
+			if (sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+				sprintf(atcmd_output, msg_txt(sd, 435), command); // Please enter a player name (usage: %s <char name>).
+				clif_displaymessage(fd, atcmd_output);
+				return -1;
+			}
+
+			target_sd = map_nick2sd(atcmd_player_name,true);
+
+			if(target_sd != nullptr) {
+				size_t newduel;
+				if((newduel = duel_create(sd, 2)) != -1) {
+					if(target_sd->duel_group > 0 ||	target_sd->duel_invite > 0) {
+						clif_displaymessage(fd, msg_txt(sd,353)); // "Duel: Player already in duel."
+						return 0;
+					}
+					duel_invite(newduel, sd, target_sd);
+					clif_displaymessage(fd, msg_txt(sd,354)); // "Duel: Invitation has been sent."
+				}
+			} else {
+				clif_displaymessage(fd, msg_txt(sd,352)); // "Duel: Player not found."
+				return 0;
+			}
+		}
+	} else
+		duel_create(sd, 0);
+
+	return 0;
+}
+
+
+ACMD_FUNC(leave)
+{
+	if(sd->duel_group <= 0) {
+		clif_displaymessage(fd, msg_txt(sd,358)); // "Duel: @leave without @duel."
+		return 0;
+	}
+
+	duel_leave(sd->duel_group, sd);
+	clif_displaymessage(fd, msg_txt(sd,359)); // "Duel: You left the duel."
+	return 0;
+}
+
+ACMD_FUNC(accept)
+{
+	if(!duel_checktime(sd)) {
+		char output[CHAT_SIZE_MAX];
+		sprintf(output, msg_txt(sd,356), battle_config.duel_time_interval); // "Duel: You can take part in duel only one time per %d minutes."
+		clif_displaymessage(fd, output);
+		return 0;
+	}
+
+	if(sd->duel_invite <= 0 || !duel_exist(sd->duel_invite) ) {
+		clif_displaymessage(fd, msg_txt(sd,360)); // "Duel: @accept without invititation."
+		return 0;
+	}
+
+	if( !duel_check_player_limit( duel_get_duelid( sd->duel_invite ) ) )
+	{
+		clif_displaymessage(fd, msg_txt(sd,351)); // "Duel: Limit of players is reached."
+		return 0;
+	}
+
+	duel_accept(sd->duel_invite, sd);
+	clif_displaymessage(fd, msg_txt(sd,361)); // "Duel: Invitation has been accepted."
+	return 0;
+}
+
+ACMD_FUNC(reject)
+{
+	if(sd->duel_invite <= 0) {
+		clif_displaymessage(fd, msg_txt(sd,362)); // "Duel: @reject without invititation."
+		return 0;
+	}
+
+	duel_reject(sd->duel_invite, sd);
+	clif_displaymessage(fd, msg_txt(sd,363)); // "Duel: Invitation has been rejected."
+	return 0;
+}
+
+/*===================================
+ * Cash Points
+ *-----------------------------------*/
+ACMD_FUNC(cash)
+{
+	char output[128];
+	int32 value;
+	int32 ret=0;
+	nullpo_retr(-1, sd);
+
+	// Since there is no cashpoint update packet we need to force updating like this
+	if( sd->state.cashshop_open ){
+		clif_displaymessage(fd, msg_txt(sd, 1376)); // Please close the cashshop before using this command.
+		return -1;
+	}
+
+	if( !message || !*message || (value = atoi(message)) == 0 ) {
+		clif_displaymessage(fd, msg_txt(sd,1322)); // Please enter an amount.
+		return -1;
+	}
+
+	if( value > 0 ) {
+		if( (ret=pc_getcash(sd, value, 0, LOG_TYPE_COMMAND)) >= 0){
+			// If this option is set, the message is already sent by pc function
+			if( !battle_config.cashshop_show_points ){
+				sprintf(output, msg_txt(sd,505), ret, sd->cashPoints); // Gained %d cash points. Total %d points.
+				clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], output, false, SELF);
+			}
+		}
+		else clif_displaymessage(fd, msg_txt(sd,149)); // Impossible to increase the number/value.
+	} else {
+		if (-value > sd->cashPoints) //By command, if cash < value, force it to remove all
+			value = -sd->cashPoints;
+		if( (ret=pc_paycash(sd, -value, 0, LOG_TYPE_COMMAND)) >= 0){
+			// If this option is set, the message is already sent by pc function
+			if( !battle_config.cashshop_show_points ){
+				sprintf(output, msg_txt(sd,410), ret, sd->cashPoints); // Removed %d cash points. Total %d points.
+				clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], output, false, SELF);
+			}
+		}
+		else clif_displaymessage(fd, msg_txt(sd,41)); // Unable to decrease the number/value.
+	}
+
+	return 0;
+}
+
+ACMD_FUNC(points){
+	char output[128];
+	int32 value;
+	int32 ret=0;
+	nullpo_retr(-1, sd);
+
+	// Since there is no cashpoint update packet we need to force updating like this
+	if( sd->state.cashshop_open ){
+		clif_displaymessage(fd, msg_txt(sd, 1376)); // Please close the cashshop before using this command.
+		return -1;
+	}
+
+	if( !message || !*message || (value = atoi(message)) == 0 ) {
+		clif_displaymessage(fd, msg_txt(sd,1322)); // Please enter an amount.
+		return -1;
+	}
+
+	if( value > 0 ) {
+		if( (ret=pc_getcash(sd, 0, value, LOG_TYPE_COMMAND)) >= 0){
+			sprintf(output, msg_txt(sd,506), ret, sd->kafraPoints); // Gained %d kafra points. Total %d points.
+			clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], output, false, SELF);
+		}
+		else clif_displaymessage(fd, msg_txt(sd,149)); // Impossible to increase the number/value.
+	} else {
+		if (-value > sd->kafraPoints) //By command, if cash < value, force it to remove all
+			value = -sd->kafraPoints;
+		if( (ret=pc_paycash(sd, 0, -value, LOG_TYPE_COMMAND)) >= 0){
+			sprintf(output, msg_txt(sd,411), ret, sd->kafraPoints); // Removed %d kafra points. Total %d points.
+			clif_messagecolor(sd, color_table[COLOR_LIGHT_GREEN], output, false, SELF);
+		}
+		else clif_displaymessage(fd, msg_txt(sd,41)); // Unable to decrease the number/value.
+	}
+
+	return 0;
+}
+
+// @clone/@slaveclone/@evilclone <playername> [Valaris]
+ACMD_FUNC(clone)
+{
+	int32 x=0,y=0,flag=0,master=0,i=0;
+	map_session_data *pl_sd=nullptr;
+
+	memset(atcmd_player_name, '\0', sizeof(atcmd_player_name));
+
+	if (!message || !*message || sscanf(message, "%23[^\n]", atcmd_player_name) < 1) {
+		clif_displaymessage(sd->fd,msg_txt(sd,1323)); // You must enter a player name or ID.
+		return 0;
+	}
+
+	if((pl_sd=map_nick2sd(atcmd_player_name,true)) == nullptr && (pl_sd=map_charid2sd(atoi(atcmd_player_name))) == nullptr) {
+		clif_displaymessage(fd, msg_txt(sd,3));	// Character not found.
+		return 0;
+	}
+
+	if(pc_get_group_level(pl_sd) > pc_get_group_level(sd)) {
+		clif_displaymessage(fd, msg_txt(sd,126));	// Cannot clone a player of higher GM level than yourself.
+		return 0;
+	}
+
+	parent_cmd = atcommand_alias_db.checkAlias(command+1);
+
+	if (strcmpi(parent_cmd, "clone") == 0)
+		flag = 1;
+	else if (strcmpi(parent_cmd, "slaveclone") == 0) {
+		flag = 2;
+		if(pc_isdead(sd)){
+		    clif_displaymessage(fd, msg_txt(sd,129+flag*2));
+		    return 0;
+		}
+		master = sd->id;
+		if (battle_config.atc_slave_clone_limit
+			&& mob_countslave(sd) >= battle_config.atc_slave_clone_limit) {
+			clif_displaymessage(fd, msg_txt(sd,127));	// You've reached your slave clones limit.
+			return 0;
+		}
+	}
+
+	do {
+		x = sd->x + rnd_value(-5, 5);
+		y = sd->y + rnd_value(-5, 5);
+	} while (map_getcell(sd->m,x,y,CELL_CHKNOPASS) && i++ < 10);
+

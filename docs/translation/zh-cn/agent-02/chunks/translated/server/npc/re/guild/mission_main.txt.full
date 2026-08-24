@@ -1,0 +1,434 @@
+//===== rAthena Script =======================================
+//= Guild Mission - Core Script
+//===== Description: =========================================
+//= Template for guild mission added in episode 14.3
+//===== Changelogs: ==========================================
+//= [Official Conversion]
+//= 1.0 First version [Secretdataz]
+//= 1.1 Fixed potential exploit from original Aegis script. [Secretdataz]
+//============================================================
+
+-	script	gld_mission#core	-1,{
+function brief;
+function mob_brief;
+function calcexp;
+function calcjobexp;
+
+	if (!checkweight(1201,3)){
+		mes "你携带的物品太多，无法继续任务。";
+		mes "请减轻负重后再试。";
+		close;
+	}
+
+	.@zone$ = strnpcinfo(2);
+	if(.@zone$ == "gqaldeg"){
+		.@zoneid = 3;
+		.@edition = 1;
+	} else if(.@zone$ == "gqaru"){
+		.@zoneid = 4;
+		.@edition = 2;
+	} else if(.@zone$ == "gqgefg"){
+		.@zoneid = 2;
+		.@edition = 1;
+	} else if(.@zone$ == "gqpayg"){
+		.@zoneid = 1;
+		.@edition = 1;
+	} else if(.@zone$ == "gqprtg"){
+		.@zoneid = 0;
+		.@edition = 1;
+	} else if(.@zone$ == "gqsch"){
+		.@zoneid = 5;
+		.@edition = 2;
+	} else if(.@zone$ == "gqtealde"){
+		.@zoneid = 6;
+		.@edition = 3;
+	} else if(.@zone$ == "gqteprt"){
+		.@zoneid = 7;
+		.@edition = 3;
+	} else {
+		// Custom error message.
+		debugmes "Guild mission script called from an unknown agit region [" + .@zone$ + "].";
+		end;
+	}
+	.@npcname$ = .npcname$[.@zoneid];
+
+	mes .@npcname$;
+	mes "我们提供可以在" + .region$[.@zoneid] + "地区完成的任务和每日任务。";
+	mes "这里既有简单的每日任务，也有只能在攻城时段内完成的任务。请考虑一下吧～";
+	next;
+	switch(select("Conquering " + .region$[.@zoneid], "Guild Dungeon Daily Quests", "About quests", "I don't need it.")){
+		case 1: // Conquering.
+			.@gid = getcharid(2);
+			if(.@gid && is_guild_leader() == true){
+				.@time_check1 = checkquest(.conquer_delay_questid[.@zoneid], PLAYTIME);
+				if(.@time_check1 == 0){
+					mes .@npcname$;
+					mes "距离上次检查还不到一小时！";
+					mes "等待时间结束后再回来吧。";
+					next;
+					mes .@npcname$;
+					mes "如果幸运站在你这边，就会有好结果。";
+					close;
+				} else if(.@time_check1 == 2){
+					erasequest .conquer_delay_questid[.@zoneid];
+					mes .@npcname$;
+					mes "我确认征服任务的等待时间已经结束。";
+					mes "我会帮你删除不必要的记录。";
+					close;
+				} else {
+					.@siege_check = (.@edition == 1 ? agitcheck() : .@edition == 2 ? agitcheck2() : agitcheck3());
+					.@time = atoi(gettimestr("%H%M",4));
+					.@after_time = ((.weekday[.@zoneid] == gettime(4)) && ((.@time > .start_time[.@zoneid]) && (.@time < .end_time[.@zoneid])));
+
+					if(.@siege_check && .@after_time){
+						mes .@npcname$;
+						mes "我会根据^4d4dff你的公会此刻征服的要塞数量^000000发放奖励。";
+						mes "现在要检查吗？你知道^4d4dff这个数量随时可能变化^000000，对吧？";
+						next;
+						if(select("I'll come back later.","Let's check right now!") == 1){
+							mes .@npcname$;
+							mes "没错。人生就是要把握时机。";
+							mes "在最闪耀的时候回来吧。";
+							close;
+						} else {
+							.@total = 0;
+							for(.@i = 0; .@i < 5; ++.@i){
+								.@total += (.@gid == getcastledata(.castle$[.@i+.@zoneid*5],CD_GUILD_ID));
+							}
+
+							if(!.@total){
+								mes .@npcname$;
+								mes "遗憾的是，你的公会没有征服任何要塞。";
+								mes "再试一次吧！";
+								close;
+							} else {
+								mes .@npcname$;
+								if(.@total == 5)
+									mes "不可思议。";
+								else
+									mes "目前，你的公会征服的要塞总数";
+								for(.@i = 0; .@i < 5; ++.@i){
+									mes getcastlename(.castle$[.@i+.@zoneid*5]) + (.@gid == getcastledata(.castle$[.@i+.@zoneid*5],CD_GUILD_ID) ? ": ^4d4dffOccupied^000000" : "");
+								}
+								if(.@total == 5)
+									mes "你的公会征服了" + .region$[.@zoneid] + "！";
+								else
+									mes "是" + .@total + "座！";
+								next;
+								mes .@npcname$;
+								mes "我会据此发放奖励，希望你善加利用。";
+								mes "距离下次报告有一小时等待时间。记住这一点，再来尝试。";
+								setquest .conquer_delay_questid[.@zoneid];
+								getitem 6489,.@total;
+								getitem 6615,.@total;
+								getitem 12888,.@total;
+								close;
+							}
+						}
+					} else {
+						mes .@npcname$;
+						mes "抱歉，这项任务只能在攻城时段内完成。恐怕现在什么也做不了。";
+						close;
+					}
+				}
+			} else {
+				mes .@npcname$;
+				mes "抱歉，征服任务只有公会会长可以接受。";
+				mes "成员可以尝试公会地下城每日任务。";
+				close;
+			}
+			break;
+		case 2: // Daily Quests
+			mes .@npcname$;
+			mes "这些是在" + .region$[.@zoneid] + "地区的公会地下城中可以完成的任务。";
+			mes "如果愿意，你可以取消任务。尽管挑战自己吧。";
+			next;
+			.@cancel_index = (.@edition == 1 ? 3 : 2);
+			for(.@i = 0; .@i < 3; ++.@i){
+				if(.daily_hunting_questid[.@zoneid*3 + .@i])
+					.@menu$ = .@menu$ + .region$[.@zoneid] + " Mission " + (.@i+1) + (isbegin_quest(.daily_hunting_questid[.@zoneid*3 + .@i]) ? " ^4d4dffCheck the result^000000" : "") + ":";
+			}
+			.@sel = select(.@menu$) - 1;
+			.@index = .@zoneid*3 + .@sel;
+			if(.@sel == .@cancel_index){
+				mes .@npcname$;
+				mes "这些任务在公会地下城中进行，不必着急。";
+				mes "想尝试的时候随时来吧。";
+				close;
+			}
+			if(BaseLevel < .level_req[.@index]){
+				mes .@npcname$;
+				mes "嗯，遗憾的是，这项任务仅限^4d4dff等级达到" + .level_req[.@index] + "级^000000以上的玩家。";
+				mes "你的等级还不够。";
+				close;
+			}
+			.@hunting = checkquest(.daily_hunting_questid[.@index], HUNTING);
+			.@playtime = checkquest(.daily_delay_questid[.@index], PLAYTIME);
+			if(.@hunting > -1){
+				if(.@hunting == 2){
+					mes .@npcname$;
+					mes "哦，你做得很好。";
+					mes "虽然不多，希望能帮上忙。";
+					setquest .daily_delay_questid[.@index];
+					erasequest .daily_hunting_questid[.@index];
+					getexp calcexp(.@zoneid,.@index),calcjobexp(.@edition);
+					getitem 6615,1;
+				} else {
+					mes .@npcname$;
+					mes "嗯？看来你还没有完成任务……";
+					mes "出什么问题了吗？";
+					next;
+					if(select("No.","Give up the quest.") == 1){
+						mes .@npcname$;
+						mes "我不知道你还能使用公会地下城多久，不过祝你好运。";
+						close;
+					} else {
+						mes .@npcname$;
+						mes "好吧，没人强迫你。";
+						mes "想做什么就做什么。";
+						mes "那我就取消任务了。";
+						erasequest .daily_hunting_questid[.@index];
+						close;
+					}
+				}
+			} else {
+				if(.@playtime == 0 || .@playtime == 1){
+					mes .@npcname$;
+					mes "这里的规则是每天只能完成一项任务。";
+					mes "等待时间结束后再回来吧。";
+					close;
+				} else if(.@playtime == 2){
+					erasequest .daily_delay_questid[.@index];
+					mes .@npcname$;
+					mes "我确认这项任务的等待时间已经结束。";
+					mes "我会删除用于确认的记录。";
+					mes "现在试着完成任务吧！";
+					close;
+				} else {
+					mes .@npcname$;
+					mes "这是" + .region$[.@zoneid] + "的第" + .ordinal$[.@sel] + "项任务。";
+					brief(.daily_hunting_questid[.@index]);
+					next;
+					mes .@npcname$;
+					if(mob_brief(.daily_hunting_questid[.@index]))
+						mes "完成任务后我会据此发放奖励。";
+					else
+						mes "我会给予你经验值作为回报。";
+					next;
+					if(select("Accept it.","Reject it.") == 1){
+						mes .@npcname$;
+						mes "公会地下城限制进入。不过，也不是完全没有办法进去。";
+						mes "我会祈祷你能成功击败那些魔物。";
+						setquest .daily_hunting_questid[.@index];
+						close;
+					} else {
+						mes .@npcname$;
+						mes "好吧，随你的便。";
+						close;
+					}
+				}
+			}
+			break;
+		case 3: // About quests
+			mes .@npcname$;
+			mes "一点也不难。";
+			mes "我会^4d4dff根据你征服的要塞数量^000000发放奖励。";
+			mes "^4d4dff奖励的种类和品质取决于我检查时征服的要塞数量。^000000";
+			next;
+			mes .@npcname$;
+			mes "当然，我只会在攻城时段检查。";
+			mes "^4d4dff领取奖励后会有一小时等待时间，所以你最好也把握好时机。^000000";
+			next;
+			mes .@npcname$;
+			mes "如果你是正在参加攻城战的公会会长，应该试试看。";
+			next;
+			mes .@npcname$;
+			mes "公会地下城每日任务是可以在公会地下城完成的战斗任务。";
+			mes "很简单。";
+			close;
+		case 4: // I don't need it.
+			mes .@npcname$;
+			mes "你真是个特别的人～！";
+			close;
+	}
+	end;
+
+OnInit:
+	setarray .castle$[0],
+		"prtg_cas01","prtg_cas02","prtg_cas03","prtg_cas04","prtg_cas05",
+		"payg_cas01","payg_cas02","payg_cas03","payg_cas04","payg_cas05",
+		"gefg_cas01","gefg_cas02","gefg_cas03","gefg_cas04","gefg_cas05",
+		"aldeg_cas01","aldeg_cas02","aldeg_cas03","aldeg_cas04","aldeg_cas05",
+		"arug_cas01","arug_cas02","arug_cas03","arug_cas04","arug_cas05",
+		"schg_cas01","schg_cas02","schg_cas03","schg_cas04","schg_cas05",
+		"te_aldecas1","te_aldecas2","te_aldecas3","te_aldecas4","te_aldecas5",
+		"te_prtcas01","te_prtcas02","te_prtcas03","te_prtcas04","te_prtcas05";
+	setarray .npcname$[0],
+		"[Altir]","[Alshine]","[Denev]","[Tarazed]","[Mirah]","[Almark]","[Becrux]","[Acrux]";
+	setarray .region$[0],
+		"Valkyrie Realm","Greenwood Lake","Britoria","Luina","Valfreyja","Nidhoggur","Kafragarten","Gloria";
+	setarray .weekday[0], // Day of the week. 0 = Sunday, 6 = Saturday.
+		0,0,0,0,0,0,6,6;
+	setarray .start_time[0],
+		2200,2200,2200,2200,2200,2200,2200,2200;
+	setarray .end_time[0],
+		2230,2230,2230,2230,2230,2230,2230,2230;
+	setarray .conquer_delay_questid[0], // Quest ID for cooldowns
+		7517,7520,7519,7518,7522,7521,7524,7523;
+	setarray .level_req[0], // Level requirement for quests. There are 2-3 quests per region
+		100,120,120,	//prt
+		100,120,120,	//pay
+		100,120,120,	//gef
+		100,120,120,	//alde
+		90,90,0,		//aru
+		90,90,0,		//sch
+		70,70,0,		//tealde
+		70,70,0;		//teprt
+	setarray .max_level[0], // Exp increase cap for quests. 0 for unlimited/not exist
+		130,140,0,	//prt
+		130,140,0,	//pay
+		130,140,0,	//gef
+		130,140,0,	//alde
+		120,120,0,	//aru
+		120,120,0,	//sch
+		99,99,0,	//tealde
+		99,99,0;	//teprt
+	setarray .daily_hunting_questid[0], //Quest ID for daily quests.
+		7525,7526,7527,	//prt
+		7534,7535,7536,	//pay
+		7531,7532,7533,	//gef
+		7528,7529,7530,	//alde
+		7539,7540,0,	//aru
+		7537,7538,0,	//sch
+		7561,7562,0,	//tealde
+		7541,7542,0;	//teprt
+	setarray .daily_delay_questid[0],	//Quest ID for mob hunting check.
+		7543,7544,7545,	//prt
+		7552,7553,7554,	//pay
+		7549,7550,7551,	//gef
+		7546,7547,7548,	//alde
+		7557,7558,0,	//aru
+		7555,7556,0,	//sch
+		7563,7564,0,	//tealde
+		7559,7560,0;	//teprt
+	setarray .ordinal$[0],"first","second","third";
+	end;
+
+	function brief {
+		switch(getarg(0)){
+			case 7527:
+			case 7530:
+			case 7533:
+			case 7536:
+				mes "任务目标是处理出现在深渊回廊的强大生物。";
+				break;
+			default:
+				mes "任务目标是消灭出现在公会地下城的魔物。";
+				break;
+		}
+		return;
+	}
+
+	function mob_brief {
+		switch(getarg(0)){
+			case 7525:
+				mes "你应该猎杀至少50只毛毛虫和奶油恐惧魔物。";
+				break;
+			case 7526:
+				mes "猎杀三种深渊狗头人各30只以上。";
+				break;
+			case 7527:
+				mes "^4d4dff你应该击杀狂暴的‘Pyuriel’和战士‘Lora’。^000000";
+				return 1;
+			case 7528:
+				mes "^4d4dff分别猎杀50只以上的巨型黄蜂和远古蠕虫。^000000";
+				break;
+			case 7529:
+				mes "^4d4dff猎杀40只以上的杀人螳螂和50只以上的安格拉螳螂。^000000";
+				break;
+			case 7530:
+				mes "它们是^4d4dff‘Elvira’和‘Gioia’，由英雄之泪形成的奇异机械生物。^000000";
+				return 1;
+			case 7531:
+				mes "^4d4dff分别猎杀50只以上的僵尸首领和幽灵亡者。^000000";
+				break;
+			case 7532:
+				mes "^4d4dff猎杀50只GLD_DARK_SHADOW、20只GLD_DARK_FRAME和20只GLD_DARK_PRIEST魔物。^000000";
+				break;
+			case 7533:
+				mes "它们是徘徊在亡者之丘的^4d4dff‘Kades’和‘Rudo’。^000000";
+				return 1;
+			case 7534:
+				mes "^4d4dff分别猎杀50只以上的Gullinbursti和Leib Olmai。^000000";
+				break;
+			case 7535:
+				mes "^4d4dff分别猎杀45只以上的骷髅将军、20只以上的Am Mut和25只以上的Gajomart。^000000";
+				break;
+			case 7536:
+				mes "^4d4dff它们是古代帝国将军‘Daehyon’和卫兵‘Soheon’。^000000";
+				return 1;
+			case 7537:
+				mes "^4d4dff分别猎杀50只以上的地狱启示和Zakudam。^000000";
+				break;
+			case 7538:
+				mes "^4d4dff分别猎杀35只以上的重金属和钴矿。^000000";
+				break;
+			case 7539:
+				mes "^4d4dff猎杀50只以上的女妖首领和30只观察者首领。^000000";
+				break;
+			case 7540:
+				mes "^4d4dff猎杀50只Aunoes和20只Fanats。^000000";
+				break;
+			case 7541:
+				mes "^4d4dff分别猎杀30名以上的骑士、铁匠和刺客。^000000";
+				break;
+			case 7542:
+				mes "^4d4dff分别猎杀30名以上的巫师、牧师和猎人。^000000";
+				break;
+			case 7561:
+				mes "^4d4dff分别猎杀30名以上的十字军、盗贼和炼金术士。^000000";
+				break;
+			case 7562:
+				mes "^4d4dff分别猎杀30名以上的贤者、武僧和吟游诗人。^000000";
+				break;
+		}
+		return 0;
+	}
+	
+	function calcexp {
+		.@zoneid = getarg(0);
+		.@index = getarg(1);
+		.@maxlevel = .max_level[.@index];
+		.@isboss = (.@zoneid < 4 && !((.@index+1)%3));
+		
+		if(!.@isboss && BaseLevel > .@maxlevel){
+			return 1000 * (100 + ((.@maxlevel - 100) * 3));
+		} else {
+			return 1000 * (100 + ((BaseLevel - 100) * 3)) * (1 + .@isboss);
+		}
+	}
+	
+	function calcjobexp {
+		.@edition = getarg(0);
+		
+		if(.@edition == 3){
+			if(jobcanentermap("te_prtcas01")){
+				if (JobLevel > 50)
+					return 1000 * (50 + ((JobLevel - 50) * 3));
+				else
+					return 5000;
+			} else {
+				debugmes "Unexpected case for Job: " + Class + "(" + jobname(Class) + ") for gld_mission#core::calcjobexp";
+				return 0;
+			}
+		} else if(.@edition == 2 ) {
+			if(JobLevel > 50)
+				return 1000 * (50 + ((JobLevel - 50) * 3));
+			else
+				return 3000;
+		} else {
+			return 5000 * JobLevel;
+		}
+		return 0;
+	}
+}

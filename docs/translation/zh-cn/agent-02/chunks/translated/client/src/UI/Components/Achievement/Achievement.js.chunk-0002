@@ -1,0 +1,161 @@
+					rewardBoxBg = 'achievement_re/list_rewardbox_default.bmp';
+				} else if (!isClaimed) {
+					rewardBoxBg = 'achievement_re/list_rewardbox_not_receive.bmp';
+				} else {
+					rewardBoxBg = '';
+				}
+			}
+
+			if (isCompleted) {
+				const d = new Date(s.completed_at * 1000);
+				dtStr = `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()}`;
+			}
+
+			item.innerHTML = `
+			<div class="icon" data-background="achievement_re/icon_${groupName}.bmp"></div>
+			<div class="title">${info.title || '未知'}</div>
+			<div class="desc">${info.content && info.content.summary ? info.content.summary : ''}</div>
+			<div class="reward-icon" data-background="${isCompleted ? 'achievement_re/badge_complete.bmp' : ''}"></div>
+			<div class="reward-pts">${info.score || 0}</div>
+			<div class="date-completed" data-background="${rewardBoxBg}">${dtStr}</div>
+		`;
+
+			GUIComponent.processDataAttrs(item);
+			item.querySelectorAll(
+				'[data-background],[data-hover],[data-down],[data-active],[data-text],[data-preload]'
+			).forEach(node => GUIComponent.processDataAttrs(node));
+
+			item.addEventListener('click', () => {
+				this.selectedAchId = parseInt(achId, 10);
+				listEl.querySelectorAll('.ach-item').forEach(el => el.classList.remove('selected'));
+				item.classList.add('selected');
+				this.renderDetail();
+			});
+			listEl.appendChild(item);
+		});
+
+		this.renderDetail();
+	}
+
+	renderDetail() {
+		const root = this.getRoot();
+		const allAch = DB.getAchievementTable();
+		const sessAch = Session.Achievement && Session.Achievement.list ? Session.Achievement.list : {};
+
+		const info = allAch[this.selectedAchId];
+		const s = sessAch[this.selectedAchId];
+
+		// show/hide reward images based on reward type
+		const rewardTitle = root.querySelector('.reward-title');
+		const rewardBuff = root.querySelector('.reward-buff');
+		const rewardItem = root.querySelector('.reward-item');
+		const overlay = root.querySelector('.js-overlay');
+
+		if (!info) {
+			root.querySelector('.js-d-title').textContent = '选择一项成就';
+			root.querySelector('.js-d-desc').textContent = '';
+			root.querySelector('.js-d-goals').innerHTML = '';
+			root.querySelector('.js-d-claim').style.display = 'none';
+			rewardTitle.style.display = 'none';
+			rewardBuff.style.display = 'none';
+			rewardItem.style.display = 'none';
+
+			return;
+		}
+
+		root.querySelector('.js-d-title').textContent = info.title || '未知';
+		root.querySelector('.js-d-desc').textContent = info.content && info.content.details ? info.content.details : '';
+		const dStamp = root.querySelector('.d-stamp');
+		// if completed display stamp on right side else empty
+		if (s && s.completed) {
+			dStamp.style.display = 'block';
+		} else {
+			dStamp.style.display = 'none';
+		}
+		const goalsEl = root.querySelector('.js-d-goals');
+		goalsEl.innerHTML = '';
+
+		if (info.resource) {
+			Object.values(info.resource).forEach((res, idx) => {
+				if (res.text) {
+					const g = document.createElement('div');
+					g.className = 'd-goal-item';
+					g.textContent = res.text;
+					goalsEl.appendChild(g);
+				}
+			});
+		}
+
+		// Clear previous events
+		rewardTitle.onmouseover = rewardTitle.onmouseout = rewardTitle.onmousemove = null;
+		rewardBuff.onmouseover = rewardBuff.onmouseout = rewardBuff.onmousemove = null;
+		rewardItem.onmouseover = rewardItem.onmouseout = rewardItem.onmousemove = null;
+
+		const bindOverlay = (el, text) => {
+			el.onmouseover = () => {
+				if (!text) return;
+				overlay.textContent = text;
+				overlay.style.display = 'block';
+
+				const hostRect = this._host.getBoundingClientRect();
+				const elRect = el.getBoundingClientRect();
+
+				overlay.style.left =
+					Math.max(0, elRect.left - hostRect.left + (elRect.width - overlay.offsetWidth) / 2) + 'px';
+				overlay.style.top = elRect.top - hostRect.top - 20 + 'px';
+			};
+			el.onmouseout = () => {
+				overlay.style.display = 'none';
+			};
+		};
+
+		if (info.reward) {
+			rewardTitle.style.display = info.reward.title ? 'block' : 'none';
+			if (info.reward.title) bindOverlay(rewardTitle, DB.getTitleString(info.reward.title));
+
+			rewardBuff.style.display = info.reward.buff ? 'block' : 'none';
+			if (info.reward.buff) bindOverlay(rewardBuff, DB.getSkillName(info.reward.buff));
+
+			rewardItem.style.display = info.reward.item ? 'block' : 'none';
+			if (info.reward.item) {
+				const it = DB.getItemInfo(info.reward.item);
+				if (it && it.identifiedResourceName) {
+					Client.loadFile(DB.INTERFACE_PATH + 'item/' + it.identifiedResourceName + '.bmp', function (data) {
+						root.querySelector('.d-reward-item').style.backgroundImage = 'url(' + data + ')';
+					});
+					bindOverlay(rewardItem, DB.getItemName({ ITID: info.reward.item, IsIdentified: true }));
+
+					rewardItem.oncontextmenu = event => {
+						event.preventDefault();
+						event.stopImmediatePropagation();
+
+						if (ItemInfo.uid === info.reward.item) {
+							ItemInfo.remove();
+						}
+
+						ItemInfo.append();
+						ItemInfo.uid = info.reward.item;
+						ItemInfo.setItem({ ITID: info.reward.item, IsIdentified: true, count: 1 });
+						return false;
+					};
+				}
+			}
+		} else {
+			rewardTitle.style.display = 'none';
+			rewardBuff.style.display = 'none';
+			rewardItem.style.display = 'none';
+		}
+
+		const claimBtn = root.querySelector('.js-d-claim');
+		const hasReward =
+			info.reward && (Array.isArray(info.reward) ? info.reward.length > 0 : Object.keys(info.reward).length > 0);
+		if (hasReward && s && s.completed && !s.reward) {
+			claimBtn.style.display = '';
+		} else {
+			claimBtn.style.display = 'none';
+		}
+	}
+}
+
+const Achievement = new AchievementComponent();
+export default UIManager.addComponent(Achievement);

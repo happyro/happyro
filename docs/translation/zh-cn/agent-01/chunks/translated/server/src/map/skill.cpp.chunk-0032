@@ -1,0 +1,500 @@
+
+			for (const auto& it : itemNode) {
+				std::string item_name;
+
+				if (!this->asString(it, "Item", item_name))
+					continue;
+
+				std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+				if (item == nullptr) {
+					this->invalidWarning(it["Item"], "Requires ItemCost Item %s does not exist.\n", item_name.c_str());
+					return 0;
+				}
+
+				int32 amount;
+
+				if (!this->asInt32(it, "Amount", amount))
+					continue;
+
+				if (this->nodeExists(it, "Level")) {
+					uint16 cost_level;
+
+					if (!this->asUInt16(it, "Level", cost_level))
+						continue;
+
+					if (cost_level < 1 || cost_level > skill->max) {
+						this->invalidWarning(it["Level"], "Requires ItemCost Level %d is not within %s's level range of 1~%d.\n", cost_level, skill->name, skill->max);
+						return 0;
+					}
+
+					count = cost_level - 1;
+
+					if (!skill->require.itemid_level_dependent)
+						skill->require.itemid_level_dependent = true;
+				}
+
+				skill->require.itemid[count] = item->nameid;
+				skill->require.amount[count] = amount;
+				count++;
+			}
+		}
+
+		if (this->nodeExists(requireNode, "Equipment")) {
+			const auto& equipNode = requireNode["Equipment"];
+
+			for (const auto& it : equipNode) {
+				std::string item_name;
+				c4::from_chars(it.key(), &item_name);
+
+				std::shared_ptr<item_data> item = item_db.search_aegisname( item_name.c_str() );
+
+				if (item == nullptr) {
+					this->invalidWarning(it, "Requires Equipment %s does not exist.\n", item_name.c_str());
+					return 0;
+				}
+
+				bool active;
+
+				if (!this->asBool(equipNode, item_name, active))
+					return 0;
+
+				auto equip_exists = util::vector_get(skill->require.eqItem, item->nameid);
+
+				if (active && equip_exists == skill->require.eqItem.end())
+					skill->require.eqItem.push_back(item->nameid);
+				else if (!active && equip_exists != skill->require.eqItem.end())
+					skill->require.eqItem.erase(equip_exists);
+			}
+		}
+	}
+
+	if (this->nodeExists(node, "GiveAp")) {
+		if (!this->parseNode("GiveAp", "Amount", node, skill->giveap))
+			return 0;
+	} else {
+		if (!exists)
+			memset(skill->giveap, 0, sizeof(skill->giveap));
+	}
+
+	if (this->nodeExists(node, "Unit")) {
+		const auto& unitNode = node["Unit"];
+
+		if (this->nodeExists(unitNode, "Id")) {
+			std::string unit;
+
+			if (!this->asString(unitNode, "Id", unit))
+				return 0;
+
+			std::string unit_constant = "UNT_" + unit;
+			int64 constant;
+
+			if (!script_get_constant(unit_constant.c_str(), &constant)) {
+				this->invalidWarning(unitNode["Id"], "Unit Id %s is invalid.\n", unit.c_str());
+				return 0;
+			}
+
+			skill->unit_id = static_cast<uint16>(constant);
+		} else {
+			this->invalidWarning(unitNode["Id"], "Unit requires an Id.\n");
+			return 0;
+		}
+
+		if (this->nodeExists(unitNode, "AlternateId")) {
+			std::string unit;
+
+			if (!this->asString(unitNode, "AlternateId", unit))
+				return 0;
+
+			std::string unit_constant = "UNT_" + unit;
+			int64 constant;
+
+			if (!script_get_constant(unit_constant.c_str(), &constant)) {
+				this->invalidWarning(unitNode["AlternateId"], "Alternate Unit Id %s is invalid.\n", unit.c_str());
+				return 0;
+			}
+
+
+			skill->unit_id2 = static_cast<uint16>(constant);
+		} else {
+			if (!exists)
+				skill->unit_id2 = 0;
+		}
+
+		if (this->nodeExists(unitNode, "Layout")) {
+			if (!this->parseNode("Layout", "Size", unitNode, skill->unit_layout_type))
+				return 0;
+		} else {
+			if (!exists)
+				memset(skill->unit_layout_type, 0, sizeof(skill->unit_layout_type));
+		}
+
+		if (this->nodeExists(unitNode, "Range")) {
+			if (!this->parseNode("Range", "Size", unitNode, skill->unit_range))
+				return 0;
+		} else {
+			if (!exists)
+				memset(skill->unit_range, 0, sizeof(skill->unit_range));
+		}
+
+		if (this->nodeExists(unitNode, "Interval")) {
+			int16 interval;
+
+			if (!this->asInt16(unitNode, "Interval", interval))
+				return 0;
+
+			skill->unit_interval = interval;
+		} else {
+			if (!exists)
+				skill->unit_interval = 0;
+		}
+
+		if (this->nodeExists(unitNode, "Target")) {
+			std::string target;
+
+			if (!this->asString(unitNode, "Target", target))
+				return 0;
+
+			std::string target_constant = "BCT_" + target;
+			int64 constant;
+
+			if (!script_get_constant(target_constant.c_str(), &constant)) {
+				this->invalidWarning(unitNode["Target"], "Unit Target %s is invalid.\n", target.c_str());
+				return 0;
+			}
+
+			skill->unit_target = static_cast<int32>(constant);
+		} else {
+			if (!exists)
+				skill->unit_target = BCT_ALL;
+		}
+
+		if (this->nodeExists(unitNode, "Flag")) {
+			const auto& flagNode = unitNode["Flag"];
+
+			for (const auto& it : flagNode) {
+				std::string flag;
+				c4::from_chars(it.key(), &flag);
+				std::string flag_constant = "UF_" + flag;
+				int64 constant;
+
+				if (!script_get_constant(flag_constant.c_str(), &constant)) {
+					this->invalidWarning(it, "Skill Unit Flag %s is invalid.\n", flag.c_str());
+					return 0;
+				}
+
+				bool active;
+
+				if (!this->asBool(flagNode, flag, active))
+					return 0;
+
+				if (active)
+					skill->unit_flag.set(static_cast<uint8>(constant));
+				else
+					skill->unit_flag.reset(static_cast<uint8>(constant));
+			}
+
+			if (skill->unit_flag[UF_NOENEMY] && battle_config.defnotenemy)
+				skill->unit_target = BCT_NOENEMY;
+
+			// By default, target just characters.
+			skill->unit_target |= BL_CHAR;
+			if (skill->unit_flag[UF_NOPC])
+				skill->unit_target &= ~BL_PC;
+			if (skill->unit_flag[UF_NOMOB])
+				skill->unit_target &= ~BL_MOB;
+			if (skill->unit_flag[UF_SKILL])
+				skill->unit_target |= BL_SKILL;
+		} else {
+			if (!exists){
+				skill->unit_flag = UF_NONE;
+				// By default, target just characters.
+				skill->unit_target |= BL_CHAR;
+			}
+		}
+	}
+
+	if (this->nodeExists(node, "Status")) {
+		std::string status;
+
+		if (!this->asString(node, "Status", status))
+			return 0;
+
+		std::string status_constant = "SC_" + status;
+		int64 constant;
+
+		if (!script_get_constant(status_constant.c_str(), &constant)) {
+			this->invalidWarning(node["Status"], "Status %s is invalid.\n", status.c_str());
+			return 0;
+		}
+
+		if (constant < SC_NONE || constant >= SC_MAX) {
+			this->invalidWarning(node["Status"], "Status %s is unknown. Defaulting to SC_NONE.\n", status.c_str());
+			constant = SC_NONE;
+		}
+
+		skill->sc = static_cast<sc_type>(constant);
+	} else {
+		if (!exists)
+			skill->sc = SC_NONE;
+	}
+
+	if (!exists) {
+		this->put(skill_id, skill);
+		this->skilldb_id2idx[skill_id] = this->skill_num;
+		this->skill_num++;
+	}
+
+	return 1;
+}
+
+void SkillDatabase::clear() {
+	TypesafeCachedYamlDatabase::clear();
+	memset( this->skilldb_id2idx, 0, sizeof( this->skilldb_id2idx ) );
+	this->skill_num = 1;
+}
+
+void SkillDatabase::loadingFinished(){
+	if( this->skill_num > MAX_SKILL ){
+		ShowError( "There are more skills defined in the skill database (%d) than the MAX_SKILL (%d) define. Please increase it and recompile.\n", this->skill_num, MAX_SKILL );
+	}
+
+	TypesafeCachedYamlDatabase::loadingFinished();
+
+	for( auto& it : *this ){
+		std::unique_ptr<const SkillImpl> impl = SkillFactoryImpl::getInstance()->create( static_cast<e_skill>( it.first ) );
+
+		if( impl != nullptr ){
+			it.second->impl = std::move( impl );
+		}
+	}
+}
+
+/**
+ * Get skill index from skill_db array. The index is also being used for skill lookup in mmo_charstatus::skill[]
+ * @param skill_id
+ * @param silent If Skill is undefined, show error message!
+ * @return Skill Index or 0 if not found/unset
+ **/
+uint16 SkillDatabase::get_index( uint16 skill_id, bool silent, const char *func, const char *file, int32 line ){
+	uint16 idx = this->skilldb_id2idx[skill_id];
+
+	if( idx == 0 && skill_id != 0 && !silent ){
+		ShowError( "Skill '%d' is undefined! %s:%d::%s\n", skill_id, file, line, func );
+	}
+
+	return idx;
+}
+
+SkillDatabase skill_db;
+
+const std::string ReadingSpellbookDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/spellbook_db.yml";
+}
+/**
+ * Reads and parses an entry from the spellbook_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 ReadingSpellbookDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string skill_name;
+
+	if (!this->asString(node, "Skill", skill_name))
+		return 0;
+
+	uint16 skill_id = skill_name2id(skill_name.c_str());
+
+	if (skill_id == 0) {
+		this->invalidWarning(node["Skill"], "Invalid skill name \"%s\", skipping.\n", skill_name.c_str());
+		return 0;
+	}
+
+	if (skill_get_inf(skill_id) ==	INF_PASSIVE_SKILL) {
+		this->invalidWarning(node["Skill"], "Passive skill %s cannot be memorized in a Spell Book.\n", skill_name.c_str());
+		return 0;
+	}
+
+	std::shared_ptr<s_skill_spellbook_db> spell = this->find(skill_id);
+	bool exists = spell != nullptr;
+
+	if (!exists) {
+		if (!this->nodesExist(node, { "Book", "PreservePoints" }))
+			return 0;
+
+		spell = std::make_shared<s_skill_spellbook_db>();
+		spell->skill_id = skill_id;
+	}
+
+	if (this->nodeExists(node, "Book")) {
+		std::string book_name;
+
+		if (!this->asString(node, "Book", book_name))
+			return 0;
+
+		std::shared_ptr<item_data> item = item_db.search_aegisname( book_name.c_str() );
+
+		if (item == nullptr) {
+			this->invalidWarning(node["Book"], "Book item %s does not exist.\n", book_name.c_str());
+			return 0;
+		}
+
+		spell->nameid = item->nameid;
+	}
+
+	if (this->nodeExists(node, "PreservePoints")) {
+		uint16 points;
+
+		if (!this->asUInt16(node, "PreservePoints", points))
+			return 0;
+
+		spell->points = points;
+	}
+
+	if (!exists)
+		this->put(skill_id, spell);
+
+	return 1;
+}
+
+/**
+ * Check if the specified item is available in the spellbook_db or not
+ * @param nameid: Book Item ID
+ * @return Spell data or nullptr otherwise
+ */
+std::shared_ptr<s_skill_spellbook_db> ReadingSpellbookDatabase::findBook(t_itemid nameid) {
+	if (!item_db.exists(nameid) || reading_spellbook_db.empty())
+		return nullptr;
+
+	for (const auto &spell : reading_spellbook_db) {
+		if (spell.second->nameid == nameid)
+			return spell.second;
+	}
+
+	return nullptr;
+}
+
+const std::string MagicMushroomDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/magicmushroom_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the magicmushroom_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 MagicMushroomDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string skill_name;
+
+	if (!this->asString(node, "Skill", skill_name))
+		return 0;
+
+	uint16 skill_id = skill_name2id(skill_name.c_str());
+
+	if (!skill_id) {
+		this->invalidWarning(node["Skill"], "Invalid Magic Mushroom skill name \"%s\", skipping.\n", skill_name.c_str());
+		return 0;
+	}
+
+	if (!skill_get_inf(skill_id)) {
+		this->invalidWarning(node["Skill"], "Passive skill %s cannot be casted by Magic Mushroom.\n", skill_name.c_str());
+		return 0;
+	}
+
+	std::shared_ptr<s_skill_magicmushroom_db> mushroom = this->find(skill_id);
+	bool exists = mushroom != nullptr;
+
+	if (!exists) {
+		mushroom = std::make_shared<s_skill_magicmushroom_db>();
+		mushroom->skill_id = skill_id;
+
+		this->put(skill_id, mushroom);
+	}
+
+	return 1;
+}
+
+/** Reads skill no cast db
+ * Structure: SkillID,Flag
+ */
+static bool skill_parse_row_nocastdb( char* split[], size_t columns, size_t current ){
+	std::shared_ptr<s_skill_db> skill = skill_db.find(atoi(split[0]));
+
+	if (!skill)
+		return false;
+
+	skill->nocast |= atoi(split[1]);
+
+	return true;
+}
+
+/** Reads Produce db
+ * Structure: ProduceItemID,ItemLV,RequireSkill,Requireskill_lv,MaterialID1,MaterialAmount1,...
+ */
+static bool skill_parse_row_producedb( char* split[], size_t columns, size_t current ){
+	uint16 x, y;
+	uint16 id = atoi(split[0]);
+	t_itemid nameid = 0;
+	bool found = false;
+
+	if (id >= ARRAYLENGTH(skill_produce_db)) {
+		ShowError("skill_parse_row_producedb: Maximum db entries reached.\n");
+		return false;
+	}
+
+	// Clear previous data, for importing support
+	memset(&skill_produce_db[id], 0, sizeof(skill_produce_db[id]));
+	// Import just for clearing/disabling from original data
+	if (!(nameid = strtoul(split[1], nullptr, 10))) {
+		//ShowInfo("skill_parse_row_producedb: Product list with ID %d removed from list.\n", id);
+		return true;
+	}
+
+	if (!item_db.exists(nameid)) {
+		ShowError("skill_parse_row_producedb: Invalid item %u.\n", nameid);
+		return false;
+	}
+
+	skill_produce_db[id].nameid = nameid;
+	skill_produce_db[id].itemlv = atoi(split[2]);
+	skill_produce_db[id].req_skill = atoi(split[3]);
+	skill_produce_db[id].req_skill_lv = atoi(split[4]);
+
+	for (x = 5, y = 0; x+1 < columns && split[x] && split[x+1] && y < MAX_PRODUCE_RESOURCE; x += 2, y++) {
+		skill_produce_db[id].mat_id[y] = strtoul(split[x], nullptr, 10);
+		skill_produce_db[id].mat_amount[y] = atoi(split[x+1]);
+	}
+
+	if (!found)
+		skill_produce_count++;
+
+	return true;
+}
+
+const std::string SkillArrowDatabase::getDefaultLocation() {
+	return std::string(db_path) + "/create_arrow_db.yml";
+}
+
+/**
+ * Reads and parses an entry from the create_arrow_db.
+ * @param node: YAML node containing the entry.
+ * @return count of successfully parsed rows
+ */
+uint64 SkillArrowDatabase::parseBodyNode(const ryml::NodeRef& node) {
+	std::string source_name;
+
+	if (!this->asString(node, "Source", source_name))
+		return 0;
+
+	std::shared_ptr<item_data> item = item_db.search_aegisname( source_name.c_str() );
+
+	if (item == nullptr) {
+		this->invalidWarning(node["Source"], "Item %s does not exist.\n", source_name.c_str());
+		return 0;
+	}
+
+	t_itemid nameid = item->nameid;
+
+	std::shared_ptr<s_skill_arrow_db> arrow = this->find(nameid);
+	bool exists = arrow != nullptr;
+
+	if (!exists) {

@@ -1,0 +1,500 @@
+		{
+			map_session_data * s_sd = BL_CAST(BL_PC, src);
+
+			val2 = (5 + 2 * val1) + (status_get_vit(src) / 10); //HP Rate: (5 + 2 * skill_lv) + (vit/10) + (BA_MUSICALLESSON level)
+			if (s_sd)
+				val2 += pc_checkskill(s_sd, BA_MUSICALLESSON) / 2;
+		}
+		[[fallthrough]];
+		case SC_WHISTLE:
+		case SC_ASSNCROS:
+		case SC_POEMBRAGI:
+		case SC_HUMMING:
+		case SC_DONTFORGETME:
+		case SC_FORTUNE:
+		case SC_SERVICE4U:
+			// Display icon as infinite
+			tick_time = tick;
+			tick = INFINITE_TICK;
+			break;
+#endif
+		case SC_EPICLESIS:
+			val2 = 5 * val1; //HP rate bonus
+			break;
+		case SC_ILLUSIONDOPING:
+			val2 = 50; // -Hit
+			break;
+
+		case SC_OVERHEAT:
+		case SC_OVERHEAT_LIMITPOINT:
+		case SC_STEALTHFIELD:
+			tick_time = tick;
+			tick = INFINITE_TICK;
+			break;
+		case SC_STEALTHFIELD_MASTER:
+			tick_time = val3 = 2000 + 1000 * val1;
+			val4 = tick / tick_time;
+			break;
+		case SC_VACUUM_EXTREME:
+			// Suck target at n second, only if the n second is lower than the duration
+			// Does not suck targets on no-knockback maps
+			if (val4 < tick && unit_blown_immune(bl, 0x9) == UB_KNOCKABLE) {
+				tick_time = val4;
+				val4 = tick - tick_time;
+			} else
+				val4 = 0;
+			break;
+		case SC_FIRE_INSIGNIA:
+		case SC_WATER_INSIGNIA:
+		case SC_WIND_INSIGNIA:
+		case SC_EARTH_INSIGNIA:
+			tick_time = 5000;
+			val4 = tick / tick_time;
+			break;
+		case SC_NEUTRALBARRIER:
+			val2 = 10 + val1 * 5; // Def/Mdef
+			tick = INFINITE_TICK;
+			break;
+		case SC_MAGIC_POISON:
+			val2 = 50; // Attribute Reduction
+			break;
+
+		/* Rebellion */
+		case SC_B_TRAP:
+			val2 = src->id;
+			val3 = val1 * 25; // -movespeed TODO: Figure out movespeed rate
+			break;
+		case SC_C_MARKER:
+		case SC_BURNT:
+			// val1 = skill_lv
+			// val2 = src_id
+			val3 = 10; // -10 flee
+			//Start timer to send mark on mini map
+			val4 = tick/1000;
+			tick_time = 1000; // Sends every 1 seconds
+			break;
+		case SC_H_MINE:
+			val2 = src->id;
+			break;
+		case SC_HEAT_BARREL:
+			{
+				uint8 n = 10;
+				if (sd)
+					n = (uint8)sd->spiritball_old;
+
+				//kRO Update 2016-05-25
+				val2 = n * 5; // -fixed casttime
+				val3 = (6 + val1 * 2) * n; // ATK
+				val4 = 25 + val1 * 5; // -hit
+			}
+			break;
+		case SC_P_ALTER:
+			{
+				uint8 n = 10;
+				if (sd)
+					n = (uint8)sd->spiritball_old;
+				val2 = 10 * n; // +atk
+				val3 = (status->max_hp * (val1 * 5) / 100); // Barrier HP
+			}
+			break;
+		case SC_E_CHAIN:
+			val2 = 10;
+			if (sd)
+				val2 = sd->spiritball_old;
+			break;
+		case SC_ANTI_M_BLAST:
+			val2 = val1 * 10;
+			break;
+		case SC_CATNIPPOWDER:
+			val2 = -50; // WATK%, MATK%
+			val3 = 25 * val1; // Move speed reduction
+			if (bl->type == BL_PC && pc_checkskill(sd, SU_SPIRITOFLAND))
+				val4 = status_get_lv(src) / 12;
+			break;
+		case SC_BITESCAR: {
+				const struct status_data *b_status = status_get_base_status(src); // Base Status
+
+				val2 = (status_get_max_hp(bl) * (val1 + (b_status->dex / 25))) / status_get_max_hp(bl); // MHP% damage
+				tick_time = 1000;
+				val4 = tick / tick_time;
+			}
+			break;
+		case SC_ARCLOUSEDASH:
+			val2 = 15 + 5 * val1; // AGI
+			val3 = 25; // Move speed increase
+			if (sd && (sd->class_&MAPID_FIRSTMASK) == MAPID_SUMMONER)
+				val4 = 10; // Ranged ATK increase if the target is a Doram
+			break;
+		case SC_SHRIMP:
+			val2 = 10; // BATK%, MATK%
+			break;
+		case SC_FRESHSHRIMP: {
+				int32 min = 0, max = 0;
+				map_session_data* ssd = BL_CAST( BL_PC, src );
+
+#ifdef RENEWAL
+				status_data* sstatus = status_get_status_data(*src);
+				min = status_base_matk_min(src, sstatus, status_get_lv(src));
+				max = status_base_matk_max(src, sstatus, status_get_lv(src));
+				if (sstatus->rhw.matk > 0) {
+					int32 wMatk, variance;
+
+					wMatk = sstatus->rhw.matk;
+					variance = wMatk * sstatus->rhw.wlv / 10;
+					min += wMatk - variance;
+					max += wMatk + variance;
+				}
+#endif
+
+				if (ssd != nullptr && ssd->right_weapon.overrefine > 0) {
+					min++;
+					max += ssd->right_weapon.overrefine - 1;
+				}
+
+				val2 += min + 178; // Heal
+				if (max > min)
+					val2 += rnd() % (max - min); // Heal
+
+				if (ssd != nullptr) {
+					if (pc_checkskill(ssd, SU_POWEROFSEA) > 0) {
+						val2 += val2 * 10 / 100;
+						if (pc_checkskill_summoner(ssd, SUMMONER_POWER_SEA) >= 20)
+							val2 += val2 * 20 / 100;
+					}
+					if (pc_checkskill(ssd, SU_SPIRITOFSEA) > 0)
+						val2 *= 2; // Doubles HP
+				}
+				tick_time = 10000 - ((val1 - 1) * 1000);
+				val4 = tick / tick_time;
+			}
+			break;
+		case SC_TUNAPARTY:
+			val2 = status_get_max_hp(src) * (val1 * 10) / 100; // Shield according to the Caster's MaxHP%
+			if (map_session_data* ssd = BL_CAST(BL_PC, src); pc_checkskill(ssd, SU_SPIRITOFSEA) > 0)
+				val2 *= 2; // Double the shield life if the caster has learned Spirit of Sea
+			break;
+		case SC_HISS:
+			val2 = 50; // Perfect Dodge
+			sc_start(src, bl, SC_DORAM_WALKSPEED, 100, 50, skill_get_time2(SU_HISS, val1));
+			break;
+		case SC_GROOMING:
+			val2 = 100; // Flee
+			break;
+		case SC_CHATTERING:
+			val2 = 100; // eATK, eMATK
+			sc_start(src, bl, SC_DORAM_WALKSPEED, 100, 50, skill_get_time2(SU_CHATTERING, val1));
+			break;
+		case SC_SWORDCLAN:
+		case SC_ARCWANDCLAN:
+		case SC_GOLDENMACECLAN:
+		case SC_CROSSBOWCLAN:
+		case SC_JUMPINGCLAN:
+			tick = INFINITE_TICK;
+			status_change_start(src,bl,SC_CLAN_INFO,10000,0,val2,0,0,INFINITE_TICK,flag);
+			break;
+
+		case SC_ANCILLA:
+			val1 = 15; // Heal Power rate bonus
+			val2 = 30; // SP Recovery rate bonus
+			break;
+		case SC_HELPANGEL:
+			tick_time = 1000;
+			val4 = tick / tick_time;
+			break;
+		case SC_EMERGENCY_MOVE:
+			val2 = 25; // Movement speed increase
+			break;
+
+		case SC_SUNSTANCE:
+			val2 = 2 + val1; // ATK Increase
+			tick = INFINITE_TICK;
+			break;
+		case SC_LUNARSTANCE:
+			val2 = 2 + val1; // MaxHP Increase
+			tick = INFINITE_TICK;
+			break;
+		case SC_STARSTANCE:
+			val2 = 4 + 2 * val1; // ASPD Increase
+			tick = INFINITE_TICK;
+			break;
+		case SC_DIMENSION1:
+		case SC_DIMENSION2:
+			if (sd)
+				pc_addspiritball(sd, skill_get_time2(SJ_BOOKOFDIMENSION, 1), 2);
+			break;
+		case SC_UNIVERSESTANCE:
+			val2 = 2 + val1; // All Stats Increase
+			tick = INFINITE_TICK;
+			break;
+		case SC_NEWMOON:
+			val2 = 7; // Number of Regular Attacks Until Reveal
+			tick_time = 1000;
+			val4 = tick / tick_time;
+			break;
+		case SC_FALLINGSTAR:
+			val2 = 8 + 2 * (1 + val1) / 2; // Autocast Chance
+			if (val1 >= 7)
+				val2 += 1; // Make it 15% at level 7.
+			break;
+		case SC_CREATINGSTAR:
+			tick_time = 500;
+			val4 = tick / tick_time;
+			break;
+		case SC_LIGHTOFSUN:
+		case SC_LIGHTOFMOON:
+		case SC_LIGHTOFSTAR:
+			val2 = 5 * val1; // Skill Damage Increase.
+			break;
+		case SC_SOULGOLEM:
+			val2 = 60 * val1; // DEF Increase
+			val3 = 15 + 5 * val1; // MDEF Increase
+			break;
+		case SC_SOULSHADOW:
+			val2 = (1 + val1) / 2; // ASPD Increase
+			val3 = 10 + 2 * val1; // CRIT Increase
+			break;
+		case SC_SOULFALCON:
+			val2 = 10 * val1; // WATK Increase
+			val3 = 10; // HIT Increase
+			if (val1 >= 3)
+				val3 += 3;
+			else if (val1 >= 5)
+				val3 += 5;
+			break;
+		case SC_SOULFAIRY:
+			val2 = 10 * val1; // MATK Increase
+			val3 = 5; // Variable Cast Time Reduction
+			if (val1 >= 3)
+				val3 += 2;
+			else if (val1 >= 5)
+				val3 += 5;
+			break;
+		case SC_SOULUNITY:
+			tick_time = 3000;
+			val4 = tick / tick_time;
+			break;
+		case SC_SOULDIVISION:
+			val2 = 10 * val1; // Skill Aftercast Increase
+			break;
+		case SC_SOULREAPER:
+			val2 = 10 + 5 * val1; // Chance of Getting A Soul Sphere.
+			break;
+		case SC_SOULCOLLECT:
+			val2 = 5 + 3 * val2; // Max Soul Sphere's.
+			val3 = tick > 0 ? tick : 60000;
+			tick_time = tick;
+			tick = INFINITE_TICK; // Duration sent to the client should be infinite
+			break;
+		case SC_SP_SHA:
+			val2 = 50; // Move speed reduction
+			break;
+		case SC_SERVANTWEAPON:
+			if( sd ){
+				// Generate 5 servants on start
+				pc_addservantball( *sd, MAX_SERVANTBALL );
+			}
+			tick_time = skill_get_time2(DK_SERVANTWEAPON,val1); // Servant Regen Interval
+			if (tick_time < 500)
+				tick_time = 500; // Avoid being brought down to 0.
+			val4 = tick - tick_time; // Remaining Time
+			break;
+		case SC_RELIEVE_ON:
+			val2 = min(10*val1, 99); // % damage received reduced from 10 * skill lvl up to 99%
+			break;
+		case SC_VIGOR:
+			val2 = 100 - 10 * (val1 - 1); // HP consumption with each attack is reduced by skill lvl
+			val2 = max(val2, 0);
+			break;
+		case SC_POWERFUL_FAITH:
+			val2 = 5 + 5 * val1;// ATK Increase
+			val3 = 5 + 2 * val1;// PAtk Increase
+			break;
+		case SC_FIRM_FAITH:
+			val2 = 2 * val1;// MaxHP Increase
+			val3 = 8 * val1;// Res Increase
+			break;
+		case SC_SINCERE_FAITH:
+			val2 = (1 + val1) / 2;// ASPD Increase
+			val3 = 4 * val1;// Perfect Hit Increase
+			break;
+		case SC_GUARD_STANCE:
+			val2 = 50 + 50 * val1;// DEF Increase
+			val3 = 50 * val1;// ATK Decrease
+			tick = INFINITE_TICK;
+			break;
+		case SC_GUARDIAN_S:
+			val2 = ( status->max_hp * 30 / 100 ) * ( 25 * val1 ) / 100 + 15 * status->sta; // Barrier HP
+			break;
+		case SC_REBOUND_S:
+			val2 = 10 * val1;// Reduced Damage From Devotion
+			if (val2 > 99)
+				val2 = 99;// Lets not let it reduce above 99.
+			break;
+		case SC_ATTACK_STANCE:
+			val2 = 40 * val1;// DEF Decrease
+			val3 = 3 * val1; // P.ATK/S.MATK Increase
+			tick = INFINITE_TICK;
+			break;
+		case SC_HOLY_S:
+			val2 = 5 + 2 * val1;// Damage Reduction / Holy Damage Increase
+			break;
+		case SC_MEDIALE:
+			val2 = 2 * val1;// Heal Rate
+			val4 = tick / 2000;
+			tick_time = 2000;
+			break;
+		case SC_A_VITA:
+		case SC_A_TELUM:
+			val2 = 5 * val1;// Res/MRes Pierce Percentage
+			break;
+		case SC_PRE_ACIES:
+			val2 = 2 * val1;// CRate Increase
+			break;
+		case SC_COMPETENTIA:
+			val2 = 10 * val1;// PAtk/SMatk Increase - Unconfirmed if this is official formula but its 50 at Lv 5. [Rytech]
+			break;
+		case SC_RELIGIO:
+		case SC_BENEDICTUM:
+			val2 = 2 * val1;// Trait Stats Increase
+			break;
+		case SC_DANCING_KNIFE:
+			val4 = tick / 300;
+			tick_time = 300;
+			break;
+		case SC_POTENT_VENOM:
+			val2 = 2 * val1;// Res Pierce Percentage
+			break;
+		case SC_A_MACHINE:
+			val4 = tick / 1000;
+			tick_time = 1000;
+			break;
+		case SC_D_MACHINE:
+			val2 = 200 + 50 * val1;// DEF Increase
+			val3 = 20 * val1;// Res Increase
+			break;
+		case SC_SHADOW_STRIP:
+			if (!sd)// Res/MRes on mobs only.
+				val2 = 25;// Need official reduction amount.
+			break;
+		case SC_ABYSSFORCEWEAPON:
+			if( sd ){
+				// Generate 5 abyss spheres on start.
+				pc_addabyssball( *sd, MAX_ABYSSBALL );
+			}
+			tick_time = skill_get_time2(ABC_FROM_THE_ABYSS, val1);// Abyss Regen Interval
+			if (tick_time < 500)
+				tick_time = 500;// Avoid being brought down to 0.
+			val4 = tick - tick_time;// Remaining Time
+			break;
+		case SC_ABYSS_SLAYER:
+			val2 = 10 + 2 * val1;// PAtk/SMatk Increase
+			val3 = 100 + 20 * val1;// Hit Increase
+			break;
+		case SC_WINDSIGN:
+			val2 = 8 + 6 * val1;// Chance to gain AP on attack.
+			if (val1 == 5)// Its 40% on level 5.
+				val2 += 2;
+			break;
+		case SC_CALAMITYGALE:// Unlimit runs along with this.
+			sc_start(bl, bl, SC_UNLIMIT, 100, 5, skill_get_time(RA_UNLIMIT, 5));
+			break;
+		case SC_GEF_NOCTURN:// MRes Reduction. Official formula unknown.
+		case SC_AIN_RHAPSODY:// Res Reduction. Official formula unknown.
+			val2 = 10 * val1;// Res/MRes Decrease
+			if (val3&2)// Bonus if partner is found in party.
+				val2 *= 2;
+			break;
+		case SC_MUSICAL_INTERLUDE:
+			val2 = 5 + 5 * val1;// Res Increase
+			if (val3&2)// Bonus if partner is found in party.
+				val2 *= 2;
+			break;
+		case SC_JAWAII_SERENADE:
+			val2 = 3 * val1;// SMatk Increase
+			if (val3 & 2)// Bonus if partner is found in party.
+				val2 *= 2;
+			break;
+		case SC_PRON_MARCH:
+			val2 = 3 * val1;// PAtk Increase
+			if (val3 & 2)// Bonus if partner is found in party.
+				val2 *= 2;
+			break;
+		case SC_SPELL_ENCHANTING:
+			val2 = 4 * val1;// SMatk Increase
+			break;
+		case SC_FLAMETECHNIC:
+		case SC_FLAMEARMOR:
+		case SC_COLD_FORCE:
+		case SC_CRYSTAL_ARMOR:
+		case SC_GRACE_BREEZE:
+		case SC_EYES_OF_STORM:
+		case SC_EARTH_CARE:
+		case SC_STRONG_PROTECTION:
+		case SC_DEEP_POISONING:
+		case SC_POISON_SHIELD:
+			val2 += 10;
+			val3 += 10000;
+			tick_time = val3;
+			break;
+		case SC_FLAMETECHNIC_OPTION:
+			val3 = ELE_FIRE;
+			break;
+		case SC_COLD_FORCE_OPTION:
+			val3 = ELE_WATER;
+			break;
+		case SC_GRACE_BREEZE_OPTION:
+			val3 = ELE_WIND;
+			break;
+		case SC_EARTH_CARE_OPTION:
+			val3 = ELE_EARTH;
+			break;
+		case SC_DEEP_POISONING_OPTION:
+			val3 = ELE_POISON;
+			break;
+		case SC_SUB_WEAPONPROPERTY:
+			if (sd && val3 == ASC_EDP) {
+				uint16 poison_level = pc_checkskill(sd, GC_RESEARCHNEWPOISON);
+
+				if (poison_level > 0) {
+					tick += 30000; // Base of 30 seconds
+					tick += poison_level * 15 * 1000; // Additional 15 seconds per level
+				}
+			}
+			break;
+		case SC_WEAPONBREAKER:
+			val2 = val1 * 2 * 100; // Chance to break weapon
+			break;
+		case SC_INTENSIVE_AIM:
+			tick = 500;
+			break;
+		case SC_HIDDEN_CARD:
+			val2 = 3 * val1;
+			val3 = 10 * val1;
+			break;
+		case SC_TALISMAN_OF_PROTECTION:
+			// Heal value is static per cast of skill
+			val3 = skill_calc_heal(src, bl, SOA_TALISMAN_OF_PROTECTION, val1, true);
+			val4 = tick / 3000;
+			// First heal tick applies on cast
+			tick_time = 100;
+			break;
+		case SC_TALISMAN_OF_WARRIOR:
+		case SC_TALISMAN_OF_MAGICIAN:
+			val2 = 2 * val1;
+			break;
+		case SC_T_FIFTH_GOD:
+			val2 = 5 * val1;
+			break;
+		case SC_TALISMAN_OF_FIVE_ELEMENTS:
+			val2 = 4 * val1;
+			break;
+		case SC_HEAVEN_AND_EARTH:
+			val2 = 5 + 2 * val1;
+			break;
+		case SC_TEMPORARY_COMMUNION:
+			val2 = val1 * 3;
+			break;
+		case SC_MARINE_FESTIVAL:
+		case SC_SANDY_FESTIVAL:
+			val2 = 2 * val1;
+			break;

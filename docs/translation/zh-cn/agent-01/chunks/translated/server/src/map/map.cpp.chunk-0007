@@ -1,0 +1,500 @@
+	return -1;
+}
+
+void map_spawnmobs(int16 m)
+{
+	int32 i, k=0;
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if (mapdata->mob_delete_timer != INVALID_TIMER)
+	{	//Mobs have not been removed yet [Skotlex]
+		delete_timer(mapdata->mob_delete_timer, map_removemobs_timer);
+		mapdata->mob_delete_timer = INVALID_TIMER;
+		return;
+	}
+	for(i=0; i<MAX_MOB_LIST_PER_MAP; i++)
+		if(mapdata->moblist[i]!=nullptr)
+		{
+			k+=mapdata->moblist[i]->num;
+			npc_parse_mob2(mapdata->moblist[i]);
+		}
+
+	if (battle_config.etc_log && k > 0)
+	{
+		ShowStatus("Map %s: Spawned '" CL_WHITE "%d" CL_RESET "' mobs.\n",mapdata->name, k);
+	}
+}
+
+int32 map_removemobs_sub(block_list *bl, va_list ap)
+{
+	mob_data *md = (mob_data *)bl;
+	nullpo_ret(md);
+
+	//When not to remove mob:
+	// doesn't respawn and is not a slave
+	if( !md->spawn && !md->master_id )
+		return 0;
+	// respawn data is not in cache
+	if( md->spawn && !md->spawn->state.dynamic )
+		return 0;
+	// hasn't spawned yet
+	if( md->spawn_timer != INVALID_TIMER )
+		return 0;
+	// is damaged and mob_remove_damaged is off
+	if( !battle_config.mob_remove_damaged && md->status.hp < md->status.max_hp )
+		return 0;
+	// is a mvp
+	if( md->get_bosstype() == BOSSTYPE_MVP )
+		return 0;
+
+	unit_free(md,CLR_OUTSIGHT);
+
+	return 1;
+}
+
+TIMER_FUNC(map_removemobs_timer){
+	int32 count;
+	const int16 m = id;
+
+	if (m < 0)
+	{	//Incorrect map id!
+		ShowError("map_removemobs_timer error: timer %d points to invalid map %d\n",tid, m);
+		return 0;
+	}
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if (mapdata->mob_delete_timer != tid)
+	{	//Incorrect timer call!
+		ShowError("map_removemobs_timer mismatch: %d != %d (map %s)\n",mapdata->mob_delete_timer, tid, mapdata->name);
+		return 0;
+	}
+	mapdata->mob_delete_timer = INVALID_TIMER;
+	if (mapdata->users > 0) //Map not empty!
+		return 1;
+
+	count = map_foreachinmap(map_removemobs_sub, m, BL_MOB);
+
+	if (battle_config.etc_log && count > 0)
+		ShowStatus("Map %s: Removed '" CL_WHITE "%d" CL_RESET "' mobs.\n",mapdata->name, count);
+
+	return 1;
+}
+
+void map_removemobs(int16 m)
+{
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if (mapdata->mob_delete_timer != INVALID_TIMER) // should never happen
+		return; //Mobs are already scheduled for removal
+
+	// Don't remove mobs on instance map
+	if (mapdata->instance_id > 0)
+		return;
+
+	mapdata->mob_delete_timer = add_timer(gettick()+battle_config.mob_remove_delay, map_removemobs_timer, m, 0);
+}
+
+/*==========================================
+ * Check for map_name from map_id
+ *------------------------------------------*/
+const char* map_mapid2mapname(int32 m)
+{
+	if (m == -1)
+		return "Floating";
+
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if (!mapdata)
+		return "";
+
+	if (mapdata->instance_id > 0) { // Instance map check
+		std::shared_ptr<s_instance_data> idata = util::umap_find(instances, map[m].instance_id);
+
+		if (!idata) // This shouldn't happen but if it does give them the map we intended to give
+			return mapdata->name;
+		else {
+			for (const auto &it : idata->map) { // Loop to find the src map we want
+				if (it.m == m)
+					return map_getmapdata(it.src_m)->name;
+			}
+		}
+	}
+
+	return mapdata->name;
+}
+
+/*==========================================
+ * Hookup, get map_id from map_name
+ *------------------------------------------*/
+int16 map_mapname2mapid(const char* name)
+{
+	uint16 map_index;
+	map_index = mapindex_name2id(name);
+	if (!map_index)
+		return -1;
+	return map_mapindex2mapid(map_index);
+}
+
+/*==========================================
+ * Returns the map of the given mapindex. [Skotlex]
+ *------------------------------------------*/
+int16 map_mapindex2mapid(uint16 mapindex)
+{
+	struct map_data *md=nullptr;
+
+	if (!mapindex)
+		return -1;
+
+	md = (struct map_data*)uidb_get(map_db,(uint32)mapindex);
+	if(md==nullptr || md->cell==nullptr)
+		return -1;
+	return md->m;
+}
+
+/*==========================================
+ * Switching Ip, port ? (like changing map_server) get ip/port from map_name
+ *------------------------------------------*/
+int32 map_mapname2ipport(uint16 name, uint32* ip, uint16* port)
+{
+	struct map_data_other_server *mdos;
+
+	mdos = (struct map_data_other_server*)uidb_get(map_db,(uint32)name);
+	if(mdos==nullptr || mdos->cell) //If gat isn't null, this is a local map.
+		return -1;
+	*ip=mdos->ip;
+	*port=mdos->port;
+	return 0;
+}
+
+/*==========================================
+ * Checks if both dirs point in the same direction.
+ *------------------------------------------*/
+int32 map_check_dir(int32 s_dir,int32 t_dir)
+{
+	if(s_dir == t_dir)
+		return 0;
+	switch(s_dir) {
+		case DIR_NORTH: if( t_dir == DIR_NORTHEAST || t_dir == DIR_NORTHWEST || t_dir == DIR_NORTH ) return 0; break;
+		case DIR_NORTHWEST: if( t_dir == DIR_NORTH || t_dir == DIR_WEST || t_dir == DIR_NORTHWEST ) return 0; break;
+		case DIR_WEST: if( t_dir == DIR_NORTHWEST || t_dir == DIR_SOUTHWEST || t_dir == DIR_WEST ) return 0; break;
+		case DIR_SOUTHWEST: if( t_dir == DIR_WEST || t_dir == DIR_SOUTH || t_dir == DIR_SOUTHWEST ) return 0; break;
+		case DIR_SOUTH: if( t_dir == DIR_SOUTHWEST || t_dir == DIR_SOUTHEAST || t_dir == DIR_SOUTH ) return 0; break;
+		case DIR_SOUTHEAST: if( t_dir == DIR_SOUTH || t_dir == DIR_EAST || t_dir == DIR_SOUTHEAST ) return 0; break;
+		case DIR_EAST: if( t_dir == DIR_SOUTHEAST || t_dir == DIR_NORTHEAST || t_dir == DIR_EAST ) return 0; break;
+		case DIR_NORTHEAST: if( t_dir == DIR_EAST || t_dir == DIR_NORTH || t_dir == DIR_NORTHEAST ) return 0; break;
+	}
+	return 1;
+}
+
+/*==========================================
+ * Returns the direction of the given cell, relative to 'src'
+ *------------------------------------------*/
+uint8 map_calc_dir(const block_list* src, int16 x, int16 y)
+{
+	uint8 dir = DIR_NORTH;
+
+	nullpo_retr( dir, src );
+
+	dir = map_calc_dir_xy(src->x, src->y, x, y, unit_getdir(src));
+
+	return dir;
+}
+
+/*==========================================
+ * Returns the direction of the given cell, relative to source cell
+ * Use this if you don't have a block list available to check against
+ *------------------------------------------*/
+uint8 map_calc_dir_xy(int16 srcx, int16 srcy, int16 x, int16 y, uint8 srcdir) {
+	uint8 dir = DIR_NORTH;
+	int32 dx, dy;
+
+	dx = x-srcx;
+	dy = y-srcy;
+	if( dx == 0 && dy == 0 )
+	{	// both are standing on the same spot
+		// aegis-style, makes knockback default to the left
+		// athena-style, makes knockback default to behind 'src'
+		dir = ( battle_config.knockback_left ? DIR_EAST : srcdir );
+	}
+	else if( dx >= 0 && dy >=0 )
+	{	// upper-right
+		if( dx >= dy*3 )      dir = DIR_EAST;	// right
+		else if( dx*3 < dy )  dir = DIR_NORTH;	// up
+		else                  dir = DIR_NORTHEAST;	// up-right
+	}
+	else if( dx >= 0 && dy <= 0 )
+	{	// lower-right
+		if( dx >= -dy*3 )     dir = DIR_EAST;	// right
+		else if( dx*3 < -dy ) dir = DIR_SOUTH;	// down
+		else                  dir = DIR_SOUTHEAST;	// down-right
+	}
+	else if( dx <= 0 && dy <= 0 )
+	{	// lower-left
+		if( dx*3 >= dy )      dir = DIR_SOUTH;	// down
+		else if( dx < dy*3 )  dir = DIR_WEST;	// left
+		else                  dir = DIR_SOUTHWEST;	// down-left
+	}
+	else
+	{	// upper-left
+		if( -dx*3 <= dy )     dir = DIR_NORTH;	// up
+		else if( -dx > dy*3 ) dir = DIR_WEST;	// left
+		else                  dir = DIR_NORTHWEST;	// up-left
+	}
+	return dir;
+}
+
+/*==========================================
+ * Randomizes target cell x,y to a random walkable cell that
+ * has the same distance from object as given coordinates do. [Skotlex]
+ *------------------------------------------*/
+int32 map_random_dir(const block_list* bl, int16 *x, int16 *y)
+{
+	int16 xi = *x-bl->x;
+	int16 yi = *y-bl->y;
+	int16 i=0;
+	int32 dist2 = xi*xi + yi*yi;
+	int16 dist = (int16)sqrt((float)dist2);
+
+	if (dist < 1) dist =1;
+
+	do {
+		directions j = static_cast<directions>(1 + 2 * rnd_value(0, 3)); //Pick a random diagonal direction
+		int16 segment = rnd_value((int16)1, dist); //Pick a random interval from the whole vector in that direction
+		xi = bl->x + segment*dirx[j];
+		segment = (int16)sqrt((float)(dist2 - segment*segment)); //The complement of the previously picked segment
+		yi = bl->y + segment*diry[j];
+	} while (
+		(map_getcell(bl->m,xi,yi,CELL_CHKNOPASS) || !path_search(nullptr,bl->m,bl->x,bl->y,xi,yi,1,CELL_CHKNOREACH))
+		&& (++i)<100 );
+
+	if (i < 100) {
+		*x = xi;
+		*y = yi;
+		return 1;
+	}
+	return 0;
+}
+
+// gat system
+inline static struct mapcell map_gat2cell(int32 gat) {
+	struct mapcell cell;
+
+	memset(&cell,0,sizeof(struct mapcell));
+
+	switch( gat ) {
+		case 0: cell.walkable = 1; cell.shootable = 1; cell.water = 0; break; // walkable ground
+		case 1: cell.walkable = 0; cell.shootable = 0; cell.water = 0; break; // non-walkable ground
+		case 2: cell.walkable = 1; cell.shootable = 1; cell.water = 0; break; // ???
+		case 3: cell.walkable = 1; cell.shootable = 1; cell.water = 1; break; // walkable water
+		case 4: cell.walkable = 1; cell.shootable = 1; cell.water = 0; break; // ???
+		case 5: cell.walkable = 0; cell.shootable = 1; cell.water = 0; break; // gap (snipable)
+		case 6: cell.walkable = 1; cell.shootable = 1; cell.water = 0; break; // ???
+		default:
+			ShowWarning("map_gat2cell: unrecognized gat type '%d'\n", gat);
+			break;
+	}
+
+	return cell;
+}
+
+static int32 map_cell2gat(struct mapcell cell)
+{
+	if( cell.walkable == 1 && cell.shootable == 1 && cell.water == 0 ) return 0;
+	if( cell.walkable == 0 && cell.shootable == 0 && cell.water == 0 ) return 1;
+	if( cell.walkable == 1 && cell.shootable == 1 && cell.water == 1 ) return 3;
+	if( cell.walkable == 0 && cell.shootable == 1 && cell.water == 0 ) return 5;
+
+	ShowWarning("map_cell2gat: cell has no matching gat type\n");
+	return 1; // default to 'wall'
+}
+
+/*==========================================
+ * Confirm if celltype in (m,x,y) match the one given in cellchk
+ *------------------------------------------*/
+int32 map_getcell(int16 m,int16 x,int16 y,cell_chk cellchk)
+{
+	if (m < 0)
+		return 0;
+	else
+		return map_getcellp(map_getmapdata(m), x, y, cellchk);
+}
+
+int32 map_getcellp(struct map_data* m,int16 x,int16 y,cell_chk cellchk)
+{
+	struct mapcell cell;
+
+	nullpo_ret(m);
+
+	//NOTE: this intentionally overrides the last row and column
+	if(x<0 || x>=m->xs-1 || y<0 || y>=m->ys-1)
+		return( cellchk == CELL_CHKNOPASS );
+
+	cell = m->cell[x + y*m->xs];
+
+	switch(cellchk)
+	{
+		// gat type retrieval
+		case CELL_GETTYPE:
+			return map_cell2gat(cell);
+
+		// base gat type checks
+		case CELL_CHKWALL:
+			return (!cell.walkable && !cell.shootable);
+
+		case CELL_CHKWATER:
+			return (cell.water);
+
+		case CELL_CHKCLIFF:
+			return (!cell.walkable && cell.shootable);
+
+
+		// base cell type checks
+		case CELL_CHKNPC:
+			return (cell.npc);
+		case CELL_CHKBASILICA:
+			return (cell.basilica);
+		case CELL_CHKLANDPROTECTOR:
+			return (cell.landprotector);
+		case CELL_CHKNOVENDING:
+			return (cell.novending);
+		case CELL_CHKNOBUYINGSTORE:
+			return (cell.nobuyingstore);
+		case CELL_CHKNOCHAT:
+			return (cell.nochat);
+		case CELL_CHKMAELSTROM:
+			return (cell.maelstrom);
+		case CELL_CHKICEWALL:
+			return (cell.icewall);
+
+		// special checks
+		case CELL_CHKPASS:
+#ifdef CELL_NOSTACK
+			if (cell.cell_bl >= battle_config.custom_cell_stack_limit) return 0;
+#endif
+		case CELL_CHKREACH:
+			return (cell.walkable);
+
+		case CELL_CHKNOPASS:
+#ifdef CELL_NOSTACK
+			if (cell.cell_bl >= battle_config.custom_cell_stack_limit) return 1;
+#endif
+		case CELL_CHKNOREACH:
+			return (!cell.walkable);
+
+		case CELL_CHKSTACK:
+#ifdef CELL_NOSTACK
+			return (cell.cell_bl >= battle_config.custom_cell_stack_limit);
+#else
+			return 0;
+#endif
+
+		default:
+			return 0;
+	}
+}
+
+/*==========================================
+ * Change the type/flags of a map cell
+ * 'cell' - which flag to modify
+ * 'flag' - true = on, false = off
+ *------------------------------------------*/
+void map_setcell(int16 m, int16 x, int16 y, cell_t cell, bool flag)
+{
+	int32 j;
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if( m < 0 || x < 0 || x >= mapdata->xs || y < 0 || y >= mapdata->ys )
+		return;
+
+	j = x + y*mapdata->xs;
+
+	switch( cell ) {
+		case CELL_WALKABLE:      mapdata->cell[j].walkable = flag;      break;
+		case CELL_SHOOTABLE:     mapdata->cell[j].shootable = flag;     break;
+		case CELL_WATER:         mapdata->cell[j].water = flag;         break;
+
+		case CELL_NPC:           mapdata->cell[j].npc = flag;           break;
+		case CELL_BASILICA:      mapdata->cell[j].basilica = flag;      break;
+		case CELL_LANDPROTECTOR: mapdata->cell[j].landprotector = flag; break;
+		case CELL_NOVENDING:     mapdata->cell[j].novending = flag;     break;
+		case CELL_NOCHAT:        mapdata->cell[j].nochat = flag;        break;
+		case CELL_MAELSTROM:	 mapdata->cell[j].maelstrom = flag;	  break;
+		case CELL_ICEWALL:		 mapdata->cell[j].icewall = flag;		  break;
+		case CELL_NOBUYINGSTORE: mapdata->cell[j].nobuyingstore = flag; break;
+		default:
+			ShowWarning("map_setcell: invalid cell type '%d'\n", (int32)cell);
+			break;
+	}
+}
+
+void map_setgatcell(int16 m, int16 x, int16 y, int32 gat)
+{
+	int32 j;
+	struct mapcell cell;
+	struct map_data *mapdata = map_getmapdata(m);
+
+	if( m < 0 || x < 0 || x >= mapdata->xs || y < 0 || y >= mapdata->ys )
+		return;
+
+	j = x + y*mapdata->xs;
+
+	cell = map_gat2cell(gat);
+	mapdata->cell[j].walkable = cell.walkable;
+	mapdata->cell[j].shootable = cell.shootable;
+	mapdata->cell[j].water = cell.water;
+}
+
+/*==========================================
+ * Invisible Walls
+ *------------------------------------------*/
+static DBMap* iwall_db;
+
+bool map_iwall_exist(const char* wall_name)
+{
+	return strdb_exists(iwall_db, wall_name);
+}
+
+void map_iwall_nextxy(int16 x, int16 y, int8 dir, int32 pos, int16 *x1, int16 *y1)
+{
+	if( dir == DIR_NORTH || dir == DIR_SOUTH )
+		*x1 = x; // Keep X
+	else if( dir > DIR_NORTH && dir < DIR_SOUTH )
+		*x1 = x - pos; // Going left
+	else
+		*x1 = x + pos; // Going right
+
+	if( dir == DIR_WEST || dir == DIR_EAST )
+		*y1 = y;
+	else if( dir > DIR_WEST && dir < DIR_EAST )
+		*y1 = y - pos;
+	else
+		*y1 = y + pos;
+}
+
+bool map_iwall_set(int16 m, int16 x, int16 y, int32 size, int8 dir, bool shootable, const char* wall_name)
+{
+	struct iwall_data *iwall;
+	int32 i;
+	int16 x1 = 0, y1 = 0;
+
+	if( size < 1 || !wall_name )
+		return false;
+
+	if( (iwall = (struct iwall_data *)strdb_get(iwall_db, wall_name)) != nullptr )
+		return false; // Already Exists
+
+	if( map_getcell(m, x, y, CELL_CHKNOREACH) )
+		return false; // Starting cell problem
+
+	CREATE(iwall, struct iwall_data, 1);
+	iwall->m = m;
+	iwall->x = x;
+	iwall->y = y;
+	iwall->size = size;
+	iwall->dir = dir;
+	iwall->shootable = shootable;
+	safestrncpy(iwall->wall_name, wall_name, sizeof(iwall->wall_name));
+
+	for( i = 0; i < size; i++ )
+	{

@@ -1,0 +1,500 @@
+ * @param wa: Weapon attack
+ * @param status: Player status
+ * @return weapon attack
+ */
+uint32 status_weapon_atk( const weapon_atk& wa ){
+	return wa.atk + wa.atk2;
+}
+#endif
+
+#ifndef RENEWAL
+uint16 status_base_matk_min( const status_data* status ) {
+	return status->int_ + (status->int_ / 7) * (status->int_ / 7);
+}
+uint16 status_base_matk_max( const status_data* status ) {
+	return status->int_ + (status->int_ / 5) * (status->int_ / 5);
+}
+#else
+/*
+* Calculates minimum attack variance 80% from db's ATK1 for non BL_PC
+* status->batk (base attack) will be added in battle_calc_base_damage
+*/
+uint16 status_base_atk_min( const block_list* bl, const status_data* status, int32 level )
+{
+	switch (bl->type) {
+		case BL_PET:
+		case BL_MOB:
+		case BL_MER:
+		case BL_ELEM:
+			return status->rhw.atk * 80 / 100;
+		case BL_HOM:
+			return (status_get_homstr(bl) + status_get_homdex(bl)) / 5;
+		default:
+			return status->rhw.atk;
+	}
+}
+
+/*
+* Calculates maximum attack variance 120% from db's ATK1 for non BL_PC
+* status->batk (base attack) will be added in battle_calc_base_damage
+*/
+uint16 status_base_atk_max( const block_list* bl, const status_data* status, int32 level )
+{
+	switch (bl->type) {
+		case BL_PET:
+		case BL_MOB:
+		case BL_MER:
+		case BL_ELEM:
+			return status->rhw.atk * 120 / 100;
+		case BL_HOM:
+			return (status_get_homluk(bl) + status_get_homstr(bl) + status_get_homdex(bl)) / 3;
+		default:
+			return status->rhw.atk2;
+	}
+}
+
+/*
+* Calculates minimum magic attack
+*/
+uint16 status_base_matk_min( const block_list* bl, const status_data* status, int32 level )
+{
+	switch (bl->type) {
+		case BL_PET:
+		case BL_MOB:
+		case BL_MER:
+		case BL_ELEM:
+			return status->int_ + level + status->rhw.matk * 70 / 100;
+		case BL_HOM:
+			return status_get_homint(bl) + level + (status_get_homint(bl) + status_get_homdex(bl)) / 5;
+		case BL_PC:
+		default:
+			return status->int_ + (status->int_ / 2) + (status->dex / 5) + (status->luk / 3) + (level / 4) + 5 * status->spl;
+	}
+}
+
+/*
+* Calculates maximum magic attack
+*/
+uint16 status_base_matk_max( const block_list* bl, const status_data* status, int32 level )
+{
+	switch (bl->type) {
+		case BL_PET:
+		case BL_MOB:
+		case BL_MER:
+		case BL_ELEM:
+			return status->int_ + level + status->rhw.matk * 130 / 100;
+		case BL_HOM:
+			return status_get_homint(bl) + level + (status_get_homluk(bl) + status_get_homint(bl) + status_get_homdex(bl)) / 3;
+		case BL_PC:
+		default:
+			return status->int_ + (status->int_ / 2) + (status->dex / 5) + (status->luk / 3) + (level / 4) + 5 * status->spl;
+	}
+}
+#endif
+
+/**
+ * Fills in the misc data that can be calculated from the other status info (except for level)
+ * @param bl: Object to calculate status on [PC|MOB|PET|HOM|MERC|ELEM]
+ * @param status: Player status
+ */
+void status_calc_misc(block_list *bl, struct status_data *status, int32 level)
+{
+	int32 stat;
+
+	// Non players get the value set, players need to stack with previous bonuses.
+	if( bl->type != BL_PC ){
+		status->batk =
+		status->hit = status->flee =
+		status->def2 = status->mdef2 =
+		status->cri = status->flee2 =
+		status->patk = status->smatk =
+		status->hplus = status->crate = 0;
+		
+		if (bl->type != BL_MOB)	// BL_MOB has values set when loading mob_db
+			status->res = status->mres = 0;
+	}
+
+#ifdef RENEWAL // Renewal formulas
+	if (bl->type == BL_HOM) {
+		// Def2
+		stat = status_get_homvit(bl) + status_get_homagi(bl) / 2;
+		status->def2 = cap_value(stat, 0, SHRT_MAX);
+		// Mdef2
+		stat = (status_get_homvit(bl) + status_get_homint(bl)) / 2;
+		status->mdef2 = cap_value(stat, 0, SHRT_MAX);
+		// Def
+		stat = status->def;
+		stat += status_get_homvit(bl) + level / 2;
+		status->def = cap_value(stat, 0, SHRT_MAX);
+		// Mdef
+		stat = (int32)(((float)status_get_homvit(bl) + level) / 4 + (float)status_get_homint(bl) / 2);
+		status->mdef = cap_value(stat, 0, SHRT_MAX);
+		// Hit
+		stat = level + status->dex + 150;
+		status->hit = cap_value(stat, 1, SHRT_MAX);
+		// Flee
+		stat = level + status_get_homagi(bl);
+		status->flee = cap_value(stat, 1, SHRT_MAX);
+	} else {
+		// Hit
+		stat = status->hit;
+		stat += level + status->dex + (bl->type == BL_PC ? status->luk / 3 + 175 : 150); //base level + ( every 1 dex = +1 hit ) + (every 3 luk = +1 hit) + 175
+		stat += 2 * status->con;
+		status->hit = cap_value(stat, 1, SHRT_MAX);
+		// Flee
+		stat = status->flee;
+		stat += level + status->agi + (bl->type == BL_MER ? 0 : bl->type == BL_PC ? status->luk / 5 : 0) + 100; //base level + ( every 1 agi = +1 flee ) + (every 5 luk = +1 flee) + 100
+		stat += 2 * status->con;
+		status->flee = cap_value(stat, 1, SHRT_MAX);
+		// Def2
+		if (bl->type == BL_MER)
+			stat = (int32)(status->vit + ((float)level / 10) + ((float)status->vit / 5));
+		else {
+			stat = status->def2;
+			stat += (int32)(((float)level + status->vit) / 2 + (bl->type == BL_PC ? ((float)status->agi / 5) : 0)); //base level + (every 2 vit = +1 def) + (every 5 agi = +1 def)
+		}
+		status->def2 = cap_value(stat, 0, SHRT_MAX);
+		// Mdef2
+		if (bl->type == BL_MER)
+			stat = (int32)(((float)level / 10) + ((float)status->int_ / 5));
+		else {
+			stat = status->mdef2;
+			stat += (int32)(bl->type == BL_PC ? (status->int_ + ((float)level / 4) + ((float)(status->dex + status->vit) / 5)) : ((float)(status->int_ + level) / 4)); //(every 4 base level = +1 mdef) + (every 1 int32 = +1 mdef) + (every 5 dex = +1 mdef) + (every 5 vit = +1 mdef)
+		}
+		status->mdef2 = cap_value(stat, 0, SHRT_MAX);
+		// PAtk
+		stat = status->patk;
+		stat += status->pow / 3 + status->con / 5;
+		status->patk = cap_value(stat, 0, SHRT_MAX);
+		// SMatk
+		stat = status->smatk;
+		stat += status->spl / 3 + status->con / 5;
+		status->smatk = cap_value(stat, 0, SHRT_MAX);
+		// Res
+		stat = status->res;
+		stat += status->sta + status->sta / 3 * 5;
+		status->res = cap_value(stat, 0, SHRT_MAX);
+		// Mres
+		stat = status->mres;
+		stat += status->wis + status->wis / 3 * 5;
+		status->mres = cap_value(stat, 0, SHRT_MAX);
+		// HPlus
+		stat = status->hplus;
+		stat += status->crt;
+		status->hplus = cap_value(stat, 0, SHRT_MAX);
+		// CRate
+		stat = status->crate;
+		stat += status->crt / 3;
+		status->crate = cap_value(stat, 0, SHRT_MAX);
+	}
+
+	// ATK
+	if (bl->type != BL_PC) {
+		status->rhw.atk2 = status_base_atk_max(bl, status, level);
+		status->rhw.atk = status_base_atk_min(bl, status, level);
+	}
+
+	// MAtk
+	status->matk_min = status_base_matk_min(bl, status, level);
+	status->matk_max = status_base_matk_max(bl, status, level);
+#else
+	// Matk
+	status->matk_min = status_base_matk_min(status);
+	status->matk_max = status_base_matk_max(status);
+	// Hit
+	stat = status->hit;
+	stat += level + status->dex;
+	status->hit = cap_value(stat, 1, SHRT_MAX);
+	// Flee
+	stat = status->flee;
+	stat += level + status->agi;
+	status->flee = cap_value(stat, 1, SHRT_MAX);
+	// Def2
+	stat = status->def2;
+	stat += status->vit;
+	status->def2 = cap_value(stat, 0, SHRT_MAX);
+	// Mdef2
+	stat = status->mdef2;
+	stat += status->int_ + (status->vit / 2);
+	status->mdef2 = cap_value(stat, 0, SHRT_MAX);
+#endif
+
+	//Critical
+	if( bl->type&battle_config.enable_critical ) {
+		stat = status->cri;
+#ifdef RENEWAL
+		stat += (level / 10); // (every 10 BaseLevel = +0.1 critical)
+		stat += 10 + (status->luk*3); // (every 1 luk = +0.3 critical)
+#else
+		stat += 10 + (status->luk*10/3); // (every 1 luk = +0.3 critical)
+#endif
+		status->cri = cap_value(stat, 1, SHRT_MAX);
+	} else
+		status->cri = 0;
+
+	if (bl->type&battle_config.enable_perfect_flee) {
+		stat = status->flee2;
+		stat += status->luk + 10; // (every 10 luk = +1 perfect flee)
+		status->flee2 = cap_value(stat, 0, SHRT_MAX);
+	} else
+		status->flee2 = 0;
+
+	status->batk += status_base_atk(bl, status, level);
+
+	if (status->cri) {
+		switch (bl->type) {
+			case BL_MOB:
+				if(battle_config.mob_critical_rate != 100)
+					status->cri = cap_value(status->cri*battle_config.mob_critical_rate/100,1,SHRT_MAX);
+				if(!status->cri && battle_config.mob_critical_rate)
+					status->cri = 10;
+				break;
+			case BL_PC:
+				// Players don't have a critical adjustment setting as of yet.
+				break;
+			default:
+				if(battle_config.critical_rate != 100)
+					status->cri = cap_value(status->cri*battle_config.critical_rate/100,1,SHRT_MAX);
+				if (!status->cri && battle_config.critical_rate)
+					status->cri = 10;
+		}
+	}
+
+	if(bl->type&BL_REGEN)
+		status_calc_regen(bl, status, status_get_regen_data(bl));
+}
+
+/**
+ * Calculates the initial status for the given mob
+ * @param md: Mob object
+ * @param opt: Whether or not it is the first calculation
+		This will only be false when a mob levels up (Regular and WoE Guardians)
+ * @return 1 for calculated special statuses or 0 for none
+ * @author [Skotlex]
+ */
+int32 status_calc_mob_(mob_data* md, uint8 opt)
+{
+	struct status_data *status;
+	block_list *mbl = nullptr;
+	int32 flag=0;
+
+	if (opt&SCO_FIRST) { // Set basic level on respawn.
+		if (md->level > 0 && md->level <= MAX_LEVEL && md->level != md->db->lv)
+			;
+		else
+			md->level = md->db->lv;
+		safestrncpy(md->ud.title, md->db->title.c_str(), NAME_LENGTH);
+		md->damagetaken = md->db->damagetaken;
+		md->ud.group_id = md->db->group_id;
+	}
+
+	// Check if we need custom base-status
+	if (battle_config.mobs_level_up && md->level > md->db->lv)
+		flag|=1;
+
+	if (md->special_state.size)
+		flag|=2;
+
+	if (md->guardian_data && md->guardian_data->guardup_lv)
+		flag|=4;
+	if (md->mob_id == MOBID_EMPERIUM)
+		flag|=4;
+
+	if (battle_config.slaves_inherit_speed && md->master_id)
+		flag|=8;
+
+	if (md->master_id && md->special_state.ai>AI_ATTACK)
+		flag|=16;
+
+	if (md->master_id && battle_config.slaves_inherit_mode)
+		flag |= 32;
+
+	if (!flag) { // No special status required.
+		if (md->base_status) {
+			aFree(md->base_status);
+			md->base_status = nullptr;
+		}
+		if (opt&SCO_FIRST)
+			memcpy(&md->status, &md->db->status, sizeof(struct status_data));
+		return 0;
+	}
+	if (!md->base_status)
+		md->base_status = (struct status_data*)aCalloc(1, sizeof(struct status_data));
+
+	status = md->base_status;
+	memcpy(status, &md->db->status, sizeof(struct status_data));
+
+	if (flag&(8|16))
+		mbl = map_id2bl(md->master_id);
+
+	if (flag&8 && mbl) {
+		struct status_data *mstatus = status_get_base_status(mbl);
+
+		if (mstatus != nullptr && md->special_state.ai != AI_SPHERE &&
+			battle_config.slaves_inherit_speed&(status_has_mode(mstatus,MD_CANMOVE)?1:2))
+			status->speed = mstatus->speed;
+		if (status->speed < MIN_WALK_SPEED)
+			status->speed = MIN_WALK_SPEED;
+	}
+
+	if (flag&32)
+		status_calc_slave_mode(*md);
+
+	if (flag&1) { // Increase from mobs leveling up [Valaris]
+		int32 diff = md->level - md->db->lv;
+
+		status->str += diff;
+		status->agi += diff;
+		status->vit += diff;
+		status->int_ += diff;
+		status->dex += diff;
+		status->luk += diff;
+		status->max_hp += diff * status->vit;
+		status->max_sp += diff * status->int_;
+		status->hp = status->max_hp;
+		status->sp = status->max_sp;
+		status->speed -= cap_value(diff, 0, status->speed - 10);
+	}
+
+	if (flag&2 && battle_config.mob_size_influence) { // Change for sized monsters [Valaris]
+		if (md->special_state.size == SZ_MEDIUM) {
+			status->max_hp /= 2;
+			status->max_sp /= 2;
+			if (!status->max_hp) status->max_hp = 1;
+			if (!status->max_sp) status->max_sp = 1;
+			status->hp = status->max_hp;
+			status->sp = status->max_sp;
+			status->str /= 2;
+			status->agi /= 2;
+			status->vit /= 2;
+			status->int_ /= 2;
+			status->dex /= 2;
+			status->luk /= 2;
+			if (!status->str) status->str = 1;
+			if (!status->agi) status->agi = 1;
+			if (!status->vit) status->vit = 1;
+			if (!status->int_) status->int_ = 1;
+			if (!status->dex) status->dex = 1;
+			if (!status->luk) status->luk = 1;
+		} else if (md->special_state.size == SZ_BIG) {
+			status->max_hp *= 2;
+			status->max_sp *= 2;
+			status->hp = status->max_hp;
+			status->sp = status->max_sp;
+			status->str *= 2;
+			status->agi *= 2;
+			status->vit *= 2;
+			status->int_ *= 2;
+			status->dex *= 2;
+			status->luk *= 2;
+		}
+	}
+
+	status_calc_misc(md, status, md->level);
+
+	if(flag&4) { // Strengthen Guardians - custom value +10% / lv
+		struct map_data *mapdata = map_getmapdata(md->m);
+		std::shared_ptr<guild_castle> gc = castle_db.mapname2gc(mapdata->name);
+
+		if (gc == nullptr)
+			ShowError("status_calc_mob: No castle set at map %s\n", mapdata->name);
+		else if(gc->castle_id < 24 || md->mob_id == MOBID_EMPERIUM) {
+#ifdef RENEWAL
+			status->max_hp += 50 * (gc->defense / 5);
+#else
+			status->max_hp += 1000 * gc->defense;
+#endif
+			status->hp = status->max_hp;
+			status->def += (gc->defense+2)/3;
+			status->mdef += (gc->defense+2)/3;
+		}
+		if(md->mob_id != MOBID_EMPERIUM) {
+			status->max_hp += 1000 * gc->defense;
+			status->hp = status->max_hp;
+			status->batk += 2 * md->guardian_data->guardup_lv + 8;
+			status->rhw.atk += 2 * md->guardian_data->guardup_lv + 8;
+			status->rhw.atk2 += 2 * md->guardian_data->guardup_lv + 8;
+			status->aspd_rate -= 2 * md->guardian_data->guardup_lv + 3;
+		}
+	}
+
+	if (flag&16 && mbl) { // Max HP setting from Summon Flora/marine Sphere
+		struct unit_data *ud = unit_bl2ud(mbl);
+		// Remove special AI when this is used by regular mobs.
+		if (mbl->type == BL_MOB && !((TBL_MOB*)mbl)->special_state.ai)
+			md->special_state.ai = AI_NONE;
+		if (ud) { 
+			// Different levels of HP according to skill level
+			if(!ud->skill_id) // !FIXME: We lost the unit data for magic decoy in somewhere before this
+				ud->skill_id = ((TBL_PC*)mbl)->menuskill_id;
+			switch(ud->skill_id) {
+				case AM_SPHEREMINE:
+					status->max_hp = 2000 + 400*ud->skill_lv;
+					break;
+				case KO_ZANZOU:
+					status->max_hp = 3000 + 3000 * ud->skill_lv;
+					break;
+				case AM_CANNIBALIZE:
+					status->max_hp = 1500 + 200*ud->skill_lv + 10*status_get_lv(mbl);
+					status->mode = static_cast<e_mode>(status->mode|MD_CANATTACK|MD_AGGRESSIVE);
+					break;
+				case MH_SUMMON_LEGION:
+				{
+					int32 homblvl = status_get_lv(mbl);
+
+					status->max_hp = 10 * (100 * (ud->skill_lv + 2) + homblvl);
+					status->batk = 100 * (ud->skill_lv+5) / 2;
+					status->def = 10 * (100 * (ud->skill_lv+2) + homblvl);
+					// status->aspd_rate = 10 * (2 * (20 - ud->skill_lv) - homblvl/10);
+					// status->aspd_rate = max(100,status->aspd_rate);
+					break;
+				}
+				case NC_SILVERSNIPER:
+				{
+					status_data* mstatus = status_get_status_data(*mbl);
+
+					// TODO: check if dummy_status? Can never be nullptr [Lemongrass]
+					if(!mstatus)
+						break;
+
+					status->max_hp = (1000 * ud->skill_lv) + (mstatus->hp / 3) + (status_get_lv(mbl) * 12);
+					status->batk = 200 * ud->skill_lv;
+					break;
+				}
+				case NC_MAGICDECOY:
+				{
+					status_data* mstatus = status_get_status_data(*mbl);
+
+					// TODO: check if dummy_status? Can never be nullptr [Lemongrass]
+					if(!mstatus)
+						break;
+
+					status->max_hp = (1000 * ((TBL_PC*)mbl)->menuskill_val) + (mstatus->sp * 4) + (status_get_lv(mbl) * 12);
+					status->matk_min = status->matk_max = 250 + 50*((TBL_PC*)mbl)->menuskill_val;
+					break;
+				}
+				case MT_SUMMON_ABR_BATTLE_WARIOR:
+				case MT_SUMMON_ABR_DUAL_CANNON:
+				case MT_SUMMON_ABR_MOTHER_NET:
+				case MT_SUMMON_ABR_INFINITY: {
+						map_session_data *msd = BL_CAST(BL_PC, mbl);
+						status_data* mstatus = status_get_status_data(*mbl);
+
+						// TODO: check if mstatus is dummy_status? Can never be nullptr [Lemongrass]
+						if (msd == nullptr || mstatus == nullptr)
+							break;
+
+						uint8 abr_mastery = pc_checkskill(msd, MT_ABR_M);
+
+						// Custom formulas for ABR's.
+						// Its unknown how the summoner's stats affects the ABR's stats.
+						// I decided to do something similar to elementals for now until I know.
+						// Also added hit increase from ABR-Mastery for balance reasons. [Rytech]
+						status->max_hp = ( 5000 + 40000 * abr_mastery ) * mstatus->vit / 100;
+						status->rhw.atk = ( 2 * mstatus->batk + 200 + 600 * abr_mastery ) * 70 / 100;
+						status->rhw.atk2 = 2 * mstatus->batk + 200 + 600 * abr_mastery;
+						status->def = mstatus->def + 20 * abr_mastery;
+						status->mdef = mstatus->mdef + 4 * abr_mastery;
+						status->hit = mstatus->hit + 5 * abr_mastery / 2;
+						status->flee = mstatus->flee + 10 * abr_mastery;
+						status->speed = mstatus->speed;

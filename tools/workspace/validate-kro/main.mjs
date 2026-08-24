@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const repo = path.resolve(new URL('../../../', import.meta.url).pathname);
-const root = path.join(repo, 'docs/zh-cn/kro-20211105');
+const root = path.join(repo, 'docs/translation/zh-cn/kro-20211105');
 const columns = [
   'agent_id', 'repo', 'path', 'domain', 'text_scope', 'unit_type', 'chunk_id',
   'start_line', 'end_line', 'source_chunk', 'translated_chunk', 'status', 'notes'

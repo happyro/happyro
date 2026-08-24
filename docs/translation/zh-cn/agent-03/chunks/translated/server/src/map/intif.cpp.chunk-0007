@@ -1,0 +1,500 @@
+	WFIFOHEAD(inter_fd,10);
+	WFIFOW(inter_fd,0) = 0x3071;
+	WFIFOL(inter_fd,2) = merc_id;
+	WFIFOL(inter_fd,6) = char_id;
+	WFIFOSET(inter_fd,10);
+	return 1;
+}
+
+/**
+ * Request to delete a mercenary
+ * @param merc_id
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_mercenary_delete(int32 merc_id)
+{
+	if (CheckForCharServer())
+		return 0;
+
+	WFIFOHEAD(inter_fd,6);
+	WFIFOW(inter_fd,0) = 0x3072;
+	WFIFOL(inter_fd,2) = merc_id;
+	WFIFOSET(inter_fd,6);
+	return 1;
+}
+
+/**
+ * Ack of a mercenary deletion request
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_mercenary_deleted(int32 fd)
+{
+	if( RFIFOB(fd,2) != 1 )
+		ShowError("Mercenary data delete failure\n");
+
+	return 1;
+}
+
+/**
+ * Request to save a mercenary
+ * @param merc : Mercenary struct to save
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_mercenary_save(struct s_mercenary *merc)
+{
+	int32 size = sizeof(struct s_mercenary) + 4;
+
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,size);
+	WFIFOW(inter_fd,0) = 0x3073;
+	WFIFOW(inter_fd,2) = size;
+	memcpy(WFIFOP(inter_fd,4), merc, sizeof(struct s_mercenary));
+	WFIFOSET(inter_fd,size);
+	return 1;
+}
+
+/**
+ * Ack of a mercenary save request
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_mercenary_saved(int32 fd)
+{
+	if( RFIFOB(fd,2) != 1 )
+		ShowError("Mercenary data save failure\n");
+
+	return 1;
+}
+
+/*==========================================
+ * Elemental's System
+ *------------------------------------------*/
+
+/**
+ * Request to create elemental, (verify and save on char-serv)
+ * @param ele : Tmp Elemental data 
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_elemental_create(struct s_elemental *ele)
+{
+	int32 size = sizeof(struct s_elemental) + 4;
+
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,size);
+	WFIFOW(inter_fd,0) = 0x307c;
+	WFIFOW(inter_fd,2) = size;
+	memcpy(WFIFOP(inter_fd,4), ele, sizeof(struct s_elemental));
+	WFIFOSET(inter_fd,size);
+	return 1;
+}
+
+/**
+ * Receive an elemental data from char-serv
+ * @param fd : char-serv link
+ * @return 0=error, 1=success
+ */
+int32 intif_parse_elemental_received(int32 fd)
+{
+	int32 len = RFIFOW(fd,2) - 5;
+	if( sizeof(struct s_elemental) != len )
+	{
+		if( battle_config.etc_log )
+			ShowError("intif: create elemental data size error %" PRIuPTR " != %d\n", sizeof(struct s_elemental), len);
+		return 0;
+	}
+
+	elemental_data_received((struct s_elemental*)RFIFOP(fd,5), RFIFOB(fd,4) > 0);
+	return 1;
+}
+
+/**
+ * Request to load elemental from char-serv
+ * @param ele_id : elemental identification
+ * @param char_id : player identification
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_elemental_request(int32 ele_id, uint32 char_id)
+{
+	if (CheckForCharServer())
+		return 0;
+
+	WFIFOHEAD(inter_fd,10);
+	WFIFOW(inter_fd,0) = 0x307d;
+	WFIFOL(inter_fd,2) = ele_id;
+	WFIFOL(inter_fd,6) = char_id;
+	WFIFOSET(inter_fd,10);
+	return 1;
+}
+
+/**
+ * Request to delete an elemental
+ * @param ele_id : Elemental to delete
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_elemental_delete(int32 ele_id)
+{
+	if (CheckForCharServer())
+		return 0;
+
+	WFIFOHEAD(inter_fd,6);
+	WFIFOW(inter_fd,0) = 0x307e;
+	WFIFOL(inter_fd,2) = ele_id;
+	WFIFOSET(inter_fd,6);
+	return 1;
+}
+
+/**
+ * Ack of a delete elemental request
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_elemental_deleted(int32 fd)
+{
+	if( RFIFOB(fd,2) != 1 )
+		ShowError("Elemental data delete failure\n");
+
+	return 1;
+}
+
+/**
+ * Request to save elemental data
+ * @param ele : elemental struct to save
+ * @return 0=error, 1=msg sent
+ */
+int32 intif_elemental_save(struct s_elemental *ele)
+{
+	int32 size = sizeof(struct s_elemental) + 4;
+
+	if( CheckForCharServer() )
+		return 0;
+
+	WFIFOHEAD(inter_fd,size);
+	WFIFOW(inter_fd,0) = 0x307f;
+	WFIFOW(inter_fd,2) = size;
+	memcpy(WFIFOP(inter_fd,4), ele, sizeof(struct s_elemental));
+	WFIFOSET(inter_fd,size);
+	return 1;
+}
+
+/**
+ * Ack of a save elemental request
+ * @param fd : char-serv link
+ * @return 1
+ */
+int32 intif_parse_elemental_saved(int32 fd)
+{
+	if( RFIFOB(fd,2) != 1 )
+		ShowError("Elemental data save failure\n");
+
+	return 1;
+}
+
+/**
+ * Request account information to char-serv
+ * @param u_fd : Player fd (for message back)
+ * @param aid : requesting player aid
+ * @param group_lv : requesting player lv
+ * @param query : name or aid of player we want info
+ * @param type : 1 - Only return account id & userid, 0 - Full info
+ * @return : 0=error, 1=msg sent
+ */
+int32 intif_request_accinfo( int32 u_fd, int32 aid, int32 group_lv, char* query ){
+
+	if( CheckForCharServer() )
+		return 0;
+	
+	WFIFOHEAD(inter_fd,2 + 4 + 4 + 4 + NAME_LENGTH);
+
+	WFIFOW(inter_fd,0) = 0x3007;
+	WFIFOL(inter_fd,2) = u_fd;
+	WFIFOL(inter_fd,6) = aid;
+	WFIFOL(inter_fd,10) = group_lv;
+	safestrncpy(WFIFOCP(inter_fd,14), query, NAME_LENGTH);
+
+	WFIFOSET(inter_fd,2 + 4 + 4 + 4 + NAME_LENGTH);
+	return 1;
+}
+
+/**
+ * Receive the reply of a request_accinfo with type 1
+ * @param fd : char-serv link
+ */
+void intif_parse_accinfo_ack( int32 fd ) {
+	char acc_name[NAME_LENGTH];
+	int32 u_fd = RFIFOL(fd,2);
+	int32 acc_id = RFIFOL(fd,6);
+	safestrncpy(acc_name, RFIFOCP(fd,10), NAME_LENGTH);
+	clif_account_name(u_fd, acc_id, acc_name);
+}
+
+/**
+ * Display a message from char-serv to a player
+ * @param fd : Char-serv link
+ */
+void intif_parse_MessageToFD(int32 fd) {
+	int32 u_fd = RFIFOL(fd,4);
+
+	if( session[u_fd] && session[u_fd]->session_data ) { //check if the player still online
+		int32 aid = RFIFOL(fd,8);
+		map_session_data * sd = (map_session_data *)session[u_fd]->session_data;
+		/* matching e.g. previous fd owner didn't dc during request or is still the same */
+		if( sd->id == aid ) {
+			char msg[512];
+			safestrncpy(msg, RFIFOCP(fd,12), RFIFOW(fd,2) - 12);
+			clif_displaymessage(u_fd,msg);
+		}
+
+	}
+
+	return;
+}
+
+/// BROADCAST OBTAIN SPECIAL ITEM
+
+/**
+ * Request to send broadcast item to all servers
+ * ZI 3009 <cmd>.W <len>.W <nameid>.N <source>.W <type>.B <name>.?B
+ * @param sd Player who obtain the item
+ * @param nameid Obtained item
+ * @param sourceid Source of item, another item ID or monster ID
+ * @param type Obtain type @see enum BROADCASTING_SPECIAL_ITEM_OBTAIN
+ * @return
+ **/
+int32 intif_broadcast_obtain_special_item(map_session_data *sd, t_itemid nameid, t_itemid sourceid, unsigned char type) {
+	nullpo_retr(0, sd);
+
+	// Should not be here!
+	if (type == ITEMOBTAIN_TYPE_NPC) {
+		intif_broadcast_obtain_special_item_npc(sd, nameid);
+		return 0;
+	}
+
+	// Send local
+	clif_broadcast_obtain_special_item(sd->status.name, nameid, sourceid, (enum BROADCASTING_SPECIAL_ITEM_OBTAIN)type);
+
+	if (CheckForCharServer())
+		return 0;
+
+	if (other_mapserver_count < 1)
+		return 0;
+
+	WFIFOHEAD(inter_fd, 11 + NAME_LENGTH);
+	WFIFOW(inter_fd, 0) = 0x3009;
+	WFIFOW(inter_fd, 2) = 11 + NAME_LENGTH;
+	WFIFOL(inter_fd, 4) = nameid;
+	WFIFOW(inter_fd, 8) = sourceid;
+	WFIFOB(inter_fd, 10) = type;
+	safestrncpy(WFIFOCP(inter_fd, 11), sd->status.name, NAME_LENGTH);
+	WFIFOSET(inter_fd, WFIFOW(inter_fd, 2));
+
+	return 1;
+}
+
+/**
+ * Request to send broadcast item to all servers.
+ * TODO: Confirm the usage. Maybe on getitem-like command?
+ * ZI 3009 <cmd>.W <len>.W <nameid>.N <source>.W <type>.B <name>.24B <npcname>.24B
+ * @param sd Player who obtain the item
+ * @param nameid Obtained item
+ * @param srcname Source name
+ * @return
+ **/
+int32 intif_broadcast_obtain_special_item_npc(map_session_data *sd, t_itemid nameid) {
+	nullpo_retr(0, sd);
+
+	// Send local
+	clif_broadcast_obtain_special_item(sd->status.name, nameid, 0, ITEMOBTAIN_TYPE_NPC);
+
+	if (CheckForCharServer())
+		return 0;
+
+	if (other_mapserver_count < 1)
+		return 0;
+
+	WFIFOHEAD(inter_fd, 11 + NAME_LENGTH*2);
+	WFIFOW(inter_fd, 0) = 0x3009;
+	WFIFOW(inter_fd, 2) = 11 + NAME_LENGTH*2;
+	WFIFOL(inter_fd, 4) = nameid;
+	WFIFOW(inter_fd, 8) = 0;
+	WFIFOB(inter_fd, 10) = ITEMOBTAIN_TYPE_NPC;
+	safestrncpy(WFIFOCP(inter_fd, 11), sd->status.name, NAME_LENGTH);
+	WFIFOSET(inter_fd, WFIFOW(inter_fd, 2));
+
+	return 1;
+}
+
+/**
+ * Received broadcast item and broadcast on local map.
+ * IZ 3809 <cmd>.W <len>.W <nameid>.L <source>.W <type>.B <name>.24B <srcname>.24B
+ * @param fd
+ **/
+void intif_parse_broadcast_obtain_special_item(int32 fd) {
+	int32 type = RFIFOB(fd, 10);
+	char name[NAME_LENGTH];
+
+	safestrncpy(name, RFIFOCP(fd, 11), NAME_LENGTH);
+	if (type == ITEMOBTAIN_TYPE_NPC)
+		safestrncpy(name, RFIFOCP(fd, 11 + NAME_LENGTH), NAME_LENGTH);
+
+	clif_broadcast_obtain_special_item(name, RFIFOL(fd, 4), RFIFOW(fd, 8), (enum BROADCASTING_SPECIAL_ITEM_OBTAIN)type);
+}
+
+/*==========================================
+ * Item Bound System
+ *------------------------------------------*/
+
+#ifdef BOUND_ITEMS
+
+/**
+ * ZI 0x3056 <char_id>.L <account_id>.L <guild_id>.W
+ * Request inter-serv to delete some bound item, for non connected cid
+ * @param char_id : Char to delete item ID
+ * @param aid : Account to delete item ID
+ * @param guild_id : Guild of char
+ */
+void intif_itembound_guild_retrieve(uint32 char_id,uint32 account_id,int32 guild_id) {
+	struct s_storage *gstor = guild2storage2(guild_id);
+	
+	if( CheckForCharServer() )
+		return;
+	
+	WFIFOHEAD(inter_fd,12);
+	WFIFOW(inter_fd,0) = 0x3056;
+	WFIFOL(inter_fd,2) = char_id;
+	WFIFOL(inter_fd,6) = account_id;
+	WFIFOW(inter_fd,10) = guild_id;
+	WFIFOSET(inter_fd,12);
+	if (gstor)
+		gstor->lock = true; //Lock for retrieval process
+	ShowInfo("Request guild bound item(s) retrieval for CID = " CL_WHITE "%d" CL_RESET ", AID = %d, Guild ID = " CL_WHITE "%d" CL_RESET ".\n", char_id, account_id, guild_id);
+}
+
+/**
+ * Acknowledge the good deletion of the bound item
+ * (unlock the guild storage)
+ * @struct : 0x3856 <aid>.L <gid>.W
+ * @param fd : Char-serv link
+ */
+void intif_parse_itembound_ack(int32 fd) {
+	int32 guild_id = RFIFOW(fd,6);
+	struct s_storage *gstor = guild2storage2(guild_id);
+	if (gstor)
+		gstor->lock = false; //Unlock now that operation is completed
+}
+
+/**
+ * IZ 0x3857 <size>.W <count>.W <guild_id>.W { <item>.?B }.*MAX_INVENTORY
+ * Received the retrieved guild bound items from inter-server, store them to guild storage.
+ * @param fd
+ * @author [Cydh]
+ */
+void intif_parse_itembound_store2gstorage(int32 fd) {
+	uint16 i, failed = 0;
+	int16 count = RFIFOW(fd, 4), guild_id = RFIFOW(fd, 6);
+	struct s_storage *gstor = guild2storage(guild_id);
+
+	if (!gstor) {
+		ShowError("intif_parse_itembound_store2gstorage: Guild '%d' not found.\n", guild_id);
+		return;
+	}
+
+	//@TODO: Gives some actions for item(s) that cannot be stored because storage is full or reach the limit of stack amount
+	for (i = 0; i < count; i++) {
+		struct item *item = (struct item*)RFIFOP(fd, 8 + i*sizeof(struct item));
+		if (!item)
+			continue;
+		if (!storage_guild_additem2(gstor, item, item->amount))
+			failed++;
+	}
+	ShowInfo("Retrieved '" CL_WHITE "%d" CL_RESET "' (failed: %d) guild bound item(s) for Guild ID = " CL_WHITE "%d" CL_RESET ".\n", count, failed, guild_id);
+	gstor->lock = false;
+	gstor->status = false;
+}
+#endif
+
+/**
+ * Receive inventory/cart/storage data for player
+ * IZ 0x388a <size>.W <type>.B <account_id>.L <result>.B <storage>.?B
+ * @param fd
+ */
+static bool intif_parse_StorageReceived(int32 fd)
+{
+	char type =  RFIFOB(fd,4);
+	uint32 account_id = RFIFOL(fd, 5);
+	map_session_data *sd = map_id2sd(account_id);
+	struct s_storage *stor, *p; //storage
+	size_t sz_stor = sizeof(struct s_storage);
+
+	if (!sd) {
+		ShowError("intif_parse_StorageReceived: No player online for receiving inventory/cart/storage data (AID: %d)\n", account_id);
+		return false;
+	}
+
+	if (!RFIFOB(fd, 9)) {
+		ShowError("intif_parse_StorageReceived: Failed to load! (AID: %d, type: %d)\n", account_id, type);
+		return false;
+	}
+
+	p = (struct s_storage *)RFIFOP(fd,10);
+
+	switch (type) { 
+		case TABLE_INVENTORY:
+			stor = &sd->inventory;
+			break;
+		case TABLE_STORAGE:
+			if (p->stor_id == 0)
+				stor = &sd->storage;
+			else
+				stor = &sd->premiumStorage;
+			break;
+		case TABLE_CART:
+			stor = &sd->cart;
+			break;
+		default:
+			return false;
+	}
+
+	if (stor->stor_id == p->stor_id) {
+		if (stor->status) { // Already open.. lets ignore this update
+			ShowWarning("intif_parse_StorageReceived: storage received for a client already open (User %d:%d)\n", sd->status.account_id, sd->status.char_id);
+			return false;
+		}
+		if (stor->dirty) { // Already have storage, and it has been modified and not saved yet! Exploit!
+			ShowWarning("intif_parse_StorageReceived: received storage for an already modified non-saved storage! (User %d:%d)\n", sd->status.account_id, sd->status.char_id);
+			return false;
+		}
+	}
+	if (RFIFOW(fd,2)-10 != sz_stor) {
+		ShowError("intif_parse_StorageReceived: data size error %d %" PRIuPTR "\n",RFIFOW(fd,2)-10 , sz_stor);
+		stor->status = false;
+		return false;
+	}
+
+	memcpy(stor, p, sz_stor); //copy the items data to correct destination
+
+	switch (type) {
+		case TABLE_INVENTORY: {
+#ifdef BOUND_ITEMS
+			int32 j, idxlist[MAX_INVENTORY];
+#endif
+			pc_setinventorydata( *sd );
+			pc_setequipindex(sd);
+			pc_check_expiration(sd);
+			pc_check_available_item(sd, ITMCHK_INVENTORY);
+			pc_itemcd_do(sd, true);
+#ifdef BOUND_ITEMS
+			// Party bound item check
+			if (sd->status.party_id == 0 && (j = pc_bound_chk(sd, BOUND_PARTY, idxlist))) { // Party was deleted while character offline
+				int32 i;
+				for (i = 0; i < j; i++)
+					pc_delitem(sd, idxlist[i], sd->inventory.u.items_inventory[idxlist[i]].amount, 4, 1, LOG_TYPE_OTHER);
+			}
+#endif
+			//Set here because we need the inventory data for weapon sprite parsing.
+			status_set_viewdata(sd, sd->status.class_);
+			// Set headgear data here, otherwise this is done in loadEndAck

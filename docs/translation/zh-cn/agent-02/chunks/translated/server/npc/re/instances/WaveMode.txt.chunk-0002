@@ -1,0 +1,308 @@
+OnSpawn4: callsub( S_Spawn, 4 );
+S_Spawn:
+	.@x = 48 + getarg(0);
+	monster 'map_def01$,.@x,74, "Invader!", 'mob_id,1;
+	.@gid = $@mobid[0];
+	setunitdata .@gid, UMOB_MODE, ( MD_CANMOVE|MD_NORANDOMWALK );
+	setunitdata .@gid, UMOB_IGNORE_CELL_STACK_LIMIT, true;
+	mob_setidleevent .@gid, 'npc_name$ + "::OnIdle" + getarg(0);
+	end;
+
+OnIdle0: callsub( S_Idle, 0 );
+OnIdle1: callsub( S_Idle, 1 );
+OnIdle2: callsub( S_Idle, 2 );
+OnIdle3: callsub( S_Idle, 3 );
+OnIdle4: callsub( S_Idle, 4 );
+S_Idle:
+	callfunc( "F_mobidle", ('npc_name$ + "::OnIdle" + getarg(0)), 'size_coord, 'x_mob, getarg(0), 'y_mob, 'dist_spot_AZ );
+	'mob_escaped++;
+	if ('mob_escaped <= 20)
+		mapannounce 'map_def01$, "有 " + 'mob_escaped + " 只怪物逃脱了。", bc_map;
+	if ('mob_escaped == 20)
+		donpcevent instance_npcname("#wave_mode_forest_out") + "::OnFail";
+	end;
+}
+
+// 1@def01,50,23,0	script	#wave_mode_forest_warp	WARPNPC,2,2,{
+1@def01,50,30,0	script	#wave_mode_forest_warp	WARPNPC,2,2,{// official warp out
+	end;
+OnTouch:
+	if (wave_mode_map$ == "")
+		warp "prontera",0,0;
+	else {
+		warp wave_mode_map$, wave_mode_x, wave_mode_y;
+		wave_mode_map$ = "";
+		wave_mode_x = wave_mode_y = 0;
+	}
+	end;
+}
+
+1@def01,1,1,0	script	#wave_mode_forest_out	-1,{
+	end;
+OnFail:
+	donpcevent instance_npcname("#wave_mode_forest_system") + "::OnStop";
+
+	mapannounce 'map_def01$, "你未能通过 <波次模式 - 森林> 挑战。", bc_map;
+	enablenpc instance_npcname("#wave_mode_forest_warp");
+	initnpctimer;
+	end;
+OnTimer1000:
+	mapannounce 'map_def01$, "<波次模式 - 森林> 服务已关闭。使用入口传送点后，你将返回进入地点。", bc_map;
+	end;
+OnTimer30000:
+	stopnpctimer;
+	instance_destroy();
+	end;
+
+OnInstanceInit:
+	'wave = 'mob_escaped = 0;
+
+	'map_def01$ = instance_mapname("1@def01");
+	'npc_name$ = instance_npcname("#wave_mode_forest_spawn");
+
+	disablenpc instance_npcname("#wave_mode_forest_system");
+	disablenpc instance_npcname("#wave_mode_forest_warp");
+	disablenpc instance_npcname("#wave_mode_forest_out");
+
+	setarray 'x_mob[0], 48, 48, 48, 48, 48, 48, 48;
+	setarray 'y_mob[0], 74, 65, 56, 48, 40, 31, 23;
+
+	'size_coord = getarraysize('y_mob);
+	for ( .@i = 0; .@i < 'size_coord -1; .@i++ ) {
+		.@dist_mob[.@i+1] = distance( 'x_mob[.@i], 'y_mob[.@i], 'x_mob[.@i+1], 'y_mob[.@i+1] );
+		.@total_mob += .@dist_mob[.@i+1];
+	}
+	for ( .@i = 0; .@i < 'size_coord -1; .@i++ )
+		'dist_spot_AZ[.@i] = .@total_mob - .@dist_mob[.@i];
+	end;
+}
+
+
+// Wave mode sky
+1@def02,30,35,0	script	#wave_mode_sky_entrance	WARPNPC,1,1,{
+	end;
+OnTouch:
+	if ('status_instance == 1)
+		end;
+	else if ('status_instance == 0) {
+		'status_instance = 1;
+		initnpctimer;
+		disablenpc instance_npcname("#wave_mode_sky_entrance");
+	}
+	else if ('status_instance == 2) {
+		if (wave_mode_map$ == "")
+			warp "prontera",0,0;
+		else {
+			warp wave_mode_map$, wave_mode_x, wave_mode_y;
+			wave_mode_map$ = "";
+			wave_mode_x = wave_mode_y = 0;
+		}
+	}
+	end;
+OnTimer4000:
+	stopnpctimer;
+	donpcevent instance_npcname("#wave_mode_sky_system") + "::OnStart";
+	end;
+}
+
+1@def02,1,1,0	script	#wave_mode_sky_system	-1,{
+	end;
+OnStart:
+	initnpctimer;
+	mapannounce 'map_def02$, "感谢一直使用 Zonda Agency 的所有顾客。", bc_map;
+	end;
+OnTimer1000:
+	mapannounce 'map_def02$, "3", bc_map;
+	end;
+OnTimer2000:
+	mapannounce 'map_def02$, "2", bc_map;
+	end;
+OnTimer3000:
+	mapannounce 'map_def02$, "1", bc_map;
+	end;
+OnTimer4000:
+	'wave_num++;
+	if ('wave_num % 5) {
+		donpcevent 'npc_name_mob$ + "::OnSpawn";
+		donpcevent 'npc_name_mercenary$ + "::OnStart";
+		donpcevent 'npc_name_mercenary$ + "::OnStart";
+	}
+	else {
+		donpcevent 'npc_name_treasure$ + "::OnStart";
+	}
+	end;
+OnTimer24000:
+	mapannounce 'map_def02$, "下一波怪物很快出现。做好准备。", bc_map;
+	initnpctimer;
+	end;
+OnStop:
+	stopnpctimer;
+	end;
+}
+
+1@def02,1,1,0	script	#wave_mode_sky_treasure	-1,{
+	end;
+OnStart:
+	if ('treasure_num < 5)
+		'treasure_num++;
+	mapannounce 'map_def02$, "！！出现了 " + 'treasure_num + " 个宝箱！！", bc_map;
+	for ( .@i = 0; .@i < 'treasure_num; .@i++ ) {
+		monster 'map_def02$,0,0, "Treasure box",3075,1;	// WA_TREASURE
+		'treasure_gid[.@i] = $@mobid[0];
+	}
+	initnpctimer;
+	end;
+OnTimer16500: callsub( S_Dice, ET_DICE3 );
+OnTimer17500: callsub( S_Dice, ET_DICE2 );
+OnTimer18500: callsub( S_Dice, ET_DICE1 );
+OnTimer19500:
+	for ( .@i = 0; .@i < 'treasure_num; .@i++ ) {
+		if (unitexists('treasure_gid[.@i]))
+			unitskilluseid 'treasure_gid[.@i],301,1,'treasure_gid[.@i],-1;	// SA_INSTANTDEATH
+	}
+	donpcevent 'npc_name_treasure$ + "::OnStop";
+	end;
+
+S_Dice:
+	.@emotion_num = getarg(0);
+	for ( .@i = 0; .@i < 'treasure_num; .@i++ ) {
+		if (unitexists('treasure_gid[.@i]))
+			emotion .@emotion_num, 'treasure_gid[.@i];
+	}
+	end;
+
+OnStop:
+	deletearray 'treasure_gid[0], 'treasure_num;
+	stopnpctimer;
+	end;
+}
+
+1@def02,1,1,0	script	#wave_mode_sky_mercenary	-1,{
+	end;
+OnStart:
+	monster 'map_def02$,29,35, "Mercenary", 3086,1, "",0,AI_WAVEMODE;	// WA_MERCENARY
+	.@gid = $@mobid[0];
+	emotion ET_SURPRISE, .@gid;
+	setunitdata .@gid, UMOB_IGNORE_CELL_STACK_LIMIT, true;
+	mob_setidleevent .@gid, 'npc_name_mercenary$ + "::OnIdle";
+	sleep 45000;
+	if (unitexists(.@gid))
+		unitskilluseid .@gid,301,1,.@gid,1,false;	// SA_INSTANTDEATH
+	end;
+
+OnIdle:
+	callfunc( "F_mobidle", ('npc_name_mercenary$ + "::OnIdle"), 'size_coord, 'x_merc, 0, 'y_merc, 'dist_spot_ZA );
+	end;
+}
+
+1@def02,1,1,0	script	#wave_mode_sky_mob_spawn	-1,{
+	end;
+OnSpawn:
+	mapannounce 'map_def02$, "-- 第 " + 'wave_num + " 波 --", bc_map;
+
+	.@i = ('wave_num % 10) - 1;
+	setarray .@mob_list[0],
+		3076,	// WA_MONSTER_1
+		3077,	// WA_MONSTER_2
+		3078,	// WA_MONSTER_3
+		3079,	// WA_MONSTER_4
+		3080,	// WA_MONSTER_5 (skipped)
+		3081,	// WA_MONSTER_6
+		3082,	// WA_MONSTER_7
+		3083,	// WA_MONSTER_8
+		3084,	// WA_MONSTER_9
+		3085;	// WA_MONSTER_10 (skipped)
+	'mob_id = .@mob_list[.@i];
+	initnpctimer;
+	end;
+OnTimer1000: callsub( S_Spawn, true );	// aggressive
+OnTimer1500: callsub( S_Spawn, false );	// passive
+OnTimer2000: callsub( S_Spawn, true );
+OnTimer2500: callsub( S_Spawn, false );
+OnTimer3000: callsub( S_Spawn, true );
+OnTimer3500: callsub( S_Spawn, false );
+OnTimer4000: callsub( S_Spawn, true );
+OnTimer4500: callsub( S_Spawn, false );
+OnTimer5000: callsub( S_Spawn, true );
+OnTimer5500: callsub( S_Spawn, false );
+OnTimer6000: callsub( S_Spawn, true );
+OnTimer6500: callsub( S_Spawn, false );
+OnTimer7000: callsub( S_Spawn, true );
+OnTimer7500: callsub( S_Spawn, false );
+OnTimer8000: callsub( S_Spawn, true );
+OnTimer8500:
+	stopnpctimer;
+	end;
+
+S_Spawn:
+	monster 'map_def02$,48,67, "Go!", 'mob_id,1;
+	if (getarg(0) == true)
+		setunitdata $@mobid[0], UMOB_MODE, ( MD_CANMOVE|MD_NORANDOMWALK|MD_AGGRESSIVE|MD_CANATTACK );
+	.@gid = $@mobid[0];
+	emotion ET_SURPRISE, .@gid;
+	setunitdata .@gid, UMOB_IGNORE_CELL_STACK_LIMIT, true;
+	mob_setidleevent .@gid, 'npc_name_mob$ + "::OnIdle";
+	end;
+
+OnIdle:
+	// monster are walking to the nearest next spot
+	callfunc( "F_mobidle", ('npc_name_mob$ + "::OnIdle"), 'size_coord, 'x_mob, 0, 'y_mob, 'dist_spot_AZ );
+	'mob_escaped++;
+	if ('mob_escaped <= 20)
+		mapannounce 'map_def02$, "有 " + 'mob_escaped + " 只怪物逃脱了。", bc_map;
+	if ('mob_escaped == 20)
+		donpcevent instance_npcname("#wave_mode_sky_out") + "::OnFail";
+	end;
+}
+
+
+1@def02,1,1,0	script	#wave_mode_sky_out	-1,{
+	end;
+OnFail:
+	// monsters timers continue
+	donpcevent instance_npcname("#wave_mode_sky_system") + "::OnStop";
+
+	mapannounce 'map_def02$, "你未能通过 <波次模式 - 天空> 挑战。", bc_map;
+	'status_instance = 2;
+	enablenpc instance_npcname("#wave_mode_sky_entrance");
+	initnpctimer;
+	end;
+OnTimer1000:
+	mapannounce 'map_def02$, "<波次模式 - 天空> 服务已关闭。使用入口传送点后，你将返回进入地点。", bc_map;
+	end;
+OnTimer30000:
+	stopnpctimer;
+	instance_destroy();
+	end;
+
+OnInstanceInit:
+	deletearray 'treasure_gid[0], 'treasure_num;
+	'wave_num = 'treasure_num = 'status_instance = 'mob_escaped = 0;
+
+	'map_def02$ = instance_mapname("1@def02");
+
+	'npc_name_mob$ = instance_npcname("#wave_mode_sky_mob_spawn");
+	'npc_name_treasure$ = instance_npcname("#wave_mode_sky_treasure");
+	'npc_name_mercenary$ = instance_npcname("#wave_mode_sky_mercenary");
+
+	disablenpc instance_npcname("#wave_mode_sky_out");
+
+	setarray 'x_mob[0], 48, 38, 30, 30, 29, 38, 47, 51, 50, 42, 33, 29;
+	setarray 'y_mob[0], 67, 67, 64, 58, 52, 52, 51, 45, 36, 36, 36, 35;
+
+	setarray 'x_merc[0], 29, 33, 42, 50, 51, 47, 38, 29, 30, 30, 38, 47;
+	setarray 'y_merc[0], 35, 36, 36, 36, 45, 51, 52, 52, 58, 64, 67, 67;
+
+	'size_coord = getarraysize('x_mob);
+	for ( .@i = 0; .@i < 'size_coord -1; .@i++ ) {
+		.@dist_mob[.@i+1] = distance( 'x_mob[.@i], 'y_mob[.@i], 'x_mob[.@i+1], 'y_mob[.@i+1] );
+		.@total_mob += .@dist_mob[.@i+1];
+		.@dist_merc[.@i+1] = distance( 'x_merc[.@i], 'y_merc[.@i], 'x_merc[.@i+1], 'y_merc[.@i+1] );
+		.@total_merc += .@dist_merc[.@i+1];
+	}
+	for ( .@i = 0; .@i < 'size_coord -1; .@i++ ) {
+		'dist_spot_AZ[.@i] = .@total_mob - .@dist_mob[.@i];
+		'dist_spot_ZA[.@i] = .@total_merc - .@dist_merc[.@i];
+	}
+	end;
+}

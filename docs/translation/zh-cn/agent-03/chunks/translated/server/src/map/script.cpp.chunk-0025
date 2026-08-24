@@ -1,0 +1,500 @@
+		if (fontColor)
+			intif_broadcast2(mes, (int32)strlen(mes)+1, strtol(fontColor, (char **)nullptr, 0), fontType, fontSize, fontAlign, fontY);
+		else
+			intif_broadcast(mes, (int32)strlen(mes)+1, flag&BC_COLOR_MASK);
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+static int32 buildin_announce_sub(block_list *bl, va_list ap)
+{
+	char *mes       = va_arg(ap, char *);
+	int32   len       = va_arg(ap, int32);
+	int32   type      = va_arg(ap, int32);
+	char *fontColor = va_arg(ap, char *);
+	int16 fontType  = (int16)va_arg(ap, int32);
+	int16 fontSize  = (int16)va_arg(ap, int32);
+	int16 fontAlign = (int16)va_arg(ap, int32);
+	int16 fontY     = (int16)va_arg(ap, int32);
+	if (fontColor)
+		clif_broadcast2(bl, mes, len, strtol(fontColor, (char **)nullptr, 0), fontType, fontSize, fontAlign, fontY, SELF);
+	else
+		clif_broadcast(bl, mes, len, type, SELF);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(mapannounce)
+{
+	const char *mapname   = script_getstr(st,2);
+	const char *mes       = script_getstr(st,3);
+	int32         flag      = script_getnum(st,4);
+	const char *fontColor = script_hasdata(st,5) ? script_getstr(st,5) : nullptr;
+	int32         fontType  = script_hasdata(st,6) ? script_getnum(st,6) : FW_NORMAL; // default fontType
+	int32         fontSize  = script_hasdata(st,7) ? script_getnum(st,7) : 12;    // default fontSize
+	int32         fontAlign = script_hasdata(st,8) ? script_getnum(st,8) : 0;     // default fontAlign
+	int32         fontY     = script_hasdata(st,9) ? script_getnum(st,9) : 0;     // default fontY
+	int16 m;
+
+	if ((m = map_mapname2mapid(mapname)) < 0)
+		return SCRIPT_CMD_SUCCESS;
+
+	map_foreachinmap(buildin_announce_sub, m, BL_PC,
+			mes, strlen(mes)+1, flag&BC_COLOR_MASK, fontColor, fontType, fontSize, fontAlign, fontY);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(areaannounce)
+{
+	const char *mapname   = script_getstr(st,2);
+	int32         x0        = script_getnum(st,3);
+	int32         y0        = script_getnum(st,4);
+	int32         x1        = script_getnum(st,5);
+	int32         y1        = script_getnum(st,6);
+	const char *mes       = script_getstr(st,7);
+	int32         flag      = script_getnum(st,8);
+	const char *fontColor = script_hasdata(st,9) ? script_getstr(st,9) : nullptr;
+	int32         fontType  = script_hasdata(st,10) ? script_getnum(st,10) : FW_NORMAL; // default fontType
+	int32         fontSize  = script_hasdata(st,11) ? script_getnum(st,11) : 12;    // default fontSize
+	int32         fontAlign = script_hasdata(st,12) ? script_getnum(st,12) : 0;     // default fontAlign
+	int32         fontY     = script_hasdata(st,13) ? script_getnum(st,13) : 0;     // default fontY
+	int16 m;
+
+	if ((m = map_mapname2mapid(mapname)) < 0)
+		return SCRIPT_CMD_SUCCESS;
+
+	map_foreachinallarea(buildin_announce_sub, m, x0, y0, x1, y1, BL_PC,
+		mes, strlen(mes)+1, flag&BC_COLOR_MASK, fontColor, fontType, fontSize, fontAlign, fontY);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(getusers)
+{
+	int32 flag, val = 0;
+	map_session_data* sd;
+	block_list* bl = nullptr;
+
+	flag = script_getnum(st,2);
+
+	switch(flag&0x07)
+	{
+		case 0:
+			if(flag&0x8)
+			{// npc
+				bl = map_id2bl(st->oid);
+			}
+			else if(script_rid2sd(sd))
+			{// pc
+				bl = sd;
+			}
+
+			if(bl)
+			{
+				val = map_getmapdata(bl->m)->users;
+			}
+			break;
+		case 1:
+			val = map_getusers();
+			break;
+		default:
+			ShowWarning("buildin_getusers: Unknown type %d.\n", flag);
+			script_pushint(st,0);
+			return SCRIPT_CMD_FAILURE;
+	}
+
+	script_pushint(st,val);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * getmapguildusers("mapname",guild ID) Returns the number guild members present on a map [Reddozen]
+ *------------------------------------------*/
+BUILDIN_FUNC(getmapguildusers)
+{
+	const char *str;
+	int16 m;
+	int32 gid;
+	int32 c=0;
+	str=script_getstr(st,2);
+	gid=script_getnum(st,3);
+	if ((m = map_mapname2mapid(str)) < 0) { // map id on this server (m == -1 if not in actual map-server)
+		script_pushint(st,-1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	auto g = guild_search(gid);
+
+	if (g){
+		uint16 i;
+		for(i = 0; i < g->guild.max_member; i++)
+		{
+			if (g->guild.member[i].sd && g->guild.member[i].sd->m == m)
+				c++;
+		}
+	}
+
+	script_pushint(st,c);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(getmapusers)
+{
+	const char *str;
+	int16 m;
+	str=script_getstr(st,2);
+	if( (m=map_mapname2mapid(str))< 0){
+		script_pushint(st,-1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	script_pushint(st,map_getmapdata(m)->users);
+	return SCRIPT_CMD_SUCCESS;
+}
+/*==========================================
+ *------------------------------------------*/
+static int32 buildin_getareausers_sub(block_list *bl,va_list ap)
+{
+	int32 *users = va_arg(ap, int32 *);
+	(*users)++;
+	return SCRIPT_CMD_SUCCESS;
+}
+
+BUILDIN_FUNC(getareausers)
+{
+	const char *str;
+	int16 m,x0,y0,x1,y1;
+	int32 users = 0;
+	str=script_getstr(st,2);
+	x0=script_getnum(st,3);
+	y0=script_getnum(st,4);
+	x1=script_getnum(st,5);
+	y1=script_getnum(st,6);
+	if( (m=map_mapname2mapid(str))< 0){
+		script_pushint(st,-1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	map_foreachinallarea(buildin_getareausers_sub,
+		m,x0,y0,x1,y1,BL_PC,&users);
+	script_pushint(st,users);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ * getunits(<type>{,<array_variable>[<first value>]})
+ * getmapunits(<type>,<"map name">{,<array_variable>[<first value>]})
+ * getareaunits(<type>,<"map name">,<x1>,<y1>,<x2>,<y2>{,<array_variable>[<first value>]})
+ *------------------------------------------*/
+BUILDIN_FUNC(getunits)
+{
+	block_list *bl = nullptr;
+	map_session_data *sd = nullptr;
+	struct script_data *data = nullptr;
+	char *command = (char *)script_getfuncname(st);
+	const char *str;
+	const char *name;
+	int32 type = script_getnum(st, 2);
+	int32 size = 0;
+	int32 idx, id;
+	int16 m = -1, x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+
+	if (!strcmp(command, "getmapunits"))
+	{
+		str = script_getstr(st, 3);
+		if ((m = map_mapname2mapid(str)) < 0) {
+			script_pushint(st, -1);
+			st->state = END;
+			ShowWarning("buildin_%s: Unknown map '%s'.\n", command, str);
+			return SCRIPT_CMD_FAILURE;
+		}
+		if (script_hasdata(st, 4))
+			data = script_getdata(st, 4);
+	}
+	else if (!strcmp(command, "getareaunits"))
+	{
+		str = script_getstr(st, 3);
+		if ((m = map_mapname2mapid(str)) < 0) {
+			script_pushint(st, -1);
+			st->state = END;
+			ShowWarning("buildin_%s: Unknown map '%s'.\n", command, str);
+			return SCRIPT_CMD_FAILURE;
+		}
+		x0 = min(script_getnum(st, 4), script_getnum(st, 6));
+		y0 = min(script_getnum(st, 5), script_getnum(st, 7));
+		x1 = max(script_getnum(st, 4), script_getnum(st, 6));
+		y1 = max(script_getnum(st, 5), script_getnum(st, 7));
+
+		if (script_hasdata(st, 8))
+			data = script_getdata(st, 8);
+	}
+	else
+	{
+		if (script_hasdata(st, 3))
+			data = script_getdata(st, 3);
+	}
+
+	if (data)
+	{
+		if (!data_isreference(data))
+		{
+			ShowError("buildin_%s: not a variable\n", command);
+			script_reportdata(data);
+			st->state = END;
+			return SCRIPT_CMD_FAILURE;
+		}
+		id = reference_getid(data);
+		idx = reference_getindex(data);
+		name = reference_getname(data);
+
+		if (not_server_variable(*name) && !script_rid2sd(sd)) {
+			ShowError("buildin_%s: Cannot use a player variable '%s' if no player is attached.\n", command, name);
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	struct s_mapiterator *iter = mapit_alloc(MAPIT_NORMAL, bl_type(type));
+	for (bl = (block_list*)mapit_first(iter); mapit_exists(iter); bl = (block_list*)mapit_next(iter))
+	{
+		if (m == -1 || (m == bl->m && !x0 && !y0 && !x1 && !y1) || (bl->m == m && (bl->x >= x0 && bl->y >= y0) && (bl->x <= x1 && bl->y <= y1)))
+		{
+			if( data ){
+				if( is_string_variable( name ) ){
+					set_reg_str( st, sd, reference_uid( id, idx + size ), name, status_get_name( *bl ), reference_getref( data ) );
+				}else{
+					set_reg_num( st, sd, reference_uid( id, idx + size ), name, bl->id, reference_getref( data ) );
+				}
+			}
+
+			size++;
+		}
+	}
+
+	mapit_free(iter);
+
+	script_pushint(st, size);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+static int32 buildin_getareadropitem_sub(block_list *bl,va_list ap)
+{
+	t_itemid nameid = va_arg(ap, t_itemid);
+	uint16 *amount = (uint16 *)va_arg(ap, int32 *);
+	flooritem_data *drop=(flooritem_data *)bl;
+
+	if(drop->item.nameid==nameid)
+		(*amount)+=drop->item.amount;
+
+	return SCRIPT_CMD_SUCCESS;
+}
+BUILDIN_FUNC(getareadropitem)
+{
+	const char *str;
+	int16 m,x0,y0,x1,y1;
+	t_itemid nameid;
+	uint16 amount = 0;
+
+	str=script_getstr(st,2);
+	x0=script_getnum(st,3);
+	y0=script_getnum(st,4);
+	x1=script_getnum(st,5);
+	y1=script_getnum(st,6);
+
+	if( script_isstring(st, 7) ){
+		const char *name = script_getstr(st, 7);
+		std::shared_ptr<item_data> item_data = item_db.searchname( name );
+
+		if( item_data )
+			nameid=item_data->nameid;
+		else{
+			ShowError( "buildin_getareadropitem: Unknown item %s\n", name );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}else{
+		nameid = script_getnum(st, 7);
+
+		if( !item_db.exists( nameid ) ){
+			ShowError( "buildin_getareadropitem: Unknown item id %u\n", nameid );
+			return SCRIPT_CMD_FAILURE;
+		}
+	}
+
+	if( (m=map_mapname2mapid(str))< 0){
+		script_pushint(st,-1);
+		return SCRIPT_CMD_SUCCESS;
+	}
+	map_foreachinallarea(buildin_getareadropitem_sub,
+		m,x0,y0,x1,y1,BL_ITEM,nameid,&amount);
+	script_pushint(st,amount);
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/*==========================================
+ *------------------------------------------*/
+BUILDIN_FUNC(enablenpc)
+{
+	npc_data* nd;
+	e_npcv_status flag = NPCVIEW_DISABLE;
+	const char* command = script_getfuncname(st);
+
+	if (script_hasdata(st, 2))
+		nd = npc_name2id(script_getstr(st,2));
+	else
+		nd = map_id2nd(st->oid);
+
+	if (!strcmp(command,"enablenpc"))
+		flag = NPCVIEW_ENABLE;
+	else if (!strcmp(command,"disablenpc"))
+		flag = NPCVIEW_DISABLE;
+	else if (!strcmp(command,"hideoffnpc"))
+		flag = NPCVIEW_HIDEOFF;
+	else if (!strcmp(command,"hideonnpc"))
+		flag = NPCVIEW_HIDEON;
+	else if (!strcmp(command,"cloakoffnpc") || !strcmp(command,"cloakoffnpcself"))
+		flag = NPCVIEW_CLOAKOFF;
+	else if (!strcmp(command,"cloakonnpc") || !strcmp(command,"cloakonnpcself"))
+		flag = NPCVIEW_CLOAKON;
+	else{
+		ShowError( "buildin_enablenpc: Undefined command \"%s\".\n", command );
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	if (!nd) {
+		if (script_hasdata(st, 2))
+			ShowError("buildin_%s: Attempted to %s a non-existing NPC '%s' (flag=%d).\n", (flag & NPCVIEW_VISIBLE) ? "show" : "hide", command, script_getstr(st,2), flag);
+		else
+			ShowError("buildin_%s: Attempted to %s a non-existing NPC (flag=%d).\n", (flag & NPCVIEW_VISIBLE) ? "show" : "hide", command, flag);
+		return SCRIPT_CMD_FAILURE;
+	}
+
+	int32 char_id = 0;
+
+	if (script_hasdata(st, 3))
+		char_id = script_getnum(st, 3);
+	else if (!strcmp(command,"cloakoffnpcself") || !strcmp(command,"cloakonnpcself")) {
+		map_session_data* sd;
+
+		if (!script_rid2sd(sd))
+			return SCRIPT_CMD_SUCCESS;
+
+		char_id = sd->status.char_id;
+	}
+
+	if (npc_enable_target(*nd, char_id, flag))
+		return SCRIPT_CMD_SUCCESS;
+
+	return SCRIPT_CMD_FAILURE;
+}
+
+/* Starts a status effect on the target unit or on the attached player.
+ *
+ * sc_start  <effect_id>,<duration>,<val1>{,<rate>,<flag>,{<unit_id>}};
+ * sc_start2 <effect_id>,<duration>,<val1>,<val2>{,<rate,<flag>,{<unit_id>}};
+ * sc_start4 <effect_id>,<duration>,<val1>,<val2>,<val3>,<val4>{,<rate,<flag>,{<unit_id>}};
+ * <flag>: enum e_status_change_start_flags
+ */
+BUILDIN_FUNC(sc_start)
+{
+	TBL_NPC * nd = map_id2nd(st->oid);
+	block_list* bl;
+	enum sc_type type;
+	int32 tick, val1, val2, val3, val4=0, rate, flag;
+	char start_type;
+	const char* command = script_getfuncname(st);
+
+	if(strstr(command, "4"))
+		start_type = 4;
+	else if(strstr(command, "2"))
+		start_type = 2;
+	else
+		start_type = 1;
+
+	type = (sc_type)script_getnum(st,2);
+	tick = script_getnum(st,3);
+	val1 = script_getnum(st,4);
+
+	//If from NPC we make default flag 1 to be unavoidable
+	if(nd && nd->id == fake_nd->id)
+		flag = script_hasdata(st,5+start_type)?script_getnum(st,5+start_type):SCSTART_NOTICKDEF;
+	else
+		flag = script_hasdata(st,5+start_type)?script_getnum(st,5+start_type):SCSTART_NOAVOID;
+
+	rate = script_hasdata(st,4+start_type)?min(script_getnum(st,4+start_type),10000):10000;
+
+	if(script_hasdata(st,(6+start_type)))
+		bl = map_id2bl(script_getnum(st,(6+start_type)));
+	else
+		bl = map_id2bl(st->rid);
+
+	uint16 skill_id;
+
+	if(tick == 0 && val1 > 0 && type > SC_NONE && type < SC_MAX && (skill_id = status_db.getSkill(type)) > 0)
+	{// When there isn't a duration specified, try to get it from the skill_db
+		tick = skill_get_time(skill_id, val1);
+	}
+
+	if(potion_flag == 1 && potion_target) { //skill.cpp set the flags before running the script, this is a potion-pitched effect.
+		bl = map_id2bl(potion_target);
+		tick /= 2;// Thrown potions only last half.
+		val4 = 1;// Mark that this was a thrown sc_effect
+	}
+
+	if(!bl)
+		return SCRIPT_CMD_SUCCESS;
+
+	switch(start_type) {
+		case 1:
+			status_change_start(bl, bl, type, rate, val1, 0, 0, val4, tick, flag);
+			break;
+		case 2:
+			val2 = script_getnum(st,5);
+			status_change_start(bl, bl, type, rate, val1, val2, 0, val4, tick, flag);
+			break;
+		case 4:
+			val2 = script_getnum(st,5);
+			val3 = script_getnum(st,6);
+			val4 = script_getnum(st,7);
+			status_change_start(bl, bl, type, rate, val1, val2, val3, val4, tick, flag);
+			break;
+	}
+	return SCRIPT_CMD_SUCCESS;
+}
+
+/// Ends one or all status effects on the target unit or on the attached player.
+///
+/// sc_end <effect_id>{,<unit_id>};
+BUILDIN_FUNC(sc_end)
+{
+	block_list* bl;
+	int32 type;
+
+	type = script_getnum(st, 2);
+	if (script_hasdata(st, 3))
+		bl = map_id2bl(script_getnum(st, 3));
+	else
+		bl = map_id2bl(st->rid);
+
+	if (potion_flag == 1 && potion_target) //##TODO how does this work [FlavioJS]
+		bl = map_id2bl(potion_target);
+
+	if (!bl)
+		return SCRIPT_CMD_SUCCESS;
+
+	if (type > SC_NONE && type < SC_MAX) {
+		status_change *sc = status_get_sc(bl);
+
+		if (sc == nullptr)
+			return SCRIPT_CMD_SUCCESS;
+
+		struct status_change_entry *sce = sc->getSCE(type);
+
+		if (sce == nullptr)
+			return SCRIPT_CMD_SUCCESS;
+
+		std::shared_ptr<s_status_change_db> sc_db = status_db.find( type );
+

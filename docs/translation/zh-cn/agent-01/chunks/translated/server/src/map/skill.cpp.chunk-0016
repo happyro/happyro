@@ -1,0 +1,500 @@
+								break;
+							case 3:
+								sc_start(ss, bl, SC_DEEPSLEEP, sg->val1*5, sg->skill_lv, skill_get_time2(sg->skill_id, sg->skill_lv));
+								break;
+						}
+						break;
+				}
+			} else
+				sc_start2(ss, bl,type,100,sg->val1,sg->val2,skill_get_time2(sg->skill_id, sg->skill_lv));
+			break;
+
+		case UNT_POISON_MIST:
+			skill_attack(BF_MAGIC, ss, unit, bl, sg->skill_id, sg->skill_lv, tick, 0);
+			status_change_start(ss, bl, SC_POISON_MIST, (10 + 10 * sg->skill_lv)*100, sg->skill_lv, sg->skill_id, 0, 0, skill_get_time2(sg->skill_id, sg->skill_lv), SCSTART_NOTICKDEF|SCSTART_NORATEDEF);
+			break;
+
+		case UNT_CHAOSPANIC:
+			if (tsc && tsc->getSCE(type))
+				break;
+			status_change_start(ss, bl, type, 3500 + (sg->skill_lv * 1500), sg->skill_lv, 0, 0, 1, skill_get_time2(sg->skill_id, sg->skill_lv), SCSTART_NOAVOID|SCSTART_NORATEDEF|SCSTART_NOTICKDEF);
+			break;
+
+		case UNT_B_TRAP:
+			if (tsc && tsc->getSCE(type))
+				break;
+			sc_start(ss, bl, type, 100, sg->skill_lv, skill_get_time2(sg->skill_id,sg->skill_lv));
+			unit->val2++; // Mark as ever been used
+			break;
+
+		case UNT_FIRE_RAIN:
+			clif_skill_damage( *ss, *bl, tick, status_get_amotion(ss), 0,
+				skill_attack(skill_get_type(sg->skill_id),ss,unit,bl,sg->skill_id,sg->skill_lv,tick,SD_ANIMATION|SD_SPLASH),
+				1, sg->skill_id, sg->skill_lv, DMG_SINGLE );
+			break;
+
+		case UNT_MAGMA_ERUPTION:
+			skill_attack(skill_get_type(NC_MAGMA_ERUPTION_DOTDAMAGE), ss, unit, bl, NC_MAGMA_ERUPTION_DOTDAMAGE, sg->skill_lv, tick, 0);
+			if (sg->skill_id == NC_MAGMA_ERUPTION)
+				skill_attack(skill_get_type(NC_MAGMA_ERUPTION_DOTDAMAGE), ss, unit, bl, NC_MAGMA_ERUPTION_DOTDAMAGE, sg->skill_lv, tick, 0);
+			else
+				skill_attack(skill_get_type(NPC_MAGMA_ERUPTION_DOTDAMAGE), ss, unit, bl, NPC_MAGMA_ERUPTION_DOTDAMAGE, sg->skill_lv, tick, 0);
+			break;
+
+		case UNT_ACIDIFIED_ZONE_WATER:
+			skill_attack(skill_get_type(BO_ACIDIFIED_ZONE_WATER_ATK), ss, unit, bl, BO_ACIDIFIED_ZONE_WATER_ATK, sg->skill_lv, tick, 0);
+			break;
+
+		case UNT_ACIDIFIED_ZONE_GROUND:
+			skill_attack(skill_get_type(BO_ACIDIFIED_ZONE_GROUND_ATK), ss, unit, bl, BO_ACIDIFIED_ZONE_GROUND_ATK, sg->skill_lv, tick, 0);
+			break;
+
+		case UNT_ACIDIFIED_ZONE_WIND:
+			skill_attack(skill_get_type(BO_ACIDIFIED_ZONE_WIND_ATK), ss, unit, bl, BO_ACIDIFIED_ZONE_WIND_ATK, sg->skill_lv, tick, 0);
+			break;
+
+		case UNT_ACIDIFIED_ZONE_FIRE:
+			skill_attack(skill_get_type(BO_ACIDIFIED_ZONE_FIRE_ATK), ss, unit, bl, BO_ACIDIFIED_ZONE_FIRE_ATK, sg->skill_lv, tick, 0);
+			break;
+
+		case UNT_ASTRAL_STRIKE:
+			skill_attack(skill_get_type(AG_ASTRAL_STRIKE_ATK), ss, unit, bl, AG_ASTRAL_STRIKE_ATK, sg->skill_lv, tick, 0);
+			break;
+
+		case UNT_ABYSS_SQUARE: {
+				int16 flag = 0;
+
+				// Check to see if the caster is in the AoE.
+				if (distance_bl(ss, unit) <= unit->range)
+					flag |= 2; // If yes, skill hits twice.
+
+				skill_attack(skill_get_type(sg->skill_id), ss, unit, bl, sg->skill_id, sg->skill_lv, tick, flag);
+			}
+			break;
+
+		case UNT_TOTEM_OF_TUTELARY:
+			if( bl->type == BL_PC ) {
+				if (tsc != nullptr && tsc->option&OPTION_MADOGEAR)
+					break;
+
+				int32 hp = 500;
+
+				hp += 500 * sg->skill_lv;
+				hp += 50 * pc_checkskill( BL_CAST( BL_PC, ss ), SOA_TALISMAN_MASTERY ) * sg->skill_lv;
+				hp += 5 * status_get_crt( ss ) * sg->skill_lv;
+				hp *= status_get_lv( ss ) / 100;
+
+				int32 sp = 0;
+
+				sp += 50 * sg->skill_lv;
+				sp += 5 * pc_checkskill( BL_CAST( BL_PC, ss ), SOA_TALISMAN_MASTERY ) * sg->skill_lv;
+				sp += 5 * status_get_crt( ss ) * sg->skill_lv;
+				sp *= status_get_lv( ss ) / 100;
+
+				status_heal( bl, hp, sp, 0, 2 );
+
+				sc_start( ss, bl, skill_get_sc( sg->skill_id ), 100, sg->skill_lv, sg->interval + 100 );
+			} 
+			break;
+
+		case UNT_HYUN_ROKS_BREEZE:
+			skill_attack(skill_get_type(sg->skill_id), ss, ss, bl, sg->skill_id, sg->skill_lv, tick, SD_ANIMATION);
+ 			break;
+	}
+
+	if (bl->type == BL_MOB && ss != bl)
+		mobskill_event((TBL_MOB*)bl, ss, tick, MSC_SKILLUSED|(skill_id<<16));
+
+	return skill_id;
+}
+
+/**
+ * Triggered when a char steps out of a skill unit
+ * @param src Skill unit from char moved out
+ * @param bl Char
+ * @param tick
+ */
+int32 skill_unit_onout(skill_unit *src, block_list *bl, t_tick tick)
+{
+	status_change *sc;
+	struct status_change_entry *sce;
+	enum sc_type type;
+
+	nullpo_ret(src);
+	nullpo_ret(bl);
+
+	std::shared_ptr<s_skill_unit_group> sg = src->group;
+
+	if (sg == nullptr)
+		return 0;
+
+	sc = status_get_sc(bl);
+	type = skill_get_sc(sg->skill_id);
+	sce = (sc && type != SC_NONE)?sc->getSCE(type):nullptr;
+
+	if (bl->prev == nullptr || (status_isdead(*bl) && sg->unit_id != UNT_ANKLESNARE)) //Need to delete the trap if the source died.
+		return 0;
+
+	switch(sg->unit_id){
+		case UNT_SAFETYWALL:
+		case UNT_PNEUMA:
+		case UNT_EPICLESIS://Arch Bishop
+		case UNT_TOTEM_OF_TUTELARY:
+			if (sce)
+				status_change_end(bl, type);
+			break;
+
+#ifndef RENEWAL
+		case UNT_BASILICA:
+			if (sce && sce->val4 != bl->id)
+				status_change_end(bl, type);
+			break;
+#endif
+
+		case UNT_HERMODE:	//Clear Hermode if the owner moved.
+			if (sce && sce->val3 == BCT_SELF && sce->val4 == sg->group_id)
+				status_change_end(bl, type);
+			break;
+
+		case UNT_DISSONANCE:
+		case UNT_UGLYDANCE:
+		case UNT_WHISTLE:
+		case UNT_ASSASSINCROSS:
+		case UNT_POEMBRAGI:
+		case UNT_APPLEIDUN:
+		case UNT_HUMMING:
+		case UNT_DONTFORGETME:
+		case UNT_FORTUNEKISS:
+		case UNT_SERVICEFORYOU:
+			if (sg->src_id==bl->id && !(sc && sc->getSCE(SC_SPIRIT) && sc->getSCE(SC_SPIRIT)->val2 == SL_BARDDANCER))
+				return -1;
+	}
+	return sg->skill_id;
+}
+
+/**
+ * Triggered when a char steps out of a skill group (entirely) [Skotlex]
+ * @param skill_id Skill ID
+ * @param bl A char
+ * @param tick
+ */
+int32 skill_unit_onleft(uint16 skill_id, block_list *bl, t_tick tick)
+{
+	status_change *sc;
+	struct status_change_entry *sce;
+	enum sc_type type;
+
+	sc = status_get_sc(bl);
+	if (sc != nullptr && sc->empty())
+		sc = nullptr;
+
+	type = skill_get_sc(skill_id);
+	sce = (sc && type != SC_NONE)?sc->getSCE(type):nullptr;
+
+	switch (skill_id)
+	{
+		case WZ_QUAGMIRE:
+			if (bl->type==BL_MOB)
+				break;
+			if (sce)
+				status_change_end(bl, type);
+			break;
+
+		case BD_LULLABY:
+		case BD_RICHMANKIM:
+		case BD_ETERNALCHAOS:
+		case BD_DRUMBATTLEFIELD:
+		case BD_RINGNIBELUNGEN:
+		case BD_ROKISWEIL:
+		case BD_INTOABYSS:
+		case BD_SIEGFRIED:
+			if(sc && sc->getSCE(SC_DANCING) && (sc->getSCE(SC_DANCING)->val1&0xFFFF) == skill_id)
+			{	//Check if you just stepped out of your ensemble skill to cancel dancing. [Skotlex]
+				//We don't check for SC_LONGING because someone could always have knocked you back and out of the song/dance.
+				//FIXME: This code is not perfect, it doesn't checks for the real ensemble's owner,
+				//it only checks if you are doing the same ensemble. So if there's two chars doing an ensemble
+				//which overlaps, by stepping outside of the other parther's ensemble will cause you to cancel
+				//your own. Let's pray that scenario is pretty unlikely and noone will complain too much about it.
+				status_change_end(bl, SC_DANCING);
+			}
+			// Sleep effect of Lullaby doesn't end even if song ends
+			if (skill_id == BD_LULLABY)
+				break;
+			[[fallthrough]];
+		case MH_STEINWAND:
+		case MG_SAFETYWALL:
+		case AL_PNEUMA:
+		case SA_VOLCANO:
+		case SA_DELUGE:
+		case SA_VIOLENTGALE:
+		case CG_HERMODE:
+#ifndef RENEWAL
+		case HW_GRAVITATION:
+		case HP_BASILICA:
+#endif
+		case NJ_SUITON:
+		case SC_MAELSTROM:
+		case EL_WATER_BARRIER:
+		case EL_ZEPHYR:
+		case EL_POWER_OF_GAIA:
+		case SO_WARMER:
+		case SO_FIRE_INSIGNIA:
+		case SO_WATER_INSIGNIA:
+		case SO_WIND_INSIGNIA:
+		case SO_EARTH_INSIGNIA:
+		case SJ_BOOKOFCREATINGSTAR:
+		case SC_BLOODYLUST:
+		case GN_FIRE_EXPANSION_SMOKE_POWDER:
+		case GN_FIRE_EXPANSION_TEAR_GAS:
+		case LG_KINGS_GRACE:
+		case NC_STEALTHFIELD:
+		case NC_NEUTRALBARRIER:
+		case SU_NYANGGRASS:
+			if (sce)
+				status_change_end(bl, type);
+			break;
+		case BA_POEMBRAGI:
+		case BA_WHISTLE:
+		case BA_ASSASSINCROSS:
+		case BA_APPLEIDUN:
+		case DC_HUMMING:
+		case DC_DONTFORGETME:
+		case DC_FORTUNEKISS:
+		case DC_SERVICEFORYOU:
+			if (bl->type == BL_PC && sce && sce->val4 == 0)
+			{
+				delete_timer(sce->timer, status_change_timer);
+				//NOTE: It'd be nice if we could get the skill_lv for a more accurate extra time, but alas...
+				//not possible on our current implementation.
+				t_tick duration = skill_get_time2(skill_id, 1);
+				sce->val4 = 1; //Store the fact that this is a "reduced" duration effect.
+				sce->timer = add_timer(tick + duration, status_change_timer, bl->id, type);
+				// Update icon duration
+				if (battle_config.refresh_song_icon == 1) {
+					if (auto scdb = status_db.find(type); scdb != nullptr)
+						clif_status_change(bl, static_cast<int32>(scdb->icon), 1, duration, 1, 0, 0);
+				}
+			}
+			// Non-players don't have lingering effects
+			else if (bl->type != BL_PC)
+				status_change_end(bl, type);
+			break;
+		case PF_FOGWALL:
+			if (sce)
+			{
+				status_change_end(bl, type);
+				if ((sce=sc->getSCE(SC_BLIND)))
+				{
+					if (bl->type == BL_PC) //Players get blind ended inmediately, others have it still for 30 secs. [Skotlex]
+						status_change_end(bl, SC_BLIND);
+					else {
+						delete_timer(sce->timer, status_change_timer);
+						sce->timer = add_timer(30000+tick, status_change_timer, bl->id, SC_BLIND);
+					}
+				}
+			}
+			break;
+		case GD_LEADERSHIP:
+		case GD_GLORYWOUNDS:
+		case GD_SOULCOLD:
+		case GD_HAWKEYES:
+			if( !(sce && sce->val4) )
+				status_change_end(bl, type);
+			break;
+	}
+
+	return skill_id;
+}
+
+/*==========================================
+ * Invoked when a unit cell has been placed/removed/deleted.
+ * flag values:
+ * flag&1: Invoke onplace function (otherwise invoke onout)
+ * flag&4: Invoke a onleft call (the unit might be scheduled for deletion)
+ * flag&8: Skip dissonance check
+ *------------------------------------------*/
+static int32 skill_unit_effect(block_list* bl, va_list ap)
+{
+	skill_unit* unit = va_arg(ap,skill_unit*);
+	t_tick tick = va_arg(ap,t_tick);
+	uint32 flag = va_arg(ap,uint32);
+	uint16 skill_id;
+	bool dissonance = false;
+	bool isTarget = false;
+
+	if( (!unit->alive && !(flag&4)) || bl->prev == nullptr )
+		return 0;
+
+	std::shared_ptr<s_skill_unit_group> group = unit->group;
+
+	if (group == nullptr)
+		return 0;
+
+	if( !(flag&8) )
+		dissonance = skill_dance_switch(unit, false);
+
+	//Target-type check.
+	isTarget = group->bl_flag & bl->type && battle_check_target(unit, bl, group->target_flag) > 0;
+
+	//Necessary in case the group is deleted after calling on_place/on_out [Skotlex]
+	skill_id = group->skill_id;
+	if( isTarget ){
+		if( flag&1 )
+			skill_unit_onplace(unit,bl,tick);
+		else {
+			if( skill_unit_onout(unit,bl,tick) == -1 )
+				return 0; // Don't let a Bard/Dancer update their own song timer
+		}
+
+		if( flag&4 )
+			skill_unit_onleft(skill_id, bl, tick);
+	} else if( !isTarget && flag&4 && ( group->state.song_dance&0x1 || ( group->src_id == bl->id && group->state.song_dance&0x2 ) ) )
+		skill_unit_onleft(skill_id, bl, tick);//Ensemble check to terminate it.
+
+	if( dissonance )
+		skill_dance_switch(unit, true);
+
+	return 0;
+}
+
+/**
+ * Check skill unit while receiving damage
+ * @param unit Skill unit
+ * @param damage Received damage
+ * @return Damage
+ */
+int64 skill_unit_ondamaged(skill_unit *unit, int64 damage)
+{
+	nullpo_ret(unit);
+
+	std::shared_ptr<s_skill_unit_group> sg = unit->group;
+
+	if (sg == nullptr)
+		return 0;
+
+	switch( sg->unit_id ) {
+		case UNT_BLASTMINE:
+		case UNT_SKIDTRAP:
+		case UNT_LANDMINE:
+		case UNT_SHOCKWAVE:
+		case UNT_SANDMAN:
+		case UNT_FLASHER:
+		case UNT_CLAYMORETRAP:
+		case UNT_FREEZINGTRAP:
+		case UNT_ANKLESNARE:
+		case UNT_ICEWALL:
+		case UNT_WALLOFTHORN:
+		case UNT_REVERBERATION:
+		case UNT_NETHERWORLD:
+			unit->val1 -= (int32)cap_value(damage,INT_MIN,INT_MAX);
+			break;
+		default:
+			damage = 0;
+			break;
+	}
+
+	return damage;
+}
+
+/**
+ * Check char condition around the skill caster
+ * @param bl Char around area
+ * @param *c Counter for 'valid' condition found
+ * @param *p_sd Stores 'rid' of char found
+ * @param skill_id Skill ID
+ * @param skill_lv Level of used skill
+ */
+int32 skill_check_condition_char_sub (block_list *bl, va_list ap)
+{
+	int32 *c, skill_id;
+	block_list *src;
+	map_session_data *sd;
+	map_session_data *tsd;
+	int32 *p_sd;	//Contains the list of characters found.
+
+	nullpo_ret(bl);
+	nullpo_ret(tsd=(map_session_data*)bl);
+	nullpo_ret(src=va_arg(ap,block_list *));
+	nullpo_ret(sd=(map_session_data*)src);
+
+	c=va_arg(ap,int32 *);
+	p_sd = va_arg(ap, int32 *);
+	skill_id = va_arg(ap,int32);
+
+	bool is_chorus = skill_get_inf2(skill_id, INF2_ISCHORUS);
+
+	if (skill_id == PR_BENEDICTIO) {
+		if (*c >= 2) // Check for two companions for Benedictio. [Skotlex]
+			return 0;
+	}
+	else if (is_chorus) {
+		if (*c == MAX_PARTY) // Check for partners for Chorus; Cap if the entire party is accounted for.
+			return 0;
+	}
+	else if (*c >= 1) // Check for one companion for all other cases.
+		return 0;
+
+	if (bl == src)
+		return 0;
+
+	if(pc_isdead(tsd))
+		return 0;
+
+	if (tsd->sc.cant.cast)
+		return 0;
+
+	if( is_chorus ) {
+		if( tsd->status.party_id && sd->status.party_id &&
+				tsd->status.party_id == sd->status.party_id &&
+				(tsd->class_&MAPID_THIRDMASK) == MAPID_MINSTRELWANDERER )
+			p_sd[(*c)++] = tsd->id;
+		return 1;
+	} else {
+
+		switch(skill_id) {
+			case PR_BENEDICTIO: {
+				uint8 dir = map_calc_dir(sd,tsd->x,tsd->y);
+				dir = (unit_getdir(sd) + dir)%8; //This adjusts dir to account for the direction the sd is facing.
+				if ((tsd->class_&MAPID_FIRSTMASK) == MAPID_ACOLYTE && (dir == 2 || dir == 6) //Must be standing to the left/right of Priest.
+					&& sd->status.sp >= 10)
+					p_sd[(*c)++]=tsd->id;
+				return 1;
+			}
+			case AB_ADORAMUS:
+			// Adoramus does not consume Blue Gemstone when there is at least 1 Priest class next to the caster
+				if( (tsd->class_&MAPID_SECONDMASK) == MAPID_PRIEST )
+					p_sd[(*c)++] = tsd->id;
+				return 1;
+			case TR_GEF_NOCTURN:
+			case TR_ROKI_CAPRICCIO:
+			case TR_AIN_RHAPSODY:
+			case TR_MUSICAL_INTERLUDE:
+			case TR_JAWAII_SERENADE:
+			case TR_NIPELHEIM_REQUIEM:
+			case TR_PRON_MARCH:// Does the partner's learned skill level affects anything? [Rytech]
+				if (sd->status.sex != tsd->status.sex && (tsd->class_&MAPID_FOURTHMASK) == MAPID_TROUBADOURTROUVERE &&
+					sd->status.party_id && tsd->status.party_id && sd->status.party_id == tsd->status.party_id)
+					p_sd[(*c)++] = tsd->id;
+				return 1;
+			default: //Warning: Assuming Ensemble Dance/Songs for code speed. [Skotlex]
+				{
+					uint16 skill_lv;
+					if(pc_issit(tsd) || !unit_can_move(tsd))
+						return 0;
+					if (sd->status.sex != tsd->status.sex &&
+							(tsd->class_&MAPID_SECONDMASK) == MAPID_BARDDANCER &&
+							(skill_lv = pc_checkskill(tsd, skill_id)) > 0 &&
+							(tsd->weapontype1==W_MUSICAL || tsd->weapontype1==W_WHIP) &&
+							sd->status.party_id && tsd->status.party_id &&
+							sd->status.party_id == tsd->status.party_id &&
+							!tsd->sc.getSCE(SC_DANCING))
+					{
+						p_sd[(*c)++]=tsd->id;
+						return skill_lv;
+					}
+				}
+				break;
+		}
+
+	}
+	return 0;

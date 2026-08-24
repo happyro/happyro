@@ -1,0 +1,500 @@
+/**
+ * UI/Components/Navigation/Navigation.js
+ *
+ * Navigation window for NAVI links
+ *
+ * This file is part of ROBrowser, (http://www.robrowser.com/).
+ *
+ * @author Vincent Thibault
+ */
+
+import KEYS from 'Controls/KeyEventHandler.js';
+import Renderer from 'Renderer/Renderer.js';
+import MapRenderer from 'Renderer/MapRenderer.js';
+import UIManager from 'UI/UIManager.js';
+import GUIComponent from 'UI/GUIComponent.js';
+import 'UI/Elements/Elements.js';
+import Altitude from 'Renderer/Map/Altitude.js';
+import Session from 'Engine/SessionStorage.js';
+import Client from 'Core/Client.js';
+import DB from 'DB/DBManager.js';
+import htmlText from './Navigation.html?raw';
+import cssText from './Navigation.css?raw';
+import MapPathFinder from './MapPathFinder.js';
+
+/**
+ * Create Navigation component
+ */
+const Navigation = new GUIComponent('Navigation', cssText);
+
+Navigation.render = () => htmlText;
+
+/**
+ * Async image create helper
+ */
+function createAsyncImage() {
+	const img = new Image();
+	img.decoding = 'async';
+	return img;
+}
+
+/**
+ * @var {Image} arrow image
+ */
+const _arrow = createAsyncImage();
+
+/**
+ * @var {Image} map information images
+ */
+const _toolDealer = createAsyncImage();
+const _weaponDealer = createAsyncImage();
+const _armorDealer = createAsyncImage();
+const _blacksmith = createAsyncImage();
+const _guide = createAsyncImage();
+const _inn = createAsyncImage();
+const _kafra = createAsyncImage();
+
+/**
+ * @var {Image} minimap image
+ */
+const _map = createAsyncImage();
+
+/**
+ * @var {CanvasRenderingContext2D} canvas context
+ */
+let _ctx = null;
+
+/**
+ * @var {Array} town information
+ */
+let _towninfo = [];
+
+/**
+ * @var {Array} markers on the map
+ */
+const _markers = [];
+
+/**
+ * @var {Array} path points
+ */
+let _path = [];
+
+/**
+ * @var {number} Last time the path was recalculated
+ */
+let _lastPathUpdate = 0;
+
+/**
+ * @var {number} Minimum time between path recalculations (in ms)
+ */
+const _pathUpdateThrottle = 500;
+
+/**
+ * @var {boolean} Lock for path update
+ */
+let _pathUpdateLock = false;
+
+/**
+ * @var {Worker} pathfinding worker
+ */
+let _pathFindingWorker = null;
+
+/**
+ * @var {Object} map data
+ */
+let _mapData = null;
+
+/**
+ * @var {Object} target data
+ */
+let _targetData = null;
+
+/**
+ * @var {Object} final target data
+ */
+let _finalTargetData = null;
+
+/**
+ * @var {boolean} was target set by map click
+ */
+let _isMapClickTarget = false;
+
+/**
+ * @var {boolean} blinking state for target coordinates
+ */
+let _blinking = false;
+
+/**
+ * @var {number} fade interval ID for blinking
+ */
+let _fadeInterval = null;
+
+/**
+ * @var {string} original color for blinking restore
+ */
+let _originalColor = '';
+
+/**
+ * Document click handler reference for cleanup
+ */
+let _documentClickHandler = null;
+
+/**
+ * Local utility functions
+ */
+
+/**
+ * Normalize a map name (remove .gat extension)
+ */
+function normalizeMapName(mapName) {
+	mapName = mapName.replace(/\.gat$/, '').toLowerCase();
+	mapName = mapName.replace(/^(.+)_[a-d]$/, '$1');
+	return mapName;
+}
+
+/**
+ * Format coordinates with consistent styling
+ */
+function formatCoordinates(x, y, options) {
+	options = options || {};
+	const shouldFloor = options.floor !== false;
+
+	if (shouldFloor) {
+		return `${Math.floor(x)},${Math.floor(y)}`;
+	}
+	return `${x},${y}`;
+}
+
+/**
+ * Format target coordinates text with consistent styling
+ */
+function formatTargetCoordinates(x, y, options) {
+	options = options || {};
+
+	let text = `${Math.floor(x)},${Math.floor(y)}`;
+
+	if (options.noPathFound) {
+		text += ' (no path found)';
+	} else if (options.targetMap && options.targetMap !== getCurrentMap()) {
+		text += ` (${options.targetMap})`;
+	}
+
+	return text;
+}
+
+/**
+ * Format location title with consistent styling
+ */
+function formatLocationTitle(currentMap, targetMap, displayName) {
+	let text;
+
+	if (!displayName && targetMap && currentMap !== targetMap) {
+		text = `[${currentMap} → ${targetMap}]`;
+	} else {
+		text = `[${displayName || currentMap}]`;
+	}
+
+	return text;
+}
+
+/**
+ * Convert map coordinates to screen coordinates
+ */
+function mapToScreen(x, y, width, height) {
+	const scaleX = width / _mapData.width;
+	const scaleY = height / _mapData.height;
+	const scale = Math.min(scaleX, scaleY);
+
+	const mapWidth = _mapData.width * scale;
+	const mapHeight = _mapData.height * scale;
+
+	const offsetX = (width - mapWidth) / 2;
+	const offsetY = (height - mapHeight) / 2;
+
+	const screenX = (x / _mapData.width) * mapWidth + offsetX;
+	const screenY = ((_mapData.height - y) / _mapData.height) * mapHeight + offsetY;
+
+	return { x: screenX, y: screenY };
+}
+
+/**
+ * Get the current map name
+ */
+function getCurrentMap() {
+	if (MapRenderer && MapRenderer.currentMap) {
+		return normalizeMapName(MapRenderer.currentMap);
+	}
+}
+
+/**
+ * Get the current player position
+ */
+function getPlayerPosition() {
+	if (!Session.Entity || !Session.Entity.position) {
+		return { x: 0, y: 0 };
+	}
+	const currentX = Math.ceil(Session.Entity.position[0]);
+	const currentY = Math.ceil(Session.Entity.position[1]);
+
+	return { x: currentX, y: currentY };
+}
+
+/**
+ * Terminate the pathfinding worker
+ */
+function terminatePathFindingWorker() {
+	if (_pathFindingWorker) {
+		_pathFindingWorker.terminate();
+		_pathFindingWorker = null;
+	}
+}
+
+/**
+ * Initialize the pathfinding worker
+ */
+function initializePathFindingWorker() {
+	if (!_pathFindingWorker) {
+		_pathFindingWorker = new Worker(new URL('./PathFindingWorker.js', import.meta.url).href);
+		_pathFindingWorker.id = new Date().getTime().toString();
+		_pathFindingWorker.onmessage = function (e) {
+			const data = e.data;
+			switch (data.type) {
+				case 'pathResult':
+					_pathUpdateLock = false;
+					if (_finalTargetData && data.path && data.workerId === _pathFindingWorker.id) {
+						const mapName = getCurrentMap();
+						_path = data.path;
+						if (_path.length > 0) {
+							this.updateTargetText();
+							this.setTargetCoordinatesBlinking(false);
+							this.setLocationTitle(mapName, _finalTargetData.map, _finalTargetData.displayName);
+						} else {
+							this.updateTargetText(true);
+							this.setTargetCoordinatesBlinking(false);
+							this.setLocationTitle(mapName, null);
+						}
+					}
+					break;
+			}
+		}.bind(Navigation);
+	}
+}
+
+function resetPathFindingWorker() {
+	terminatePathFindingWorker();
+	initializePathFindingWorker();
+}
+
+/**
+ * Convert screen coordinates to map coordinates
+ */
+Navigation.screenToMapCoordinates = function screenToMapCoordinates(screenX, screenY) {
+	const width = 280;
+	const height = 230;
+
+	const scaleX = width / _mapData.width;
+	const scaleY = height / _mapData.height;
+	const scale = Math.min(scaleX, scaleY);
+
+	const scaledMapWidth = _mapData.width * scale;
+	const scaledMapHeight = _mapData.height * scale;
+
+	const offsetX = (width - scaledMapWidth) / 2;
+	const offsetY = (height - scaledMapHeight) / 2;
+
+	let mapX = ((screenX - offsetX) / scaledMapWidth) * _mapData.width;
+	let mapY = _mapData.height - ((screenY - offsetY) / scaledMapHeight) * _mapData.height;
+
+	mapX = Math.max(0, Math.min(_mapData.width, mapX));
+	mapY = Math.max(0, Math.min(_mapData.height, mapY));
+
+	return { x: Math.floor(mapX), y: Math.floor(mapY) };
+};
+
+/**
+ * Initialize component
+ */
+Navigation.init = function init() {
+	const root = Navigation.getRoot();
+
+	_mapData = {
+		walkableType: Altitude.TYPE.WALKABLE
+	};
+
+	this._host.style.top = `${Math.max(0, Math.min(Renderer.height - 300, 200))}px`;
+	this._host.style.left = `${Math.max(0, Math.min(Renderer.width - 300, 200))}px`;
+
+	// Get canvas context
+	const canvas = document.createElement('canvas');
+	canvas.width = 280;
+	canvas.height = 230;
+	_ctx = canvas.getContext('2d');
+	const mapDisplay = root.querySelector('.map-display');
+	if (mapDisplay) {
+		mapDisplay.appendChild(canvas);
+	}
+
+	// Load arrow image
+	Client.loadFile(`${DB.INTERFACE_PATH}map/map_arrow.bmp`, dataURI => {
+		_arrow.src = dataURI;
+	});
+
+	// Load town info icons
+	Client.loadFile(`${DB.INTERFACE_PATH}information/store.bmp`, dataURI => {
+		_toolDealer.src = dataURI;
+	});
+	Client.loadFile(`${DB.INTERFACE_PATH}information/weaponshop.bmp`, dataURI => {
+		_weaponDealer.src = dataURI;
+	});
+	Client.loadFile(`${DB.INTERFACE_PATH}information/armorshops.bmp`, dataURI => {
+		_armorDealer.src = dataURI;
+	});
+	Client.loadFile(`${DB.INTERFACE_PATH}information/smithy.bmp`, dataURI => {
+		_blacksmith.src = dataURI;
+	});
+	Client.loadFile(`${DB.INTERFACE_PATH}information/guide.bmp`, dataURI => {
+		_guide.src = dataURI;
+	});
+	Client.loadFile(`${DB.INTERFACE_PATH}information/inn.bmp`, dataURI => {
+		_inn.src = dataURI;
+	});
+	Client.loadFile(`${DB.INTERFACE_PATH}information/kafra.bmp`, dataURI => {
+		_kafra.src = dataURI;
+	});
+
+	// Bind events
+	root.querySelector('.close').addEventListener('click', () => this.hide());
+	root.querySelector('.search-button').addEventListener('click', () => this.onSearch());
+
+	const searchInput = root.querySelector('.search-input');
+	searchInput.addEventListener('keypress', e => {
+		if (e.which === KEYS.ENTER || e.key === 'Enter') {
+			this.onSearch();
+		}
+	});
+
+	// Focus handling for search input
+	searchInput.addEventListener('focus', () => {
+		const resultsContainer = root.querySelector('.search-results');
+		if (resultsContainer && resultsContainer.children.length > 0) {
+			resultsContainer.style.display = '';
+		}
+	});
+
+	// Hide search results when clicking outside (on document level)
+	_documentClickHandler = e => {
+		if (!e.target.closest('.search-results, .search-input, .search-button, .search-type')) {
+			const resultsContainer = root.querySelector('.search-results');
+			if (resultsContainer) {
+				resultsContainer.style.display = 'none';
+			}
+		}
+	};
+	document.addEventListener('click', _documentClickHandler);
+
+	// Map click event for navigation
+	root.querySelector('.map-display').addEventListener('click', e => this.onMapClick(e));
+
+	// Mouse move event for displaying coordinates
+	root.querySelector('.map-display').addEventListener('mousemove', e => this.onMapMouseMove(e));
+
+	// Mouse leave event to reset coordinates display
+	root.querySelector('.map-display').addEventListener('mouseleave', () => this.onMapMouseLeave());
+
+	this.draggable('.titlebar');
+
+	// Hide the UI initially
+	this.ui.hide();
+};
+
+/**
+ * Once append to the DOM
+ */
+Navigation.onAppend = function onAppend() {
+	// Clear path for clean render
+	this.clearPath();
+
+	// Start rendering
+	Renderer.render(this.renderCanvas.bind(this));
+
+	// Initialize pathfinding worker
+	initializePathFindingWorker();
+
+	// Load the current map after initializing the worker
+	const mapName = getCurrentMap();
+	this.loadMap(mapName);
+
+	if (_finalTargetData) {
+		const currentPos = getPlayerPosition();
+		this.navigateTo({
+			startMap: mapName,
+			startX: currentPos.x,
+			startY: currentPos.y,
+			endMap: _finalTargetData.map,
+			endX: _finalTargetData.x,
+			endY: _finalTargetData.y,
+			displayName: _finalTargetData.displayName
+		});
+	}
+};
+
+/**
+ * Once removed from DOM
+ */
+Navigation.onRemove = function onRemove() {
+	this.clearPath();
+	terminatePathFindingWorker();
+
+	// Clean up document-level event listener
+	if (_documentClickHandler) {
+		document.removeEventListener('click', _documentClickHandler);
+	}
+};
+
+/**
+ * Handle search button click
+ */
+Navigation.onSearch = function onSearch() {
+	const root = Navigation.getRoot();
+	const query = root.querySelector('.search-input').value.trim();
+	const type = root.querySelector('.search-type').value;
+
+	if (query.length < 2) {
+		return;
+	}
+
+	// Search for NPCs and MOBs
+	const results = DB.searchNavigation(query, type);
+
+	// Display search results
+	this.displaySearchResults(results);
+};
+
+/**
+ * Display search results
+ */
+Navigation.displaySearchResults = function displaySearchResults(results) {
+	const root = Navigation.getRoot();
+
+	// Get or create results container
+	let resultsContainer = root.querySelector('.search-results');
+	if (!resultsContainer) {
+		resultsContainer = document.createElement('div');
+		resultsContainer.className = 'search-results';
+		root.querySelector('.content').appendChild(resultsContainer);
+	} else {
+		resultsContainer.innerHTML = '';
+	}
+
+	// If no results, show a message
+	if (results.length === 0) {
+		resultsContainer.innerHTML = '<div class="no-results">未找到结果</div>';
+		resultsContainer.style.display = '';
+		return;
+	}
+
+	// Create results list
+	const resultsList = document.createElement('ul');
+	resultsList.className = 'results-list';
+	resultsContainer.appendChild(resultsList);
+
