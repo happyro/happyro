@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from .models import MergeFailure, Row
@@ -20,6 +21,50 @@ TOKEN_CHECKS = (
     re.compile(rb"%(?:[0-9]+\$)?[-+0-9.#]*[A-Za-z]|\{[0-9]+\}"),
 )
 LEGACY_BYTE_ESCAPE_PATHS = {"src/DB/Items/RobeTable.js"}
+PROTECTED_RESOURCE_PATHS = {
+    "src/DB/Items/HatTable.js",
+    "src/DB/Items/RobeTable.js",
+    "src/DB/Jobs/JobNameTable.js",
+    "src/DB/Monsters/MonsterTable.js",
+}
+YAML_SUFFIXES = (".yml", ".yaml")
+HTML_SUFFIXES = (".html", ".htm")
+YAML_KEY_RE = re.compile(rb"^([ \t]*)(- )?([A-Za-z][A-Za-z0-9_]*):(?:[ \t]|$)")
+YAML_BLOCK_RE = re.compile(rb"[|>][-+]?\s*(?:#.*)?$")
+TRANSLATABLE_HTML_ATTRIBUTES = {"alt", "aria-label", "data-text", "placeholder", "title", "value"}
+
+
+def logical_path(label: str) -> str:
+    value = label.split("/", 1)[-1]
+    return re.sub(r"/(?:full|chunk-\d+)$", "", value)
+
+
+class _HTMLStructureParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.events: list[tuple[str, str, tuple[tuple[str, str | None], ...]]] = []
+
+    @staticmethod
+    def _attributes(attrs: list[tuple[str, str | None]]) -> tuple[tuple[str, str | None], ...]:
+        normalized = []
+        for name, value in attrs:
+            if name in TRANSLATABLE_HTML_ATTRIBUTES:
+                if name == "data-text" and value is not None and value.isdigit():
+                    normalized.append((name, value))
+                else:
+                    normalized.append((name, "<TEXT>"))
+            else:
+                normalized.append((name, value))
+        return tuple(normalized)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.events.append(("start", tag, self._attributes(attrs)))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.events.append(("startend", tag, self._attributes(attrs)))
+
+    def handle_endtag(self, tag: str) -> None:
+        self.events.append(("end", tag, ()))
 
 
 def line_count(data: bytes) -> int:
@@ -85,6 +130,59 @@ def logic_warnings(source: bytes, translated: bytes, label: str) -> list[str]:
         if sorted(expression.findall(source)) != sorted(expression.findall(translated)):
             warnings.append(f"{label}: protected token requires review")
     return warnings
+
+
+def validate_yaml_structure(source: bytes, translated: bytes, label: str) -> None:
+    """Reject translation changes to YAML keys and their structural indentation."""
+    if not label.split("/", 1)[-1].split("/chunk-", 1)[0].endswith(YAML_SUFFIXES):
+        return
+    source_lines = normalize_newlines(source).splitlines()
+    translated_lines = normalize_newlines(translated).splitlines()
+    if len(source_lines) != len(translated_lines):
+        raise MergeFailure(
+            f"{label}: YAML translation changes line count {len(source_lines)} -> {len(translated_lines)}"
+        )
+    block_indent: int | None = None
+    for line_number, (source_line, translated_line) in enumerate(zip(source_lines, translated_lines), 1):
+        source_indent = len(source_line) - len(source_line.lstrip(b" "))
+        if block_indent is not None:
+            if not source_line.strip() or source_indent > block_indent:
+                continue
+            block_indent = None
+        source_match = YAML_KEY_RE.match(source_line)
+        translated_match = YAML_KEY_RE.match(translated_line)
+        source_structure = source_match.groups() if source_match else None
+        translated_structure = translated_match.groups() if translated_match else None
+        if source_structure != translated_structure:
+            raise MergeFailure(f"{label}:{line_number}: YAML key or structural indentation changed")
+        if source_match and YAML_BLOCK_RE.search(source_line[source_match.end() :]):
+            block_indent = source_indent
+
+
+def validate_protected_resource_file(source: bytes, translated: bytes, label: str) -> None:
+    """Reject translations of tables whose values are runtime resource identifiers."""
+    if (
+        logical_path(label) in PROTECTED_RESOURCE_PATHS
+        and normalize_newlines(source) != normalize_newlines(translated)
+    ):
+        raise MergeFailure(f"{label}: protected resource mapping must remain byte-for-byte unchanged")
+
+
+def validate_html_structure(source: bytes, translated: bytes, label: str) -> None:
+    """Reject changes to HTML tags, attribute names, and non-text attribute values."""
+    if not logical_path(label).endswith(HTML_SUFFIXES):
+        return
+    source_parser = _HTMLStructureParser()
+    translated_parser = _HTMLStructureParser()
+    try:
+        source_parser.feed(source.decode("utf-8"))
+        source_parser.close()
+        translated_parser.feed(translated.decode("utf-8"))
+        translated_parser.close()
+    except (UnicodeDecodeError, ValueError) as error:
+        raise MergeFailure(f"{label}: invalid HTML translation: {error}") from error
+    if source_parser.events != translated_parser.events:
+        raise MergeFailure(f"{label}: HTML tags or protected attributes changed")
 
 
 def _json_path(path: tuple[str, ...]) -> str:
