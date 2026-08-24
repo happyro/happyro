@@ -1,27 +1,15 @@
-#!/usr/bin/env python3
-"""Check translation chunks without modifying the workspace.
-
-Examples:
-    python3 tools/translation/check-output/main.py --agent agent-03
-    python3 tools/translation/check-output/main.py --all --root docs/translation/zh-cn/client-server/agents
-    python3 tools/translation/check-output/main.py --agent-dir docs/translation/zh-cn/kro-20211105/agents/agent-03
-
-Line-count differences are warnings by default. Use --strict-lines when they
-should make the check fail.
-"""
+"""Validate translated agent chunks before merging."""
 
 from __future__ import annotations
 
-import argparse
-import csv
 import re
-import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .common import display, read_tsv, resolve_agents
 
-ROOT = Path(__file__).resolve().parents[3]
+
 REPLACEMENT_BYTES = b"\xef\xbf\xbd"
 TOKEN_CHECKS = (
     ("color code", re.compile(r"\^[0-9A-Fa-f]{6}")),
@@ -37,33 +25,6 @@ class Result:
     warnings: list[str] = field(default_factory=list)
     statuses: Counter[str] = field(default_factory=Counter)
     manifest_rows: int = 0
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", action="append", help="Agent directory name, relative to --root; repeatable")
-    parser.add_argument("--agent-dir", action="append", type=Path, help="Explicit agent directory; repeatable")
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("docs/translation/zh-cn/client-server/agents"),
-        help="Root containing agent directories",
-    )
-    parser.add_argument("--all", action="store_true", help="Check every immediate subdirectory with manifest.tsv")
-    parser.add_argument("--strict-lines", action="store_true", help="Treat line-count differences as errors")
-    return parser.parse_args()
-
-
-def display(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(ROOT))
-    except ValueError:
-        return str(path)
-
-
-def read_tsv(path: Path) -> list[tuple[int, list[str]]]:
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return [(line_number, row) for line_number, row in enumerate(csv.reader(handle, delimiter="\t"), 1) if row]
 
 
 def line_count(data: bytes) -> int:
@@ -83,11 +44,11 @@ def record_key(row: list[str]) -> tuple[str, str, str]:
 def token_differences(source: str, translated: str, expression: re.Pattern[str]) -> list[str]:
     source_counts = Counter(expression.findall(source))
     translated_counts = Counter(expression.findall(translated))
-    differences = []
-    for token in sorted(source_counts.keys() | translated_counts.keys()):
-        if source_counts[token] != translated_counts[token]:
-            differences.append(f"{token}: {source_counts[token]} -> {translated_counts[token]}")
-    return differences
+    return [
+        f"{token}: {source_counts[token]} -> {translated_counts[token]}"
+        for token in sorted(source_counts.keys() | translated_counts.keys())
+        if source_counts[token] != translated_counts[token]
+    ]
 
 
 def check_agent(agent_dir: Path, strict_lines: bool) -> Result:
@@ -117,7 +78,9 @@ def check_agent(agent_dir: Path, strict_lines: bool) -> Result:
         result.statuses[row[10]] += 1
         current_key = manifest_key(row)
         if current_key in manifest_keys:
-            result.errors.append(f"{display(manifest_path)}:{line_number}: duplicate manifest key {' '.join(current_key)}")
+            result.errors.append(
+                f"{display(manifest_path)}:{line_number}: duplicate manifest key {' '.join(current_key)}"
+            )
         manifest_keys[current_key] = line_number
 
         source_path = agent_dir / row[8]
@@ -163,10 +126,14 @@ def check_agent(agent_dir: Path, strict_lines: bool) -> Result:
             continue
         current_key = record_key(row)
         if current_key in record_keys:
-            result.errors.append(f"{display(records_path)}:{line_number}: duplicate translated record {' '.join(current_key)}")
+            result.errors.append(
+                f"{display(records_path)}:{line_number}: duplicate translated record {' '.join(current_key)}"
+            )
         record_keys[current_key] = line_number
         if current_key not in manifest_keys:
-            result.warnings.append(f"{display(records_path)}:{line_number}: record absent from manifest {' '.join(current_key)}")
+            result.warnings.append(
+                f"{display(records_path)}:{line_number}: record absent from manifest {' '.join(current_key)}"
+            )
 
     for current_key in sorted(translated_keys):
         if current_key not in record_keys:
@@ -176,39 +143,14 @@ def check_agent(agent_dir: Path, strict_lines: bool) -> Result:
     return result
 
 
-def resolve_agents(args: argparse.Namespace) -> list[Path]:
-    root = (ROOT / args.root).resolve() if not args.root.is_absolute() else args.root.resolve()
-    paths = []
-    if args.agent:
-        paths.extend(root / name for name in args.agent)
-    if args.agent_dir:
-        paths.extend((ROOT / path).resolve() if not path.is_absolute() else path.resolve() for path in args.agent_dir)
-    if args.all:
-        paths.extend(
-            path
-            for path in sorted(root.iterdir())
-            if path.is_dir() and re.fullmatch(r"agent-\d+", path.name) and (path / "manifest.tsv").is_file()
-        )
-    if not paths:
-        paths.append(root / "agent-03")
-    unique = []
-    seen = set()
-    for path in paths:
-        if path not in seen:
-            unique.append(path)
-            seen.add(path)
-    return unique
-
-
-def main() -> int:
-    args = parse_args()
+def run(root: Path, agents: list[str], agent_dirs: list[Path], all_agents: bool, strict_lines: bool) -> int:
     results = []
-    for agent_dir in resolve_agents(args):
+    for agent_dir in resolve_agents(root, agents, agent_dirs, all_agents):
         if not agent_dir.is_dir():
             result = Result(display(agent_dir))
             result.errors.append("agent directory does not exist")
         else:
-            result = check_agent(agent_dir, args.strict_lines)
+            result = check_agent(agent_dir, strict_lines)
         results.append(result)
         statuses = ", ".join(f"{status}={count}" for status, count in result.statuses.items()) or "none"
         print(f"Agent: {result.label}")
@@ -220,9 +162,4 @@ def main() -> int:
             print(f"ERROR {message}")
         for message in result.warnings:
             print(f"WARN  {message}")
-
     return 1 if any(result.errors for result in results) else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

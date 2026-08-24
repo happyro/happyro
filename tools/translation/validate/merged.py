@@ -1,50 +1,16 @@
-#!/usr/bin/env python3
-"""Compare indentation in merged translation files with their source chunks.
-
-The checker compares each translated chunk with its original source chunk
-before interpreting the merged file's line numbers.  This avoids treating
-translated dialogue that was merged into fewer lines as a false indentation
-error.  Structural lines such as if/switch/case/select are reported by
-default; repetitive dialogue commands can be included with --include-dialogue.
-
-Examples:
-    python3 tools/translation/check-merged-indentation/main.py \
-        --agent agent-03 \
-        --merged-root work/translation-merge/client-server/batch-01/merged/files
-    python3 tools/translation/check-merged-indentation/main.py \
-        --agent agent-03 \
-        --merged-root docs/translation/zh-cn/client-server/merged/files \
-        --include-dialogue
-"""
+"""Validate indentation in merged translation files."""
 
 from __future__ import annotations
 
-import argparse
-import csv
 import difflib
 import re
-import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .common import ROOT, TRANSLATED, display, read_manifest, resolve, resolve_agents
 
-ROOT = Path(__file__).resolve().parents[3]
-MANIFEST_COLUMNS = (
-    "repo",
-    "path",
-    "domain",
-    "text_scope",
-    "unit_type",
-    "chunk_id",
-    "start_line",
-    "end_line",
-    "source_chunk",
-    "translated_chunk",
-    "status",
-    "notes",
-)
-TRANSLATED = "已翻译"
+
 STRING_RE = re.compile(rb'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')')
 
 
@@ -66,55 +32,6 @@ class Result:
     files: int = 0
     findings: list[Finding] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", action="append", help="Agent directory name; repeatable")
-    parser.add_argument("--agent-dir", action="append", type=Path, help="Explicit agent directory; repeatable")
-    parser.add_argument(
-        "--root",
-        type=Path,
-        default=Path("docs/translation/zh-cn/client-server/agents"),
-        help="Root containing agent directories",
-    )
-    parser.add_argument("--all", action="store_true", help="Check every immediate agent-* directory")
-    parser.add_argument(
-        "--merged-root",
-        type=Path,
-        default=Path("work/translation-merge/client-server/latest/merged/files"),
-        help="Root containing <repo>/<path> merged files",
-    )
-    parser.add_argument(
-        "--repo-root",
-        action="append",
-        default=[],
-        metavar="NAME=PATH",
-        help="Map manifest repo name to the original repository path; repeatable",
-    )
-    parser.add_argument(
-        "--include-dialogue",
-        action="store_true",
-        help="Also report indentation candidates for repetitive mes/next/close lines",
-    )
-    parser.add_argument(
-        "--include-ambiguous",
-        action="store_true",
-        help="Also report structural signatures repeated within a chunk; these require manual review",
-    )
-    parser.add_argument("--max-findings", type=int, default=200, help="Maximum findings printed per agent")
-    return parser.parse_args()
-
-
-def resolve_path(path: Path) -> Path:
-    return (ROOT / path).resolve() if not path.is_absolute() else path.resolve()
-
-
-def display(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(ROOT))
-    except ValueError:
-        return str(path)
 
 
 def leading(data: bytes) -> bytes:
@@ -154,42 +71,8 @@ def parse_repo_roots(values: list[str]) -> dict[str, Path]:
         name, path = value.split("=", 1)
         if not name or not path:
             raise ValueError(f"--repo-root must use NAME=PATH: {value}")
-        roots[name] = resolve_path(Path(path))
+        roots[name] = resolve(Path(path))
     return roots
-
-
-def resolve_agents(args: argparse.Namespace) -> list[Path]:
-    root = resolve_path(args.root)
-    paths: list[Path] = []
-    if args.agent:
-        paths.extend(root / name for name in args.agent)
-    if args.agent_dir:
-        paths.extend(resolve_path(path) for path in args.agent_dir)
-    if args.all:
-        paths.extend(
-            path
-            for path in sorted(root.iterdir())
-            if path.is_dir() and re.fullmatch(r"agent-\d+", path.name) and (path / "manifest.tsv").is_file()
-        )
-    if not paths:
-        paths.append(root / "agent-03")
-    unique: list[Path] = []
-    seen: set[Path] = set()
-    for path in paths:
-        path = path.resolve()
-        if path not in seen:
-            unique.append(path)
-            seen.add(path)
-    return unique
-
-
-def read_manifest(agent_dir: Path) -> list[dict[str, str]]:
-    path = agent_dir / "manifest.tsv"
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle, delimiter="\t")
-        if tuple(reader.fieldnames or ()) != MANIFEST_COLUMNS:
-            raise ValueError(f"{display(path)}: unexpected manifest header")
-        return list(reader)
 
 
 def add_finding(
@@ -265,13 +148,7 @@ def check_agent(
             translated_lines = translated_path.read_bytes().splitlines(keepends=True)
             source_start = int(row["start_line"])
             selected_start = output_line_start(
-                [
-                    {
-                        **item,
-                        "translated_chunk_path": str(agent_dir / item["translated_chunk"]),
-                    }
-                    for item in ordered
-                ],
+                [{**item, "translated_chunk_path": str(agent_dir / item["translated_chunk"])} for item in ordered],
                 row_index,
             )
             label = f"{repo}/{logical_path}/{row['chunk_id']}"
@@ -361,27 +238,25 @@ def print_result(result: Result, max_findings: int) -> None:
         print(f"WARN  {len(result.findings) - max_findings} findings omitted; use --max-findings to increase")
 
 
-def main() -> int:
-    args = parse_args()
+def run(
+    root: Path,
+    agents: list[str],
+    agent_dirs: list[Path],
+    all_agents: bool,
+    merged_root: Path,
+    repo_root_values: list[str],
+    include_dialogue: bool,
+    include_ambiguous: bool,
+    max_findings: int,
+) -> int:
     try:
-        repo_roots = parse_repo_roots(args.repo_root)
+        repo_roots = parse_repo_roots(repo_root_values)
     except ValueError as error:
-        print(f"ERROR {error}", file=sys.stderr)
+        print(f"ERROR {error}")
         return 2
-    merged_root = resolve_path(args.merged_root)
     results = []
-    for agent_dir in resolve_agents(args):
-        result = check_agent(
-            agent_dir,
-            merged_root,
-            repo_roots,
-            args.include_dialogue,
-            args.include_ambiguous,
-        )
+    for agent_dir in resolve_agents(root, agents, agent_dirs, all_agents):
+        result = check_agent(agent_dir, resolve(merged_root), repo_roots, include_dialogue, include_ambiguous)
         results.append(result)
-        print_result(result, args.max_findings)
+        print_result(result, max_findings)
     return 1 if any(result.errors or result.findings for result in results) else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
