@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/../_lib/lib.sh"
 
 compose_env="$MARIADB_RUNTIME/compose.env"
 account_file="$PROJECT_ROOT/work/runtime/automation-account.env"

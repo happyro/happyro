@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/../_lib/lib.sh"
 
 printf '%-28s %-8s %-12s %s\n' repository branch commit state
 for spec in \

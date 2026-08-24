@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/../_lib/lib.sh"
 
 unit=happyro-gateway.service
 port=3338
@@ -33,9 +33,9 @@ verify_gateway() {
 start_gateway() {
 	is_running && fail "service is already running"
 	ss -H -ltn "sport = :$port" | rg -q ":$port[[:space:]]" && fail "port $port is already in use"
-	"$PROJECT_ROOT/scripts/server.sh" verify
-	"$PROJECT_ROOT/scripts/configure-gateway.sh"
-	"$PROJECT_ROOT/scripts/configure-resources.sh"
+	"$PROJECT_ROOT/scripts/server/server.sh" verify
+	"$PROJECT_ROOT/scripts/gateway/configure-gateway.sh"
+	"$PROJECT_ROOT/scripts/resources/configure-resources.sh"
 	[[ -d "$GATEWAY_REPO/node_modules" ]] || (cd "$GATEWAY_REPO" && npm install --ignore-scripts)
 	mkdir -p "$(dirname "$log_file")"
 	: > "$log_file"

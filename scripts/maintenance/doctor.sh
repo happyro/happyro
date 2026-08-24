@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/../_lib/lib.sh"
 
 for command in git node npm cmake c++ docker openssl rg ss curl systemctl systemd-run; do
 	command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
@@ -41,12 +41,12 @@ rg -q '^WEB_BIND_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
 rg -q '^WEB_PORT=8889$' "$RATHENA_PROFILE"
 rg -q '^pincode_enabled: no$' "$SERVER_REPO/conf/import/char_conf.txt"
 bash -n \
-	"$PROJECT_ROOT/scripts/database.sh" \
-	"$PROJECT_ROOT/scripts/configure-server.sh" \
-	"$PROJECT_ROOT/scripts/gateway.sh" \
-	"$PROJECT_ROOT/scripts/test-account.sh" \
-	"$PROJECT_ROOT/scripts/automation-account.sh" \
-	"$PROJECT_ROOT/scripts/server.sh" \
+	"$PROJECT_ROOT/scripts/database/database.sh" \
+	"$PROJECT_ROOT/scripts/server/configure-server.sh" \
+	"$PROJECT_ROOT/scripts/gateway/gateway.sh" \
+	"$PROJECT_ROOT/scripts/account/test-account.sh" \
+	"$PROJECT_ROOT/scripts/account/automation-account.sh" \
+	"$PROJECT_ROOT/scripts/server/server.sh" \
 	"$PROJECT_ROOT/deploy/mariadb/init/20-happyro-databases.sh"
 git -C "$PROJECT_ROOT" check-ignore -q work/runtime/mariadb-10.11/secrets.env
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/../_lib/lib.sh"
 
 runtime_client="$PROJECT_ROOT/inputs/runtime/kro-20211105/client"
 resources_dir="$GATEWAY_REPO/resources"

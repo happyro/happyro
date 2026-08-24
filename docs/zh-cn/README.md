@@ -15,11 +15,11 @@
 
 扫描工具位于：
 
-    scripts/scan-localization-inventory.py
+    scripts/localization/scan-localization-inventory.py
 
 运行：
 
-    python3 scripts/scan-localization-inventory.py
+    python3 scripts/localization/scan-localization-inventory.py
 
 扫描器读取根仓库、server 和 client 的 Git 跟踪文件，将可疑非中文文本写入 work/localization/。这些输出属于可重建生成物，不提交到 Git。
 

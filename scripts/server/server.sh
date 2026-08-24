@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # shellcheck disable=SC1091
-source "$(dirname "$0")/lib.sh"
+source "$(dirname "$0")/../_lib/lib.sh"
 
 action="${1:-}"
 services=(login-server char-server map-server web-server)
@@ -97,8 +97,8 @@ stop_servers() {
 
 start_servers() {
 	local service port unit log_file
-	"$PROJECT_ROOT/scripts/database.sh" verify
-	"$PROJECT_ROOT/scripts/configure-server.sh"
+	"$PROJECT_ROOT/scripts/database/database.sh" verify
+	"$PROJECT_ROOT/scripts/server/configure-server.sh"
 	mkdir -p "$RATHENA_RUNTIME/logs"
 
 	for service in "${services[@]}"; do
