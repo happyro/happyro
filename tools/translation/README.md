@@ -8,6 +8,7 @@
 | [`validate/main.py chunks`](validate/main.py) | 检查单个 agent 的译文文件、占位符、颜色码、转义符和清单登记 | 合并前 |
 | [`validate/main.py merged`](validate/main.py) | 检查完整文件回拼后的缩进变化 | 合并后 |
 | [`../workspace/validate-kro/main.mjs`](../workspace/validate-kro/main.mjs) | 检查 kRO 总清单、agent 清单、切片范围和提取单元一致性 | 工作区维护 |
+| [`../client/build/README.md`](../client/build/README.md) | 将合并 JSON 回编译为 Lua 5.0/5.1 LUB 并执行语义回环校验 | 客户端构建 |
 
 临时合并结果写入 `work/translation-merge/<workspace>/<batch>/`；确认后再复制到对应工作区的 `merged/files/`。这些工具不修改 agent 分片、官方输入或独立 client/server 仓库。
 
