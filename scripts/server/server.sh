@@ -97,8 +97,8 @@ stop_servers() {
 
 start_servers() {
 	local service port unit log_file
-	"$PROJECT_ROOT/scripts/database/database.sh" verify
-	"$PROJECT_ROOT/scripts/server/configure-server.sh"
+	bash "$PROJECT_ROOT/scripts/database/database.sh" verify
+	bash "$PROJECT_ROOT/scripts/server/configure-server.sh"
 	mkdir -p "$RATHENA_RUNTIME/logs"
 
 	for service in "${services[@]}"; do
