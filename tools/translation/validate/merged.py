@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import csv
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -111,6 +112,7 @@ def output_line_start(rows: list[dict[str, str]], target_index: int) -> int:
 def check_agent(
     agent_dir: Path,
     merged_root: Path,
+    merged_paths: dict[tuple[str, str], str],
     repo_roots: dict[str, Path],
     include_dialogue: bool,
     include_ambiguous: bool,
@@ -133,7 +135,13 @@ def check_agent(
         if base_root is None:
             result.errors.append(f"{repo}/{logical_path}: no base repository mapping")
             continue
-        merged_path = merged_root / repo / logical_path
+        output_path = merged_paths.get((repo, logical_path), logical_path)
+        # client-server manifests include the repo prefix in output_path;
+        # kRO manifests point directly at normalized JSON under merged_root.
+        if Path(output_path).parts[:1] == (repo,):
+            merged_path = merged_root / output_path
+        else:
+            merged_path = merged_root / repo / output_path if not merged_paths else merged_root / output_path
         if not merged_path.is_file():
             result.errors.append(f"missing merged file: {display(merged_path)}")
             continue
@@ -244,6 +252,7 @@ def run(
     agent_dirs: list[Path],
     all_agents: bool,
     merged_root: Path,
+    merged_manifest: Path | None,
     repo_root_values: list[str],
     include_dialogue: bool,
     include_ambiguous: bool,
@@ -251,12 +260,26 @@ def run(
 ) -> int:
     try:
         repo_roots = parse_repo_roots(repo_root_values)
+        merged_paths: dict[tuple[str, str], str] = {}
+        if merged_manifest:
+            with resolve(merged_manifest).open("r", encoding="utf-8", newline="") as handle:
+                for row in csv.DictReader(handle, delimiter="\t"):
+                    output_path = row.get("output_path", "")
+                    if output_path:
+                        merged_paths[(row["repo"], row["path"])] = output_path
     except ValueError as error:
         print(f"ERROR {error}")
         return 2
     results = []
     for agent_dir in resolve_agents(root, agents, agent_dirs, all_agents):
-        result = check_agent(agent_dir, resolve(merged_root), repo_roots, include_dialogue, include_ambiguous)
+        result = check_agent(
+            agent_dir,
+            resolve(merged_root),
+            merged_paths,
+            repo_roots,
+            include_dialogue,
+            include_ambiguous,
+        )
         results.append(result)
         print_result(result, max_findings)
     return 1 if any(result.errors or result.findings for result in results) else 0

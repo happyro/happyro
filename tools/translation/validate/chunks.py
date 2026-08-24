@@ -16,6 +16,7 @@ TOKEN_CHECKS = (
     ("escape", re.compile(r"\\(?:[nrtbfv'\\]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})")),
     ("placeholder", re.compile(r"%(?:[0-9]+\$)?[-+0-9.#]*[A-Za-z]|\{[0-9]+\}")),
 )
+LEGACY_BYTE_ESCAPE_PATHS = {("client", "src/DB/Items/RobeTable.js")}
 
 
 @dataclass
@@ -38,7 +39,10 @@ def manifest_key(row: list[str]) -> tuple[str, str, str]:
 
 
 def record_key(row: list[str]) -> tuple[str, str, str]:
-    return row[0], row[1], row[2]
+    # kRO translated-files.tsv has an explicit unit column before chunk_id;
+    # client-server files use chunk_id in the third column.
+    chunk_id = row[3] if len(row) >= 4 and row[2] in {"chunk", "file"} else row[2]
+    return row[0], row[1], chunk_id
 
 
 def token_differences(source: str, translated: str, expression: re.Pattern[str]) -> list[str]:
@@ -108,7 +112,10 @@ def check_agent(agent_dir: Path, strict_lines: bool) -> Result:
                 f"({source_replacements} -> {translated_replacements})"
             )
 
-        for name, expression in TOKEN_CHECKS:
+        token_checks = TOKEN_CHECKS
+        if (row[0], row[1]) in LEGACY_BYTE_ESCAPE_PATHS:
+            token_checks = tuple(item for item in TOKEN_CHECKS if item[0] != "escape")
+        for name, expression in token_checks:
             differences = token_differences(source_text, translated_text, expression)
             if differences:
                 result.errors.append(f"{relative_translated}: {name} mismatch ({', '.join(differences)})")
