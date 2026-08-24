@@ -5,7 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from tools.client.build.common import BuildError, Target, lua_string, lua_value, select_data
+from tools.client.build.common import BuildError, Target, lua_string, lua_value, render_source, select_data
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -26,6 +26,21 @@ class LuaSerializationTests(unittest.TestCase):
         self.assertEqual(select_data({"data": {"1": "ok"}}, target), {"1": "ok"})
         with self.assertRaises(BuildError):
             select_data({}, target)
+
+    def test_towninfo_source_exposes_client_main_entrypoint(self) -> None:
+        target = Target("Towninfo.json", "System/Towninfo.lub", "mapNPCInfoTable", entrypoint="towninfo")
+        source = render_source(target, '{prontera = {{name = "Guide", X = 1, Y = 2, TYPE = 4}}}')
+        self.assertIn("mapNPCInfoTable =", source)
+        self.assertIn("function main()", source)
+        self.assertIn("AddTownInfo(mapName, entry.name, entry.X, entry.Y, entry.TYPE)", source)
+
+    def test_mapinfo_source_exposes_client_callbacks(self) -> None:
+        target = Target("mapInfo_true.json", "System/mapInfo_true.lub", "mapTbl", entrypoint="mapinfo")
+        source = render_source(target, '{prontera = {displayName = "Prontera"}}')
+        self.assertIn("function main()", source)
+        self.assertIn("AddMapDisplayName(mapName, entry.displayName", source)
+        self.assertIn("AddMapSignName(mapName", source)
+        self.assertIn("AddMapBackgroundBmp(mapName", source)
 
 
 class HelpTests(unittest.TestCase):

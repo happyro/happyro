@@ -30,9 +30,9 @@ TARGETS = (
         "System/RecommendedQuestInfoList_True.lub",
         "RecommendedQuestInfoList",
     ),
-    Target("Towninfo.json", "System/Towninfo.lub", "mapNPCInfoTable"),
+    Target("Towninfo.json", "System/Towninfo.lub", "mapNPCInfoTable", entrypoint="towninfo"),
     Target("itemInfo_true.json", "System/itemInfo_true.lub", "tbl", ("data",)),
-    Target("mapInfo_true.json", "System/mapInfo_true.lub", "mapTbl"),
+    Target("mapInfo_true.json", "System/mapInfo_true.lub", "mapTbl", entrypoint="mapinfo"),
     Target("tipbox.json", "System/tipbox.lub", "tbl"),
 )
 
