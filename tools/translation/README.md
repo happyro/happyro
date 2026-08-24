@@ -5,9 +5,11 @@
 | 工具 | 用途 | 阶段 |
 | --- | --- | --- |
 | [`merge/main.py`](merge/main.py) | 将各 agent 的译文分片合并成完整文件，并生成来源清单 | 合并 |
+| [`writeback/main.py`](writeback/main.py) | 按合并清单将已复核产物发布到明确的目标目录 | 发布 |
 | [`validate/main.py chunks`](validate/main.py) | 检查单个 agent 的译文文件、占位符、颜色码、转义符和清单登记 | 合并前 |
 | [`validate/main.py merged`](validate/main.py) | 检查完整文件回拼后的缩进变化 | 合并后 |
 | [`../workspace/validate-kro/main.mjs`](../workspace/validate-kro/main.mjs) | 检查 kRO 总清单、agent 清单、切片范围和提取单元一致性 | 工作区维护 |
+| [`../client/build/README.md`](../client/build/README.md) | 将合并 JSON 回编译为 Lua 5.0/5.1 LUB 并执行语义回环校验 | 客户端构建 |
 
 临时合并结果写入 `work/translation-merge/<workspace>/<batch>/`；确认后再复制到对应工作区的 `merged/files/`。这些工具不修改 agent 分片、官方输入或独立 client/server 仓库。
 
@@ -29,10 +31,12 @@ python3 tools/translation/validate/main.py chunks --all
 ```bash
 python3 tools/translation/validate/main.py merged \
   --agent agent-03 \
-  --merged-root work/translation-merge/client-server/batch-01/merged/files
+  --merged-root work/translation-merge/client-server/batch-01/merged/files \
+  --merged-manifest work/translation-merge/client-server/batch-01/merged/manifest.tsv
 ```
 
 `merged` 校验器按照源分片和译文分片的语义行对齐，检查结构性缩进和新增的混合 Tab/空格缩进；对白命令默认只作为对齐依据，可用 `--include-dialogue` 纳入报告。它不替代 `merge` 的结构、标记和 JSON 校验，而是负责合并后完整文件的缩进复核。
+对于 kRO，合并器会将 `.lub` 分片输出为规范化 JSON；使用 `--merged-manifest` 让校验器按合并清单中的 `output_path` 定位这些文件。
 
 ## 合并器
 
@@ -61,3 +65,24 @@ kRO 的 LUB 分片是带 `{}` 或 `[]` 框架的规范化 JSON；合并器会去
 kRO 的译文分片同样默认允许物理行数变化。合并器以源 JSON 为结构骨架，只替换字符串文本；缺失或新增的非翻译字段、数值和类型变化不会写入结果，而是保留源值并记录复核警告。描述文本数组的长度变化会记录为复核警告；页面数组会尽量按页面边界重建，无法安全重建时保留源页面。JSON 解析或分片组合失败仍会中止合并；如需严格物理行数检查，使用 `--strict-line-count`。
 
 输出目录的上一级自动生成 `manifest.tsv`，记录逻辑源路径、完整输出路径、分片统计、行数变化和是否完整；`validation/merge-warnings.tsv` 保存结构签名或受保护标记的复核项。工具不会清理已有输出；需要重新开始时请指定新的 batch 目录。
+
+## 回写合并产物
+
+回写工具默认只执行预览；只有显式加入 `--write` 才会落盘。目标目录必须通过 `--target-root NAME=PATH` 明确指定，工具会拒绝 `inputs/` 下的受保护源材料，并使用临时文件原子替换已有目标文件。需要保留旧文件时可指定 `--backup-dir`，备份目录按仓库名和相对路径保存。
+
+```bash
+python3 tools/translation/writeback/main.py \
+  --merged-root work/translation-merge/<batch>/kro-20211105/merged/files \
+  --manifest work/translation-merge/<batch>/kro-20211105/merged/manifest.tsv \
+  --target-root client=docs/translation/zh-cn/kro-20211105/merged/files
+
+python3 tools/translation/writeback/main.py \
+  --merged-root work/translation-merge/<batch>/client-server/merged/files \
+  --manifest work/translation-merge/<batch>/client-server/merged/manifest.tsv \
+  --target-root client=repos/happyro-client \
+  --target-root server=repos/happyro-server \
+  --backup-dir work/translation-writeback-backup \
+  --write
+```
+
+kRO 的 `.lub` 合并结果是规范化 JSON，回写工具会发布 JSON 产物；需要生成客户端 `.lub` 时，继续使用 `tools/client/build/lua50` 或 `lua51` 回编译工具。

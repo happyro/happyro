@@ -67,6 +67,11 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("work/translation-merge/client-server/latest/merged/files"),
     )
+    merged_parser.add_argument(
+        "--merged-manifest",
+        type=Path,
+        help="Map logical source paths to merged output paths",
+    )
     merged_parser.add_argument("--repo-root", action="append", default=[], metavar="NAME=PATH")
     merged_parser.add_argument("--include-dialogue", action="store_true")
     merged_parser.add_argument("--include-ambiguous", action="store_true")
@@ -92,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
             args.agent_dir,
             args.all,
             args.merged_root,
+            args.merged_manifest,
             args.repo_root,
             args.include_dialogue,
             args.include_ambiguous,

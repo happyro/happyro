@@ -43,13 +43,15 @@ LUB 的目录名与源表名保持一致，切片范围以 `manifest.tsv` 为准
 - 直接 CP949 文本：3 个文件，已分配为待处理工作单元，尚未写回官方资源。
 - 提取器覆盖 19 个 LUB 目标；其中 11 个输出含可翻译玩家可见字段，已拆为 174 个 JSON 工作单元。
 - 当前总计 177 个工作单元，分配为 agent-01 至 agent-08（23、22、22、22、22、22、22、22 个）。
-- Lua 5.0 回编译和 CP949 中文编码仍是独立的集成阻塞项；翻译期间不修改官方源文件。
+- Lua 5.0 和 Lua 5.1 回编译工具已经实现并通过语义回环；UTF-8 中文在最终客户端中的字体与渲染效果仍需实机确认。翻译和构建期间不修改官方源文件。
 
 ## 分片合并与回写
 
 合并前的临时结果写入 `work/translation-merge/kro-20211105/<batch>/merged/`，其中的 `files/`、`manifest.tsv` 和 `validation/` 可以反复重建。校验通过后，将完整文件复制到本目录的 `merged/files/`，并更新 `merged/manifest.tsv`；该目录是整个 kRO 工作区的 Git 跟踪合并结果，不再按 agent 拆分。
 
-后续回写或回编译脚本以 `merged/files/` 为输入，生成到 `artifacts/` 或其他运行时资源目录。不得将合并结果直接写回 `inputs/runtime/kro-20211105/client/`，因为官方 kRO 源文件属于只读源材料。LUB 的回编译、CP949 编码和最终资源替换必须单独记录在 `status/recompile.tsv` 或对应报告中。
+后续回写或回编译脚本以 `merged/files/` 为输入，生成到 `artifacts/` 或其他运行时资源目录。不得将合并结果直接写回 `inputs/runtime/kro-20211105/client/`，因为官方 kRO 源文件属于只读源材料。LUB 的回编译、字符串编码和最终资源替换必须单独记录在 `status/recompile.tsv` 或对应报告中。
+
+Lua 5.0 和 Lua 5.1 回编译工具及目标 ABI 说明见 [`tools/client/build/README.md`](../../../../tools/client/build/README.md)。
 
 合并工具的完整说明见 [`tools/translation/README.md`](../../../../tools/translation/README.md)。
 
