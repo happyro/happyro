@@ -49,4 +49,4 @@ docs/translation/zh-cn/<workspace>/merged/
 
 合并器和分片校验器的职责、命令和校验边界见 [`tools/translation/README.md`](../../../tools/translation/README.md)。
 
-本次合并问题修复批次见 [`repair/20260824/`](repair/20260824/)。其中的 `agent-01` 至 `agent-12` 互相独立，全部完成后再统一收集修复分片并重新合并。
+本次合并问题修复批次见 [`repair/20260824-01/`](repair/20260824-01/)。其中的 `agent-01` 至 `agent-12` 互相独立，全部完成后再统一收集修复分片并重新合并。
