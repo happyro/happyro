@@ -3,7 +3,7 @@ window.ROConfigHappyRO = {
 	remoteClient: `${window.location.origin}/`,
 	servers: [
 		{
-			display: 'HappyRO LAN',
+			display: 'HappyRO 局域网',
 			desc: 'Renewal 2021-11-03',
 			address: '10.24.1.1',
 			port: 6900,
