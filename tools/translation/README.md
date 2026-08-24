@@ -29,10 +29,12 @@ python3 tools/translation/validate/main.py chunks --all
 ```bash
 python3 tools/translation/validate/main.py merged \
   --agent agent-03 \
-  --merged-root work/translation-merge/client-server/batch-01/merged/files
+  --merged-root work/translation-merge/client-server/batch-01/merged/files \
+  --merged-manifest work/translation-merge/client-server/batch-01/merged/manifest.tsv
 ```
 
 `merged` 校验器按照源分片和译文分片的语义行对齐，检查结构性缩进和新增的混合 Tab/空格缩进；对白命令默认只作为对齐依据，可用 `--include-dialogue` 纳入报告。它不替代 `merge` 的结构、标记和 JSON 校验，而是负责合并后完整文件的缩进复核。
+对于 kRO，合并器会将 `.lub` 分片输出为规范化 JSON；使用 `--merged-manifest` 让校验器按合并清单中的 `output_path` 定位这些文件。
 
 ## 合并器
 
