@@ -48,3 +48,5 @@ docs/translation/zh-cn/<workspace>/merged/
 `agents/*/chunks/translated/` 保留原始译文分片，`merged/` 保存整个工作区的完整合并结果。后续回写或编译脚本以 `merged/files/` 为输入，生成到 `artifacts/` 或目标项目资源目录。`inputs/official/` 和 `inputs/runtime/kro-20211105/` 中的官方源材料保持只读，不直接覆盖。
 
 合并器和分片校验器的职责、命令和校验边界见 [`tools/translation/README.md`](../../../tools/translation/README.md)。
+
+本次合并问题修复批次见 [`repair-20260824/`](repair-20260824/)。其中的 `agent-01` 至 `agent-12` 互相独立，全部完成后再统一收集修复分片并重新合并。
