@@ -145,6 +145,10 @@ def check_agent(
         if not merged_path.is_file():
             result.errors.append(f"missing merged file: {display(merged_path)}")
             continue
+        # Normalized kRO JSON is structurally checked during merge; line-based
+        # indentation alignment is not meaningful after JSON normalization.
+        if output_path.endswith(".json"):
+            continue
         ordered = sorted(group, key=lambda row: int(row["start_line"]))
         for row_index, row in enumerate(ordered):
             source_path = agent_dir / row["source_chunk"]
