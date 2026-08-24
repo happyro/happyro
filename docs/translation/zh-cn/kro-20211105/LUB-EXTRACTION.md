@@ -2,9 +2,9 @@
 
 ## 目的
 
-使用 Playwright 在浏览器中运行项目自己的 Lua 5.1 WASM 运行时，提取当前工具清单中的 19 个 LUB 目标，并与 `workspace/lub/source/` 中的基准 JSON 比较。官方 `.lub` 文件只读，不修改、不回编译。Lua 5.0 兼容读取结果单独登记，不混入 Playwright 5.1 运行时。
+使用 Playwright 在浏览器中运行项目自己的 Lua 5.1 WASM 运行时，提取当前工具清单中的 19 个 LUB 目标，并与 `baseline/lub/source/` 中的基准 JSON 比较。官方 `.lub` 文件只读，不修改、不回编译。Lua 5.0 兼容读取结果单独登记，不混入 Playwright 5.1 运行时。
 
-长期工具：[`tools/client/extract/lua51/playwright/main.mjs`](../../../tools/client/extract/lua51/playwright/main.mjs)
+长期工具：[`tools/client/extract/lua51/playwright/main.mjs`](../../../../tools/client/extract/lua51/playwright/main.mjs)
 
 ## 前置条件
 
@@ -55,11 +55,11 @@ node tools/client/extract/lua51/playwright/main.mjs
 - `System/monster_size_effect_new.lub` → `monster_size_effect_new.json`，读取 `EFFECT`；仅内部效果数据。
 - `System/tipbox.lub` → `tipbox.json`，读取 `tbl` 并保留提示框字段和 0-based `Page` 索引表现。
 
-结果写入 `work/lub-reextract/`，核验后的基准复制到 `workspace/lub/source/`。该目录属于生成工作区，不是正式源文件。每次提取后应同步更新 `status/extracted-files.tsv`，再决定是否生成翻译切片。
+结果写入 `work/lub-reextract/`，核验后的基准复制到 `baseline/lub/source/`。该目录属于生成工作区，不是正式源文件。每次提取后应同步更新 `status/extracted-files.tsv`，再决定是否生成翻译切片。
 
 ## 比较规则
 
-先比较文件字节；若仅因 Lua `pairs()` 造成对象键顺序不同，再解析 JSON 做递归结构比较。数组顺序、字段名、字符串、控制标记、颜色码和占位符必须完全一致。`workspace/lub/source/` 是基准，只读，不得用重提结果覆盖。
+先比较文件字节；若仅因 Lua `pairs()` 造成对象键顺序不同，再解析 JSON 做递归结构比较。数组顺序、字段名、字符串、控制标记、颜色码和占位符必须完全一致。`baseline/lub/source/` 是基准，只读，不得用重提结果覆盖。
 
 提取器中保留 CP949/EUC-KR 解码、客户端回调和字段包装逻辑；不能改成系统 Lua、默认 UTF-8 解码或只读取单一全局表，否则会得到看似有效但无法复现的 JSON。
 
@@ -70,4 +70,4 @@ node tools/client/extract/lua51/playwright/main.mjs
 - `System/MsgString.lub` → `System_MsgString_lua50.json`；
 - `PatchClient/Lua Files/ServerInfoz/ServerInfo_KR.lub` → `ServerInfo_KR.json`。
 
-这两个文件使用 kRO 的 Lua 5.0 头部（其中 `size_t` 和 `Instruction` 采用 4 字节布局）。不能用系统默认 Lua 5.0 直接读取；兼容读取器需要使用 4 字节 `Instruction`，按 4 字节读取 `size_t`，执行后再将 CP949 输出转换为 UTF-8。兼容读取结果作为审阅基准保存在 `workspace/lub/source/`，原始生成副本保存在 `work/lub-reextract/`，不覆盖官方资源，也不代表已完成中文回编译。
+这两个文件使用 kRO 的 Lua 5.0 头部（其中 `size_t` 和 `Instruction` 采用 4 字节布局）。不能用系统默认 Lua 5.0 直接读取；兼容读取器需要使用 4 字节 `Instruction`，按 4 字节读取 `size_t`，执行后再将 CP949 输出转换为 UTF-8。兼容读取结果作为审阅基准保存在 `baseline/lub/source/`，原始生成副本保存在 `work/lub-reextract/`，不覆盖官方资源，也不代表已完成中文回编译。

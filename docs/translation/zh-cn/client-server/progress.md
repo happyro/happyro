@@ -4,7 +4,7 @@
 
 - 状态：从 0 开始，尚未翻译
 - 当前分支：lang/zh-cn
-- 当前基准：[translation-scan-baseline.md](translation-scan-baseline.md)
+- 当前基准：[baseline.md](baseline.md)
 - 扫描日期：2026-08-21
 - 总源文件数：2,099
 - 总原始行数：2,535,635
@@ -46,7 +46,7 @@
 
 - translated-files.tsv 初始只保留表头；只有 agent 完成翻译后才新增记录。
 - terms-names.csv 初始只保留表头；不要预先导入旧术语。
-- translation-manifest.tsv 是冻结的全量候选工作单元和分配清单；翻译期间不重新分配文件或切片。
+- manifest.tsv 是冻结的全量候选工作单元和分配清单；翻译期间不重新分配文件或切片。
 - 每个 agent 只更新自己的 manifest.tsv、chunks/translated/、translated-files.tsv、progress.md 和 terms-names.csv。
 - 状态只使用：待处理、进行中、已翻译、跳过、阻塞；不使用待复核或待验收。
 - text_scope=unknown 只能作为初始状态；agent 必须分类后才能结束工作单元。

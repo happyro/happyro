@@ -28,9 +28,9 @@ const manifest = await readTsv(path.join(root, 'manifest.tsv'));
 const errors = [];
 const byAgent = new Map();
 for (const row of manifest) {
-  if (!/^agent-0[1-4]$/.test(row.agent_id)) errors.push(`invalid agent: ${row.agent_id}`);
+  if (!/^agent-0[1-8]$/.test(row.agent_id)) errors.push(`invalid agent: ${row.agent_id}`);
   if (row.status !== '待处理') errors.push(`${row.path}/${row.chunk_id}: status is ${row.status}`);
-  const source = path.join(root, row.agent_id, row.source_chunk);
+  const source = path.join(root, 'agents', row.agent_id, row.source_chunk);
   try {
     const data = await fs.readFile(source);
     const lineCount = row.unit_type === 'chunk'
@@ -47,7 +47,7 @@ for (const row of manifest) {
 }
 
 for (const [agent, rows] of byAgent) {
-  const agentManifest = await readTsv(path.join(root, agent, 'manifest.tsv'), columns.slice(1));
+  const agentManifest = await readTsv(path.join(root, 'agents', agent, 'manifest.tsv'), columns.slice(1));
   const a = rows.map(row => `${row.path}\\t${row.chunk_id}`).sort().join('\\n');
   const b = agentManifest.map(row => `${row.path}\\t${row.chunk_id}`).sort().join('\\n');
   if (a !== b) errors.push(`${agent}/manifest.tsv does not match root manifest`);

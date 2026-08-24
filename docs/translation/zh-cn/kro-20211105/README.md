@@ -17,11 +17,11 @@
 ## 工作区布局
 
 ```text
-workspace/
+baseline/
 ├── text/source/       直接文本基准
 └── lub/source/        Playwright 提取的 JSON 基准
 
-agent-01/ 至 agent-08/
+agents/agent-01/ 至 agents/agent-08/
 ├── manifest.tsv       本 agent 的 kRO 工作单元
 ├── chunks/source/     本 agent 的源切片
 └── chunks/translated/ 本 agent 的译文切片
@@ -29,7 +29,7 @@ agent-01/ 至 agent-08/
 
 LUB 的目录名与源表名保持一致，切片范围以 `manifest.tsv` 为准。超过 200 行的直接文本按原始物理行切片；提取 JSON 先规范化为一条顶层记录一行，再按最多 200 个物理行切片。翻译只处理玩家可见字段；ID、键名、变量、奖励、导航、颜色码、占位符、脚本和控制流保持原样。
 
-本轮 kRO 切片位于本目录的 `agent-01/` 至 `agent-08/`。每个 agent 只修改自己对应的 `chunks/translated/`，不得跨 agent 编辑。
+本轮 kRO 切片位于本目录的 `agents/agent-01/` 至 `agents/agent-08/`。每个 agent 只修改自己对应的 `chunks/translated/`，不得跨 agent 编辑。
 
 ## 当前边界
 
@@ -40,7 +40,7 @@ LUB 的目录名与源表名保持一致，切片范围以 `manifest.tsv` 为准
 
 ## LUB 提取工具
 
-长期保留的 Playwright 提取器位于 [`tools/client/extract/lua51/playwright/main.mjs`](../../../tools/client/extract/lua51/playwright/main.mjs)。它使用客户端自带的 `wasmoon-lua5.1.js` 和本地 `liblua5.1.wasm`，并复原任务、道具、成就、推荐任务、提示框、消息、地图、城镇等客户端加载规则。提取结果写入 `work/lub-reextract/`；不得直接覆盖 `workspace/lub/source/` 中的基准结果。
+长期保留的 Playwright 提取器位于 [`tools/client/extract/lua51/playwright/main.mjs`](../../../../tools/client/extract/lua51/playwright/main.mjs)。它使用客户端自带的 `wasmoon-lua5.1.js` 和本地 `liblua5.1.wasm`，并复原任务、道具、成就、推荐任务、提示框、消息、地图、城镇等客户端加载规则。提取结果写入 `work/lub-reextract/`；不得直接覆盖 `baseline/lub/source/` 中的基准结果。
 
 完整运行和一致性比较步骤见 [`LUB-EXTRACTION.md`](LUB-EXTRACTION.md)。
 
