@@ -43,6 +43,12 @@
 
 当前仅 `conf/motd.txt` 未提交，属于服务端配置本地化。`db/re/item_db_equip.yml` 的 C_Persika YAML 修复已包含在既有提交 `842de2a7a`，本归档只记录其源头追溯，不重复提交。
 
+## 2026-08-25 回写复核
+
+本次回写曾使用旧源码基线，导致 client 的 `DBManager.js` 和 `MapTable.js` 部分 bugfix 被覆盖。复核时已从备份中的 bugfix 维护源恢复这两个文件，并完成三仓库全量目录对比：client/server/gateway 的源码与备份一致；正式 client-server merged 与当前仓库的可对照文件没有实质差异，剩余差异仅为生成文件、换行或格式。
+
+旧 agent 分片仍是回写前快照，使用当前仓库合并会报告 334 个源分片漂移。日常 bugfix 直接修改源码维护源，不再为每次修复重新分片；旧分片或 `canonical-20260825-01` 不能作为新的 writeback 输入。只有明确启动新翻译项目时，才从最新仓库重新扫描和分片。
+
 ## gateway
 
 本轮明确相关的是 `src/controllers/clientController.js`：按路径段处理 CP949 乱码，保留已经是 Unicode 的文件名。
