@@ -19,7 +19,7 @@ bash scripts/server/server.sh verify
 node work/runtime/ui-audit.mjs
 ```
 
-翻译合并证据来自 `work/translation-merge/repair-20260824-01-run3/`；最终 kRO 证据已晋级到 `docs/translation/zh-cn/kro-20211105/merged/validation/`。`work/` 证据不提交，长期需要保留的结论必须写回本文或正式 validation 目录。
+本次正式基准 `canonical-20260825-01` 已完成合并、校验、回写和 LUB 回编译；最终证据已晋级到 `docs/translation/zh-cn/client-server/merged/validation/` 和 `docs/translation/zh-cn/kro-20211105/merged/validation/`。过程目录已清理，长期结论只保留在本文和正式 validation 目录。
 
 ## 浏览器自动审计
 
