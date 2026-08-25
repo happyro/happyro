@@ -15,6 +15,16 @@ CHUNK_SUFFIX = re.compile(r"\.chunk-\d+\.json$")
 STRING_RE = re.compile(rb'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')')
 TEXT_ARRAY_FIELDS = {"Description", "identifiedDescriptionName", "unidentifiedDescriptionName"}
 PAGE_ARRAY_FIELDS = {"Page"}
+VISIBLE_TEXT_FIELDS = {
+    "Title",
+    "Summary",
+    "Description",
+    "Page",
+    "identifiedDisplayName",
+    "unidentifiedDisplayName",
+    "identifiedDescriptionName",
+    "unidentifiedDescriptionName",
+}
 TOKEN_CHECKS = (
     re.compile(rb"\^[0-9A-Fa-f]{6}"),
     re.compile(rb"\\(?:[nrtbfv'\\]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})"),
@@ -210,7 +220,7 @@ def _merge_json_value(
             warnings.append(f"{location}: translated JSON added keys ignored: {', '.join(extra)}")
         for key, source_value in source.items():
             if key not in translated:
-                if reject_source_fallback:
+                if reject_source_fallback and key in VISIBLE_TEXT_FIELDS:
                     raise MergeFailure(f"{location}.{key}: missing translated field")
                 merged[key] = source_value
                 warnings.append(f"{location}.{key}: missing translated field; source retained")
@@ -237,6 +247,14 @@ def _merge_json_value(
                         return [text[:boundary], text[boundary + 1 :]], [
                             f"{location}: reconstructed two pages from one translated page"
                         ]
+                if reject_source_fallback and len(source) == 1 and all(
+                    isinstance(item, str)
+                    and not re.search(r"[가-힣ㄱ-ㅎㅏ-ㅣ]", item)
+                    for item in translated
+                ):
+                    return ["\n".join(translated)], [
+                        f"{location}: reconstructed one page from translated lines"
+                    ]
                 if reject_source_fallback:
                     raise MergeFailure(f"{location}: translated page count changed")
                 return source, [f"{location}: page count changed {len(source)} -> {len(translated)}; source retained"]
@@ -249,6 +267,8 @@ def _merge_json_value(
                         return translated, []
                     return source, [f"{location}: unidentified text changed; source retained"]
             if not translated and source:
+                if all(item == "" for item in source):
+                    return source, []
                 if reject_source_fallback:
                     raise MergeFailure(f"{location}: empty translation")
                 return source, [f"{location}: empty translation; source retained"]
@@ -256,7 +276,7 @@ def _merge_json_value(
                 return translated, [f"{location}: text line count changed {len(source)} -> {len(translated)}"]
             return translated, []
         elif len(source) != len(translated):
-            if reject_source_fallback:
+            if reject_source_fallback and field in VISIBLE_TEXT_FIELDS:
                 raise MergeFailure(f"{location}: non-text array length changed")
             return source, [
                 f"{location}: non-text array length changed {len(source)} -> {len(translated)}; source retained"

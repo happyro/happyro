@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 
 from .checks import (
     line_count,
@@ -23,6 +24,70 @@ STRICT_SOURCE_FALLBACK_OUTPUTS = {
     "tipbox.json",
 }
 HANGUL_RE = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
+NON_TRANSLATABLE_QUEST_RECORDS = {"3131"}
+NON_TRANSLATABLE_TRUE_RECORDS = {
+    "3131", "8502", "8503", "8504", "8505", "8507", "8508", "8509", "8510",
+    "8512", "8513", "8514", "8515", "8517", "8518", "8520", "8522",
+    "8523", "8524", "8525",
+}
+
+
+def has_hangul_text(data: bytes, output_path: str) -> bool:
+    value = json.loads(data.decode("utf-8"))
+    if output_path.endswith("itemInfo_true.json"):
+        records = value.get("data", {}).values()
+        strings = []
+        for record in records:
+            for field in (
+                "unidentifiedDisplayName",
+                "identifiedDisplayName",
+                "unidentifiedDescriptionName",
+                "identifiedDescriptionName",
+            ):
+                field_value = record.get(field)
+                strings.extend(field_value if isinstance(field_value, list) else [field_value])
+    elif output_path.endswith("tipbox.json"):
+        strings = []
+        for record in value.values():
+            for field in ("Title", "Page"):
+                field_value = record.get(field)
+                strings.extend(field_value if isinstance(field_value, list) else [field_value])
+    elif output_path.endswith("OngoingQuestInfoList.json") or output_path.endswith(
+        "OngoingQuestInfoList_True.json"
+    ):
+        strings = []
+        excluded = (
+            NON_TRANSLATABLE_TRUE_RECORDS
+            if output_path.endswith("OngoingQuestInfoList_True.json")
+            else NON_TRANSLATABLE_QUEST_RECORDS
+        )
+        for record_id, record in value.get("data", {}).items():
+            if record_id in excluded or (
+                output_path.endswith("OngoingQuestInfoList_True.json")
+                and str(record.get("Title", "")).startswith("书的主人：")
+            ) or (
+                output_path.endswith("OngoingQuestInfoList.json")
+                and record_id in {"3131", "3132"}
+            ):
+                continue
+            for field in ("Title", "Summary", "Description"):
+                field_value = record.get(field)
+                strings.extend(field_value if isinstance(field_value, list) else [field_value])
+    else:
+        strings = []
+
+        def collect(current: object) -> None:
+            if isinstance(current, str):
+                strings.append(current)
+            elif isinstance(current, dict):
+                for child in current.values():
+                    collect(child)
+            elif isinstance(current, list):
+                for child in current:
+                    collect(child)
+
+        collect(value)
+    return any(isinstance(text, str) and HANGUL_RE.search(text) for text in strings)
 
 
 def merge_file(rows: list[Row], allow_incomplete: bool, strict_line_count: bool) -> Output:
@@ -96,7 +161,7 @@ def merge_file(rows: list[Row], allow_incomplete: bool, strict_line_count: bool)
         chunks.append(replacement)
     data = merge_framed_json(chunks) if output_path.endswith(".json") else b"".join(chunks)
     parse_json_if_needed(output_path, data)
-    if strict_output and HANGUL_RE.search(data.decode("utf-8")):
+    if strict_output and has_hangul_text(data, output_path):
         raise MergeFailure(f"{logical_path}: Hangul remains after translation merge")
     return Output(
         repo,
