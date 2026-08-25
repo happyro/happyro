@@ -12,7 +12,10 @@
 | --- | --- |
 | [change-inventory.md](change-inventory.md) | 工作树边界、文件归属、生成物与待确认改动 |
 | [translation-writeback.md](translation-writeback.md) | 翻译源、合并、回写以及源头同步规则 |
-| [client-runtime.md](client-runtime.md) | 称号、技能、地图、按钮、邮件等客户端修复 |
+| [client-static-localization.md](client-static-localization.md) | 客户端静态表和界面本地化 |
+| [client-mail-lifecycle.md](client-mail-lifecycle.md) | 客户端邮件窗口生命周期 |
+| [client-signboard-localization.md](client-signboard-localization.md) | NPC 头顶标牌的本地化来源与覆盖规则 |
+| [client-monster-name-localization.md](client-monster-name-localization.md) | 魔物悬停名称的本地化来源与回退规则 |
 | [server-runtime.md](server-runtime.md) | MOTD、服务端数据和数据库重建判断 |
 | [resources-and-gateway.md](resources-and-gateway.md) | 装备图片、编码路径、AI 和资源网关 |
 | [build-and-environment.md](build-and-environment.md) | 需要重新构建或重启的环境 |

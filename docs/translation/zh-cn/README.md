@@ -6,6 +6,7 @@
 
 - [`client-server/`](client-server/README.md)：HappyRO client 和 server 项目的主产品翻译工作区；
 - [`kro-20211105/`](kro-20211105/README.md)：kRO 2021-11-05 官方客户端资源的独立翻译工作区。
+- [`npc-names/`](npc-names/README.md)：常用城镇 NPC 名称的独立中文翻译计划。
 
 两个工作区分别维护自己的清单、进度、术语表、基准文件和 agent 目录，不共用工作状态文件。
 
