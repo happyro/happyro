@@ -2,7 +2,7 @@
 
 本目录维护 HappyRO 常用城镇 NPC 名称的独立中文翻译计划。它只处理玩家可见的 NPC 名称，不承接 NPC 对话、选项、任务文本或 kRO 客户端资源的全量翻译。
 
-进度按“单个城镇全地图覆盖”统计。目前只有普隆德拉达到全地图已实现标准；其他核心城市已有部分名称译文，但仍属于部分覆盖。
+进度按“单个城镇全地图覆盖”统计。第一阶段六城和第二阶段八座主要城市均已完成全量清单、客户端映射、自动检查和代表性实机取样。
 
 ## 文档
 
@@ -11,6 +11,8 @@
 - [terms-names.csv](terms-names.csv)：NPC 名称术语表
 - [batches/core-towns.md](batches/core-towns.md)：核心六城第一批范围
 - [batches/prontera.md](batches/prontera.md)：普隆德拉全地图范围和验收基准
+- [batches/second-stage.md](batches/second-stage.md)：第二阶段八城范围、排除项和验收证据
+- [second-stage-inventory.csv](second-stage-inventory.csv)：第二阶段活动 NPC 全量名称清单
 - NPC 初始名称包的客户端本地化原因和验收方式见 [`../../../bugfix/zh-cn/20260825/client-npc-name-display.md`](../../../bugfix/zh-cn/20260825/client-npc-name-display.md)。
 
 ## 维护边界
