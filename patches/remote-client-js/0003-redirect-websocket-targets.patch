@@ -1,0 +1,50 @@
+diff --git a/index.js b/index.js
+index f26068e..ae35333 100644
+--- a/index.js
++++ b/index.js
+@@ -212,6 +212,12 @@ async function startServer() {
+           '127.0.0.1:6121',  // Char
+           '127.0.0.1:5121',  // Map
+         ];
++    const TARGET_REDIRECTS = Object.fromEntries(
++      (process.env.WS_TARGET_REDIRECTS || '')
++        .split(',')
++        .map(entry => entry.trim().split('='))
++        .filter(([source, destination]) => source && destination)
++    );
+ 
+     server.on('upgrade', (req, socket, head) => {
+       if (req.url.startsWith('/ws/')) {
+@@ -248,8 +254,21 @@ async function startServer() {
+         return;
+       }
+ 
+-      logger.info(`WS proxy: connecting to ${target}`);
+-      const tcp = net.connect(targetPort, host);
++      const destination = TARGET_REDIRECTS[target] || target;
++      const destinationColonIdx = destination.lastIndexOf(':');
++      const destinationHost = destinationColonIdx !== -1 ? destination.slice(0, destinationColonIdx) : '';
++      const destinationPort = destinationColonIdx !== -1
++        ? parseInt(destination.slice(destinationColonIdx + 1), 10)
++        : NaN;
++
++      if (!destinationHost || !Number.isInteger(destinationPort) || destinationPort < 1 || destinationPort > 65535) {
++        logger.warn(`WS proxy rejected malformed destination: "${destination}"`);
++        ws.close();
++        return;
++      }
++
++      logger.info(`WS proxy: connecting ${target} -> ${destination}`);
++      const tcp = net.connect(destinationPort, destinationHost);
+       tcp.setNoDelay(true);
+ 
+       // Buffer messages received before the TCP connection is established.
+@@ -274,7 +293,7 @@ async function startServer() {
+ 
+       tcp.on('connect', () => {
+         connected = true;
+-        logger.info(`WS proxy: connected  to ${target}`);
++        logger.info(`WS proxy: connected ${target} -> ${destination}`);
+         pending.splice(0).forEach(d => tcp.write(d));
+       });
+ 

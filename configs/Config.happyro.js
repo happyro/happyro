@@ -5,7 +5,7 @@ window.ROConfigHappyRO = {
 		{
 			display: 'HappyRO',
 			desc: 'Renewal 2021-11-03',
-			address: '10.24.1.1',
+			address: '127.0.0.1',
 			port: 6900,
 			version: 25,
 			langtype: 0xf0,
