@@ -21,7 +21,7 @@ bash scripts/server/server.sh stop
 bash scripts/server/server.sh start
 ```
 
-停止和启动会影响当前局域网服务，应在确认没有其他验证会话后执行。单纯复核当前进程可使用 `gateway.sh verify` 和 `server.sh verify`。
+停止和启动会影响当前服务，应在确认没有其他验证会话后执行。单纯复核当前进程可使用 `gateway.sh verify` 和 `server.sh verify`。
 
 ## 本轮不需要执行
 

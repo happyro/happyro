@@ -1,6 +1,6 @@
 # 部署文档
 
-HappyRO 当前在局域网中通过根仓库 `scripts/`、systemd transient units 和 `deploy/` 配置运行。这里的文档需要明确区分当前可执行流程与未来方案。
+HappyRO 当前通过根仓库 `scripts/`、systemd transient units 和 `deploy/` 配置运行。这里的文档需要明确区分当前可执行流程与未来方案。
 
 ## 当前入口
 
