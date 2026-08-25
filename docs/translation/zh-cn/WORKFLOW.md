@@ -19,7 +19,7 @@
 | --- | --- |
 | 长期流程和完成条件 | 本文 |
 | 翻译分片、清单、术语和正式 merged | 对应 `docs/translation/zh-cn/<workspace>/` |
-| 一次运行的合并和检查日志 | `work/translation-merge/<workspace>/<batch>/` |
+| 一次运行的合并、编译、回写和检查记录 | `work/translation-release/<workspace>/<batch>/` |
 | 可分配的翻译内容修复 | `docs/translation/zh-cn/repair/<batch>/` |
 | 构建产物 | `artifacts/` |
 | 产品缺陷、根因、验证和提交计划 | `docs/bugfix/<locale>/<batch>/` |
@@ -95,6 +95,8 @@ Agent 只修改自己的：
 
 本阶段不修改目标源码、不生成完整合并文件，也不提交。进入校验前，所有工作单元必须处于终态；`阻塞` 需要先解决，不能在正式发布中使用 `--allow-incomplete` 绕过。
 
+当正式仓库已经发生 bugfix 或翻译回写后，旧 agent 分片不再是当前源码基线。日常 bugfix 直接修改源码维护源，不要求为每次修复重新分片；源一致性错误不得通过指定旧备份或关闭检查绕过。旧批次保留为历史审计，不能直接作为新的 writeback 输入。只有明确启动新翻译项目时，才从最新仓库重新扫描和分片。
+
 工作区细则见 [client-server/README.md](client-server/README.md) 和 [kro-20211105/README.md](kro-20211105/README.md)。
 
 ## 3. 校验原始分片
@@ -115,31 +117,23 @@ python3 tools/translation/validate/main.py chunks \
 
 完成条件：命令无错误退出，所有警告都有明确复核结论。
 
-## 4. 合并到临时目录
+## 4. 使用发布工具生成批次
 
-先 dry-run，再写入新的批次目录：
+推荐使用统一发布工具。它会在 `work/translation-release/<workspace>/<batch>/` 中依次执行分片校验、合并、merged 校验和 kRO Lua 回编译；默认只生成临时结果和 dry-run 计划：
+
+client-server 若使用已回写仓库对应的冻结基线合并，并且校验只出现已复核的结构审阅告警，可增加 `--allow-review-findings`；日志中的 `Errors` 仍必须为 0。
 
 ```bash
-python3 tools/translation/merge/main.py \
+python3 tools/translation/release/main.py \
   --workspace client-server \
-  --output work/translation-merge/client-server/<batch>/merged/files \
-  --dry-run
+  --batch <batch>
 
-python3 tools/translation/merge/main.py \
-  --workspace client-server \
-  --output work/translation-merge/client-server/<batch>/merged/files
-
-python3 tools/translation/merge/main.py \
+python3 tools/translation/release/main.py \
   --workspace kro-20211105 \
-  --output work/translation-merge/kro-20211105/<batch>/merged/files \
-  --dry-run
-
-python3 tools/translation/merge/main.py \
-  --workspace kro-20211105 \
-  --output work/translation-merge/kro-20211105/<batch>/merged/files
+  --batch <batch>
 ```
 
-每个输出目录的 `merged/` 必须同时包含 `files/`、`manifest.tsv` 和 `validation/merge-warnings.tsv`。临时合并结果不能直接视为正式源。
+每个输出目录的 `merged/` 必须同时包含 `files/`、`manifest.tsv` 和 `validation/merge-warnings.tsv`；kRO 还会在 `artifacts/lua50/`、`artifacts/lua51/` 保存回编译产物。临时合并结果不能直接视为正式源。
 
 ## 5. 校验完整合并文件
 
@@ -149,14 +143,14 @@ python3 tools/translation/merge/main.py \
 python3 tools/translation/validate/main.py merged \
   --root docs/translation/zh-cn/client-server/agents \
   --all \
-  --merged-root work/translation-merge/client-server/<batch>/merged/files \
-  --merged-manifest work/translation-merge/client-server/<batch>/merged/manifest.tsv
+  --merged-root work/translation-release/client-server/<batch>/merged/files \
+  --merged-manifest work/translation-release/client-server/<batch>/merged/manifest.tsv
 
 python3 tools/translation/validate/main.py merged \
   --root docs/translation/zh-cn/kro-20211105/agents \
   --all \
-  --merged-root work/translation-merge/kro-20211105/<batch>/merged/files \
-  --merged-manifest work/translation-merge/kro-20211105/<batch>/merged/manifest.tsv
+  --merged-root work/translation-release/kro-20211105/<batch>/merged/files \
+  --merged-manifest work/translation-release/kro-20211105/<batch>/merged/manifest.tsv
 
 node tools/workspace/validate-kro/main.mjs
 ```
@@ -178,35 +172,40 @@ Repair agent 的 `fixed/` 是临时修复结果。协调者复核后必须按 `t
 禁止只修改以下位置：
 
 - `repair/*/fixed/`
-- `work/translation-merge/**`
+- `work/translation-release/**`
 - 目标仓库中已经回写的文件
 
 否则下一次合并会重新产生同一问题。具体 repair 批次规则由该批次自己的 README 和 AGENTS.md 管理。
 
-## 7. 晋级正式 merged
+## 7. 晋级正式 merged 和回写
 
-校验通过后，才把临时 `files/` 发布到对应工作区的 Git 跟踪 `merged/files/`。writeback 默认 dry-run，应先检查计划，再显式使用 `--write`。
+校验和编译全部通过后，使用 `--promote-merged` 将本批次的 `files/`、`manifest.tsv`、`BATCH_STATE` 和 `validation/` 晋级到正式 `docs/translation/zh-cn/<workspace>/merged/`。默认仍是 dry-run；确认计划后才增加 `--write`。
 
-client-server：
-
-```bash
-python3 tools/translation/writeback/main.py \
-  --merged-root work/translation-merge/client-server/<batch>/merged/files \
-  --manifest work/translation-merge/client-server/<batch>/merged/manifest.tsv \
-  --target-root client=docs/translation/zh-cn/client-server/merged/files/client \
-  --target-root server=docs/translation/zh-cn/client-server/merged/files/server
-```
-
-kRO：
+kRO 晋级并写入运行时：
 
 ```bash
-python3 tools/translation/writeback/main.py \
-  --merged-root work/translation-merge/kro-20211105/<batch>/merged/files \
-  --manifest work/translation-merge/kro-20211105/<batch>/merged/manifest.tsv \
-  --target-root client=docs/translation/zh-cn/kro-20211105/merged/files
+python3 tools/translation/release/main.py \
+  --workspace kro-20211105 \
+  --batch <batch> \
+  --promote-merged \
+  --runtime-root inputs/runtime/kro-20211105/client
 ```
 
-确认 dry-run 后，用同一命令增加 `--backup-dir work/translation-writeback-backup/<batch>` 和 `--write`。writeback 只发布 manifest 中的文件；协调者还必须把本批 `manifest.tsv` 和已确认的验证报告更新到正式 `merged/`，并检查旧文件是否需要删除。
+确认 dry-run 后，使用同一命令增加 `--write`。被替换的正式 merged 和运行时文件会备份到当前批次的 `backup/`。
+
+client-server 晋级并回写两个源码仓库：
+
+```bash
+python3 tools/translation/release/main.py \
+  --workspace client-server \
+  --batch <batch> \
+  --allow-review-findings \
+  --promote-merged \
+  --target-root client=repos/happyro-client \
+  --target-root server=repos/happyro-server
+```
+
+确认目标和文件数后，在同一命令末尾增加 `--write`。发布工具只发布 manifest 登记的文件，不删除目标中的旧文件；正式 merged 的元数据和验证报告由 `--promote-merged` 一并晋级。
 
 晋级时还必须从各 agent 清单生成工作区根 `translated-files.tsv`，并对 agent 术语表去重、处理冲突后更新根 `terms-names.csv`。这些汇总表不能直接拼接，因为工作区根表与 agent 表的 schema 可能不同。
 
@@ -216,40 +215,40 @@ python3 tools/translation/writeback/main.py \
 
 ### client-server
 
-从正式 `docs/translation/zh-cn/client-server/merged/` 再次 dry-run，然后回写独立仓库：
+使用发布工具从同一个临时批次晋级正式 merged 并回写两个独立仓库：
 
 ```bash
-python3 tools/translation/writeback/main.py \
-  --merged-root docs/translation/zh-cn/client-server/merged/files \
-  --manifest docs/translation/zh-cn/client-server/merged/manifest.tsv \
+python3 tools/translation/release/main.py \
+  --workspace client-server \
+  --batch <batch> \
+  --promote-merged \
   --target-root client=repos/happyro-client \
   --target-root server=repos/happyro-server \
-  --backup-dir work/translation-writeback-backup/<batch>
+  --write
 ```
 
-确认目标和文件数后增加 `--write`。回写结束后分别检查两个仓库的 `git diff`，并运行各自的语法、单元测试和构建检查。
+回写结束后分别检查两个仓库的 `git diff`，并运行各自的语法、单元测试和构建检查。
 
 ### kRO
 
-正式 JSON 不能直接作为客户端 LUB 使用。分别运行 Lua 5.0 和 Lua 5.1 构建器：
+使用发布工具从同一个临时批次晋级正式 merged、回编译 Lua 5.0/5.1，并写入运行时资源：
 
 ```bash
-python3 tools/client/build/lua50/main.py build \
-  --output artifacts/client/lub
-
-python3 tools/client/build/lua51/main.py build \
-  --output artifacts/client/lub
+python3 tools/translation/release/main.py \
+  --workspace kro-20211105 \
+  --batch <batch> \
+  --promote-merged \
+  --runtime-root inputs/runtime/kro-20211105/client \
+  --write
 ```
 
-构建器默认读取正式 kRO merged，并执行字节码 ABI 检查和语义回环。直接文本文件按资源部署流程从正式 `merged/files/text/` 发布。任何情况下都不能覆盖 `inputs/runtime/kro-20211105/client/`。
+编译器执行字节码 ABI 检查和语义回环；直接文本按工具记录的资源路径发布。运行时目标受 `--runtime-root` 限制，并由当前批次的 `backup/runtime/` 提供回滚备份。
 
-### 当前自动化缺口
+### 当前自动化边界
 
-- writeback 只发布 manifest 中登记的文件，不同步 manifest、验证报告，也不删除正式 merged 中已经过期的文件；晋级阶段仍需要协调者复核。
-- kRO 的 LUB 构建产物和 `merged/files/text/` 目前没有统一的资源安装命令；投放位置、覆盖优先级和回滚方式必须在具体批次中记录。
+- 发布工具不会删除目标中的旧文件；过期文件必须在复核后单独清理。
+- 发布工具不会重建数据库、重启服务或执行浏览器审计。
 - 浏览器审计证据和 bugfix 文档仍由批次流程整理，尚未由单一命令自动关联。
-
-这些缺口不能用手工覆盖官方 `inputs/` 规避。后续如实现发布工具，应更新本文和对应工具 README，再把手工步骤替换为可验证命令。
 
 ## 9. 构建、重启和运行验证
 

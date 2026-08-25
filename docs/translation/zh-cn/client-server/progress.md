@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 状态：四个 agent 的工作单元全部进入终态；repair 和合并验证已完成，正式 `merged/` 已晋级，可作为 writeback 输入。
+- 状态：四个 agent 的工作单元全部进入终态；repair 和合并验证已完成，正式 `merged/` 已晋级并完成 writeback。
 - 当前分支：`lang/zh-cn`
 - 当前基准：[baseline.md](baseline.md)
 - 扫描日期：2026-08-21
@@ -31,11 +31,12 @@
 
 - 从 agent manifest 生成工作区根 `translated-files.tsv`，不能直接拼接不同 schema 的 agent 表。
 - 合并 agent 术语表，去重并处理冲突后更新根 `terms-names.csv`。
-- 已从 `work/translation-merge/repair-20260824-01-run3/client-server/merged/` 晋级 `merged/files/`、`merged/manifest.tsv` 和验证记录。
-- 已完成正式 merged 的回写，并复核 client/server 目标 diff。
+- 当前正式基准为 `canonical-20260825-01`，重新合并 838 个文件，使用冻结基线完成 validate，并回写 client/server 与正式 merged；同时恢复 `fc9503e5` 当前提交中的 DBManager、地图和技能本地化逻辑，避免旧基线覆盖 bugfix。
+- 回写后的三仓库抽样与全量 manifest 对照已完成：当前 client/server/vendor 中的 bugfix 维护源已恢复；正式 merged 的 836 个可对照文件与当前 client/server 一致，另有 1 个技能本地化文件仅存在换行/格式差异。旧 agent 分片仍保存回写前快照，下一轮翻译必须从当前仓库重新分片，不能继续把旧分片作为新基线。
+- 已保存 chunks validate 和 merged validate；merged validate 为 `Errors: 0`，结构复核 finding 保留在 `merged/validation/merged-validate.log`。
 
 ## 保留的复核项
 
-- `merged/validation/merge-warnings.tsv` 保留 836 条结构提示；这些提示来自合并器的非对白结构或保护标记检查，需按文件人工确认，不等同于合并失败。
+- `merged/validation/merge-warnings.tsv` 保留 587 条结构提示；这些提示来自合并器的非对白结构或保护标记检查，需按文件人工确认，不等同于合并失败。
 
 完成条件和命令顺序见 [`../WORKFLOW.md`](../WORKFLOW.md)。
