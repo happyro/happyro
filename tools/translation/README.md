@@ -8,12 +8,13 @@
 | --- | --- | --- |
 | [`merge/main.py`](merge/main.py) | 将各 agent 的译文分片合并成完整文件，并生成来源清单 | 合并 |
 | [`writeback/main.py`](writeback/main.py) | 按合并清单将已复核产物发布到明确的目标目录 | 发布 |
+| [`release/main.py`](release/main.py) | 编排分片校验、合并、merged 校验、kRO Lua 回编译和 writeback | 发布编排 |
 | [`validate/main.py chunks`](validate/main.py) | 检查单个 agent 的译文文件、占位符、颜色码、转义符和清单登记 | 合并前 |
 | [`validate/main.py merged`](validate/main.py) | 检查完整文件回拼后的缩进变化 | 合并后 |
 | [`../workspace/validate-kro/main.mjs`](../workspace/validate-kro/main.mjs) | 检查 kRO 总清单、agent 清单、切片范围和提取单元一致性 | 工作区维护 |
 | [`../client/build/README.md`](../client/build/README.md) | 将合并 JSON 回编译为 Lua 5.0/5.1 LUB 并执行语义回环校验 | 客户端构建 |
 
-临时合并结果写入 `work/translation-merge/<workspace>/<batch>/`；确认后再复制到对应工作区的 `merged/files/`。这些工具不修改 agent 分片、官方输入或独立 client/server 仓库。
+推荐使用 `release/main.py` 将临时结果统一写入 `work/translation-release/<workspace>/<batch>/`；确认后由 `--promote-merged` 晋级正式 `merged/`。底层 `merge` 命令仍可单独使用，并写入 `work/translation-merge/<workspace>/<batch>/`。这些工具不修改 agent 分片或官方输入。
 
 合并器按职责拆分在 [`merge/`](merge/) 包中：`cli.py` 负责参数和流程编排，`manifest.py` 负责清单读取与分组，`client.py` 和 `kro.py` 分别处理两类工作区，`checks.py` 集中处理行、结构、标记和 JSON 校验，`writer.py` 写出合并清单与复核报告；`main.py` 仅作为可直接执行的薄入口。命令不带参数时只显示帮助，不执行合并。
 
@@ -28,6 +29,8 @@ python3 tools/translation/validate/main.py chunks --all
 
 默认行数变化为警告；需要把行数变化视为失败时，加 `--strict-lines`。颜色码、转义符、占位符、替换字符、清单重复项和译文登记缺失仍会报告为错误。
 
+merged 校验发现结构缩进差异时会返回审阅 findings；确认这些提示属于既有译文差异且 `Errors: 0` 后，发布编排可使用 `--allow-review-findings`，只放行审阅提示，不放行校验错误。
+
 ### 合并文件校验
 
 ```bash
@@ -38,6 +41,19 @@ python3 tools/translation/validate/main.py merged \
 ```
 
 `merged` 校验器按照源分片和译文分片的语义行对齐，检查结构性缩进和新增的混合 Tab/空格缩进；对白命令默认只作为对齐依据，可用 `--include-dialogue` 纳入报告。它不替代 `merge` 的结构、标记和 JSON 校验，而是负责合并后完整文件的缩进复核。
+
+## Release 编排
+
+完整流程可以通过 [`release/main.py`](release/main.py) 一次执行。它把每次运行的中间文件集中放在 `work/translation-release/<workspace>/<batch>/`，包括 merged 文件、manifest、校验日志、kRO Lua 5.0/5.1 产物、writeback 备份和 `STATE.json`。默认是 dry-run，只有显式增加 `--write` 才会发布到目标目录；使用 `--promote-merged` 可以将本批次的 merged 文件、manifest、BATCH_STATE 和 validation 晋级到正式 `docs/translation/zh-cn/<workspace>/merged/`；使用 kRO 的 `--runtime-root inputs/runtime/...` 时，还会将编译出的 `.lub` 和直接文本发布到运行时并单独备份。它不会删除目标中的旧文件、重建数据库或重启服务。
+
+三个工具的实现按职责拆分：`validate/` 将分片校验、merged 校验和公共清单逻辑分开；`writeback/` 将清单读取、目标安全检查和文件发布分开；`release/` 将阶段执行、状态管理、正式 merged 晋级和运行时回写分开。`client-server` 源码已经发生回写时，使用 release 的 `--repo-root` 指向冻结基线。`main.py` 保持为稳定的命令入口。
+
+```bash
+python3 tools/translation/release/main.py \
+  --workspace kro-20211105 \
+  --batch canonical-20260825-01 \
+  --target-root client=docs/translation/zh-cn/kro-20211105/merged/files
+```
 对于 kRO，合并器会将 `.lub` 分片输出为规范化 JSON；使用 `--merged-manifest` 让校验器按合并清单中的 `output_path` 定位这些文件。
 
 ## 合并器
@@ -71,6 +87,8 @@ kRO 的译文分片同样默认允许物理行数变化。合并器以源 JSON �
 ## 回写合并产物
 
 回写工具默认只执行预览；只有显式加入 `--write` 才会落盘。目标目录必须通过 `--target-root NAME=PATH` 明确指定，工具会拒绝 `inputs/` 下的受保护源材料，并使用临时文件原子替换已有目标文件。需要保留旧文件时可指定 `--backup-dir`，备份目录按仓库名和相对路径保存。
+
+正式 `merged/` 目录可以包含 `BATCH_STATE`。当其 `state=closed` 时，writeback 默认拒绝使用该批次，避免历史 merged 覆盖后续源码 bugfix；需要复现历史结果时，应先复制到新的 replay/staging 目录，并显式使用 `--allow-closed`。正常修复和翻译发布必须创建新批次。
 
 ```bash
 # 将已验证的 kRO 临时合并文件晋级到正式 merged（dry-run）
