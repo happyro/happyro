@@ -3,7 +3,7 @@
 ## 当前状态
 
 - 状态：四个 agent 的工作单元全部进入终态；repair 和合并验证已完成，正式 `merged/` 已晋级并完成 writeback。
-- 当前分支：`lang/zh-cn`
+- 当前分支：`main`
 - 当前基准：[baseline.md](baseline.md)
 - 扫描日期：2026-08-21
 - 总源文件数：2,099
