@@ -8,6 +8,7 @@
 - [progress.md](progress.md)：地图批次和验收进度
 - [terms-names.csv](terms-names.csv)：NPC 名称术语表
 - [batches/core-towns.md](batches/core-towns.md)：核心六城第一批范围
+- NPC 初始名称包的客户端本地化原因和验收方式见 [`../../../bugfix/zh-cn/20260825/client-npc-name-display.md`](../../../bugfix/zh-cn/20260825/client-npc-name-display.md)。
 
 ## 维护边界
 
