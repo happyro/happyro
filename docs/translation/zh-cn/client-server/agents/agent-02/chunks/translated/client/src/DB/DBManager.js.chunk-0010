@@ -95,6 +95,20 @@ function loadAttendanceFile(filename, callback, onEnd) {
  * @param {function} onEnd - Function to run when done
  */
 function loadWorldMapInfo(basePath, onEnd) {
+	const localizedWorldNames = new Map([
+		['Midgard North', '米德加尔特北部'],
+		['Crack', '次元裂缝'],
+		['Far-Star', '遥远星域']
+	]);
+	const localizedWorldMap = new Map(
+		WorldMap.map(world => [
+			world.id,
+			{
+				name: world.name,
+				maps: new Map(world.maps.map(section => [section.id, section.name]))
+			}
+		])
+	);
 	const files = ['worldviewdata_language.lub', 'worldviewdata_list.lub', 'worldviewdata_table.lub'];
 
 	const dirPath = basePath.endsWith('/') ? basePath : basePath + '/';
@@ -135,12 +149,13 @@ function loadWorldMapInfo(basePath, onEnd) {
 				const decodedName = userStringDecoder.decode(name);
 				const decodedId = userStringDecoder.decode(id);
 				const decodedTableKey = userStringDecoder.decode(tableKey);
+				const localizedWorld = localizedWorldMap.get(decodedId);
 
 				WorldMap.push({
 					id: decodedId || decodedTableKey, // fallback to table name if id missing
 					ep_from: 0,
 					ep_to: 99,
-					name: decodedName,
+					name: localizedWorld?.name || localizedWorldNames.get(decodedName) || decodedName,
 					maps: [],
 					_tableKey: decodedTableKey // Internal use for mapping maps to this world
 				});
@@ -178,13 +193,15 @@ function loadWorldMapInfo(basePath, onEnd) {
 				if (world) {
 					// clean .rsw extension for ID
 					const mapId = decodedRsw.toLowerCase().replace('.rsw', '').replace('.gat', '');
+					const localizedName = localizedWorldMap.get(world.id)?.maps.get(mapId);
+					const localizedMapInfoName = LocalizedMapInfo[`${mapId}.rsw`]?.displayName;
 
 					world.maps.push({
 						index: dgIndex,
 						id: mapId,
 						ep_from: 0,
 						ep_to: 99,
-						name: decodedName,
+						name: localizedName || localizedMapInfoName || decodedName,
 						top: top,
 						left: left,
 						width: right - left, // Calculate width
@@ -281,6 +298,24 @@ function loadWorldMapInfo(basePath, onEnd) {
 }
 
 function loadTitleTable(filename, callback, onEnd) {
+	const loadLocalizedTitles = () => {
+		Client.loadFile(
+			'data/titletable.json',
+			file => {
+				try {
+					const text = typeof file === 'string' ? file : new TextDecoder().decode(file);
+					const json = JSON.parse(text);
+					Object.assign(TitleTable, json);
+				} catch (error) {
+					console.error('[loadTitleTable] Localized title error: ', error);
+				} finally {
+					onEnd();
+				}
+			},
+			onEnd
+		);
+	};
+
 	Client.loadFile(
 		filename,
 		async function (file) {
@@ -316,10 +351,10 @@ function loadTitleTable(filename, callback, onEnd) {
 				console.error('[loadTitleTable] Error: ', error);
 			} finally {
 				lua.unmountFile(filename);
-				onEnd();
+				loadLocalizedTitles();
 			}
 		},
-		onEnd
+		loadLocalizedTitles
 	);
 }
 

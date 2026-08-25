@@ -1,5 +1,7 @@
 import iconv from 'Vendors/iconv-lite.js';
 
+const LEGACY_KRO_CHARSET = 'windows-949';
+
 /**
  * Smart decode helper.
  *
@@ -83,7 +85,7 @@ const CodepageManager = {
 		}
 		if (charset === 'utf-8') {
 			// triggered on server string decoding defined on BinaryReader
-			return smartDecode(data, this.userCharset);
+			return smartDecode(data, LEGACY_KRO_CHARSET);
 		}
 		return iconv.decode(data, charset || this.userCharset);
 	},

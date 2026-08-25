@@ -23,11 +23,25 @@ verify_gateway() {
 		"http://127.0.0.1:$port/api/health" >/dev/null || fail "health endpoint failed"
 	curl --fail --silent --show-error --max-time 10 \
 		"http://127.0.0.1:$port/applications/pwa/index.html" >/dev/null || fail "PWA endpoint failed"
+	message_table="$(curl --fail --silent --show-error --max-time 10 \
+		"http://127.0.0.1:$port/data/msgstringtable.txt")" || fail "message table endpoint failed"
+	[[ "$(sed -n '1292p' <<<"$message_table")" == '一般信息#' ]] || \
+		fail "message table endpoint returned unexpected content"
+	title_table="$(curl --fail --silent --show-error --max-time 10 \
+		"http://127.0.0.1:$port/data/titletable.json")" || fail "title table endpoint failed"
+	jq -e '."1000" == "生命的交汇" and ."1046" == "造王者"' \
+		<<<"$title_table" >/dev/null || fail "title table endpoint returned unexpected content"
+	skill_description_table="$(curl --fail --silent --show-error --max-time 10 \
+		"http://127.0.0.1:$port/data/skilldesctable.txt")" || fail "skill description table endpoint failed"
+	rg -q '^NV_BASIC#' <<<"$skill_description_table" || \
+		fail "skill description table endpoint returned unexpected content"
+	curl --fail --silent --show-error --max-time 10 \
+		"http://127.0.0.1:$port/AI/AI.lua" >/dev/null || fail "homunculus AI endpoint failed"
 
 	status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
 		-X POST "http://127.0.0.1:$port/userconfig/load")"
 	[[ "$status" == 400 ]] || fail "rAthena Web API proxy returned HTTP $status, expected 400"
-	echo "gateway: health, PWA, and rAthena Web API proxy are healthy"
+	echo "gateway: health, PWA, localization, and rAthena Web API proxy are healthy"
 }
 
 start_gateway() {

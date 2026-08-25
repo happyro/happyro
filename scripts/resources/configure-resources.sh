@@ -6,6 +6,9 @@ source "$(dirname "$0")/../_lib/lib.sh"
 
 runtime_client="$PROJECT_ROOT/inputs/runtime/kro-20211105/client"
 resources_dir="$GATEWAY_REPO/resources"
+message_table="$PROJECT_ROOT/localization/client/data/msgstringtable.txt"
+title_table="$PROJECT_ROOT/localization/client/data/titletable.json"
+skill_description_table="$PROJECT_ROOT/localization/client/data/skilldesctable.txt"
 
 [[ -d "$runtime_client" ]] || {
 	echo "missing runtime client: $runtime_client" >&2
@@ -21,6 +24,31 @@ resources_dir="$GATEWAY_REPO/resources"
 }
 cmp -s "$runtime_client/DATA.INI" <(printf '[Data]\n1=data.grf\n') || {
 	echo "unexpected Web DATA.INI content: $runtime_client/DATA.INI" >&2
+	exit 1
+}
+[[ -f "$message_table" ]] || {
+	echo "missing localized message table: $message_table" >&2
+	exit 1
+}
+[[ "$(wc -l < "$message_table")" -ge 3977 ]] || {
+	echo "localized message table does not cover client message IDs: $message_table" >&2
+	exit 1
+}
+[[ -f "$title_table" ]] || {
+	echo "missing localized title table: $title_table" >&2
+	exit 1
+}
+jq -e 'length == 47 and ."1000" == "生命的交汇" and ."1046" == "造王者"' \
+	"$title_table" >/dev/null || {
+	echo "localized title table is incomplete: $title_table" >&2
+	exit 1
+}
+[[ -f "$skill_description_table" ]] || {
+	echo "missing localized skill description table: $skill_description_table" >&2
+	exit 1
+}
+rg -q '^NV_BASIC#' "$skill_description_table" || {
+	echo "localized skill description table is incomplete: $skill_description_table" >&2
 	exit 1
 }
 
@@ -48,7 +76,7 @@ ensure_link "$resources_dir/data.grf" \
 ensure_link "$resources_dir/DATA.INI" \
 	"../../../inputs/runtime/kro-20211105/client/DATA.INI"
 
-for loose_dir in BGM System; do
+for loose_dir in AI BGM System; do
 	if [[ -d "$runtime_client/$loose_dir" ]]; then
 		ensure_link "$GATEWAY_REPO/$loose_dir" \
 			"../../inputs/runtime/kro-20211105/client/$loose_dir"
@@ -58,3 +86,6 @@ done
 
 echo "configured: $resources_dir/data.grf"
 echo "configured: $resources_dir/DATA.INI"
+echo "configured: $message_table"
+echo "configured: $title_table"
+echo "configured: $skill_description_table"
