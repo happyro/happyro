@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 状态：四个 agent 的工作单元全部进入终态；repair 和临时合并验证已完成，正式 `merged/` 尚待晋级。
+- 状态：四个 agent 的工作单元全部进入终态；repair 和合并验证已完成，正式 `merged/` 已晋级，可作为 writeback 输入。
 - 当前分支：`lang/zh-cn`
 - 当前基准：[baseline.md](baseline.md)
 - 扫描日期：2026-08-21
@@ -27,11 +27,15 @@
 | agent-04 | 935 | 688 | 0 | 1,623 | 完成 |
 | 合计 | 3,628 | 2,866 | 0 | 6,494 | 完成 |
 
-## 尚未完成的协调工作
+## 已完成的协调工作
 
 - 从 agent manifest 生成工作区根 `translated-files.tsv`，不能直接拼接不同 schema 的 agent 表。
 - 合并 agent 术语表，去重并处理冲突后更新根 `terms-names.csv`。
-- 从已验证临时批次晋级 `merged/files/`、`merged/manifest.tsv` 和验证记录。
-- 对正式 merged 执行 dry-run writeback，并复核 client/server 目标 diff。
+- 已从 `work/translation-merge/repair-20260824-01-run3/client-server/merged/` 晋级 `merged/files/`、`merged/manifest.tsv` 和验证记录。
+- 已完成正式 merged 的回写，并复核 client/server 目标 diff。
+
+## 保留的复核项
+
+- `merged/validation/merge-warnings.tsv` 保留 836 条结构提示；这些提示来自合并器的非对白结构或保护标记检查，需按文件人工确认，不等同于合并失败。
 
 完成条件和命令顺序见 [`../WORKFLOW.md`](../WORKFLOW.md)。

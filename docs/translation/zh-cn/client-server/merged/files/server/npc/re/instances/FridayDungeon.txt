@@ -1,0 +1,881 @@
+//===== rAthena Script =======================================
+//= Friday Memorial Dungeon
+//===== Description: =========================================
+//= [Walkthrough Conversion]
+//= Friday Memorial Dungeon
+//===== Changelogs: ==========================================
+//= 1.0 Initial release [Everade]
+//= 1.1 Clean-up [Capuche]
+//============================================================
+
+gef_tower,57,170,3	script	Marry Jay	4_F_JOB_BLACKSMITH,{
+	if (BaseLevel < 130) {
+		mes "[玛丽·杰伊]";
+		mes "你的基础等级太低，达到 130 级后再来。";
+		close;
+	}
+	mes "^ff0000在地下城内进行怪物处理（例如驯服怪物）不会计入进度，请注意。^000000";
+	next;
+	.@day = gettime(DT_DAYOFWEEK);
+	if (.@day != FRIDAY) {
+		mes "[玛丽·杰伊]";
+		mes "哦，好奇的旁观者？我是玛丽·杰，负责星期中的星期五。";
+		next;
+		select( "什么时候开放？" );
+		mes "[玛丽·杰伊]";
+		mes "地下城开放时间：";
+		mes "^0000FF星期五 00:00 ~ 星期五 23:59^000000";
+		next;
+		mes "[玛丽·杰伊]";
+		mes "希望星期五到来时能见到你~";
+		close;
+	}
+	.@md_name$ = "Friday Dungeon";
+
+	switch(checkquest(12379,PLAYTIME)) {
+	case -1:
+		break;
+	case 0:
+	case 1:
+		mes "[玛丽·杰伊]";
+		mes "抱歉，进入" + .@md_name$ + "的时间已经结束。";
+		mes "请先休息，等待副本再次开放。";
+		close;
+	case 2:
+		erasequest 12379;
+		mes "[玛丽·杰伊]";
+		mes "冷却时间结束了。";
+		mes "你可以再次进入纪念地下城。";
+		close;
+	}
+	mes "[玛丽·杰伊]";
+	mes "你来得正是时候。";
+	mes "纪念地下城刚好准备开放。";
+	mes "现在要进入吗？";
+	next;
+
+	if (is_party_leader() == true)
+		.@menu$ = "Prepare Friday Memorial";
+
+	switch( select( .@menu$, "进入星期五纪念地下城", "取消" ) ) {
+	case 1:
+		instance_create(.@md_name$);
+		mes "[玛丽·杰伊]";
+		mes "纪念地下城已创建。";
+		mes "现在可以进入了。";
+		close;
+	case 2:
+		switch( instance_enter(.@md_name$) ) {
+		case IE_NOMEMBER:
+			if (is_party_leader() == true)
+				end;
+			mes "只有队伍成员可以进入该纪念地下城。";
+			close;
+		case IE_NOINSTANCE:
+			if (is_party_leader() == true) {
+				mes "没有登记的纪念副本。";
+				close;
+			}
+			mes "星期五纪念地下城不存在。";
+			mes "你的队长尚未创建纪念地下城。";
+			close;
+		case IE_OTHER:
+			mes "发生未知错误。";
+			close;
+		case IE_OK:
+			mes "[玛丽·杰伊]";
+			mes "出发吧！";
+			mapannounce "gef_tower", "队伍中的" + strcharinfo(0) + "正在进入" + .@md_name$ + "。", bc_map, 0xFF99;
+			if (isbegin_quest(12379) < 1)
+				setquest 12379;
+			end;
+		}
+		end;
+	case 3:
+		mes "[玛丽·杰伊]";
+		mes "你还没准备好吗？";
+		mes "看来也没办法了。";
+		close;
+	}
+	end;
+}
+
+//Instance
+1@md_gef,185,81	monster	Shining Plant	1083,1,1800000,900000
+
+1@md_gef,110,129,6	script	Marry Jay#0_1	4_F_JOB_BLACKSMITH,{
+	if (is_party_leader() == false)
+		end;
+	mes "[玛丽·杰伊]";
+	mes "在开始设置这里的环境前，你可以选择合适的难度。";
+	mes "我可以替你选择，但每个人应根据自己的能力做决定。";
+	next;
+	switch( select( "取消", "LV130 ~ 199", "LV200 + " ) ) {
+	case 1:
+		close;
+	case 2:
+		//MinLevel, Lich Lord, Nightmare, Jakk, Ghoul, Drainliar
+		'hard = 0;
+		setarray 'mob[0],130,3658,3660,3662,3664,3666;
+		break;
+	case 3:
+		if (BaseLevel < 200) {
+			mes "[玛丽·杰伊]";
+			mes "你的基础等级低于 200，无法选择此难度。";
+			close;
+		}
+		'hard = 1;
+		setarray 'mob[0],200,3659,3661,3663,3665,3667;
+		break;
+	}
+	if (BaseLevel < 'mob[0]) {
+		mes "[玛丽·杰伊]";
+		mes "你的基础等级太低，无法选择此项；需要达到" + 'mob[0] + "级或更高。";
+		close;
+	}
+	close2;
+	npctalk "现在，这里就要变成狩猎场了。我会出去并关上前门。";
+	sleep 4000;
+	npctalk "祝你好运~";
+	sleep 3000;
+	if ('step == 0) {
+		'step = 1;
+		donpcevent instance_npcname("md_gef_mobs_spawn") + "::OnStart";
+		disablenpc();
+		enablenpc instance_npcname("The Stranger#cadaver");
+		enablenpc instance_npcname("Bizzare Sculpture#boss");
+	}
+	end;
+}
+
+1@md_gef,1,1,6	script	md_gef_mobs_spawn	-1,{
+	end;
+OnStart:
+	.@npc_name$ = instance_npcname("md_gef_mobs_spawn");
+	monster 'map_md_gef$,0,0,"Nightmare",'mob[2],20, .@npc_name$ + "::OnNightmareDead";
+	monster 'map_md_gef$,0,0,"Jakk",'mob[3],30, .@npc_name$ + "::OnJakkDead";
+	monster 'map_md_gef$,0,0,"Ghoul",'mob[4],30, .@npc_name$ + "::OnGhoulDead";
+	monster 'map_md_gef$,0,0,"Drainliar",'mob[5],20, .@npc_name$ + "::OnDrainliarDead";
+	end;
+
+OnNightmareDead:
+	callsub( S_Mob, 'mob[2], "Nightmare", "OnNightmareDead" );
+OnJakkDead:
+	callsub( S_Mob, 'mob[3], "Jakk", "OnJakkDead" );
+OnGhoulDead:
+	callsub( S_Mob, 'mob[4], "Ghoul", "OnGhoulDead" );
+OnDrainliarDead:
+	callsub( S_Mob, 'mob[5], "Drainliar", "OnDrainliarDead" );
+
+S_Mob:
+	'count++;
+	if (('count % 100) == 0) {
+		'rand_chest++;
+		if ('rand_chest > 4)
+			'rand_chest = 1;
+		// Treasure Chest Spawn
+		donpcevent instance_npcname("#fd_box" + 'rand_chest) + "::OnStart";
+	}
+	sleep 10000;
+	monster 'map_md_gef$,0,0, getarg(1), getarg(0),1, instance_npcname("md_gef_mobs_spawn") + "::" + getarg(2);
+	end;
+
+OnInstanceInit:
+	'step = 0;
+	'hard = 0;
+	'count = 0;
+	'rand_chest = 0;
+	'freestones = 0;
+	'boss_actv = 0;
+	'map_md_gef$ = instance_mapname("1@md_gef");
+	end;
+}
+
+
+1@md_gef,110,129,6	script(DISABLED)	Mary Juj#0_2	4_F_JOB_BLACKSMITH,{
+	npctalk "你好。";
+	end;
+}
+
+1@md_gef,183,222,5	script(DISABLED)	The Stranger#cadaver	4_TOWER_11,{
+	mes "这是一具陌生人的尸体。";
+	mes "也许他在这里寻找宝藏时徘徊而死。";
+	next;
+	if (select( "冷静", "调查尸体" ) == 1) {
+		mes "你尊重死者，决定不打扰尸体。";
+		close;
+	}
+	mes "看着口袋里潦草写下的纸条，这位冒险者的名字似乎是沃尔特。";
+	next;
+	mes "[Adventurer's Log]";
+	mes "我叫沃尔特。留给未来来访的冒险者，希望你们不要再犯同样的错误。";
+	next;
+	mes "[Adventurer's Log]";
+	mes "第一天，我好奇地把手放在附近奇怪雕像的石板上。";
+	mes "……我唤醒了本不该唤醒的东西。";
+	next;
+	mes "[Adventurer's Log]";
+	mes "现在复活的古代国王正在我面前徘徊。";
+	mes "也许他没有前世的记忆。";
+	mes "有一点可以确定，他会杀了我。";
+	next;
+	mes "[Adventurer's Log]";
+	mes "给未来会来到这里的冒险者：希望你们不要犯和我一样的错误。";
+	mes "如果看到可疑的石板，不要表现出兴趣，直接走过去。";
+	next;
+	mes "[Adventurer's Log]";
+	mes "再说一次，绝对不要触碰石板，无论它多么诱人。";
+	if ('freestones != 0)
+		close;
+	next;
+	mes "几块工艺石从他的身体上掉落下来。它们大概是在探索这里时收集的。";
+	close2;
+	if ('freestones == 0) {
+		'freestones = 1;
+		if ('hard == 1)
+			.@num = rand(7,9);
+		else
+			.@num = rand(5,7);
+		for ( .@i = 0; .@i < .@num; ++.@i )
+			makeitem 25235,1, 'map_md_gef$, rand(181,183), rand(221,224);
+	}
+	end;
+}
+
+1@md_gef,199,73,0	script(DISABLED)	Bizzare Sculpture#boss	CLEAR_NPC,{
+	if ('count < 100) {
+		mes "这是一座堆满灰尘的奇怪雕像。我没看到任何可疑之处。";
+		close;
+	}
+	if ('boss_actv >= 1) {
+		mes "工艺石被强大力量熔入了插槽。";
+		mes "看来插槽暂时无法使用。";
+		close;
+	}
+	mes "不知何时，积尘散开了，雕像下方的石板上露出 10 个空洞。";
+	next;
+	mes "这 10 个空洞似乎都能完美嵌入工艺石。";
+	next;
+	if (select( "Ignore", "Try inserting craft stones" ) == 1)
+		end;
+	if (countitem(25235) < 10) {
+		mes "工艺石被强大力量熔入了插槽。";
+		mes "看来插槽暂时无法使用。";
+		close;
+	}
+	mes "将工艺石插入空洞后，它会发出耀眼的光并融化。";
+	next;
+	delitem 25235,10;
+	specialeffect EF_ANGELUS;
+
+	if (rand(1,10) == 10) {
+		mes "我周围的空气似乎发生了变化。";
+		instance_announce 0, "Lord of the Dead: Who Awakened Me? I will meet you in person and ask you why.", bc_map, "0xFFFF00";
+		if ('boss_actv == 0) {
+			'boss_actv = 1;
+			monster 'map_md_gef$,210,110,"Lich King",'mob[1],1;
+		}
+	}
+	else {
+		mes "但没有其他事情发生。";
+		close2;
+		if ('boss_actv == 0) {
+			disablenpc();	// Disable NPC for 5 minutes when MVP didn't spawn.
+			initnpctimer;
+		}
+		end;
+	}
+	close;
+
+OnTimer300000:
+	stopnpctimer;
+	enablenpc();
+	end;
+}
+
+
+// Treasure Chest Reward
+1@md_gef,212,212,3	script(DISABLED)	#fd_box1	4_TREASURE_BOX,{
+	specialeffect EF_COIN;
+	disablenpc();
+	stopnpctimer;
+	sleep 500;
+
+	if ('hard == 1)
+		.@num = rand(7,9);
+	else
+		.@num = rand(5,7);
+
+	.@npc_name$ = strnpcinfo(2);
+
+	if (.@npc_name$ == "fd_box1") {
+		for ( .@i = 0; .@i < .@num; ++.@i )
+			makeitem 25235,1, 'map_md_gef$, rand(210,214), rand(210,214);
+	}
+	if (.@npc_name$ == "fd_box2") {
+		for ( .@i = 0; .@i < .@num; ++.@i )
+			makeitem 25235,1, 'map_md_gef$, rand(188,192), rand(54,58);
+	}
+	if (.@npc_name$ == "fd_box3") {
+		for ( .@i = 0; .@i < .@num; ++.@i )
+			makeitem 25235,1, 'map_md_gef$, rand(47,51), rand(55,59);
+	}
+	if (.@npc_name$ == "fd_box4") {
+		for ( .@i = 0; .@i < .@num; ++.@i )
+			makeitem 25235,1, 'map_md_gef$, rand(42,46), rand(209,213);
+	}
+	end;
+
+OnStart:
+	enablenpc();
+	instance_announce 0, "A treasure chest appeared somewhere in the dungeon. It'll disappear after a while, so let's find it.", bc_map, "0xff5500";
+	initnpctimer;
+	end;
+OnTimer180000:	//3min before chest disappears
+	disablenpc();
+	stopnpctimer;
+	end;
+}
+1@md_gef,190,56,3	duplicate(#fd_box1)	#fd_box2	4_TREASURE_BOX
+1@md_gef,49,57,3	duplicate(#fd_box1)	#fd_box3	4_TREASURE_BOX
+1@md_gef,44,211,3	duplicate(#fd_box1)	#fd_box4	4_TREASURE_BOX
+
+
+//Merchant
+gef_tower,57,167,3	script	Amateur Collector#pa0829	1_F_01,{
+	disable_items;
+	function F_equip_menu;
+	function F_enchant;
+
+	if (checkweight(1201,1) == 0) {
+		mes "你拥有的物品种类太多。请清理物品栏。";
+		close;
+	}
+	if (MaxWeight - Weight < 10000) {
+		mes "无法继续，因为你携带了太多重物。请清理背包以降低总重量。";
+		close;
+	}
+	mes "[Amateur Collector]";
+	mes "如果你带来" + mesitemlink(25235, false) + "，我就能为你的饰品附加绝妙效果！";
+	next;
+	switch( select( "What can you do with the Crafting Stone?", "饰品附魔", "重置附魔" ) ) {
+	case 1:
+		mes "[Amateur Collector]";
+		mes "我用自己的手艺交换副本里的珍贵石头。我还是初学者，但技术还算过得去。";
+		mes "请多多关照。";
+		next;
+		if (select( "I've heard this before.", "I'm listening." ) == 1) {
+			mes "[Amateur Collector]";
+			mes "是这样吗？";
+			close;
+		}
+		mes "[Amateur Collector]";
+		mes "使用工艺石，我可以为你的饰品附加能力。";
+		next;
+		mes "[Amateur Collector]";
+		mes "我需要 10 个" + mesitemlink(25235, false) + "和 100,000 Zeny。";
+		mes "附魔过程不会失败。";
+		next;
+		mes "[Amateur Collector]";
+		mes "但是，^0000FF如果饰品有随机选项，附魔后随机选项会被移除。^000000";
+		next;
+		select( "Anything else?" );
+		mes "[Amateur Collector]";
+		mes "饰品上的卡片在附魔后仍会保留。";
+		next;
+		mes "[Amateur Collector]";
+		mes "可以重置，但我不能说自己经验丰富。";
+		mes "我的成功率是：";
+		mes "皇家戒指：80%";
+		mes "其他饰品：20%";
+		next;
+		mes "[Amateur Collector]";
+		mes "^0000FFIf the accessory has a random option, the random option will be removed after initialization.^000000";
+		close;
+	case 2:
+		.@type = 1;
+		.@type_name$ = "enchant";
+		break;
+	case 3:
+		.@type = 2;
+		.@type_name$ = "reset";
+		break;
+	}
+
+	.@slot = F_equip_menu();
+	.@equip_id = getequipid(.@slot);
+	setarray .@equip_card[0], getequipcardid(.@slot,0), getequipcardid(.@slot,1), getequipcardid(.@slot,2), getequipcardid(.@slot,3);
+    copyarray .@card[0], .@equip_card[0], 4;
+	
+	switch( .@equip_id ) {
+	case 0:
+		mes "[Amateur Collector]";
+		mes "请装备饰品。";
+		close;
+	case 28483:
+	case 2601:
+	case 2602:
+	case 2603:
+	case 2605:
+	case 2607:
+	case 2608:
+	case 2609:
+	case 2610:
+	case 2611:
+	case 2612:
+	case 2613:
+	case 2614:
+	case 2615:
+	case 2616:
+	case 2617:
+	case 2618:
+	case 2619:
+	case 2620:
+	case 2621:
+	case 2622:
+	case 2623:
+	case 2625:
+	case 2626:
+	case 2627:
+	case 2628:
+	case 2636:
+	case 2637:
+	case 2638:
+	case 2639:
+	case 2640:
+	case 2641:
+	case 2645:
+	case 2648:
+	case 2649:
+	case 2650:
+	case 2651:
+	case 2652:
+	case 2653:
+	case 2654:
+	case 2655:
+	case 2656:
+	case 2658:
+	case 2663:
+	case 2664:
+	case 2665:
+	case 2666:
+	case 2667:
+	case 2671:
+	case 2680:
+	case 2692:
+	case 2700:
+	case 2701:
+	case 2702:
+	case 2703:
+	case 2712:
+	case 2714:
+	case 2715:
+	case 2716:
+	case 2718:
+	case 2719:
+	case 2720:
+	case 2721:
+	case 2722:
+	case 2723:
+	case 2724:
+	case 2725:
+	case 2726:
+	case 2727:
+	case 2728:
+	case 2729:
+	case 2730:
+	case 2731:
+	case 2732:
+	case 2736:
+	case 2737:
+	case 2743:
+	case 2744:
+	case 2745:
+	case 2746:
+	case 2747:
+	case 2748:
+	case 2749:
+	case 2766:
+	case 2767:
+	case 2768:
+	case 2769:
+	case 2770:
+	case 2771:
+	case 2772:
+	case 2773:
+	case 2774:
+	case 2777:
+	case 2778:
+	case 2779:
+	case 2780:
+	case 2781:
+	case 2783:
+	case 2784:
+	case 2787:
+	case 2788:
+	case 2789:
+	case 2790:
+	case 2794:
+	case 2795:
+	case 2800:
+	case 2801:
+	case 2802:
+	case 2803:
+	case 2804:
+	case 2805:
+	case 2807:
+	case 2808:
+	case 2809:
+	case 2810:
+	case 2826:
+	case 2827:
+	case 2843:
+	case 2853:
+	case 2854:
+	case 2881:
+	case 2956:
+		break;
+	default:
+		mes "[业余收藏家]";
+		mes "我无法对这个" + mesitemlink(.@equip_id, false) + "饰品进行" + .@type_name$ + "。";
+		close;
+	}
+
+	if (.@type == 1) {	// enchant
+		switch( .@equip_id ) {
+		case 28483:	//Royal Ring Enchantment
+			if (.@equip_card[2] != 0) {
+				mes "[业余收藏家]";
+				mes mesitemlink(.@equip_id, false) + "已经达到最大附魔等级。";
+				mes "我无法继续处理它。";
+				close;
+			}
+			.@pos = .@equip_card[3] != 0 ? 2 : 3;
+			mes "[业余收藏家]";
+			mes "请选择附魔类型~";
+			next;
+			switch( select( "物理", "魔法", "远程" ) ) {
+			case 1:
+				if (.@pos == 2)
+					.@equip_card[2] = F_enchant(2);
+				else
+					.@equip_card[3] = F_enchant(3);
+				break;
+			case 2:
+				if (.@pos == 2)
+					.@equip_card[2] = F_enchant(4);
+				else
+					.@equip_card[3] = F_enchant(5);
+				break;
+			case 3:
+				if (.@pos == 2)
+					.@equip_card[2] = F_enchant(6);
+				else
+					.@equip_card[3] = F_enchant(7);
+				break;
+			}
+			if (.@pos == 2) {
+				mes "[业余收藏家]";
+				mes "确定要强化" + mesitemlink(.@equip_id, false) + "吗？";
+				mes "^0000FF不会失败。^000000";
+				next;
+				if (select( "是，请继续", "取消" ) == 2)
+					end;
+			}
+			if (countitem(25235) < 10) {
+				mes "[业余收藏家]";
+				mes "请带来 10 个" + mesitemlink(25235, false) + "。";
+				close;
+			}
+			if (Zeny < 100000) {
+				mes "[业余收藏家]";
+				mes "我需要 100,000 Zeny！";
+				close;
+			}
+			delitem 25235,10; //Catalyst
+			Zeny -= 100000;
+
+			// anti-hack
+			if (callfunc("F_IsEquipIDHack", .@slot, .@equip_id) || callfunc("F_IsEquipCardHack", .@slot, .@card[0], .@card[1], .@card[2], .@card[3]))
+				end;
+
+			delequip .@slot;
+			specialeffect2 EF_REPAIRWEAPON;
+			mes "[业余收藏家]";
+			mes mesitemlink(.@equip_id, false) + "已经附魔！！";
+			getitem2 .@equip_id,1,1,0,0,.@equip_card[0],.@equip_card[1],.@equip_card[2],.@equip_card[3];
+			close;
+
+		default:	// Normal Accessory Enchantment
+			if (.@equip_card[3] != 0) {
+				mes "[业余收藏家]";
+				mes mesitemlink(.@equip_id, false) + "已经有附魔。";
+				mes "我无法继续处理它。";
+				close;
+			}
+			mes "[业余收藏家]";
+			mes "确定要强化" + mesitemlink(.@equip_id, false) + "吗？";
+			mes "^0000FF不会失败。^000000";
+			next;
+			if (select( "是，请继续", "取消") == 2)
+				end;
+			if (countitem(25235) < 10) {
+				mes "[业余收藏家]";
+				mes "请带来 10 个" + mesitemlink(25235, false) + "。";
+				close;
+			}
+			if (Zeny < 100000) {
+				mes "[业余收藏家]";
+				mes "我需要 100,000 Zeny！";
+				close;
+			}
+			delitem 25235,10; //Catalyst
+			Zeny -= 100000;
+
+			// anti-hack
+			if (callfunc("F_IsEquipIDHack", .@slot, .@equip_id) || callfunc("F_IsEquipCardHack", .@slot, .@card[0], .@card[1], .@card[2], .@card[3]))
+				end;
+
+			delequip .@slot;
+			.@enchant = F_enchant(1);
+			specialeffect2 EF_REPAIRWEAPON;
+			mes "[业余收藏家]";
+			mes mesitemlink(.@equip_id, false) + "已经附加了" + mesitemlink(.@enchant, false) + "。";
+			getitem2 .@equip_id,1,1,0,0,.@equip_card[0],.@equip_card[1],.@equip_card[2],.@enchant;
+			close;
+		}
+		end;
+	}
+	else {	// reset
+		if (.@equip_id == 28483) {
+			.@pos = 2;
+			.@success = 80;	// success royal
+		} else {
+			.@pos = 3;
+			.@success = 20;	// success normal
+		}
+		if (.@equip_card[.@pos] == 0) {
+			mes "[业余收藏家]";
+			mes mesitemlink(.@equip_id, false) + "还没有达到最大附魔等级。";
+			mes "我无法重置这个饰品。";
+			close;
+		}
+		mes "[业余收藏家]";
+		mes "要移除" + mesitemlink(.@equip_id, false) + "上的全部附魔效果吗？";
+		mes "^FF0000成功率为 " + .@success + "%。重置失败时饰品会被摧毁！^000000";
+		next;
+		if (select( "我之后再来", "请继续") == 1)
+			end;
+		if (countitem(25235) < 10) {
+			mes "[业余收藏家]";
+			mes "请带来 10 个" + mesitemlink(25235, false) + "";
+			close;
+		}
+		if (Zeny < 100000) {
+			mes "[业余收藏家]";
+			mes "我需要 100,000 Zeny！";
+			close;
+		}
+		delitem 25235,10; //Catalyst
+		Zeny -= 100000;
+
+		// anti-hack
+		if (callfunc("F_IsEquipIDHack", .@slot, .@equip_id) || callfunc("F_IsEquipCardHack", .@slot, .@card[0], .@card[1], .@card[2], .@card[3]))
+			end;
+
+		delequip .@slot;
+		if (rand(100) > .@success) {
+			specialeffect2 EF_SUI_EXPLOSION;
+			mes "[业余收藏家]";
+			mes "可恶……";
+			mes "失败了，饰品被摧毁了。真的很抱歉。";
+			close;
+		}
+		specialeffect2 EF_REPAIRWEAPON;
+		mes "[业余收藏家]";
+		mes "成功了。";
+		mes mesitemlink(.@equip_id, false) + "已经初始化。";
+		getitem2 .@equip_id,1,1,0,0,.@equip_card[0],.@equip_card[1],0,0;
+		close;
+	}
+	end;
+
+function	F_equip_menu {
+	.@l$ = getitemname(getequipid(EQI_ACC_L));
+	.@r$ = getitemname(getequipid(EQI_ACC_R));
+	.@acc_l$ = .@l$ == "null" ? "" : "左侧饰品 - " + .@l$;
+	.@acc_r$ = .@r$ == "null" ? "" : "右侧饰品 - " + .@r$;
+
+	switch( select( .@acc_l$, .@acc_r$ ) ) {
+	case 1:
+		.@slot = EQI_ACC_L;
+		break;
+	case 2:
+		.@slot = EQI_ACC_R;
+		break;
+	}
+	return .@slot;
+}
+
+function	F_enchant {
+	.@type = getarg(0);
+
+	switch(.@type) {
+	case 1: //Normal Enchant
+		.@i = rand(920);
+			 if (.@i < 30) .@enchant = 4701; //STR+2
+		else if (.@i < 60) .@enchant = 4702; //STR+3
+		else if (.@i < 90) .@enchant = 4703; //STR+4
+		else if (.@i < 120) .@enchant = 4711; //INT+2
+		else if (.@i < 150) .@enchant = 4712; //INT+3
+		else if (.@i < 180) .@enchant = 4713; //INT+4
+		else if (.@i < 210) .@enchant = 4721; //DEX+2
+		else if (.@i < 240) .@enchant = 4722; //DEX+3
+		else if (.@i < 270) .@enchant = 4723; //DEX+4
+		else if (.@i < 300) .@enchant = 4731; //AGI+2
+		else if (.@i < 330) .@enchant = 4732; //AGI+3
+		else if (.@i < 360) .@enchant = 4733; //AGI+4
+		else if (.@i < 390) .@enchant = 4741; //VIT+2
+		else if (.@i < 420) .@enchant = 4742; //VIT+3
+		else if (.@i < 450) .@enchant = 4743; //VIT+4
+		else if (.@i < 480) .@enchant = 4796; //HP+200
+		else if (.@i < 510) .@enchant = 4798; //HP+400
+		else if (.@i < 540) .@enchant = 4792; //DEF+6
+		else if (.@i < 570) .@enchant = 4794; //DEF+12
+		else if (.@i < 600) .@enchant = 4800; //SP+50
+		else if (.@i < 630) .@enchant = 4801; //SP+100
+		else if (.@i < 660) .@enchant = 4786; //MDEF+2
+		else if (.@i < 690) .@enchant = 4787; //MDEF+4
+		else if (.@i < 710) .@enchant = 4861; //MHP+1%
+		else if (.@i < 730) .@enchant = 4862; //MHP+2%
+		else if (.@i < 750) .@enchant = 4929; //MSP+1%
+		else if (.@i < 770) .@enchant = 4882; //ATK+1%
+		else if (.@i < 790) .@enchant = 4883; //MATK+1%
+		else if (.@i < 800) .@enchant = 4817; //Sharp2
+		else if (.@i < 810) .@enchant = 4816; //Sharp3
+		else if (.@i < 815) .@enchant = 4843; //Sharp4
+		else if (.@i < 825) .@enchant = 29047; //Fatal
+		else if (.@i < 835) .@enchant = 4863; //Fatal1Lv
+		else if (.@i < 840) .@enchant = 4864; //Fatal2Lv
+		else if (.@i < 850) .@enchant = 4832; //Expert Archer1
+		else if (.@i < 860) .@enchant = 4813; //Spell3
+		else if (.@i < 870) .@enchant = 4812; //Spell4
+		else if (.@i < 875) .@enchant = 4826; //Spell5
+		else if (.@i < 885) .@enchant = 4805; //Archbishop1Lv
+		else if (.@i < 895) .@enchant = 4850; //Heal Amount2
+		else if (.@i < 905) .@enchant = 4809; //Fighting Spirit3
+		else if (.@i < 915) .@enchant = 4808; //Fighting Spirit4
+		else .@enchant = 4820; //Fighting Spirit5
+		break;
+	case 2: //Royal Physical Slot 3
+		.@i = rand(225);
+			 if (.@i < 30) .@enchant = 4809; //Fighting Spirit3
+		else if (.@i < 60) .@enchant = 4808; //Fighting Spirit4
+		else if (.@i < 70) .@enchant = 4820; //Fighting Spirit5
+		else if (.@i < 80) .@enchant = 4821; //Fighting Spirit6
+		else if (.@i < 85) .@enchant = 4822; //Fighting Spirit7
+		else if (.@i < 115) .@enchant = 4818; //Sharp1
+		else if (.@i < 145) .@enchant = 4817; //Sharp2
+		else if (.@i < 155) .@enchant = 4816; //Sharp3
+		else if (.@i < 165) .@enchant = 4843; //Sharp4
+		else if (.@i < 170) .@enchant = 4844; //Sharp5
+		else if (.@i < 200) .@enchant = 4819; //Atk1
+		else if (.@i < 210) .@enchant = 4766; //ATK+2%
+		else if (.@i < 215) .@enchant = 4767; //ATK+3%
+		else if (.@i < 220) .@enchant = 4807; //Atk Speed1
+		else .@enchant = 4842; //Atk Speed2
+		break;
+	case 3: //Royal Physical Slot 4
+		.@i = rand(375);
+			 if (.@i < 50) .@enchant = 4702; //STR+3
+		else if (.@i < 100) .@enchant = 4703; //STR+4
+		else if (.@i < 110) .@enchant = 4704; //STR+5
+		else if (.@i < 120) .@enchant = 4705; //STR+6
+		else if (.@i < 125) .@enchant = 4706; //STR+7
+		else if (.@i < 175) .@enchant = 4732; //AGI+3
+		else if (.@i < 225) .@enchant = 4733; //AGI+4
+		else if (.@i < 235) .@enchant = 4734; //AGI+5
+		else if (.@i < 245) .@enchant = 4735; //AGI+6
+		else if (.@i < 250) .@enchant = 4736; //AGI+7
+		else if (.@i < 300) .@enchant = 4742; //VIT+3
+		else if (.@i < 350) .@enchant = 4743; //VIT+4
+		else if (.@i < 360) .@enchant = 4744; //VIT+5
+		else if (.@i < 370) .@enchant = 4745; //VIT+6
+		else .@enchant = 4746; //VIT+7
+		break;
+	case 4: //Royal Magical Slot 3
+		.@i = rand(230);
+			 if (.@i < 30) .@enchant = 4813; //Spell3
+		else if (.@i < 60) .@enchant = 4812; //Spell4
+		else if (.@i < 70) .@enchant = 4826; //Spell5
+		else if (.@i < 80) .@enchant = 4827; //Spell6
+		else if (.@i < 85) .@enchant = 4828; //Spell7
+		else if (.@i < 115) .@enchant = 4929; //MSP+1%
+		else if (.@i < 145) .@enchant = 4805; //Archbishop1Lv
+		else if (.@i < 155) .@enchant = 4850; //Archbishop2Lv
+		else if (.@i < 165) .@enchant = 4851; //Archbishop3Lv
+		else if (.@i < 170) .@enchant = 4852; //Archbishop4Lv
+		else if (.@i < 200) .@enchant = 4883; //MATK + 1%
+		else if (.@i < 210) .@enchant = 4896; //MATK + 2%
+		else if (.@i < 215) .@enchant = 4897; //MATK + 3%
+		else if (.@i < 225) .@enchant = 4760; //MATK 1Lv
+		else .@enchant = 4761; //MATK 2Lv
+		break;
+	case 5: //Royal Magical Slot 4
+		.@i = rand(375);
+			 if (.@i < 50) .@enchant = 4712; //INT+3
+		else if (.@i < 100) .@enchant = 4713; //INT+4
+		else if (.@i < 110) .@enchant = 4714; //INT+5
+		else if (.@i < 120) .@enchant = 4715; //INT+6
+		else if (.@i < 125) .@enchant = 4716; //INT+7
+		else if (.@i < 175) .@enchant = 4722; //DEX+3
+		else if (.@i < 225) .@enchant = 4723; //DEX+4
+		else if (.@i < 235) .@enchant = 4724; //DEX+5
+		else if (.@i < 245) .@enchant = 4725; //DEX+6
+		else if (.@i < 250) .@enchant = 4726; //DEX+7
+		else if (.@i < 300) .@enchant = 4742; //VIT+3
+		else if (.@i < 350) .@enchant = 4743; //VIT+4
+		else if (.@i < 360) .@enchant = 4744; //VIT+5
+		else if (.@i < 370) .@enchant = 4745; //VIT+6
+		else .@enchant = 4746; //VIT+7
+		break;
+	case 6: //Royal Ranged Slot 3
+		.@i = rand(225);
+			 if (.@i < 30) .@enchant = 29047; //Fatal
+		else if (.@i < 60) .@enchant = 4863; //Fatal1Lv
+		else if (.@i < 70) .@enchant = 4864; //Fatal2Lv
+		else if (.@i < 80) .@enchant = 4865; //Fatal3Lv
+		else if (.@i < 85) .@enchant = 4866; //Fatal4Lv
+		else if (.@i < 115) .@enchant = 4818; //Sharp1
+		else if (.@i < 145) .@enchant = 4817; //Sharp2
+		else if (.@i < 155) .@enchant = 4816; //Sharp3
+		else if (.@i < 165) .@enchant = 4843; //Sharp4
+		else if (.@i < 170) .@enchant = 4844; //Sharp5
+		else if (.@i < 200) .@enchant = 4832; //Expert Archer1
+		else if (.@i < 210) .@enchant = 4833; //Expert Archer2
+		else if (.@i < 215) .@enchant = 4834; //Expert Archer3
+		else if (.@i < 220) .@enchant = 4807; //Atk Speed1
+		else .@enchant = 4842; //Atk Speed2
+		break;
+	case 7: //Royal Ranged Slot 4
+		.@i = rand(375);
+			 if (.@i < 50) .@enchant = 4732; //AGI+3
+		else if (.@i < 100) .@enchant = 4733; //AGI+4
+		else if (.@i < 110) .@enchant = 4734; //AGI+5
+		else if (.@i < 120) .@enchant = 4735; //AGI+6
+		else if (.@i < 125) .@enchant = 4736; //AGI+7
+		else if (.@i < 175) .@enchant = 4722; //DEX+3
+		else if (.@i < 225) .@enchant = 4723; //DEX+4
+		else if (.@i < 235) .@enchant = 4724; //DEX+5
+		else if (.@i < 245) .@enchant = 4725; //DEX+6
+		else if (.@i < 250) .@enchant = 4726; //DEX+7
+		else if (.@i < 300) .@enchant = 4752; //LUK+3
+		else if (.@i < 350) .@enchant = 4753; //LUK+4
+		else if (.@i < 360) .@enchant = 4754; //LUK+5
+		else if (.@i < 370) .@enchant = 4755; //LUK+6
+		else .@enchant = 4756; //LUK+7
+		break;
+	}
+	return .@enchant;
+}
+}

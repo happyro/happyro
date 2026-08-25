@@ -1,0 +1,248 @@
+//===== rAthena Script =======================================
+//= Disguise Event
+//===== By: ==================================================
+//= GmOcean
+//===== Current Version: =====================================
+//= 5.1
+//===== Compatible With: =====================================
+//= rAthena Project
+//===== Description: =========================================
+//= Guess a monster name correctly for prizes.
+//= 
+//= NOTE: Requires PCRE library installed.
+//===== Additional Comments: =================================
+//= 5.0 Last update by GmOcean.
+//= 5.1 Cleaned and standardized, mostly. [Euphy]
+//============================================================
+
+prontera,160,155,4	script	Disguise Event	795,{
+
+	// Currently set to run every two hours.
+	// To change times, edit the OnClock labels below.
+
+	set .@GMLevel,60;	// GM level required to access NPC.
+	set .@n$,"[^0000FFDisguise NPC^000000]";
+
+	if (getgmlevel()>=.@GMLevel) {
+		mes .@n$;
+		mes "请选择选项。";
+		next;
+		switch(select("开启/关闭活动:活动设置")) {
+		case 1:
+			mes .@n$;
+			if (.EventON) {
+				mes "活动当前状态：[^0000FF开启^000000]";
+				mes "要关闭吗？";
+			} else {
+				mes "活动当前状态：[^FF0000关闭^000000]";
+				mes "要开启吗？";
+			}
+			if(select("是:否")==2) close;
+			if (.EventON) {
+				set .EventON,0; set .Timer,0;
+				setnpctimer 0; stopnpctimer;
+				announce "GM 决定关闭变身活动。因此将不再发放奖励。",bc_map | bc_blue;
+				deletepset 1;
+				setnpcdisplay "Disguise Event",795;
+				close;
+			}
+			set .EventON,1; set .Timer,1; setnpctimer 0; initnpctimer;
+			set .ResetCounter,.ResetCounter+1;
+			announce "变身活动将在 3 分钟后开始。",bc_all | bc_blue;
+			announce "活动地点：普隆德拉。",bc_all | bc_blue;
+			close;
+		case 2:
+			mes .@n$;
+			mes "请选择要修改的设置。";
+			next;
+			switch(select("怪物显示:回合数:奖励设置")) {
+			case 1:
+				setarray .@r$[0],"Disguise as all monsters.","Disguise as MVPs only.";
+				mes .@n$;
+				mes "请选择变身规则。";
+				next;
+				set .Rule, select(implode(.@r$,":"));
+				mes .@n$;
+				mes "变身规则已设置为：";
+				mes "  > ^0055FF"+.@r$[.Rule-1]+"^000000";
+				close;
+			case 2:
+				mes .@n$;
+				mes "请输入活动持续的回合数。";
+				mes "当前回合数：[^0000FF"+.Rounds+"^000000]";
+				next;
+				input .@Rounds;
+				set .Rounds,.@Rounds;
+				mes .@n$;
+				mes "回合数已更改为 "+.Rounds+"。";
+				close;
+			case 3:
+				mes .@n$;
+				mes "请输入每回合发放的奖励物品 ID。";
+				mes "当前物品：[^0000FF"+getitemname(.Prize)+"^000000]（ID #"+.Prize+")";
+				next;
+				input .@Prize;
+				mes .@n$;
+				if (getitemname(.@Prize)=="" || getitemname(.@Prize)=="null") {
+					mes "该物品不存在，请重试。";
+					close;
+				}
+				set .Prize,.@Prize;
+				mes "请输入发放数量。";
+				next;
+				input .@amount;
+				mes .@n$;
+				if (.@amount<=0 || .@amount>=10000) {
+					mes "数量无效，将使用默认数量 1。";
+					set .@amount,1;
+					next;
+					mes .@n$;
+				}
+				set .PrizeAmt,.@amount;
+				mes "奖励已成功更改。";
+				mes "奖励："+.PrizeAmt+" 个 [^0000FF"+getitemname(.Prize)+"^000000]";
+				close;
+			}
+		}
+	}
+	if (.EventON) end;
+	mes .@n$;
+	mes "欢迎。";
+	mes "我能为你做些什么？";
+	if(select("说明:只是路过。")==2) close;
+	next;
+	mes .@n$;
+	mes "这个活动很简单。";
+	mes "活动开始时，我会随机变身为";
+	mes "一只怪物。你必须大声喊出";
+	mes "那只怪物的名字。";
+	next;
+	mes "答对就能获得奖励。答错了就继续尝试！";
+	mes "这就是活动的全部规则。";
+	close;
+
+OnInit:
+	set .EventON,0;
+	set .Wait,0;
+	set .Winner,0;
+	set .ResetCounter,0;
+	set .Rounds,10;
+	set .Prize,512;
+	set .PrizeAmt,1;
+	set .Rule,1;
+	setarray .MVP[0],1038,1039,1046,1059,1086,1087,1112,1115,1147,1150,1157,1159,1190,1251,1252,1272,1312,1373,
+	                  1389,1399,1418,1492,1502,1511,1583,1623,1630,1646,1647,1648,1649,1650,1651,1658,1685,1688,
+				   1708,1719,1734,1751,1768,1779,1785,1802,1832,1871,1874,1885,1917,1980,2022,2068,2087,2131,
+				   2156,2165;
+	set .BlackList$, "1003,1006,1017,1021,1022,1027,1043,1075,1136,1137,1168," + 
+	    "1171,1172,1173,1181,1187,1210,1217,1218,1222,1223,1224,1225,1226,1227,1228," + 
+	    "1233,1284,1407,1411,1414,1495,1501,1900,1996,2000,2001,2002,2003,2004," + 
+	    "2005,2006,2007,2011,2012,2025,2028,2029,2030,2031,2032,2033,2034,2035," + 
+	    "2036,2037,2038,2039,2040,2041,2042,2043,2044,2045,2046,2047,2048,2049," + 
+	    "2050,2051,2052,2053,2054,2055,2056,2057,2058,2059,2060,2061,2062,2063," + 
+	    "2064,2065,2066,2067,2075,2076,2077,2078,2079,2080,2081,2083,2084,2085," + 
+	    "2086,2087,2088,2089,2090,2091,2092,2093,2094,2095,2096,2097,2098,2099," + 
+	    "2100,2101,2012,2103,2104,2105,2106,2107,2108,2109,2110,2111,2112,2113," + 
+	    "2114,2115,2116,2117,2118,2119,2120,2121,2123,2124,2125,1496,";
+	end;
+OnClock0000:
+OnClock0200:
+OnClock0400:
+OnClock0600:
+OnClock0800:
+OnClock1000:
+OnClock1200:
+OnClock1400:
+OnClock1600:
+OnClock1800:
+OnClock2000:
+OnClock2200:
+	set .ResetCounter,.ResetCounter+1;
+	set .EventON,1;
+	set .Timer,1;
+	set .Wait,1;
+		announce "变身活动将在 3 分钟后开始。",bc_all | bc_blue;
+		announce "活动地点：普隆德拉。",bc_all | bc_blue;
+	setnpctimer 0;
+	initnpctimer;
+	end;
+OnTimer10000:
+	if (.Timer || .Change) end;
+	set .Wait,0;
+	goto iDisguise;
+	end;
+OnTimer30000:
+	if (.Timer) end;
+	set .Change,0;
+	setnpcdisplay "Disguise Event",795;
+	npctalk "伪装活动：你花了太久才猜出我是什么。请等待10秒，我会再次伪装。";
+	specialeffect EF_DETECT2;
+	set $MonsterName$,"";
+	deletepset 1;
+	stopnpctimer;
+	setnpctimer 0;
+	initnpctimer;
+	end;
+OnTimer60000:
+	if (.Timer!=1) end;
+		announce "变身活动将在 2 分钟后开始。",bc_all | bc_blue;
+		announce "活动地点：普隆德拉。",bc_all | bc_blue;
+	end;
+OnTimer120000:
+	if (.Timer!=1) end;
+		announce "变身活动将在 1 分钟后开始。",bc_all | bc_blue;
+		announce "活动地点：普隆德拉。",bc_all | bc_blue;
+	end;
+OnTimer180000:
+	if (.Timer!=1) end;
+		announce "变身活动开始了！",bc_all | bc_blue;
+		announce "活动地点：普隆德拉。",bc_all | bc_blue;
+	set .Timer,0; stopnpctimer;
+	setnpctimer 0; initnpctimer;
+iDisguise:
+	if (.Rule==1) {
+		set .Winner,0;
+		set .Monster,1000+rand(1,995);
+		if (compare(","+.BlackList$+"," , ","+.Monster+",")) goto iDisguise;
+		if (.Monster==.LastMonster) goto iDisguise;
+		set .LastMonster,.Monster;
+		set $MonsterName$,getmonsterinfo(.Monster, MOB_NAME);
+	}
+	if (.Rule==2) {
+		set .Winner,0;
+		set .Monster,rand(49);
+		set $MonsterName$,getmonsterinfo(.MVP[.Monster], MOB_NAME);
+	}
+	deletepset 1;
+	defpattern 1,"([^:]+):.\\s*"+$MonsterName$+".*", "iCorrect";
+	activatepset 1;
+	if (.Rule==1) setnpcdisplay "Disguise Event",.Monster;
+	if (.Rule==2) setnpcdisplay "Disguise Event",.MVP[.Monster];
+	set .Change,1;
+	setnpctimer 0;
+	end;
+iCorrect:
+	if (.Winner) {
+		dispbottom "本回合已经有人获胜。";
+		end;
+	}
+	set .Winner,1;
+	set .RoundCount,.RoundCount+1;
+	deletepset 1;
+	activatepset 1;
+	getitem .Prize,.PrizeAmt;
+	announce strcharinfo(0)+" 答对了！我变身成了："+$MonsterName$+"",bc_map | bc_blue;
+	if (.RoundCount>=.Rounds) {
+		setnpcdisplay "Disguise Event",795;
+		set .RoundCount,0; set .Change,0; set .EventON,0;
+		setnpctimer 0; stopnpctimer;
+		npctalk "伪装活动：感谢大家参与。伪装活动的最后一轮结束了。稍后再来玩吧。";
+		end;
+	}
+	setnpcdisplay "Disguise Event",795;
+	set .Change,0;
+	setnpctimer 0;
+	end;
+}
+//
+//
