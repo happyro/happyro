@@ -1,5 +1,7 @@
 # 普隆德拉全地图 NPC 名称
 
+> 批次 ID：`town-prontera`。当前状态以 [`../../progress.md`](../../progress.md) 为准。
+
 ## 状态
 
 全地图已实现。
@@ -28,7 +30,7 @@
 - 服务端 `repos/happyro-server/npc/`：活动 NPC 定义清单和对话标题来源。
 - 客户端 `src/DB/PronteraNpcNameTable.js`：普隆德拉实体名称的专用中文映射。
 - 客户端 `src/DB/NpcNameTable.js`：公共 NPC 名称、23 字符截断别名及跨地图复用映射。
-- `terms-names.csv`：人工确认并需要跨地图复用的术语，不作为全量清单。
+- [`../../glossary/npc-name-terms.csv`](../../glossary/npc-name-terms.csv)：人工确认并需要跨地图复用的术语，不作为全量清单。
 
 ## 验收基准
 
