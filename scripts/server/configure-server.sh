@@ -36,6 +36,12 @@ done
 
 import_dir="$SERVER_REPO/conf/import"
 mkdir -p "$import_dir"
+map_import_dir="$SERVER_REPO/db/import"
+map_cache_source="$SERVER_REPO/db/re/map_cache.dat"
+mkdir -p "$map_import_dir"
+if [[ ! -e "$map_import_dir/map_cache.dat" && -f "$map_cache_source" ]]; then
+	ln -s ../re/map_cache.dat "$map_import_dir/map_cache.dat"
+fi
 umask 077
 
 write_database_entry() {
