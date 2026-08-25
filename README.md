@@ -1,6 +1,6 @@
 # HappyRO
 
-HappyRO 是仅限局域网运行的 roBrowserLegacy 开发栈。它独立于
+HappyRO 是基于 roBrowserLegacy 和 rAthena 的 Web 游戏栈。它独立于
 `happyro-desktop`，不使用 Windows 客户端、公共 GRF 服务或公共 WebSocket
 代理。
 
@@ -12,9 +12,9 @@ HappyRO 自有修改按日期记录在 [`changelog/`](changelog/README.md)。
 happyro/
 ├── configs/                         # HappyRO 客户端配置
 ├── docs/translation/zh-cn/          # 两个独立的中文翻译工作区
-├── deploy/mariadb/                  # 固定版本的局域网开发数据库
-├── deploy/rathena/                  # rAthena 局域网运行时配置
-├── deploy/remote-client/            # 局域网网关环境
+├── deploy/mariadb/                  # 固定版本的开发数据库
+├── deploy/rathena/                  # rAthena 运行时配置
+├── deploy/remote-client/            # 网关环境
 ├── inputs/                          # 不可变源材料和暂存的运行时资源
 ├── repos/happyro-client/            # HappyRO roBrowserLegacy 派生仓库
 ├── repos/happyro-server/            # HappyRO rAthena 派生仓库
@@ -65,7 +65,7 @@ GitHub。锁定的 RemoteClient-JS 版本引用了一个未发布的本地 ESRGA
 HappyRO 不启用 ESRGAN，因此 vendor 工作树包含该依赖的可复现补丁，以及
 同源的 rAthena API 代理。
 
-`make test-account` 维护局域网手动测试账号 `happyro1 / happyro`。
+`make test-account` 维护手动测试账号 `happyro1 / happyro`。
 `make automation-account` 维护隔离的浏览器回归测试账号
 `autotest / happyro` 及其 `AutoTest` 角色。
 
