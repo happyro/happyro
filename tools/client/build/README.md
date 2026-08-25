@@ -28,11 +28,11 @@ Lua 5.0 固定使用 5.0.2，Lua 5.1 固定使用 5.1.5。下载和构建结果�
 
 ```bash
 python3 tools/client/build/lua50/main.py build \
-  --input work/translation-merge/<batch>/kro-20211105/merged/files/lub \
+  --input work/translation-merge/kro-20211105/<batch>/merged/files/lub \
   --output artifacts/client/lub
 
 python3 tools/client/build/lua51/main.py build \
-  --input work/translation-merge/<batch>/kro-20211105/merged/files/lub \
+  --input work/translation-merge/kro-20211105/<batch>/merged/files/lub \
   --output artifacts/client/lub
 ```
 

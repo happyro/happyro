@@ -1,5 +1,7 @@
 # 中文翻译工作区
 
+完整的翻译、校验、repair、合并晋级、回写、kRO 回编译、运行验证和 bugfix 回溯顺序，以 [`WORKFLOW.md`](WORKFLOW.md) 为准。本 README 只介绍工作区结构。
+
 本目录包含两个相互独立的中文翻译工作区：
 
 - [`client-server/`](client-server/README.md)：HappyRO client 和 server 项目的主产品翻译工作区；
@@ -49,4 +51,4 @@ docs/translation/zh-cn/<workspace>/merged/
 
 合并器和分片校验器的职责、命令和校验边界见 [`tools/translation/README.md`](../../../tools/translation/README.md)。
 
-本次合并问题修复批次见 [`repair/20260824-01/`](repair/20260824-01/)。其中的 `agent-01` 至 `agent-12` 互相独立，全部完成后再统一收集修复分片并重新合并。
+合并问题修复批次见 [`repair/`](repair/)。Repair 是校验失败时的条件回路，不是每次翻译必经阶段。当前批次 [`repair/20260824-01/`](repair/20260824-01/) 的 `agent-01` 至 `agent-12` 相互独立；修复结果必须回填原工作区 translated 分片后，重新执行校验和合并。

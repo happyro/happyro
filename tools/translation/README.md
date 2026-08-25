@@ -1,5 +1,7 @@
 # 翻译工具
 
+工具命令在完整发布流程中的顺序、输入晋级和完成条件见 [`docs/translation/zh-cn/WORKFLOW.md`](../../docs/translation/zh-cn/WORKFLOW.md)。本文只定义各工具的行为和参数。
+
 ## 工具职责
 
 | 工具 | 用途 | 阶段 |
@@ -71,18 +73,21 @@ kRO 的译文分片同样默认允许物理行数变化。合并器以源 JSON �
 回写工具默认只执行预览；只有显式加入 `--write` 才会落盘。目标目录必须通过 `--target-root NAME=PATH` 明确指定，工具会拒绝 `inputs/` 下的受保护源材料，并使用临时文件原子替换已有目标文件。需要保留旧文件时可指定 `--backup-dir`，备份目录按仓库名和相对路径保存。
 
 ```bash
+# 将已验证的 kRO 临时合并文件晋级到正式 merged（dry-run）
 python3 tools/translation/writeback/main.py \
-  --merged-root work/translation-merge/<batch>/kro-20211105/merged/files \
-  --manifest work/translation-merge/<batch>/kro-20211105/merged/manifest.tsv \
+  --merged-root work/translation-merge/kro-20211105/<batch>/merged/files \
+  --manifest work/translation-merge/kro-20211105/<batch>/merged/manifest.tsv \
   --target-root client=docs/translation/zh-cn/kro-20211105/merged/files
 
+# 从正式 client-server merged 预览目标仓库回写（dry-run）
 python3 tools/translation/writeback/main.py \
-  --merged-root work/translation-merge/<batch>/client-server/merged/files \
-  --manifest work/translation-merge/<batch>/client-server/merged/manifest.tsv \
+  --merged-root docs/translation/zh-cn/client-server/merged/files \
+  --manifest docs/translation/zh-cn/client-server/merged/manifest.tsv \
   --target-root client=repos/happyro-client \
   --target-root server=repos/happyro-server \
-  --backup-dir work/translation-writeback-backup \
-  --write
+  --backup-dir work/translation-writeback-backup/<batch>
 ```
+
+核对 dry-run 的来源、目标和文件数后，才在同一命令末尾增加 `--write`。工具只发布 manifest 登记的文件，不复制 manifest 或验证报告，也不删除目标中的过期文件；正式产物晋级必须按 WORKFLOW 另外完成这些复核。
 
 kRO 的 `.lub` 合并结果是规范化 JSON，回写工具会发布 JSON 产物；需要生成客户端 `.lub` 时，继续使用 `tools/client/build/lua50` 或 `lua51` 回编译工具。

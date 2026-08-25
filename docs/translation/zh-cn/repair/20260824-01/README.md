@@ -2,6 +2,16 @@
 
 本目录用于修复 `batch-20260824` 合并结果中发现的分片问题。12 个 agent 目录相互独立；每个 agent 只修改自己的 `fixed/`，完成后更新自己的 `manifest.tsv` 和 `progress.md`。
 
+本批次是 [`../../WORKFLOW.md`](../../WORKFLOW.md) 中的条件 repair 回路。`fixed/` 不是最终维护源；协调者必须把已确认结果回填对应工作区 translated 分片，再从 chunks 校验阶段重新执行。
+
+## 最终状态
+
+- 263 个工作单元全部终态：152 个“已修复”、110 个“已完成”、1 个“确认无误”。
+- 12 个 agent 共生成 262 个 fixed 文件；“确认无误”项不生成替换文件。
+- 修复结果已收集到 `work/translation-merge/repair-20260824-01-run3/` 并重新合并。
+- run3 的 client-server 合并后检查四组均为 `Errors: 0`；最终 kRO merged 检查八组均为 `Errors: 0`。
+- 当前规范 translated 分片在后续 bugfix 中继续演进，不能再用 fixed 副本哈希判断当前内容；后续运行以原工作区 agent 分片为维护源。
+
 分片源文件和当前译文仍从原工作区只读引用，不修改原有 `agents/agent-xx/`。所有 agent 完成后，再统一收集 `fixed/`、重新运行校验和合并。
 
 ## Agent 规则
@@ -23,7 +33,7 @@
 
 ## 最终收集
 
-修复完成后，协调者将所有 `fixed/` 收集到 `work/translation-repair/repair/20260824-01/`，应用到临时译文基线，再分别执行：
+本批协调者将所有 `fixed/` 收集并应用到 run3 临时译文基线，依次执行：
 
 ```text
 validate chunks
@@ -32,8 +42,7 @@ merge
 validate merged / validate-kro
 ```
 
-确认通过后，才回写正式工作区的 `merged/files/`。
-
+确认通过后，修复内容回到原工作区 translated 分片；正式 merged 的晋级状态分别见两个工作区的 `merged/README.md`。
 
 ## 本次静态分配
 
