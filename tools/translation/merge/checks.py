@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from .models import MergeFailure, Row
@@ -14,12 +15,66 @@ CHUNK_SUFFIX = re.compile(r"\.chunk-\d+\.json$")
 STRING_RE = re.compile(rb'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')')
 TEXT_ARRAY_FIELDS = {"Description", "identifiedDescriptionName", "unidentifiedDescriptionName"}
 PAGE_ARRAY_FIELDS = {"Page"}
+VISIBLE_TEXT_FIELDS = {
+    "Title",
+    "Summary",
+    "Description",
+    "Page",
+    "identifiedDisplayName",
+    "unidentifiedDisplayName",
+    "identifiedDescriptionName",
+    "unidentifiedDescriptionName",
+}
 TOKEN_CHECKS = (
     re.compile(rb"\^[0-9A-Fa-f]{6}"),
     re.compile(rb"\\(?:[nrtbfv'\\]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})"),
     re.compile(rb"%(?:[0-9]+\$)?[-+0-9.#]*[A-Za-z]|\{[0-9]+\}"),
 )
 LEGACY_BYTE_ESCAPE_PATHS = {"src/DB/Items/RobeTable.js"}
+PROTECTED_RESOURCE_PATHS = {
+    "src/DB/Items/HatTable.js",
+    "src/DB/Items/RobeTable.js",
+    "src/DB/Jobs/JobNameTable.js",
+    "src/DB/Monsters/MonsterTable.js",
+}
+YAML_SUFFIXES = (".yml", ".yaml")
+HTML_SUFFIXES = (".html", ".htm")
+YAML_KEY_RE = re.compile(rb"^([ \t]*)(- )?([A-Za-z][A-Za-z0-9_]*):(?:[ \t]|$)")
+YAML_BLOCK_RE = re.compile(rb"[|>][-+]?\s*(?:#.*)?$")
+TRANSLATABLE_HTML_ATTRIBUTES = {"alt", "aria-label", "data-text", "placeholder", "title", "value"}
+
+
+def logical_path(label: str) -> str:
+    value = label.split("/", 1)[-1]
+    return re.sub(r"/(?:full|chunk-\d+)$", "", value)
+
+
+class _HTMLStructureParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.events: list[tuple[str, str, tuple[tuple[str, str | None], ...]]] = []
+
+    @staticmethod
+    def _attributes(attrs: list[tuple[str, str | None]]) -> tuple[tuple[str, str | None], ...]:
+        normalized = []
+        for name, value in attrs:
+            if name in TRANSLATABLE_HTML_ATTRIBUTES:
+                if name == "data-text" and value is not None and value.isdigit():
+                    normalized.append((name, value))
+                else:
+                    normalized.append((name, "<TEXT>"))
+            else:
+                normalized.append((name, value))
+        return tuple(normalized)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.events.append(("start", tag, self._attributes(attrs)))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.events.append(("startend", tag, self._attributes(attrs)))
+
+    def handle_endtag(self, tag: str) -> None:
+        self.events.append(("end", tag, ()))
 
 
 def line_count(data: bytes) -> int:
@@ -87,6 +142,59 @@ def logic_warnings(source: bytes, translated: bytes, label: str) -> list[str]:
     return warnings
 
 
+def validate_yaml_structure(source: bytes, translated: bytes, label: str) -> None:
+    """Reject translation changes to YAML keys and their structural indentation."""
+    if not label.split("/", 1)[-1].split("/chunk-", 1)[0].endswith(YAML_SUFFIXES):
+        return
+    source_lines = normalize_newlines(source).splitlines()
+    translated_lines = normalize_newlines(translated).splitlines()
+    if len(source_lines) != len(translated_lines):
+        raise MergeFailure(
+            f"{label}: YAML translation changes line count {len(source_lines)} -> {len(translated_lines)}"
+        )
+    block_indent: int | None = None
+    for line_number, (source_line, translated_line) in enumerate(zip(source_lines, translated_lines), 1):
+        source_indent = len(source_line) - len(source_line.lstrip(b" "))
+        if block_indent is not None:
+            if not source_line.strip() or source_indent > block_indent:
+                continue
+            block_indent = None
+        source_match = YAML_KEY_RE.match(source_line)
+        translated_match = YAML_KEY_RE.match(translated_line)
+        source_structure = source_match.groups() if source_match else None
+        translated_structure = translated_match.groups() if translated_match else None
+        if source_structure != translated_structure:
+            raise MergeFailure(f"{label}:{line_number}: YAML key or structural indentation changed")
+        if source_match and YAML_BLOCK_RE.search(source_line[source_match.end() :]):
+            block_indent = source_indent
+
+
+def validate_protected_resource_file(source: bytes, translated: bytes, label: str) -> None:
+    """Reject translations of tables whose values are runtime resource identifiers."""
+    if (
+        logical_path(label) in PROTECTED_RESOURCE_PATHS
+        and normalize_newlines(source) != normalize_newlines(translated)
+    ):
+        raise MergeFailure(f"{label}: protected resource mapping must remain byte-for-byte unchanged")
+
+
+def validate_html_structure(source: bytes, translated: bytes, label: str) -> None:
+    """Reject changes to HTML tags, attribute names, and non-text attribute values."""
+    if not logical_path(label).endswith(HTML_SUFFIXES):
+        return
+    source_parser = _HTMLStructureParser()
+    translated_parser = _HTMLStructureParser()
+    try:
+        source_parser.feed(source.decode("utf-8"))
+        source_parser.close()
+        translated_parser.feed(translated.decode("utf-8"))
+        translated_parser.close()
+    except (UnicodeDecodeError, ValueError) as error:
+        raise MergeFailure(f"{label}: invalid HTML translation: {error}") from error
+    if source_parser.events != translated_parser.events:
+        raise MergeFailure(f"{label}: HTML tags or protected attributes changed")
+
+
 def _json_path(path: tuple[str, ...]) -> str:
     return "$" if not path else "$." + ".".join(path)
 
@@ -96,11 +204,14 @@ def _merge_json_value(
     translated: object,
     label: str,
     path: tuple[str, ...] = (),
+    reject_source_fallback: bool = False,
 ) -> tuple[object, list[str]]:
     """Keep source structure while replacing translated text values."""
     location = f"{label}{_json_path(path)}"
     if isinstance(source, dict):
         if not isinstance(translated, dict):
+            if reject_source_fallback:
+                raise MergeFailure(f"{location}: translated value changed from object")
             return source, [f"{location}: translated value changed from object; source retained"]
         extra = sorted(set(translated) - set(source))
         merged: dict[str, object] = {}
@@ -109,16 +220,22 @@ def _merge_json_value(
             warnings.append(f"{location}: translated JSON added keys ignored: {', '.join(extra)}")
         for key, source_value in source.items():
             if key not in translated:
+                if reject_source_fallback and key in VISIBLE_TEXT_FIELDS:
+                    raise MergeFailure(f"{location}.{key}: missing translated field")
                 merged[key] = source_value
                 warnings.append(f"{location}.{key}: missing translated field; source retained")
                 continue
-            value, value_warnings = _merge_json_value(source_value, translated[key], label, (*path, key))
+            value, value_warnings = _merge_json_value(
+                source_value, translated[key], label, (*path, key), reject_source_fallback
+            )
             merged[key] = value
             warnings.extend(value_warnings)
         return merged, warnings
 
     if isinstance(source, list):
         if not isinstance(translated, list):
+            if reject_source_fallback:
+                raise MergeFailure(f"{location}: translated value changed from array")
             return source, [f"{location}: translated value changed from array; source retained"]
         field = path[-1] if path else ""
         if field in PAGE_ARRAY_FIELDS:
@@ -130,19 +247,37 @@ def _merge_json_value(
                         return [text[:boundary], text[boundary + 1 :]], [
                             f"{location}: reconstructed two pages from one translated page"
                         ]
+                if reject_source_fallback and len(source) == 1 and all(
+                    isinstance(item, str)
+                    and not re.search(r"[가-힣ㄱ-ㅎㅏ-ㅣ]", item)
+                    for item in translated
+                ):
+                    return ["\n".join(translated)], [
+                        f"{location}: reconstructed one page from translated lines"
+                    ]
+                if reject_source_fallback:
+                    raise MergeFailure(f"{location}: translated page count changed")
                 return source, [f"{location}: page count changed {len(source)} -> {len(translated)}; source retained"]
         elif field in TEXT_ARRAY_FIELDS:
             if not all(isinstance(item, str) for item in source + translated):
                 raise MergeFailure(f"{location}: text array contains a non-string value")
             if field == "unidentifiedDescriptionName" and source and all(item == "" for item in source):
                 if translated != source:
+                    if reject_source_fallback:
+                        return translated, []
                     return source, [f"{location}: unidentified text changed; source retained"]
             if not translated and source:
+                if all(item == "" for item in source):
+                    return source, []
+                if reject_source_fallback:
+                    raise MergeFailure(f"{location}: empty translation")
                 return source, [f"{location}: empty translation; source retained"]
             if len(source) != len(translated):
                 return translated, [f"{location}: text line count changed {len(source)} -> {len(translated)}"]
             return translated, []
         elif len(source) != len(translated):
+            if reject_source_fallback and field in VISIBLE_TEXT_FIELDS:
+                raise MergeFailure(f"{location}: non-text array length changed")
             return source, [
                 f"{location}: non-text array length changed {len(source)} -> {len(translated)}; source retained"
             ]
@@ -150,7 +285,7 @@ def _merge_json_value(
         warnings: list[str] = []
         for index, (source_item, translated_item) in enumerate(zip(source, translated)):
             value, value_warnings = _merge_json_value(
-                source_item, translated_item, label, (*path, str(index))
+                source_item, translated_item, label, (*path, str(index)), reject_source_fallback
             )
             merged_items.append(value)
             warnings.extend(value_warnings)
@@ -158,21 +293,32 @@ def _merge_json_value(
 
     if isinstance(source, str):
         if not isinstance(translated, str):
+            if reject_source_fallback:
+                raise MergeFailure(f"{location}: translated value changed from string")
             return source, [f"{location}: translated value changed from string; source retained"]
         return translated, []
 
     if type(source) is not type(translated) or source != translated:
+        if reject_source_fallback:
+            raise MergeFailure(f"{location}: non-text value changed")
         return source, [f"{location}: non-text value changed; source retained"]
     return source, []
 
 
-def normalize_json_pair(source: bytes, translated: bytes, label: str) -> tuple[bytes, list[str]]:
+def normalize_json_pair(
+    source: bytes,
+    translated: bytes,
+    label: str,
+    reject_source_fallback: bool = False,
+) -> tuple[bytes, list[str]]:
     try:
         source_value = json.loads(source.decode("utf-8"))
         translated_value = json.loads(translated.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise MergeFailure(f"{label}: invalid JSON: {error}") from error
-    merged, warnings = _merge_json_value(source_value, translated_value, label)
+    merged, warnings = _merge_json_value(
+        source_value, translated_value, label, reject_source_fallback=reject_source_fallback
+    )
     return json.dumps(merged, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), warnings
 
 

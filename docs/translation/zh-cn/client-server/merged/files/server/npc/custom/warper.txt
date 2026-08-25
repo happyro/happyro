@@ -1,0 +1,1387 @@
+//===== rAthena Script ======================================= 
+//= Warper
+//===== Description: ========================================= 
+//= A complete - but very condensed - warper script.
+//===== Additional Comments: =================================
+//= 1.0 Initial script By [Euphy].
+//= 1.1 Added missing duplicates and fixed coordinates.
+//=     Some coordinates written by [Tekno-Kanix] and [ToastOfDoom].
+//= 1.2 Added new episodes and simplified functions.
+//= 1.3 Added Renewal checks and Instances menu.
+//=     Aligned coordinates with @go.
+//= 1.4 Added new Guild Dungeons.
+//= 1.4a Slight edits.
+//= 1.4b Added Wolfchev's Laboratory warp.
+//= 1.5 Added Lasagna ,Para Market ,WOE TE ,Instances and settings [sader1992].
+//= 1.5a Fix Bifrost Tower
+//============================================================
+
+-	script	Warper	-1,{
+function Go; function Disp; function Pick; function Restrict;
+
+// --------------------------------------------------
+//	Main Menu:
+// --------------------------------------------------
+
+menu	"上次传送 ^777777["+lastwarp$+"]^000000",-,
+    	" ~ 城镇",Towns,
+    	" ~ 原野",Fields,
+    	" ~ 地下城",Dungeons,
+    	" ~ 公会城堡",Castles,
+    	" ~ 公会地下城",Guild_Dungeons,
+    	" ~ 副本",Instances,
+    	" ~ 特殊区域",Special;
+
+	if (lastwarp$ == "")
+		message strcharinfo(0),"你还没有传送过。";
+	else
+		warp lastwarp$,lastwarpx,lastwarpy;
+	end;
+
+// ------------------- Functions -------------------
+// * Go("<map>",<x>,<y>);
+//	~ Warps directly to a map.
+//
+// * Disp("<Menu Option>",<first option>,<last option>);
+// * Pick("<map_prefix>"{,<index offset>});
+//	~ Dynamic menu and map selection (auto-numbered).
+//	~ Fields and Dungeons must use Disp and Pick Functions.
+//
+// * Disp("<Option 1>:<Option 2>:<etc.>");
+// * Pick("","<map1>","<map2>","<etc.>");
+//	~ Manual menu and map selection (listed).
+//
+// * Restrict("<RE | Pre-RE>"{,<menu option numbers>});
+//	~ Only allows map for Renewal or Pre-Renewal modes.
+//     If menu option numbers are given, only those maps
+//     will be restricted (i.e. not for "Go").
+//
+// Other notes:
+//   ~ Array @c[] holds all (x,y) coordinates.
+//   ~ Use @c[2] EXCEPT when maps begin dynamically
+//	  at 0: use @c[0] and Pick() offset 1.
+// --------------------------------------------------
+
+function Go {
+	set lastwarp$, getarg(0);
+	set lastwarpx, getarg(1,0);
+	set lastwarpy, getarg(2,0);
+	warp getarg(0),getarg(1,0),getarg(2,0);
+	end;
+}
+function Disp {
+	if (getargcount() < 3)
+		set @menu$, getarg(0);
+	else {
+		set @menu$,"";
+		for (set .@i,getarg(1); .@i<=getarg(2); set .@i,.@i+1)
+			set @menu$, @menu$+getarg(0)+" "+.@i+":";
+	}
+	return;
+}
+function Pick {
+	set .@warp_block,@warp_block;
+	set @warp_block,0;
+	if((@f && .OnlyFirstFld) || (@d && .OnlyFirstDun)){
+		set .@select,1;
+		if(.@warp_block){
+			while(.@warp_block & (1<<.@select)){
+				.@select += 1;
+			}
+		}
+	}else{
+		set .@select, select(@menu$);
+	}
+	if (getarg(0) == "") {
+		set .@i, .@select;
+		set .@map$, getarg(.@i);
+	} else {
+		set .@i, .@select-getarg(1,0);
+		set .@map$, getarg(0)+((.@i<10)?"0":"")+.@i;
+	}
+	if (.@warp_block & (1<<.@select)) {
+		message strcharinfo(0),"这张地图未在"+((checkre(0))?"":"前置")+"Renewal 中启用。";
+		end;
+	}
+	set .@x, @c[.@i*2];
+	set .@y, @c[.@i*2+1];
+	deletearray @c[0],getarraysize(@c);
+	@f = false; @d = false;
+	Go(.@map$,.@x,.@y);
+}
+function Restrict {
+	.@type$ = getarg(0);
+	
+	if (.@type$ == "Brasilis") {
+		// If the official warper to Brasilis is enabled, meaning is either
+		// Renewal mode or Pre-renewal Brasilis is enabled, we lift the restriction
+		if (getnpcid(0, "Crewman_bra2"))
+			return;
+		// Otherwise we apply the renewal restriction
+		.@type$ = "RE";
+	}
+
+	if ((.@type$ == "RE" && !checkre(0)) || (.@type$ == "Pre-RE" && checkre(0))) {
+		if (getarg(1,0)) {
+			set @warp_block,0;
+			for (set .@i,1; .@i<getargcount(); set .@i,.@i+1)
+				set @warp_block, @warp_block | (1<<getarg(.@i));
+		} else {
+			message strcharinfo(0),"这张地图未在"+((checkre(0))?"":"前置")+"Renewal 中启用。";
+			end;
+		}
+	}
+	return;
+}
+
+// --------------------------------------------------
+	Towns:
+// --------------------------------------------------
+menu	"普隆德拉",T1, "艾尔贝塔",T2, "艾尔帕兰",T3, "天津町",T4, "阿育王町",T5,
+    	"巴西利斯",T6, "海洞",T7, "德瓦塔",T8, "伊克拉斯",T9, "艾因贝赫",T10,
+		"艾因布洛克",T11, "埃尔迪卡斯特",T12, "吉芬",T13, "胡格尔",T14, "冰城",T15,
+		"依斯鲁得",T16, "嘉年华岛",T17, "朱诺",T18, "昆仑",T19, "拉萨格",T20,
+		"里希塔乐镇",T21, "洛阳",T22, "姜饼城",T23, "马林岛",T24, "马来西亚",T25,
+		"马努克",T26, "米德加尔特远征队营地",T27, "莫拉",T28, "梦罗克",T29, "莫斯科比亚",T30,
+		"无名岛（白天）",T31, "无名岛（夜晚）",T32, "尼夫海姆",T33, "帕扬",T34, "拉赫",T35,
+		"洛克里奇",T36, "特殊安全区域科尔",T37, "斯普兰迪德",T38, "托尔营地",T39, "乌帕拉",T40,
+		"瓦尔蒙特府邸",T41, "维因斯",T42, "维鲁斯发掘地",T43, "狼村",T44;
+
+T1: Go("prontera",155,183);
+T2: Go("alberta",28,234);
+T3: Go("aldebaran",140,131);
+T4: Go("amatsu",198,84);
+T5: Go("ayothaya",208,166);
+T6: Restrict("Brasilis");
+	Go("brasilis",196,217);
+T7: Go("comodo",209,143);
+T8: Restrict("RE");
+	Go("dewata",200,180);
+T9: Restrict("RE");
+	Go("ecl_in01",48,53);
+T10: Go("einbech",63,35);
+T11: Go("einbroch",64,200);
+T12: Restrict("RE");
+	 Go("dicastes01",198,187);
+T13: Go("geffen",119,59);
+T14: Go("hugel",96,145);
+T15: Restrict("RE");
+	 Go("icecastle",185,212);
+T16: Go("izlude",128,(checkre(3)?146:114));
+T17: Go("jawaii",251,132);
+T18: Go("yuno",157,51);
+T19: Go("gonryun",160,120);
+T20: Restrict("RE");
+	 Go("lasagna",193,182);
+T21: Go("lighthalzen",158,92);
+T22: Go("louyang",217,100);
+T23: Go("xmas",147,134);
+T24: Restrict("RE");
+	 Go("malangdo",140,114);
+T25: Restrict("RE");
+	 Go("malaya",231,200);
+T26: Go("manuk",282,138);
+T27: Go("mid_camp",210,288);
+T28: Restrict("RE");
+	 Go("mora",55,146);
+T29: Go("morocc",156,93);
+T30: Go("moscovia",223,184);
+T31: Go("nameless_i",256,215);
+T32: Go("nameless_n",256,215);
+T33: Go("niflheim",202,174);
+T34: Go("payon",179,100);
+T35: Go("rachel",130,110);
+T36: Restrict("RE");
+	 Go("harboro1",298,206);
+T37: Restrict("RE");
+	 Go("sp_cor",160,166);
+T38: Go("splendide",201,147);
+T39: Go("thor_camp",246,68);
+T40: Go("umbala",97,153);
+T41: Restrict("RE");
+	Go("ba_maison",72,146);
+T42: Go("veins",216,123);
+T43: Restrict("RE");
+	 Go("verus04",123,250);
+T44: Restrict("RE");
+	 Go("wolfvill",144,144);
+
+// --------------------------------------------------
+	Fields:
+// --------------------------------------------------
+@f = true;
+menu	"天津町原野",F1, "阿育王町原野",F2, "彩虹桥原野", F3,
+    	"巴西利斯原野",F4, "海洞原野",F5, "德瓦塔原野",F6,
+    	"伊克拉斯原野",F7, "艾因布洛克原野",F8, "埃尔迪卡斯特原野",F9,
+    	"冰鳞原野",F10, "吉芬原野",F11, "灰狼森林",F12,
+		"胡格尔原野",F13, "朱诺原野",F14, "奇瓦瓦沙漠",F15,
+		"昆仑原野",F16, "拉萨格原野",F17, "里希塔乐原野",F18,
+		"洛阳原野",F19, "姜饼城原野",F20, "马来西亚原野",F21,
+		"马努克原野",F22, "妙勒尼山脉原野",F23, "莫斯科比亚原野",F24,
+		"尼夫海姆原野",F25, "帕扬森林",F26, "普隆德拉原野",F27,
+		"拉赫原野",F28, "苏格拉特沙漠",F29, "斯普兰迪德原野",F30,
+		"乌帕拉原野",F31, "维因斯原野",F32;
+
+F1: setarray @c[2],190,197;
+	Disp("天津町原野",1,1); Pick("ama_fild");
+F2: setarray @c[2],173,134,212,150;
+	Disp("阿育王町原野",1,2); Pick("ayo_fild");
+F3: Restrict("RE");
+	setarray @c[2],193,220,220,187;
+	Disp("彩虹桥原野",1,2); Pick("bif_fild");
+F4: Restrict("Brasilis");
+	setarray @c[2],74,32;
+	Disp("巴西利斯原野",1,1); Pick("bra_fild");
+F5: Restrict("Pre-RE",5);
+	setarray @c[2],180,178,231,160,191,172,228,194,224,203,190,223,234,177,194,175,172,172;
+	Disp("海洞原野",1,9); Pick("cmd_fild");
+F6: Restrict("RE");
+	setarray @c[2],371,212;
+	Disp("德瓦塔原野",1,1); Pick("dew_fild");
+F7: Restrict("RE");
+	setarray @c[2],97,314;
+	Disp("伊克拉斯原野",1,1); Pick("ecl_fild");
+F8: Restrict("Pre-RE",2,10);
+	setarray @c[2],142,225,182,141,187,228,185,173,216,173,195,148,272,220,173,214,207,174,196,200;
+	Disp("艾因布洛克原野",1,10); Pick("ein_fild");
+F9: Restrict("RE");
+	setarray @c[2],143,132,143,217;
+	Disp("埃尔迪卡斯特原野",1,2); Pick("dic_fild");
+F10: Restrict("RE");
+	 setarray @c[2],378,223,223,18,365,241,140,280;
+	 Disp("冰鳞山丘:冰鳞平原:冰鳞冰川:冰鳞尾部"); Pick("","jor_back1","jor_back2","jor_back3","jor_tail");
+F11: Restrict("Pre-RE",13,15);
+	 setarray @c[0],46,199,213,204,195,212,257,192,188,171,166,263,248,158,195,191,186,183,221,117,178,218,136,328,240,181,235,235,211,185;
+	 Disp("吉芬原野",0,14); Pick("gef_fild",1);
+F12: Restrict("RE");
+	 setarray @c[2],22,315,122,388;
+	 Disp("灰狼森林",1,2); Pick("gw_fild");
+F13: Restrict("Pre-RE",3,7);
+	 setarray @c[2],268,101,222,193,232,185,252,189,196,106,216,220,227,197;
+	 Disp("胡格尔原野",1,7); Pick("hu_fild");
+F14: Restrict("Pre-RE",5,10);
+	 setarray @c[2],189,224,192,207,221,157,226,199,223,177,187,232,231,174,196,203,183,214,200,124,195,226,210,304;
+	 Disp("朱诺原野",1,12); Pick("yuno_fild");
+F15: Restrict("RE");
+	 setarray @c[2],38,246,31,207;
+	 Disp("奇瓦瓦沙漠",1,2); Pick("","rockrdg1","rockrdg2");
+F16: setarray @c[2],220,227;
+	 Disp("昆仑原野",1,1); Pick("gon_fild");
+F17: Restrict("RE");
+	 setarray @c[2],344,371,20,98;
+	 Disp("拉萨格原野",1,2); Pick("lasa_fild");
+F18: setarray @c[2],240,179,185,235,240,226;
+	 Disp("里希塔乐原野",1,3); Pick("lhz_fild");
+F19: setarray @c[2],229,187;
+	 Disp("洛阳原野",1,1); Pick("lou_fild");
+F20: setarray @c[2],115,145;
+	 Disp("姜饼城原野",1,1); Pick("xmas_fild");
+F21: Restrict("RE");
+	 setarray @c[2],40,272,207,180;
+	 Disp("马来西亚原野",1,2); Pick("ma_fild");
+F22: setarray @c[2],35,236,35,262,84,365;
+	 Disp("马努克原野",1,3); Pick("man_fild");
+F23: setarray @c[2],204,120,175,193,208,213,179,180,181,240,195,270,235,202,188,215,205,144,245,223,180,206,196,208;
+	 Disp("妙勒尼山脉原野",1,12); Pick("mjolnir_");
+F24: setarray @c[2],82,104,131,147;
+	 Disp("莫斯科比亚原野",1,2); Pick("mosk_fild");
+F25: setarray @c[2],215,229,167,234;
+	 Disp("尼夫海姆原野",1,2); Pick("nif_fild");
+F26: Restrict("Pre-RE",5,11);
+	 setarray @c[2],158,206,151,219,205,148,186,247,134,204,193,235,200,177,137,189,201,224,160,205,194,150;
+	 Disp("帕扬森林",1,11); Pick("pay_fild");
+F27: setarray @c[0],208,227,190,206,240,206,190,143,307,252,239,213,185,188,193,194,187,218,210,183,195,149,198,164;
+	 Disp("普隆德拉原野",0,11); Pick("prt_fild",1);
+F28: Restrict("Pre-RE",2,7,9,10,11,13);
+	 setarray @c[2],192,162,235,166,202,206,202,208,225,202,202,214,263,196,217,201,87,121,277,181,221,185,175,200,174,197;
+	 Disp("拉赫原野",1,13); Pick("ra_fild");
+F29: if(.Satan_Morocc){
+	 setarray @c[2],219,205,177,206,194,182,224,170,198,216,156,187,185,263,206,228,208,238,209,223,85,97,207,202,31,195,38,195;
+	 Disp("苏格拉特沙漠 1:苏格拉特沙漠 2:苏格拉特沙漠 3:苏格拉特沙漠 7:苏格拉特沙漠 11:苏格拉特沙漠 12:苏格拉特沙漠 13:苏格拉特沙漠 16:苏格拉特沙漠 17:苏格拉特沙漠 18:苏格拉特沙漠 19:苏格拉特沙漠 20:苏格拉特沙漠 21:苏格拉特沙漠 22");
+	 Pick("","moc_fild01","moc_fild02","moc_fild03","moc_fild07","moc_fild11","moc_fild12","moc_fild13","moc_fild16","moc_fild17","moc_fild18","moc_fild19","moc_fild20","moc_fild21","moc_fild22");
+	 }else{
+	 setarray @c[2],219,205,177,206,194,182,146,297,204,197,275,302,224,170,139,123,101,110,341,39,198,216,156,187,185,263,223,222,170,257,206,228,208,238,209,223,85,97;
+	 Disp("苏格拉特沙漠",1,19); Pick("moc_fild");
+	 }
+F30: setarray @c[2],175,186,236,184,188,204;
+	 Disp("斯普兰迪德原野",1,3); Pick("spl_fild");
+F31: setarray @c[2],217,206,223,221,237,215,202,197;
+	 Disp("乌帕拉原野",1,4); Pick("um_fild");
+F32: Restrict("Pre-RE",5);
+	 setarray @c[2],186,175,196,370,222,45,51,250,202,324,150,223,149,307;
+	 Disp("维因斯原野",1,7); Pick("ve_fild");
+
+// --------------------------------------------------
+	Dungeons:
+// --------------------------------------------------
+@d = true;
+menu	"阿米希提亚废弃实验室",D1, "深渊湖",D2, "天津町地下城",D3,
+		"蚂蚁地狱",D4, "阿育王町地下城",D5, "海滩地下城",D6,
+		"彩虹桥塔",D7, "生化实验室",D8, "巴西利斯地下城",D9,
+		"拜亚兰地下城",D10, "钟楼",D11, "矿山",D12,
+		"下水道",D13, "诅咒修道院",D14, "德瓦塔地下城",D15,
+		"艾因布洛克地下城",D16, "火焰盆地",D17, "吉芬尼亚",D18,
+		"吉芬地下城",D19, "古城",D20, "隐藏地下城",D21,
+		"冰洞地下城",D22, "幻影地下城",D23, "伊斯加德地下城",D24,
+		"朱彼洛斯",D25, "基尔地下城",D26, "昆仑地下城",D27,
+		"拉萨格地下城",D28, "洛阳地下城",D29, "熔岩地下城",D30,
+		"马林岛地下城",D31, "莫斯科比亚地下城",D32, "尼德霍格地下城",D33,
+		"尼夫海姆地下城",D34, "奥丁神殿",D35, "兽人地下城",D36,
+		"奥兹迷宫地下城",D37, "帕扬地下城",D38, "普隆德拉地下",D39,
+		"金字塔",D40, "拉赫圣域",D41, "洛克里奇地下城",D42,
+		"鲁杜斯地下城",D43, "斯卡拉巴洞穴",D44, "斯芬克斯",D45,
+		"沉船",D46, "塔纳托斯塔",D47, "托尔火山",D48,
+		"玩具工厂",D49, "乌龟地下城",D50, "乌帕拉地下城",D51,
+		"瓦尔蒙特地下城",D52, "维鲁斯区域",D53;
+
+D1: Restrict("RE");
+	setarray @c[2],253,244,145,278;
+	Disp("第 1 层 - 综合实验室:第 2 层 - 深度培养室"); Pick("","amicitia1","amicitia2");
+D2: Restrict("RE",4);
+	setarray @c[2],261,272,275,270,116,27,169,159;
+	Disp("深渊湖",1,4); Pick("abyss_");
+D3: setarray @c[2],228,11,34,41,119,14;
+	Disp("天津町地下城",1,3); Pick("ama_dun");
+D4: setarray @c[2],35,262,168,170;
+	Disp("蚂蚁地狱",1,2); Pick("anthell");
+D5: setarray @c[2],275,19,24,26;
+	Disp("古代神社迷宫:古代神社内部"); Pick("ayo_dun");
+D6: setarray @c[2],266,67,255,244,23,260;
+	Disp("海滩地下城",1,3); Pick("","beach_dun","beach_dun2","beach_dun3");
+D7: Restrict("RE");
+	setarray @c[2],57,13,64,88,45,14,26,23;
+	Disp("彩虹桥塔",1,4); Pick("ecl_tdun");
+D8: Restrict("RE",4,5);
+	setarray @c[2],150,288,150,18,140,134,244,52,100,202;
+	Disp("生化实验室 1:生化实验室 2:生化实验室 3:生化实验室 4:陨落者之墓"); Pick("","lhz_dun01","lhz_dun02","lhz_dun03","lhz_dun04","lhz_dun_n");
+D9: Restrict("Brasilis");
+	setarray @c[2],87,47,262,262;
+	Disp("巴西利斯地下城",1,2); Pick("bra_dun");
+D10: Restrict("RE",6);
+	 setarray @c[0],168,168,253,252,236,204,32,63,26,27,141,187;
+	 Disp("拜亚兰地下城",1,6); Pick("iz_dun",1);
+D11: Restrict("RE",9,10,11);
+	 setarray @c[2],199,159,148,283,65,147,56,155,297,25,127,169,277,178,268,74,266,27,60,142,79,39;
+	 Disp("钟楼 1:钟楼 2:钟楼 3:钟楼 4:地下 1 层:地下 2 层:地下 3 层:地下 4 层:梦魇钟楼第 2 层:梦魇钟楼第 3 层:未知地下层");
+	 Pick("","c_tower1","c_tower2","c_tower3","c_tower4","alde_dun01","alde_dun02","alde_dun03","alde_dun04","c_tower2_","c_tower3_","clock_01");
+D12: setarray @c[2],52,17,381,343,302,262;
+	 Disp("矿山",1,3); Pick("mjo_dun");
+D13: setarray @c[2],131,247,19,19,180,169,100,92;
+	 Disp("下水道",1,4); Pick("","prt_sewb1","prt_sewb2","prt_sewb3","prt_sewb4");
+D14: setarray @c[2],51,14,150,11,120,10;
+	 Disp("诅咒修道院",1,3); Pick("abbey");
+D15: Restrict("RE");
+	 setarray @c[2],285,160,299,29;
+	 Disp("德瓦塔地下城",1,2); Pick("dew_dun");
+D16: Restrict("RE",3);
+	 setarray @c[2],22,14,292,290,269,279;
+	 Disp("艾因布洛克地下城",1,3); Pick("ein_dun");
+D17: Restrict("RE");
+	 Go("moro_vol",97,107);
+D18: setarray @c[2],40,103,203,34,266,168,130,272;
+	 Disp("吉芬尼亚",1,4); Pick("gefenia",0);
+D19: setarray @c[0],104,99,115,236,106,132,203,200;
+	 Disp("吉芬地下城",1,4); Pick("gef_dun",1);
+D20: Restrict("RE",17,18,19);
+	 setarray @c[2],370,304,199,29,104,25,150,15,157,287,147,15,258,255,108,291,171,283,68,277,156,7,12,7,133,271,224,274,14,70,150,14,104,31,148,144,199,29;
+	 Disp("入口:城堡 1:城堡 2:骑士团 1:骑士团 2:墓地:下水道 1:下水道 2:下水道 3:下水道 4:圣修道院:阶梯地下城:地下洞穴 1:地下洞穴 2:地下监狱 1:地下监狱 2:城堡 2 - 梦魇模式:墓地 - 梦魇模式:深渊古城城堡第 1 层");
+	 Pick("","glast_01","gl_cas01","gl_cas02","gl_knt01","gl_knt02","gl_chyard","gl_sew01","gl_sew02","gl_sew03","gl_sew04","gl_church","gl_step","gl_dun01","gl_dun02","gl_prison","gl_prison1","gl_cas02_","gl_chyard_","gl_cas01_");
+D21: setarray @c[2],99,31,93,20,182,88;
+	 Disp("隐藏地下城",1,3); Pick("prt_maze");
+D22: setarray @c[2],157,14,151,155,149,22,33,158;
+	 Disp("冰洞地下城",1,4); Pick("ice_dun");
+D23: menu	"深渊幻影",SubD1, "冰冻幻影",SubD2, "迷宫幻影",SubD3,
+			"卢安达幻影",SubD4, "月光幻影",SubD5, "泰迪熊幻影",SubD6,
+			"双子幻影",SubD7, "水下幻影",SubD8, "吸血鬼幻影",SubD9;
+	SubD1: Restrict("RE");
+		   setarray @c[2],132,189,99,186;
+		   Disp("荒凉村庄:阴郁乌龟宫殿"); Pick("","tur_d03_i","tur_d04_i");
+	SubD2: Restrict("RE");
+		   Go("ice_d03_i",149,22);
+	SubD3: Restrict("RE");
+		   Go("prt_mz03_i",100,100);
+	SubD4: Restrict("RE");
+		   Go("com_d02_i",250,245);
+	SubD5: Restrict("RE");
+		   Go("pay_d03_i",140,44);
+	SubD6: Restrict("RE");
+		   Go("ein_d02_i",164,184);
+	SubD7: Restrict("RE");
+		   Go("ant_d02_i",168,170);
+	SubD8: Restrict("RE");
+		   setarray @c[2],130,230,141,188;
+		   Disp("深海洞穴",1,2); Pick("","iz_d04_i","iz_d05_i");
+	SubD9: Restrict("RE");
+		   Go("gef_d01_i",114,216);
+D24: Restrict("RE");
+	 setarray @c[2],112,15,280,87,112,12,274,85;
+	 Disp("废弃矿坑第 1 层:废弃矿坑第 2 层:蛇神温床第 1 层:蛇神温床第 2 层"); Pick("","jor_ab01","jor_ab02","jor_dun01","jor_dun02");
+D25: Restrict("RE",5);
+	 setarray @c[2],140,51,53,247,37,63,150,285,146,215;
+	 Disp("入口:朱彼洛斯 1:朱彼洛斯 2:核心:朱彼洛斯东部遗迹");
+	 Pick("","jupe_cave","juperos_01","juperos_02","jupe_core","ver_eju");
+D26: setarray @c[2],28,226,41,198;
+	 Disp("基尔地下城",1,2); Pick("kh_dun");
+D27: setarray @c[2],153,53,28,113,68,16;
+	 Disp("昆仑地下城",1,3); Pick("gon_dun");
+D28: Restrict("RE");
+	 setarray @c[2],24,143,22,171,190,18;
+	 Disp("拉萨格地下城",1,3); Pick("lasa_dun");
+D29: setarray @c[2],218,196,282,20,165,38;
+	 Disp("王陵:王陵内部:水龙宫"); Pick("lou_dun");
+D30: Restrict("RE",3);
+	 setarray @c[2],126,68,47,30,118,113;
+	 Disp("熔岩地下城",1,3); Pick("mag_dun");
+D31: Restrict("RE");
+	 setarray @c[2],33,230;
+	 Disp("马林岛地下城",1,1); Pick("mal_dun");
+D32: setarray @c[2],189,48,165,30,32,135;
+	 Disp("莫斯科比亚地下城",1,3); Pick("mosk_dun");
+D33: setarray @c[2],61,239,60,271;
+	 Disp("尼德霍格地下城",1,2); Pick("nyd_dun");
+D34: Restrict("RE");
+	 setarray @c[2],145,90,150,20;
+	 Disp("尼夫海姆地下城 - 第 1 层:尼夫海姆地下城 - 第 2 层"); Pick("nif_dun");
+D35: Restrict("RE",4);
+	 setarray @c[2],298,167,224,149,266,280,276,236;
+	 Disp("奥丁神殿 1:奥丁神殿 2:奥丁神殿 3:奥丁过去"); Pick("","odin_tem01","odin_tem02","odin_tem03","odin_past");
+D36: setarray @c[2],32,170,21,185;
+	 Disp("兽人地下城",1,2); Pick("orcsdun");
+D37: Restrict("RE");
+	 setarray @c[2],21,191,141,277;
+	 Disp("奥兹迷宫第 1 层:奥兹迷宫第 2 层"); Pick("oz_dun");
+D38: setarray @c[0],21,183,19,33,19,63,155,159,201,204;
+	 Disp("帕扬地下城",1,5); Pick("pay_dun",1);
+D39: Restrict("RE");
+	 setarray @c[2],159,289,155,353;
+	 Disp("普隆德拉地下监狱:普隆德拉入侵"); Pick("","prt_prison","prt_q");
+D40: Restrict("RE",7,8);
+	 setarray @c[2],192,9,10,192,100,92,181,11,94,96,192,8,94,96,192,8;
+	 Disp("金字塔 1:金字塔 2:金字塔 3:金字塔 4:地下 1 层:地下 2 层:地下 1 层 - 梦魇模式:地下 2 层 - 梦魇模式");
+	 Pick("","moc_pryd01","moc_pryd02","moc_pryd03","moc_pryd04","moc_pryd05","moc_pryd06","moc_prydn1","moc_prydn2");
+D41: setarray @c[2],140,11,32,21,8,149,204,218,150,9;
+	 Disp("拉赫圣域",1,5); Pick("ra_san");
+D42: Restrict("RE");
+	 setarray @c[2],247,19,281,104;
+	 Disp("洛克里奇矿山:地下水道下水道"); Pick("","rockmi1","harboro2");
+D43: Restrict("RE");
+	 setarray @c[2],200,377,185,258,366,207,378,178;
+	 Disp("鲁杜斯地下城",1,4); Pick("","sp_rudus","sp_rudus2","sp_rudus3","sp_rudus4");
+D44: Restrict("RE");
+	 setarray @c[2],364,44,101,141,101,141;
+	 Disp("斯卡拉巴洞穴",1,3); Pick("dic_dun");
+D45: setarray @c[2],288,9,149,81,210,54,10,222,100,99;
+	 Disp("斯芬克斯",1,5); Pick("","in_sphinx1","in_sphinx2","in_sphinx3","in_sphinx4","in_sphinx5");
+D46: setarray @c[2],69,24,102,27;
+	 Disp("沉船",1,2); Pick("treasure");
+D47: setarray @c[2],150,39,150,136,220,158,59,143,62,11,89,221,35,166,93,148,29,107,159,138,19,20,130,52;
+	 Disp("塔纳托斯塔",1,12); Pick("tha_t");
+D48: setarray @c[2],21,228,75,205,34,272;
+	 Disp("托尔火山",1,3); Pick("thor_v");
+D49: setarray @c[2],205,15,129,133;
+	 Disp("玩具工厂",1,2); Pick("xmas_dun");
+D50: setarray @c[2],154,49,148,261,132,189,100,192;
+	 Disp("入口:乌龟地下城 1:乌龟地下城 2:乌龟地下城 3"); Pick("tur_dun");
+D51: Restrict("Pre-RE",1,2);
+	 setarray @c[2],42,31,48,30,204,78;
+	 Disp("树中木匠店:通往异世界的通道:赫维尔格米尔泉");
+	 Pick("","um_dun01","um_dun02","yggdrasil01");
+D52: Restrict("RE");
+	 setarray @c[2],275,21,15,115,15,115,159,27,162,36,159,11,156,33,337,333,314,64,163,18,156,20,39,81;
+	 Disp("污水处理厂:第 1 发电厂:第 2 发电厂:大型冥想浴场:失落农场谷:图书馆记忆回廊:塔尔塔罗斯仓库上层:塔尔塔罗斯仓库下层:死亡符文:火焰符文:草地符文:冰霜符文"); Pick("","ba_pw02","ba_pw01","ba_pw03","ba_bath","ba_lost","ba_lib","ba_2whs01","ba_2whs02","bl_death","bl_lava","bl_grass","bl_ice");
+D53: Restrict("RE");
+	 setarray @c[2],244,61,72,20,122,22;
+	 Disp("奥普塔提奥实验室:维希研发部:维鲁斯中心广场"); Pick("verus");
+
+// --------------------------------------------------
+	Castles:
+// --------------------------------------------------
+menu	"[FE] 艾尔帕兰城堡",C1, "[FE] 吉芬城堡",C2, "[FE] 帕扬城堡",C3,
+    	"[FE] 普隆德拉城堡",C4, "[SE] 阿鲁纳佩尔兹城堡",C5, "[SE] 施瓦尔茨瓦德城堡",C6,
+		"[TE] 艾尔帕兰城堡",C7, "[TE] 普隆德拉城堡",C8;
+
+C1: setarray @c[2],48,83,95,249,142,85,239,242,264,90;
+	Disp("新天鹅堡:霍恩施万高:纽伦堡:维尔茨堡:罗滕堡");
+	Pick("","alde_gld","alde_gld","alde_gld","alde_gld","alde_gld");
+C2: setarray @c[2],214,75,308,240,143,240,193,278,305,87;
+	Disp("雷佩利翁:艾约尔布里加:耶斯内尔夫:贝尔格尔:梅尔塞泽代茨");
+	Pick("","gef_fild13","gef_fild13","gef_fild13","gef_fild13","gef_fild13");
+C3: setarray @c[2],121,233,295,116,317,293,140,160,204,266;
+	Disp("明亮树园:猩红宫殿:圣影:神圣祭坛:竹林山");
+	Pick("","pay_gld","pay_gld","pay_gld","pay_gld","pay_gld");
+C4: setarray @c[2],134,65,240,128,153,137,111,240,208,240;
+	Disp("克里姆希尔德:斯万希尔德:法德格里德:斯科格尔:贡杜尔");
+	Pick("","prt_gld","prt_gld","prt_gld","prt_gld","prt_gld");
+C5: setarray @c[2],158,272,83,47,68,155,299,345,292,107;
+	Disp("马多尔:赛尔:霍恩:盖芬:巴纳迪斯");
+	Pick("","aru_gld","aru_gld","aru_gld","aru_gld","aru_gld");
+C6: setarray @c[2],293,100,288,252,97,196,137,90,71,315;
+	Disp("希明:安德朗格:维布莱恩:赫利奥德:斯基德布拉德尼尔");
+	Pick("","sch_gld","sch_gld","sch_gld","sch_gld","sch_gld");
+C7: Restrict("RE");
+	setarray @c[2],48,83,95,249,142,85,239,242,264,90;
+	Disp("卡普拉花园 1:卡普拉花园 2:卡普拉花园 3:卡普拉花园 4:卡普拉花园 5");
+	Pick("","te_alde_gld","te_alde_gld","te_alde_gld","te_alde_gld","te_alde_gld");
+C8: Restrict("RE");
+	setarray @c[2],134,65,240,128,153,137,111,240,208,240;
+	Disp("荣耀 1:荣耀 2:荣耀 3:荣耀 4:荣耀 5");
+	Pick("","te_prt_gld","te_prt_gld","te_prt_gld","te_prt_gld","te_prt_gld");
+	
+// --------------------------------------------------
+	Guild_Dungeons:
+// --------------------------------------------------
+menu	"巴尔德",G1, "卢伊纳",G2, "女武神",G3, "布里托尼亚",G4,
+	    	"阿鲁纳佩尔兹",G5, "施瓦茨瓦尔德",G6, "卡普拉花园",G7,
+		"荣耀",G8;
+
+G1: Restrict("RE",2,3);
+	setarray @c[2],119,93,119,93,120,130;
+	Disp("巴尔德 F1:巴尔德 F2:深渊大厅");
+	Pick("","gld_dun01","gld_dun01_2","gld2_pay");
+G2: Restrict("RE",2,3);
+	setarray @c[2],39,161,39,161,147,155;
+	Disp("卢伊纳 F1:卢伊纳 F2:深渊大厅");
+	Pick("","gld_dun02","gld_dun02_2","gld2_ald");
+G3: Restrict("RE",2,3);
+	setarray @c[2],50,44,50,44,140,132;
+	Disp("女武神 F1:女武神 F2:深渊大厅");
+	Pick("","gld_dun03","gld_dun03_2","gld2_prt");
+G4: Restrict("RE",2,3);
+	setarray @c[2],116,45,116,45,152,118;
+	Disp("布里托尼亚 F1:布里托尼亚 F2:深渊大厅");
+	Pick("","gld_dun04","gld_dun04_2","gld2_gef");
+G5: Go("arug_dun01",199,195);
+G6: Go("schg_dun01",200,124);
+G7: Restrict("RE");
+	Go("teg_dun01",42,36);
+G8: Restrict("RE");
+	Go("teg_dun02",26,160);
+
+// --------------------------------------------------
+	Instances:
+// --------------------------------------------------
+menu	"巴库纳瓦湖",I1, "梦魇医院 2F",I2, "鳄鱼洞穴",I3,
+		"恶魔塔",I4, "艾可拉吉内部",I5, "无尽之塔",I6,
+		"蠕虫巢穴",I7, "吉芬魔法大赛",I8, "幽灵宫殿",I9,
+		"迷雾森林",I10, "恐怖玩具工厂",I11, "马林多下水道",I12,
+		"尼德霍格之巢",I13, "章鱼洞穴",I14, "旧克雷斯特汉姆古城",I15,
+		"兽人记忆",I16, "莎拉与芬里尔",I17, "莎拉记忆",I18,
+		"封印神殿",I19, "沃尔夫切夫实验室",I20;
+
+I1: Restrict("RE");
+	Go("ma_scene01",172,175);
+I2: Restrict("RE");
+	Go("ma_dun01",151,8);
+I3: Restrict("RE");
+	Go("ma_fild02",316,317);
+I4: Restrict("RE");
+	Go("dali02",137,115);
+I5: Restrict("RE");
+	Go("ecl_hub01",129,12);
+I6: Go("e_tower",72,112);
+I7: Restrict("RE");
+	Go("dali",85,64);
+I8: Restrict("RE");
+	Go("dali",94,141);
+I9: Restrict("RE");
+	Go("dali02",46,128);
+I10: Restrict("RE");
+	Go("bif_fild01",161,334);
+I11: Restrict("RE");
+	Go("xmas",234,298);
+I12: Restrict("RE");
+	Go("mal_in01",164,21);
+I13: Go("nyd_dun02",95,193);
+I14: Restrict("RE");
+	Go("mal_dun01",152,230);
+I15: Restrict("RE");
+	Go("glast_01",204,268);
+I16: Go("gef_fild10",240,198);
+I17: Restrict("RE");
+	Go("dali02",92,141);
+I18: Restrict("RE");
+	Go("dali",133,108);
+I19: Go("monk_test",306,143);
+I20: Restrict("RE");
+	Go("lhz_dun04",148,269);
+
+// --------------------------------------------------
+	Special:
+// --------------------------------------------------
+menu	"拍卖会场",S1, "战场",S2, "赌场",S3, "次元裂隙",S4,
+		"伊甸园总部",S5, "昆仑竞技场",S6, "伊斯鲁德竞技场",S7, 
+		"怪物赛跑竞技场",S8, "普拉市场",S9, "涡轮赛道",S10;
+
+S1: Go("auction_01",22,68);
+S2: Go("bat_room",154,150);
+S3: Go("cmd_in02",179,129);
+S4: Restrict("RE");
+	Go("dali",113,82);	
+S5: Restrict("RE");
+	Go("moc_para01",31,14);
+S6: Go("gon_test",48,10);
+S7: Go("arena_room",100,88);
+S8: Go("p_track01",62,41);
+S9: Restrict("RE");
+	Go("paramk",97,17);
+S10: Go("turbo_room",99,114);
+
+OnNaviGenerate:
+
+	// for non-prontera warpers, just give it warp to prontera
+	// this cuts down the number of links considerably
+	if (strnpcinfo(4) != "prontera") {
+		naviregisterwarp("Warper > Prontera", "prontera", 155, 183);
+		end;
+	}
+
+	naviregisterwarp("Warper > Prontera", "prontera", 155, 183);
+	naviregisterwarp("Warper > Alberta", "alberta", 28, 234);
+	naviregisterwarp("Warper > Al De Baran", "aldebaran", 140, 131);
+	naviregisterwarp("Warper > Amatsu", "amatsu", 198, 84);
+	naviregisterwarp("Warper > Ayothaya", "ayothaya", 208, 166);
+	naviregisterwarp("Warper > Einbech", "einbech",63,35);
+	naviregisterwarp("Warper > Einbroch", "einbroch",64,200);
+	naviregisterwarp("Warper > Geffen", "geffen",119,59);
+	naviregisterwarp("Warper > Hugel", "hugel",96,145);
+	naviregisterwarp("Warper > Izlude", "izlude",128,(checkre(3)?146:114));
+	naviregisterwarp("Warper > Jawaii", "jawaii",251,132);
+	naviregisterwarp("Warper > Juno", "yuno",157,51);
+	naviregisterwarp("Warper > Kunlun", "gonryun",160,120);
+	naviregisterwarp("Warper > Lighthalzen", "lighthalzen",158,92);
+	naviregisterwarp("Warper > Luoyang", "louyang",217,100);
+	naviregisterwarp("Warper > Lutie", "xmas",147,134);
+	naviregisterwarp("Warper > Manuk", "manuk",282,138);
+	naviregisterwarp("Warper > Midgarts Expedition Camp", "mid_camp",210,288);
+	naviregisterwarp("Warper > Morocc", "morocc",156,93);
+	naviregisterwarp("Warper > Moscovia", "moscovia",223,184);
+	naviregisterwarp("Warper > Nameless Island", "nameless_n",256,215);
+	naviregisterwarp("Warper > Niflheim", "niflheim",202,174);
+	naviregisterwarp("Warper > Payon", "payon",179,100);
+	naviregisterwarp("Warper > Rachel", "rachel",130,110);
+	naviregisterwarp("Warper > Splendide", "splendide",201,147);
+	naviregisterwarp("Warper > Thor Camp", "thor_camp",246,68);
+	naviregisterwarp("Warper > Umbala", "umbala",97,153);
+	naviregisterwarp("Warper > Veins", "veins",216,123);
+
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Brasilis", "brasilis", 196, 217);
+		naviregisterwarp("Warper > Dewata", "dewata",200,180);
+		naviregisterwarp("Warper > Eclage", "ecl_in01",48,53);
+		naviregisterwarp("Warper > El Dicastes", "dicastes01",198,187);
+		naviregisterwarp("Warper > Lasagna", "lasagna",193,182);
+		naviregisterwarp("Warper > Malangdo", "malangdo",140,114);
+		naviregisterwarp("Warper > Malaya", "malaya",231,200);
+		naviregisterwarp("Warper > Mora", "mora",55,146);
+	}
+
+	// fields
+	naviregisterwarp("Warper > Amatsu Field", "ama_fild01", 190, 197);
+	naviregisterwarp("Warper > Ayothaya Field", "ayo_fild01", 173, 134);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Ayothaya Field", "ayo_fild02", 212, 150);
+	}
+
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Bifrost Field", "bif_fild01", 193, 220);
+		if (!.OnlyFirstFld) {
+			naviregisterwarp("Warper > Bifrost Field", "bif_fild02", 220, 187);
+		}
+		naviregisterwarp("Warper > Brasilis Field", "bra_fild01", 74, 32);
+	}
+
+	naviregisterwarp("Warper > Comodo Field", "cmd_fild01", 180, 178);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Comodo Field", "cmd_fild02", 231, 160);
+		naviregisterwarp("Warper > Comodo Field", "cmd_fild03", 191, 172);
+		naviregisterwarp("Warper > Comodo Field", "cmd_fild04", 228, 194);
+		if (!checkre(0)) {
+			naviregisterwarp("Warper > Comodo Field", "cmd_fild05", 224, 203);
+		}
+		naviregisterwarp("Warper > Comodo Field", "cmd_fild06", 190, 223);
+		naviregisterwarp("Warper > Comodo Field", "cmd_fild07", 234, 177);
+		naviregisterwarp("Warper > Comodo Field", "cmd_fild08", 194, 175);
+		naviregisterwarp("Warper > Comodo Field", "cmd_fild09", 172, 172);
+	}
+
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Dewata Field", "dew_fild01", 371, 212);
+		naviregisterwarp("Warper > Eclage Field", "ecl_fild01", 97, 314);
+	}
+
+	naviregisterwarp("Warper > Einbroch Field", "ein_fild01", 142, 225);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Einbroch Field", "ein_fild03", 187, 228);
+		naviregisterwarp("Warper > Einbroch Field", "ein_fild04", 185, 173);
+		naviregisterwarp("Warper > Einbroch Field", "ein_fild05", 216, 173);
+		naviregisterwarp("Warper > Einbroch Field", "ein_fild06", 195, 148);
+		naviregisterwarp("Warper > Einbroch Field", "ein_fild07", 272, 220);
+		naviregisterwarp("Warper > Einbroch Field", "ein_fild08", 173, 214);
+		naviregisterwarp("Warper > Einbroch Field", "ein_fild09", 207, 174);
+		if (!checkre(0)) {
+			naviregisterwarp("Warper > Einbroch Field", "ein_fild02", 182, 141);
+			naviregisterwarp("Warper > Einbroch Field", "ein_fild10", 196, 200);
+		}
+	}
+
+	if (checkre(0)) {
+		naviregisterwarp("Warper > El Dicastes Field", "dic_fild01", 143, 132);
+		if (!.OnlyFirstFld) {
+			naviregisterwarp("Warper > El Dicastes Field", "dic_fild02", 143, 217);
+		}
+	}
+
+	naviregisterwarp("Warper > Geffen Field 0", "gef_fild00", 46, 199);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Geffen Field 1", "gef_fild01", 213, 204);
+		naviregisterwarp("Warper > Geffen Field 2", "gef_fild02", 195, 212);
+		naviregisterwarp("Warper > Geffen Field 3", "gef_fild03", 257, 192);
+		naviregisterwarp("Warper > Geffen Field 4", "gef_fild04", 188, 171);
+		naviregisterwarp("Warper > Geffen Field 5", "gef_fild05", 166, 263);
+		naviregisterwarp("Warper > Geffen Field 6", "gef_fild06", 248, 158);
+		naviregisterwarp("Warper > Geffen Field 7", "gef_fild07", 195, 191);
+		naviregisterwarp("Warper > Geffen Field 8", "gef_fild08", 186, 183);
+		naviregisterwarp("Warper > Geffen Field 9", "gef_fild09", 221, 117);
+		naviregisterwarp("Warper > Geffen Field 10", "gef_fild10", 178, 218);
+		naviregisterwarp("Warper > Geffen Field 11", "gef_fild11", 136, 328);
+		naviregisterwarp("Warper > Geffen Field 13", "gef_fild13", 235, 235);
+		if (checkre(0)) {
+			naviregisterwarp("Warper > Geffen Field 12", "gef_fild12", 240, 181);
+			naviregisterwarp("Warper > Geffen Field 14", "gef_fild14", 211, 185);
+		}
+	}
+
+	naviregisterwarp("Warper > Kunlun Field 1", "gon_fild01", 220, 227);
+
+	naviregisterwarp("Warper > Hugel Field 1", "hu_fild01", 268, 101);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Hugel Field 2", "hu_fild02", 222, 193);
+		naviregisterwarp("Warper > Hugel Field 4", "hu_fild04", 252, 189);
+		naviregisterwarp("Warper > Hugel Field 5", "hu_fild05", 196, 106);
+		naviregisterwarp("Warper > Hugel Field 6", "hu_fild06", 216, 220);
+		if (!checkre(0)) {
+			naviregisterwarp("Warper > Hugel Field 3", "hu_fild03", 232, 185);
+			naviregisterwarp("Warper > Hugel Field 7", "hu_fild07", 227, 197);
+		}
+	}
+
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Lasagna Field 1", "lasa_fild01", 344, 371);
+		if (!.OnlyFirstFld) {
+			naviregisterwarp("Warper > Lasagna Field 2", "lasa_fild02", 20, 98);
+		}
+	}
+
+	naviregisterwarp("Warper > Lighthalzen Field 1", "lhz_fild01", 240, 179);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Lighthalzen Field 2", "lhz_fild02", 185, 235);
+		naviregisterwarp("Warper > Lighthalzen Field 3", "lhz_fild03", 240, 226);
+	}
+
+	naviregisterwarp("Warper > Luoyang Field 1", "lou_fild01", 229, 187);
+
+	naviregisterwarp("Warper > Lutie Field 1", "xmas_fild01", 115, 145);
+
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Malaya Field 1", "ma_fild01", 40, 272);
+		if (!.OnlyFirstFld) {
+			naviregisterwarp("Warper > Malaya Field 2", "ma_fild02", 207, 180);
+		}
+	}
+
+	naviregisterwarp("Warper > Manuk Field 1", "man_fild01", 35, 236);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Manuk Field 2", "man_fild02", 35, 262);
+		naviregisterwarp("Warper > Manuk Field 3", "man_fild03", 84, 365);
+	}
+
+	naviregisterwarp("Warper > Mjolnir Field 1", "mjolnir_01", 204, 120);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Mjolnir Field 2", "mjolnir_02", 175, 193);
+		naviregisterwarp("Warper > Mjolnir Field 3", "mjolnir_03", 208, 213);
+		naviregisterwarp("Warper > Mjolnir Field 4", "mjolnir_04", 179, 180);
+		naviregisterwarp("Warper > Mjolnir Field 5", "mjolnir_05", 181, 240);
+		naviregisterwarp("Warper > Mjolnir Field 6", "mjolnir_06", 195, 270);
+		naviregisterwarp("Warper > Mjolnir Field 7", "mjolnir_07", 235, 202);
+		naviregisterwarp("Warper > Mjolnir Field 8", "mjolnir_08", 188, 215);
+		naviregisterwarp("Warper > Mjolnir Field 9", "mjolnir_09", 205, 144);
+		naviregisterwarp("Warper > Mjolnir Field 10", "mjolnir_10", 245, 223);
+		naviregisterwarp("Warper > Mjolnir Field 11", "mjolnir_11", 180, 206);
+		naviregisterwarp("Warper > Mjolnir Field 12", "mjolnir_12", 196, 208);
+	}
+
+	naviregisterwarp("Warper > Moscovia Field 1", "mosk_fild01", 82, 104);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Moscovia Field 2", "mosk_fild02", 131, 147);
+	}
+
+	naviregisterwarp("Warper > Niflheim Field 1", "nif_fild01", 215, 229);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warer > Niflheim Field 2", "nif_fild02", 167, 234);
+	}
+
+	naviregisterwarp("Warper > Payon Forest 1", "pay_fild01", 158, 206);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Payon Forest 2", "pay_fild02", 151, 219);
+		naviregisterwarp("Warper > Payon Forest 3", "pay_fild03", 205, 148);
+		naviregisterwarp("Warper > Payon Forest 4", "pay_fild04", 186, 247);
+		naviregisterwarp("Warper > Payon Forest 6", "pay_fild06", 193, 235);
+		naviregisterwarp("Warper > Payon Forest 7", "pay_fild07", 200, 177);
+		naviregisterwarp("Warper > Payon Forest 8", "pay_fild08", 137, 189);
+		naviregisterwarp("Warper > Payon Forest 9", "pay_fild09", 201, 224);
+		naviregisterwarp("Warper > Payon Forest 10", "pay_fild10", 160, 205);
+		if (!checkre(0)) {
+			naviregisterwarp("Warper > Payon Forest 5", "pay_fild05", 134, 204);
+			naviregisterwarp("Warper > Payon Forest 11", "pay_fild11", 194, 150);
+		}
+	}
+
+	naviregisterwarp("Warper > Prontera Field 0", "prt_fild00", 208, 227);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Prontera Field 1", "prt_fild01", 190, 206);
+		naviregisterwarp("Warper > Prontera Field 2", "prt_fild02", 240, 206);
+		naviregisterwarp("Warper > Prontera Field 3", "prt_fild03", 190, 143);
+		naviregisterwarp("Warper > Prontera Field 4", "prt_fild04", 307, 252);
+		naviregisterwarp("Warper > Prontera Field 5", "prt_fild05", 239, 213);
+		naviregisterwarp("Warper > Prontera Field 6", "prt_fild06", 185, 188);
+		naviregisterwarp("Warper > Prontera Field 7", "prt_fild07", 193, 194);
+		naviregisterwarp("Warper > Prontera Field 8", "prt_fild08", 187, 218);
+		naviregisterwarp("Warper > Prontera Field 9", "prt_fild09", 210, 183);
+		naviregisterwarp("Warper > Prontera Field 10", "prt_fild10", 195, 149);
+		naviregisterwarp("Warper > Prontera Field 11", "prt_fild11", 198, 164);
+	}
+
+	naviregisterwarp("Warper > Rachel Field 1", "ra_fild01", 192, 162);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Rachel Field 3", "ra_fild03", 202, 206);
+		naviregisterwarp("Warper > Rachel Field 4", "ra_fild04", 202, 208);
+		naviregisterwarp("Warper > Rachel Field 5", "ra_fild05", 225, 202);
+		naviregisterwarp("Warper > Rachel Field 6", "ra_fild06", 202, 214);
+		naviregisterwarp("Warper > Rachel Field 8", "ra_fild08", 217, 201);
+		naviregisterwarp("Warper > Rachel Field 12", "ra_fild12", 175, 200);
+
+		if (!checkre(0)) {
+			naviregisterwarp("Warper > Rachel Field 2", "ra_fild02", 235, 166);
+			naviregisterwarp("Warper > Rachel Field 7", "ra_fild07", 263, 196);
+			naviregisterwarp("Warper > Rachel Field 9", "ra_fild09", 87, 121);
+			naviregisterwarp("Warper > Rachel Field 10", "ra_fild10", 277, 181);
+			naviregisterwarp("Warper > Rachel Field 11", "ra_fild11", 221, 185);
+			naviregisterwarp("Warper > Rachel Field 13", "ra_fild13", 174, 197);
+		}
+	}
+
+	if (.Satan_Morocc) {
+		naviregisterwarp("Warper > Sograt Desert 1", "moc_fild01", 219, 205);
+		if (!.OnlyFirstFld) {
+			naviregisterwarp("Warper > Sograt Desert 2", "moc_fild02", 177, 206);
+			naviregisterwarp("Warper > Sograt Desert 3", "moc_fild03", 194, 182);
+			naviregisterwarp("Warper > Sograt Desert 7", "moc_fild07", 224, 170);
+			naviregisterwarp("Warper > Sograt Desert 11", "moc_fild11", 198, 216);
+			naviregisterwarp("Warper > Sograt Desert 12", "moc_fild12", 156, 187);
+			naviregisterwarp("Warper > Sograt Desert 13", "moc_fild13", 185, 263);
+			naviregisterwarp("Warper > Sograt Desert 16", "moc_fild16", 206, 228);
+			naviregisterwarp("Warper > Sograt Desert 17", "moc_fild17", 208, 238);
+			naviregisterwarp("Warper > Sograt Desert 18", "moc_fild18", 209, 223);
+			naviregisterwarp("Warper > Sograt Desert 19", "moc_fild19", 85, 97);
+			naviregisterwarp("Warper > Sograt Desert 20", "moc_fild20", 207, 202);
+			naviregisterwarp("Warper > Sograt Desert 21", "moc_fild21", 31, 195);
+			naviregisterwarp("Warper > Sograt Desert 22", "moc_fild22", 38, 195);
+		}
+	} else {
+		naviregisterwarp("Warper > Sograt Desert 1", "moc_fild01", 219, 205);
+		if (!.OnlyFirstFld) {
+			naviregisterwarp("Warper > Sograt Desert 2", "moc_fild02", 177, 206);
+			naviregisterwarp("Warper > Sograt Desert 3", "moc_fild03", 194, 182);
+			naviregisterwarp("Warper > Sograt Desert 4", "moc_fild04", 146, 297);
+			naviregisterwarp("Warper > Sograt Desert 5", "moc_fild05", 204, 197);
+			naviregisterwarp("Warper > Sograt Desert 6", "moc_fild06", 275, 302);
+			naviregisterwarp("Warper > Sograt Desert 7", "moc_fild07", 224, 170);
+			naviregisterwarp("Warper > Sograt Desert 8", "moc_fild08", 139, 123);
+			naviregisterwarp("Warper > Sograt Desert 9", "moc_fild09", 101, 110);
+			naviregisterwarp("Warper > Sograt Desert 10", "moc_fild10", 341, 39);
+			naviregisterwarp("Warper > Sograt Desert 11", "moc_fild11", 198, 216);
+			naviregisterwarp("Warper > Sograt Desert 12", "moc_fild12", 156, 187);
+			naviregisterwarp("Warper > Sograt Desert 13", "moc_fild13", 185, 263);
+			naviregisterwarp("Warper > Sograt Desert 14", "moc_fild14", 223, 222);
+			naviregisterwarp("Warper > Sograt Desert 15", "moc_fild15", 170, 257);
+			naviregisterwarp("Warper > Sograt Desert 16", "moc_fild16", 206, 228);
+			naviregisterwarp("Warper > Sograt Desert 17", "moc_fild17", 208, 238);
+			naviregisterwarp("Warper > Sograt Desert 18", "moc_fild18", 209, 223);
+			naviregisterwarp("Warper > Sograt Desert 19", "moc_fild19", 85, 97);
+		}
+	}
+
+	naviregisterwarp("Warper > Splendide Field 1", "spl_fild01", 175, 186);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Splendide Field 2", "spl_fild02", 236, 184);
+		naviregisterwarp("Warper > Splendide Field 3", "spl_fild03", 188, 204);
+	}
+
+	naviregisterwarp("Warper > Umbala Field 1", "um_fild01", 217, 206);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Umbala Field 2", "um_fild02", 223, 221);
+		naviregisterwarp("Warper > Umbala Field 3", "um_fild03", 237, 215);
+		naviregisterwarp("Warper > Umbala Field 4", "um_fild04", 202, 197);
+	}
+
+	naviregisterwarp("Warper > Veins Field 1", "ve_fild01", 186, 175);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Veins Field 2", "ve_fild02", 196, 370);
+		naviregisterwarp("Warper > Veins Field 3", "ve_fild03", 222, 45);
+		naviregisterwarp("Warper > Veins Field 4", "ve_fild04", 51, 250);
+		naviregisterwarp("Warper > Veins Field 6", "ve_fild06", 150, 223);
+		naviregisterwarp("Warper > Veins Field 7", "ve_fild07", 149, 307);
+		if (!checkre(0)) {
+			naviregisterwarp("Warper > Veins Field 5", "ve_fild05", 202, 324);
+		}
+	}
+
+	naviregisterwarp("Warper > Juno Field 1", "yuno_fild01", 189, 224);
+	if (!.OnlyFirstFld) {
+		naviregisterwarp("Warper > Juno Field 2", "yuno_fild02", 192, 207);
+		naviregisterwarp("Warper > Juno Field 3", "yuno_fild03", 221, 157);
+		naviregisterwarp("Warper > Juno Field 4", "yuno_fild04", 226, 199);
+		naviregisterwarp("Warper > Juno Field 6", "yuno_fild06", 187, 232);
+		naviregisterwarp("Warper > Juno Field 7", "yuno_fild07", 231, 174);
+		naviregisterwarp("Warper > Juno Field 8", "yuno_fild08", 196, 203);
+		naviregisterwarp("Warper > Juno Field 9", "yuno_fild09", 183, 214);
+		naviregisterwarp("Warper > Juno Field 11", "yuno_fild11", 195, 226);
+		naviregisterwarp("Warper > Juno Field 12", "yuno_fild12", 210, 304);
+		if (!checkre(0)) {
+			naviregisterwarp("Warper > Juno Field 5", "yuno_fild05", 223, 177);
+			naviregisterwarp("Warper > Juno Field 10", "yuno_fild10", 200, 124);
+		}
+	}
+
+	naviregisterwarp("Warper > Abyss Lakes 1", "abyss_01", 261, 272);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Abyss Lakes 2", "abyss_02", 275, 270);
+		naviregisterwarp("Warper > Abyss Lakes 3", "abyss_03", 116, 27);
+	}
+	naviregisterwarp("Warper > Amatsu Dungeon 1", "ama_dun01", 228, 11);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Amatsu Dungeon 2", "ama_dun02", 34, 41);
+		naviregisterwarp("Warper > Amatsu Dungeon 3", "ama_dun03", 119, 14);
+	}
+	
+	naviregisterwarp("Warper > Anthell 1", "anthell01", 35, 262);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Anthell 2", "anthell02", 168, 170);
+	}
+
+	naviregisterwarp("Warper > Ancient Shrine Maze", "ayo_dun01", 275, 19);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Inside Ancient Shrine", "ayo_dun02", 24, 26);
+	}
+
+	naviregisterwarp("Warper > Beach Dungeon 1", "beach_dun", 266, 67);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Beach Dungeon 2", "beach_dun2", 255, 244);
+		naviregisterwarp("Warper > Beach Dungeon 3", "beach_dun3", 23, 260);
+	}
+
+	naviregisterwarp("Warper > Bio Lab 1", "lhz_dun01", 150, 288);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Bio Lab 2", "lhz_dun02", 150, 18);
+		naviregisterwarp("Warper > Bio Lab 3", "lhz_dun03", 140, 134);
+		if (checkre(0)) {
+			naviregisterwarp("Warper > Bio Lab 4", "lhz_dun04", 244, 52);
+		}
+	}
+
+	naviregisterwarp("Warper > Brasilis Dungeon 1", "bra_dun01", 87, 47);
+	if (!.OnlyFirstDun) {
+		if (checkre(0)) {
+			naviregisterwarp("Warper > Brasilis Dungeon 2", "bra_dun02", 262, 262);
+		}
+	}
+
+	naviregisterwarp("Warper > Byalan Dungeon 1", "iz_dun00", 168, 168);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Byalan Dungeon 2", "iz_dun01", 253, 252);
+		naviregisterwarp("Warper > Byalan Dungeon 3", "iz_dun02", 236, 204);
+		naviregisterwarp("Warper > Byalan Dungeon 4", "iz_dun03", 32, 63);
+		naviregisterwarp("Warper > Byalan Dungeon 5", "iz_dun04", 26, 27);
+		if (checkre(0)) {
+			naviregisterwarp("Warper > Byalan Dungeon 6", "iz_dun05", 141, 187);
+		}
+	}
+	naviregisterwarp("Warper > Clock Tower 1", "c_tower1", 199, 159);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Clock Tower 2", "c_tower2", 148, 283);
+		naviregisterwarp("Warper > Clock Tower 3", "c_tower3", 65, 147);
+		naviregisterwarp("Warper > Clock Tower 4", "c_tower4", 56, 155);
+		naviregisterwarp("Warper > Basement 1", "alde_dun01", 297, 25);
+		naviregisterwarp("Warper > Basement 2", "alde_dun02", 127, 169);
+		naviregisterwarp("Warper > Basement 3", "alde_dun03", 277, 178);
+		naviregisterwarp("Warper > Basement 4", "alde_dun04", 268, 74);
+	}
+	naviregisterwarp("Warper > Coal Mines 1", "mjo_dun01", 52, 17);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Coal Mines 2", "mjo_dun02", 381, 343);
+		naviregisterwarp("Warper > Coal Mines 3", "mjo_dun03", 302, 262);
+	}
+	naviregisterwarp("Warper > Culvert 1", "prt_sewb1", 131, 247);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Culvert 2", "prt_sewb2", 19, 19);
+		naviregisterwarp("Warper > Culvert 3", "prt_sewb3", 180, 169);
+		naviregisterwarp("Warper > Culvert 4", "prt_sewb4", 100, 92);
+	}
+	naviregisterwarp("Warper > Cursed Abbey 1", "abbey01", 51, 14);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Cursed Abbey 2", "abbey02", 150, 11);
+		naviregisterwarp("Warper > Cursed Abbey 3", "abbey03", 120, 10);
+	}
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Dewata Dungeon 1", "dew_dun01", 285, 160);
+		if (!.OnlyFirstDun) {
+			naviregisterwarp("Warper > Dewata Dungeon 2", "dew_dun02", 299, 29);
+		}
+	}
+	naviregisterwarp("Warper > Einbroch Dungeon 1", "ein_dun01", 22, 14);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Einbroch Dungeon 2", "ein_dun02", 292, 290);
+	}
+	naviregisterwarp("Warper > Gefenia 1", "gefenia01", 40, 103);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Gefenia 2", "gefenia02", 203, 34);
+		naviregisterwarp("Warper > Gefenia 3", "gefenia03", 266, 168);
+		naviregisterwarp("Warper > Gefenia 4", "gefenia04", 130, 272);
+	}
+	naviregisterwarp("Warper > Geffen Dungeon 1", "gef_dun00", 104, 99);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Geffen Dungeon 2", "gef_dun01", 115, 236);
+		naviregisterwarp("Warper > Geffen Dungeon 3", "gef_dun02", 106, 132);
+		naviregisterwarp("Warper > Geffen Dungeon 4", "gef_dun03", 203, 200);
+	}
+	naviregisterwarp("Warper > Entrance", "glast_01", 370, 304);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Castle 1", "gl_cas01", 199, 29);
+		naviregisterwarp("Warper > Castle 2", "gl_cas02", 104, 25);
+		naviregisterwarp("Warper > Chivalry 1", "gl_knt01", 150, 15);
+		naviregisterwarp("Warper > Chivalry 2", "gl_knt02", 157, 287);
+		naviregisterwarp("Warper > Churchyard", "gl_chyard", 147, 15);
+		naviregisterwarp("Warper > Culvert 1", "gl_sew01", 258, 255);
+		naviregisterwarp("Warper > Culvert 2", "gl_sew02", 108, 291);
+		naviregisterwarp("Warper > Culvert 3", "gl_sew03", 171, 283);
+		naviregisterwarp("Warper > Culvert 4", "gl_sew04", 68, 277);
+		naviregisterwarp("Warper > St. Abbey", "gl_church", 156, 7);
+		naviregisterwarp("Warper > Staircase Dungeon", "gl_step", 12, 7);
+		naviregisterwarp("Warper > Underground Cave 1", "gl_dun01", 133, 271);
+		naviregisterwarp("Warper > Underground Cave 2", "gl_dun02", 224, 274);
+		naviregisterwarp("Warper > Underground Prison 1", "gl_prison", 14, 70);
+		naviregisterwarp("Warper > Underground Prison 2", "gl_prison1", 150, 14);
+	}
+	naviregisterwarp("Warper > Kunlun Dungeon 1", "gon_dun01", 153, 53);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Kunlun Dungeon 2", "gon_dun02", 28, 113);
+		naviregisterwarp("Warper > Kunlun Dungeon 3", "gon_dun03", 68, 16);
+	}
+	naviregisterwarp("Warper > Hidden Dungeon 1", "prt_maze01", 176, 7);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Hidden Dungeon 2", "prt_maze02", 93, 20);
+		naviregisterwarp("Warper > Hidden Dungeon 3", "prt_maze03", 23, 8);
+	}
+	naviregisterwarp("Warper > Ice Dungeon 1", "ice_dun01", 157, 14);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Ice Dungeon 2", "ice_dun02", 151, 155);
+		naviregisterwarp("Warper > Ice Dungeon 3", "ice_dun03", 149, 22);
+		naviregisterwarp("Warper > Ice Dungeon 4", "ice_dun04", 33, 158);
+	}
+	naviregisterwarp("Warper > Entrance", "jupe_cave", 140, 51);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Juperos 1", "juperos_01", 53, 247);
+		naviregisterwarp("Warper > Juperos 2", "juperos_02", 37, 63);
+		naviregisterwarp("Warper > Core", "jupe_core", 150, 285);
+	}
+	naviregisterwarp("Warper > Kiel Dungeon 1", "kh_dun01", 28, 226);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Kiel Dungeon 2", "kh_dun02", 41, 198);
+	}
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Lasagna Dungeon 1", "lasa_dun01", 24, 143);
+		if (!.OnlyFirstDun) {
+			naviregisterwarp("Warper > Lasagna Dungeon 2", "lasa_dun02", 22, 171);
+			naviregisterwarp("Warper > Lasagna Dungeon 3", "lasa_dun03", 190, 18);
+		}
+	}
+	naviregisterwarp("Warper > The Royal Tomb", "lou_dun01", 218, 196);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Inside the Royal Tomb", "lou_dun02", 282, 20);
+		naviregisterwarp("Warper > Suei Long Gon", "lou_dun03", 165, 38);
+	}
+	naviregisterwarp("Warper > Magma Dungeon 1", "mag_dun01", 126, 68);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Magma Dungeon 2", "mag_dun02", 47, 30);
+	}
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Malangdo Dungeon 1", "mal_dun01", 33, 230);
+	}
+	naviregisterwarp("Warper > Moscovia Dungeon 1", "mosk_dun01", 189, 48);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Moscovia Dungeon 2", "mosk_dun02", 165, 30);
+		naviregisterwarp("Warper > Moscovia Dungeon 3", "mosk_dun03", 32, 135);
+	}
+	naviregisterwarp("Warper > Nidhogg's Dungeon 1", "nyd_dun01", 61, 239);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Nidhogg's Dungeon 2", "nyd_dun02", 60, 271);
+	}
+	naviregisterwarp("Warper > Odin Temple 1", "odin_tem01", 298, 167);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Odin Temple 2", "odin_tem02", 224, 149);
+		naviregisterwarp("Warper > Odin Temple 3", "odin_tem03", 266, 280);
+	}
+	naviregisterwarp("Warper > Orc Dungeon 1", "orcsdun01", 32, 170);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Orc Dungeon 2", "orcsdun02", 21, 185);
+	}
+	naviregisterwarp("Warper > Payon Dungeon 1", "pay_dun00", 21, 183);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Payon Dungeon 2", "pay_dun01", 19, 33);
+		naviregisterwarp("Warper > Payon Dungeon 3", "pay_dun02", 19, 63);
+		naviregisterwarp("Warper > Payon Dungeon 4", "pay_dun03", 155, 159);
+		naviregisterwarp("Warper > Payon Dungeon 5", "pay_dun04", 201, 204);
+	}
+	naviregisterwarp("Warper > Pyramids 1", "moc_pryd01", 192, 9);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Pyramids 2", "moc_pryd02", 10, 192);
+		naviregisterwarp("Warper > Pyramids 3", "moc_pryd03", 100, 92);
+		naviregisterwarp("Warper > Pyramids 4", "moc_pryd04", 181, 11);
+		naviregisterwarp("Warper > Basement 1", "moc_pryd05", 94, 96);
+		naviregisterwarp("Warper > Basement 2", "moc_pryd06", 192, 8);
+		if (checkre(0)) {
+			naviregisterwarp("Warper > Basement 1 - Nightmare Mode", "moc_prydn1", 94, 96);
+			naviregisterwarp("Warper > Basement 2 - Nightmare Mode", "moc_prydn2", 192, 8);
+		}
+	}
+	naviregisterwarp("Warper > Rachel Sanctuary 1", "ra_san01", 140, 11);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Rachel Sanctuary 2", "ra_san02", 32, 21);
+		naviregisterwarp("Warper > Rachel Sanctuary 3", "ra_san03", 8, 149);
+		naviregisterwarp("Warper > Rachel Sanctuary 4", "ra_san04", 204, 218);
+		naviregisterwarp("Warper > Rachel Sanctuary 5", "ra_san05", 150, 9);
+	}
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Scaraba Hole 1", "dic_dun01", 364, 44);
+		if (!.OnlyFirstDun) {
+			naviregisterwarp("Warper > Scaraba Hole 2", "dic_dun02", 101, 141);
+		}
+	}
+	naviregisterwarp("Warper > Sphinx 1", "in_sphinx1", 288, 9);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Sphinx 2", "in_sphinx2", 149, 81);
+		naviregisterwarp("Warper > Sphinx 3", "in_sphinx3", 210, 54);
+		naviregisterwarp("Warper > Sphinx 4", "in_sphinx4", 10, 222);
+		naviregisterwarp("Warper > Sphinx 5", "in_sphinx5", 100, 99);
+	}
+	naviregisterwarp("Warper > Sunken Ship 1", "treasure01", 69, 24);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Sunken Ship 2", "treasure02", 102, 27);
+	}
+	naviregisterwarp("Warper > Thanatos Tower 1", "tha_t01", 150, 39);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Thanatos Tower 2", "tha_t02", 150, 136);
+		naviregisterwarp("Warper > Thanatos Tower 3", "tha_t03", 220, 158);
+		naviregisterwarp("Warper > Thanatos Tower 4", "tha_t04", 59, 143);
+		naviregisterwarp("Warper > Thanatos Tower 5", "tha_t05", 62, 11);
+		naviregisterwarp("Warper > Thanatos Tower 6", "tha_t06", 89, 221);
+		naviregisterwarp("Warper > Thanatos Tower 7", "tha_t07", 35, 166);
+		naviregisterwarp("Warper > Thanatos Tower 8", "tha_t08", 93, 148);
+		naviregisterwarp("Warper > Thanatos Tower 9", "tha_t09", 29, 107);
+		naviregisterwarp("Warper > Thanatos Tower 10", "tha_t10", 159, 138);
+		naviregisterwarp("Warper > Thanatos Tower 11", "tha_t11", 19, 20);
+		naviregisterwarp("Warper > Thanatos Tower 12", "tha_t12", 130, 52);
+	}
+	naviregisterwarp("Warper > Thor Volcano 1", "thor_v01", 21, 228);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Thor Volcano 2", "thor_v02", 75, 205);
+		naviregisterwarp("Warper > Thor Volcano 3", "thor_v03", 34, 272);
+	}
+	naviregisterwarp("Warper > Toy Factory 1", "xmas_dun01", 205, 15);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Toy Factory 2", "xmas_dun02", 129, 133);
+	}
+	naviregisterwarp("Warper > Entrance", "tur_dun01", 154, 49);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Turtle Dungeon 1", "tur_dun02", 148, 261);
+		naviregisterwarp("Warper > Turtle Dungeon 2", "tur_dun03", 132, 189);
+		naviregisterwarp("Warper > Turtle Dungeon 3", "tur_dun04", 100, 192);
+	}
+	naviregisterwarp("Warper > Carpenter's Shop in the Tree", "um_dun01", 42, 31);
+	if (!.OnlyFirstDun) {
+		naviregisterwarp("Warper > Passage to a Foreign World", "um_dun02", 48, 30);
+		naviregisterwarp("Warper > Hvergermil's Fountain", "yggdrasil01", 204, 78);
+	}
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Bifrost Tower 1", "ecl_tdun01", 57, 13);
+		if (!.OnlyFirstDun) {
+			naviregisterwarp("Warper > Bifrost Tower 2", "ecl_tdun02", 64, 88);
+			naviregisterwarp("Warper > Bifrost Tower 3", "ecl_tdun03", 45, 14);
+			naviregisterwarp("Warper > Bifrost Tower 4", "ecl_tdun04", 26, 23);
+		}
+	}
+
+	// castles
+
+	naviregisterwarp("Warper > Neuschwanstein", "alde_gld", 48, 83);
+	naviregisterwarp("Warper > Hohenschwangau", "alde_gld", 95, 249);
+	naviregisterwarp("Warper > Nuenberg", "alde_gld", 142, 85);
+	naviregisterwarp("Warper > Wuerzburg", "alde_gld", 239, 242);
+	naviregisterwarp("Warper > Rothenburg", "alde_gld", 264, 90);
+	naviregisterwarp("Warper > Repherion", "gef_fild13", 214, 75);
+	naviregisterwarp("Warper > Eeyolbriggar", "gef_fild13", 308, 240);
+	naviregisterwarp("Warper > Yesnelph", "gef_fild13", 143, 240);
+	naviregisterwarp("Warper > Bergel", "gef_fild13", 193, 278);
+	naviregisterwarp("Warper > Mersetzdeitz", "gef_fild13", 305, 87);
+	naviregisterwarp("Warper > Bright Arbor", "pay_gld", 121, 233);
+	naviregisterwarp("Warper > Scarlet Palace", "pay_gld", 295, 116);
+	naviregisterwarp("Warper > Holy Shadow", "pay_gld", 317, 293);
+	naviregisterwarp("Warper > Sacred Altar", "pay_gld", 140, 160);
+	naviregisterwarp("Warper > Bamboo Grove Hill", "pay_gld", 204, 266);
+	naviregisterwarp("Warper > Kriemhild", "prt_gld", 134, 65);
+	naviregisterwarp("Warper > Swanhild", "prt_gld", 240, 128);
+	naviregisterwarp("Warper > Fadhgridh", "prt_gld", 153, 137);
+	naviregisterwarp("Warper > Skoegul", "prt_gld", 111, 240);
+	naviregisterwarp("Warper > Gondul", "prt_gld", 208, 240);
+	naviregisterwarp("Warper > Mardol", "aru_gld", 158, 272);
+	naviregisterwarp("Warper > Cyr", "aru_gld", 83, 47);
+	naviregisterwarp("Warper > Horn", "aru_gld", 68, 155);
+	naviregisterwarp("Warper > Gefn", "aru_gld", 299, 345);
+	naviregisterwarp("Warper > Banadis", "aru_gld", 292, 107);
+	naviregisterwarp("Warper > Himinn", "sch_gld", 293, 100);
+	naviregisterwarp("Warper > Andlangr", "sch_gld", 288, 252);
+	naviregisterwarp("Warper > Viblainn", "sch_gld", 97, 196);
+	naviregisterwarp("Warper > Hljod", "sch_gld", 137, 90);
+	naviregisterwarp("Warper > Skidbladnir", "sch_gld", 71, 315);
+
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Kafragarten 1", "te_alde_gld", 48, 83);
+		naviregisterwarp("Warper > Kafragarten 2", "te_alde_gld", 95, 249);
+		naviregisterwarp("Warper > Kafragarten 3", "te_alde_gld", 142, 85);
+		naviregisterwarp("Warper > Kafragarten 4", "te_alde_gld", 239, 242);
+		naviregisterwarp("Warper > Kafragarten 5", "te_alde_gld", 264, 90);
+		naviregisterwarp("Warper > Gloria 1", "te_prt_gld", 134, 65);
+		naviregisterwarp("Warper > Gloria 2", "te_prt_gld", 240, 128);
+		naviregisterwarp("Warper > Gloria 3", "te_prt_gld", 153, 137);
+		naviregisterwarp("Warper > Gloria 4", "te_prt_gld", 111, 240);
+		naviregisterwarp("Warper > Gloria 5", "te_prt_gld", 208, 240);
+	}
+
+	// guild dungeons
+	naviregisterwarp("Warper > Baldur F1", "gld_dun01", 119, 93);
+	naviregisterwarp("Warper > Luina F1", "gld_dun02", 39, 161);
+	naviregisterwarp("Warper > Valkyrie F1", "gld_dun03", 50, 44);
+	naviregisterwarp("Warper > Britoniah F1", "gld_dun04", 116, 45);
+	naviregisterwarp("Warper > Arunafeltz", "arug_dun01", 199, 195);
+	naviregisterwarp("Warper > Schwarzwald", "schg_dun01", 200,124);
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Baldur F2", "gld_dun01_2", 119, 93);
+		naviregisterwarp("Warper > Hall of Abyss", "gld2_pay", 120, 130);
+		naviregisterwarp("Warper > Luina F2", "gld_dun02_2", 39, 161);
+		naviregisterwarp("Warper > Hall of Abyss", "gld2_ald", 147, 155);
+		naviregisterwarp("Warper > Valkyrie F2", "gld_dun03_2", 50, 44);
+		naviregisterwarp("Warper > Hall of Abyss", "gld2_prt", 140, 132);
+		naviregisterwarp("Warper > Britoniah F2", "gld_dun04_2", 116, 45);
+		naviregisterwarp("Warper > Hall of Abyss", "gld2_gef", 152, 118);
+		naviregisterwarp("Warper > Kafragarten", "teg_dun01", 42, 36);
+		naviregisterwarp("Warper > Gloria", "teg_dun02", 26, 160);
+	}
+	end;
+
+	// instances
+	naviregisterwarp("Warper > Endless Tower", "e_tower", 72, 112);
+	naviregisterwarp("Warper > Nidhoggur's Nest", "nyd_dun02", 95, 193);
+	naviregisterwarp("Warper > Orc's Memory", "gef_fild10", 240, 198);
+	naviregisterwarp("Warper > Sealed Shrine", "monk_test", 306, 143);
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Bakonawa Lake", "ma_scene01", 172, 175);
+		naviregisterwarp("Warper > Bangungot Hospital 2F", "ma_dun01", 151, 8);
+		naviregisterwarp("Warper > Buwaya Cave", "ma_fild02", 316, 317);
+		naviregisterwarp("Warper > Devil Tower", "dali02", 137, 115);
+		naviregisterwarp("Warper > Eclage Interior", "ecl_hub01", 129, 12);
+		naviregisterwarp("Warper > Faceworms Nest", "dali", 85, 64);
+		naviregisterwarp("Warper > Geffen Magic Tournament", "dali", 94, 141);
+		naviregisterwarp("Warper > Ghost Palace", "dali02", 46, 128);
+		naviregisterwarp("Warper > Hazy Forest", "bif_fild01", 161, 334);
+		naviregisterwarp("Warper > Horror Toy Factory", "xmas", 234, 298);
+		naviregisterwarp("Warper > Malangdo Culvert", "mal_in01", 164, 21);
+		naviregisterwarp("Warper > Octopus Cave", "mal_dun01", 152, 230);
+		naviregisterwarp("Warper > Old Glast Heim", "glast_01", 204, 268);
+		naviregisterwarp("Warper > Sarah and Fenrir", "dali02", 92, 141);
+		naviregisterwarp("Warper > Sara Memory", "dali", 133, 108);
+		naviregisterwarp("Warper > Wolfchev's Laboratory", "lhz_dun04", 148, 269);
+	}
+
+
+	// special
+	naviregisterwarp("Warper > Auction Hall", "auction_01", 22, 68);
+	naviregisterwarp("Warper > Battlegrounds", "bat_room", 154, 150);
+	naviregisterwarp("Warper > Casino", "cmd_in02", 179, 129);
+	naviregisterwarp("Warper > Kunlun Arena", "gon_test", 48, 10);
+	naviregisterwarp("Warper > Izlude Arena", "arena_room", 100, 88);
+	naviregisterwarp("Warper > Monster Race Arena", "p_track01", 62, 41);
+	naviregisterwarp("Warper > Turbo Track", "turbo_room", 99, 114);
+	if (checkre(0)) {
+		naviregisterwarp("Warper > Dimensional Rift", "dali", 113, 82);
+		naviregisterwarp("Warper > Eden Group Headquarters", "moc_para01", 31, 14);
+		naviregisterwarp("Warper > Para Market", "paramk", 97, 17);
+	}
+
+OnInit:
+	.Satan_Morocc = true;	//	false will enable moc_fild 4,5,6,8,9,10,14,15 while disable moc_fild 20,21,22 Default is true.
+	.OnlyFirstFld = false;	//	true will teleport to the first level of the Fields  Default is false.
+	.OnlyFirstDun = false;	//	true will teleport to the first level of the Dungeons  Default is false.
+}
+
+// --------------------------------------------------
+//	Duplicates:
+// --------------------------------------------------
+alb2trea,57,70,6	duplicate(Warper)	Warper#tre	811
+alberta,28,240,4	duplicate(Warper)	Warper#alb	811
+aldebaran,145,118,4	duplicate(Warper)	Warper#alde	811
+amatsu,203,87,4	duplicate(Warper)	Warper#ama	811
+ayothaya,209,169,6	duplicate(Warper)	Warper#ayo	811
+comodo,194,158,4	duplicate(Warper)	Warper#com	811
+einbech,59,38,6	duplicate(Warper)	Warper#einbe	811
+einbroch,69,202,4	duplicate(Warper)	Warper#einbr	811
+gef_fild10,71,339,4	duplicate(Warper)	Warper#orc	811
+geffen,124,72,4	duplicate(Warper)	Warper#gef	811
+glast_01,372,308,4	duplicate(Warper)	Warper#glh	811
+gonryun,162,122,4	duplicate(Warper)	Warper#gon	811
+hugel,101,151,4	duplicate(Warper)	Warper#hug	811
+izlu2dun,110,92,4	duplicate(Warper)	Warper#izd	811
+izlude,134,150,4	duplicate(Warper)	Warper#izl	811	//Pre-RE: (132,120)
+jawaii,253,138,4	duplicate(Warper)	Warper#jaw	811
+lighthalzen,162,102,4	duplicate(Warper)	Warper#lhz	811
+louyang,208,103,6	duplicate(Warper)	Warper#lou	811
+manuk,274,146,6	duplicate(Warper)	Warper#man	811
+mid_camp,216,288,4	duplicate(Warper)	Warper#mid	811
+mjolnir_02,85,364,4	duplicate(Warper)	Warper#mjo	811
+moc_ruins,64,164,4	duplicate(Warper)	Warper#moc	811
+morocc,159,97,4	duplicate(Warper)	Warper#mor	811
+moscovia,229,191,4	duplicate(Warper)	Warper#mos	811
+nameless_n,259,213,4	duplicate(Warper)	Warper#nam	811
+niflheim,205,179,4	duplicate(Warper)	Warper#nif	811
+pay_arche,42,134,4	duplicate(Warper)	Warper#arc	811
+payon,182,108,4	duplicate(Warper)	Warper#pay	811
+prontera,159,192,4	duplicate(Warper)	Warper#prt	811
+prt_fild05,279,223,6	duplicate(Warper)	Warper#cul	811
+rachel,135,116,4	duplicate(Warper)	Warper#rac	811
+splendide,205,153,4	duplicate(Warper)	Warper#spl	811
+thor_camp,249,76,4	duplicate(Warper)	Warper#thor	811
+umbala,106,150,3	duplicate(Warper)	Warper#umb	811
+veins,214,123,4	duplicate(Warper)	Warper#ve	811
+xmas,150,136,6	duplicate(Warper)	Warper#xmas	811
+yuno,162,47,4	duplicate(Warper)	Warper#yuno	811
+
+// --------------------------------------------------
+//	Duplicates (Renewal):
+// --------------------------------------------------
+brasilis,201,222,4	duplicate(Warper)	Warper#bra	811
+dewata,204,186,6	duplicate(Warper)	Warper#dew	811
+dicastes01,194,194,6	duplicate(Warper)	Warper#dic	811
+ecl_in01,51,60,4	duplicate(Warper)	Warper#ecl	811
+lasagna,196,187,4	duplicate(Warper)	Warper#las	811
+malangdo,134,117,6	duplicate(Warper)	Warper#mal	811
+malaya,231,204,4	duplicate(Warper)	Warper#ma	811
+mora,57,152,4	duplicate(Warper)	Warper#mora	811

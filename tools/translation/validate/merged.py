@@ -261,6 +261,7 @@ def run(
     include_dialogue: bool,
     include_ambiguous: bool,
     max_findings: int,
+    allow_findings: bool = False,
 ) -> int:
     try:
         repo_roots = parse_repo_roots(repo_root_values)
@@ -286,4 +287,4 @@ def run(
         )
         results.append(result)
         print_result(result, max_findings)
-    return 1 if any(result.errors or result.findings for result in results) else 0
+    return 1 if any(result.errors or (result.findings and not allow_findings) for result in results) else 0

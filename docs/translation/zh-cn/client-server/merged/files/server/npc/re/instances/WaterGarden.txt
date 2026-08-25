@@ -1,0 +1,1029 @@
+//===== rAthena Script =======================================
+//= Water Garden
+//===== Description: =========================================
+//= [Walkthrough Conversion]
+//= Episode 17.2 Water Garden
+//= Episode 17.2 Water Garden Hard Mode
+//===== Changelog: ===========================================
+//= 1.0 Initial release [crazyarashi]
+//= 1.1 Optimizations and cleanup [Everade]
+//= 1.2 Cleanup [Capuche]
+//============================================================
+
+ba_maison,238,44,5	script	Harad#jh_ba1	4_EP17_BASIC_B,{
+	if (ep172_watergarden < 3) {
+		cutin "ep172_beta",2;
+		mes "[Harad]";
+		mes "你好，客人。";
+		mes "这里是码头。";
+		next;
+		mes "[Harad]";
+		mes "现在没有船只运行。不过这里风景不错，尽管四处看看吧！";
+		close3;
+	}
+	switch( checkquest(16439,PLAYTIME) ) {
+	case -1:
+		break;
+	case 0:
+	case 1:
+		cutin "ep172_beta",2;
+		mes "[Harad]";
+		mes "根据园丁的植物培育和除草计划，普通水之庭院与困难水之庭院每天仅限进入一次。";
+		next;
+		mes "[Harad]";
+		mes "感谢你的理解。";
+		mes "请充分休息，天亮后再回来！";
+		close3;
+	case 2:
+		erasequest 16439;
+		break;
+	}
+	cutin "ep172_beta",2;
+	mes "[Harad]";
+	mes "要乘船前往水之庭院吗？";
+	mes "船每天只运行一次！";
+	next;
+	mes "^FF0000请注意，在副本内进行驯服等异常的魔物处理不属于正常行为。^000000";
+	mes "";
+	mes "^FF0000接取‘水之庭院’或‘水之庭院（困难）’任务的队长必须进入副本才能继续。若更换队长，副本将被取消，无法继续。^000000";
+	next;
+	cutin "",255;
+	.@normal = is_party_leader();
+	.@hard = (.@normal && isbegin_quest(16430) == 2);
+	.@md_name$ = "Water Garden";	// default
+	switch( select( (.@normal ? "Create Water Garden" : ""), (.@hard ? "Create Water Garden Hard" : ""), "^0000CDGarden Entrance^000000" ) ) {
+	case 1:
+		.@quest_given = 16437;
+		.@other_quest = 16438;
+		break;
+	case 2:
+		if (BaseLevel < 180) {
+			cutin "ep172_beta",2;
+			mes "[Harad]";
+			mes "想进入水之庭院的话可以告诉我。";
+			mes "但里面很危险，你现在不能进入。";
+			next;
+			mes "- 此副本仅限 180 级以上。-";
+			close3;
+		}
+		.@md_name$ = "Water Garden Hard";
+		.@quest_given = 16438;
+		.@other_quest = 16437;
+		break;
+	case 3:
+		if (ep172_watergarden > 3) {
+			.@instance_name$ = instance_live_info(ILI_NAME, instance_id(IM_PARTY));
+			if (.@instance_name$ != "Water Garden" && .@instance_name$ != "Water Garden Hard") {
+				cutin "ep172_beta",2;
+				mes "[Harad]";
+				mes "副本尚未创建。";
+				mes "请检查。";
+				close3;
+			}
+			cutin "ep172_beta",2;
+			mes "[Harad]";
+			mes "进入 ^CC0000" + .@instance_name$ + "^000000。";
+			next;
+			cutin "",255;
+			if (select( "^0000CDEnter Water Garden", "Enter Water Garden Hard^000000" ) == 1)
+				.@md_name$ = "Water Garden";
+			else
+				.@md_name$ = "Water Garden Hard";
+		}
+		if (instance_enter(.@md_name$) != IE_OK) {
+			cutin "ep172_beta",2;
+			mes "[Harad]";
+			mes "副本尚未创建。";
+			mes "请检查。";
+			close2;
+			cutin "",255;
+			end;
+		}
+		setquest 16439;
+		mapannounce "ba_maison", "" + strcharinfo(0) + " of the party, " + getpartyname( getcharid(1) ) + ", is entering the " + .@md_name$ + ".", bc_map, "0x00FF99";
+		end;
+	}
+	if (instance_create(.@md_name$) == -3)
+		dispbottom "The reservation of the instance '" + .@md_name$ + "' has failed due to an active instance.";
+	if (isbegin_quest(.@quest_given) > 0)
+		erasequest .@quest_given;
+	if (isbegin_quest(.@other_quest) > 0)
+		erasequest .@other_quest;
+	setquest .@quest_given;
+	mes "[Harad]";
+	mes "当“" + .@md_name$ + "”副本开启后，请再次与我交谈，并选择 ^0000CD进入 " + .@md_name$ + "^000000。";
+	close;
+}
+
+1@ghg,1,1,0	script	#172_water_garden_control	-1,{
+	end;
+OnInstanceInit:
+	// 'mode = 0;	// not resetted
+	'water_garden = 0;
+	'map_ghg$ = instance_mapname("1@ghg");
+
+	// warps
+	// disablenpc instance_npcname("#ghg_w1");
+
+	// Area 1
+	// disablenpc instance_npcname("Gardener#ghg_g1");
+	end;
+}
+
+1@ghg,66,69,0	script	#ghg_hw1	HIDDEN_WARP_NPC,4,4,{
+	end;
+OnTouch:
+	if (!is_party_leader())
+		end;
+	if ('water_garden != 0)
+		end;
+	if (isbegin_quest(16438) > 0) {
+		erasequest 16438;
+		'mode = 1;
+	}
+	else if (isbegin_quest(16437) > 0) {
+		erasequest 16437;
+		'mode = 0;
+	}
+	'water_garden = 1;
+	end;
+}
+
+// warps
+1@ghg,75,69,0	script	#ghg_w1	WARPNPC,2,2,{
+	end;
+OnTouch:
+	if ('water_garden == 0) {
+		mes "- 队长进入副本后，你就可以进入水之庭院。-";
+		close;
+	}
+	warp 'map_ghg$,208,57;
+	end;
+}
+
+1@ghg,269,68,0	warp2(DISABLED)	#ghg_w2	2,2,1@ghg,311,67
+1@ghg,343,97,0	warp2(DISABLED)	#ghg_w3	2,2,1@ghg,343,139
+1@ghg,265,309,0	warp2(DISABLED)	#ghg_wb	2,2,1@ghg,189,287
+
+1@ghg,343,184,0	script(DISABLED)	#ghg_w4	WARPNPC,2,2,{
+	end;
+OnTouch:
+	switch( rand(1,4) ) {
+	case 1:
+		warp 'map_ghg$,345,235;
+		break;
+	case 2:
+		warp 'map_ghg$,345,278;
+		break;
+	case 3:
+		warp 'map_ghg$,305,310;
+		break;
+	case 4:
+		warp 'map_ghg$,305,236;
+		break;
+	}
+	end;
+}
+
+
+// Area 1
+1@ghg,216,58,3	script	Gardener#ghg_g1	4_EP17_SCISSORE,{
+	if ('water_garden == 0)
+		end;
+	if ('water_garden == 1) {
+		mes "[Hetilla]";
+		mes "客人，欢迎来到水之庭院，";
+		mes "你要去见帕皮拉吗？帕皮拉最近对入侵者非常敏感……";
+		npctalk "客人，欢迎来到水之庭院。你要去见帕皮拉吗？帕皮拉最近对入侵者非常敏感……";
+		next;
+		mes "[Hetilla]";
+		mes "帕皮拉们正在这里四处游荡。";
+		mes "它们利用翅膀上的致幻物质进行短距离移动，或施展危险的魔法。";
+		npctalk "帕皮拉们正在这里四处游荡。它们利用翅膀上的致幻物质进行短距离移动，或施展危险的魔法。";
+		next;
+		mes "[Hetilla]";
+		mes "我已经提前警告过你了，但还是要小心。";
+		mes "修剪所有过度生长的植物和动物后，3 点钟方向的门就会打开。";
+		npctalk "我已经提前警告过你了，但还是要小心。修剪所有过度生长的植物和动物后，3 点钟方向的门就会打开。";
+		close2;
+		if ('water_garden == 1) {
+			'water_garden = 2;
+			donpcevent instance_npcname("#172_wg_mob_1") + "::OnStart";
+			donpcevent instance_npcname("#172_wg_area_1") + "::OnStart";
+		}
+		end;
+	}
+	if ('water_garden == 2)
+		npctalk "小心帕皮拉的致幻物质。";
+	else
+		npctalk "客人，你现在可以前往下一个区域了。";
+	end;
+}
+
+1@ghg,1,1,0	script	#172_wg_mob_1	HIDDEN_WARP_NPC,{
+	end;
+OnStart:
+	.@event$ = instance_npcname("#172_wg_mob_1") + "::OnMobDead";
+	if ('mode == 0) {
+		monster 'map_ghg$,247,89,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,257,90,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,228,89,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,227,93,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,238,54,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,245,52,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,251,89,"--ja--",20669,1, .@event$;
+		monster 'map_ghg$,253,92,"--ja--",20669,1, .@event$;
+		monster 'map_ghg$,244,53,"--ja--",20669,1, .@event$;
+		monster 'map_ghg$,227,96,"--ja--",20669,1, .@event$;
+		monster 'map_ghg$,226,83,"--ja--",20669,1, .@event$;
+		monster 'map_ghg$,244,59,"--ja--",20669,1, .@event$;
+	}
+	else {
+		monster 'map_ghg$,257,65,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,253,64,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,245,77,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,245,78,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,249,70,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,257,87,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,250,81,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,253,85,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,254,93,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,251,59,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,252,59,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,239,54,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,237,53,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,242,52,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,241,52,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,239,51,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,234,69,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,231,61,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,232,73,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,228,58,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,225,66,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,225,63,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,224,62,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,220,88,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,219,92,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,226,95,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,228,98,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,221,98,"--ja--","MD_PAPILA_H",1, .@event$;
+		monster 'map_ghg$,249,97,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,254,96,"--ja--","MD_PAPILA_H",1, .@event$;
+	}
+	end;
+OnMobDead:
+	if ('water_garden != 2)
+		end;
+	if (mobcount('map_ghg$, instance_npcname("#172_wg_mob_1") + "::OnMobDead") < 2) {	// note: stops when less than 2 mobs remain
+		killmonster 'map_ghg$, instance_npcname("#172_wg_mob_1") + "::OnMobDead";
+		'water_garden = 3;
+		enablenpc instance_npcname("#ghg_w2");
+		specialeffect EF_READYPORTAL, AREA, instance_npcname("#ghg_w2");
+		donpcevent instance_npcname("#172_wg_area_1") + "::OnStop";
+		enablenpc instance_npcname("Gardener#ghg_g2");
+		mapannounce 'map_ghg$, "Cleanup is complete. Please proceed to the next area.", bc_map, 0xFFFF99;
+		end;
+	}
+	end;
+}
+
+1@ghg,1,1,0	script	#172_wg_area_1	HIDDEN_WARP_NPC,{
+	end;
+OnStart:
+	switch( rand(1,8) ) {
+	case 1:
+		instance_warpall 'map_ghg$,240,73,instance_id(), IWA_NOTDEAD;
+		break;
+	case 2:
+		instance_warpall 'map_ghg$,225,59,instance_id(), IWA_NOTDEAD;
+		break;
+	case 3:
+		instance_warpall 'map_ghg$,253,91,instance_id(), IWA_NOTDEAD;
+		break;
+	case 4:
+		instance_warpall 'map_ghg$,257,76,instance_id(), IWA_NOTDEAD;
+		break;
+	case 5:
+		instance_warpall 'map_ghg$,240,54,instance_id(), IWA_NOTDEAD;
+		break;
+	case 6:
+		instance_warpall 'map_ghg$,227,80,instance_id(), IWA_NOTDEAD;
+		break;
+	case 7:
+		instance_warpall 'map_ghg$,228,92,instance_id(), IWA_NOTDEAD;
+		break;
+	case 8:
+		instance_warpall 'map_ghg$,261,54,instance_id(), IWA_NOTDEAD;
+		break;
+	}
+	initnpctimer;
+	end;
+OnTimer2000:
+	mapannounce 'map_ghg$, "The magic of the Papilla's has activated. Be careful!", bc_map, 0xFFFF99;
+	end;
+OnTimer4000:
+	callsub( S_Spawn, 240,73,20676,9 );
+	callsub( S_Spawn, 225,59,20676,4 );
+	callsub( S_Spawn, 253,91,20676,4 );
+	callsub( S_Spawn, 257,76,20676,6 );
+	callsub( S_Spawn, 240,54,20673,6 );
+	callsub( S_Spawn, 227,80,20673,4 );
+	callsub( S_Spawn, 223,92,20673,6 );
+	callsub( S_Spawn, 261,54,20673,4 );
+	end;
+OnTimer9000:
+	killmonster 'map_ghg$, instance_npcname("#172_wg_area_1") + "::OnMobDead";
+	end;
+
+S_Spawn:
+	.@x = getarg(0);
+	.@y = getarg(1);
+
+	monster 'map_ghg$,.@x,.@y, "", getarg(2),1, instance_npcname("#172_wg_area_1") + "::OnMobDead";
+	unitskillusepos $@mobid[0],"NPC_RAINOFMETEOR",getarg(3),.@x,.@y,-10000;
+	return;
+
+OnTimer24000:
+	stopnpctimer;
+	donpcevent instance_npcname("#172_wg_area_1") + "::OnStart";
+	end;
+OnStop:
+	stopnpctimer;
+	killmonster 'map_ghg$, instance_npcname("#172_wg_area_1") + "::OnMobDead";
+	end;
+OnMobDead:
+	end;
+}
+
+
+// Area 2
+1@ghg,316,69,3	script(DISABLED)	Gardener#ghg_g2	4_EP17_SCISSORE,{
+	if ('water_garden == 3) {
+		mes "[Juventus]";
+		mes "小心，帕皮拉和其他种类的帕皮拉似乎正在四处游荡。";
+		npctalk "小心，帕皮拉和其他种类的帕皮拉似乎正在四处游荡。";
+		next;
+		mes "[Juventus]";
+		mes "攻击范围会根据帕皮拉的颜色而变化。";
+		npctalk "攻击范围会根据帕皮拉的颜色而变化。";
+		next;
+		mes "[Juventus]";
+		mes "此外，一些园丁被入侵者破坏了。";
+		npctalk "此外，一些园丁被入侵者破坏了。";
+		next;
+		mes "[Juventus]";
+		mes "如果它们攻击客人，那就是损坏的园丁，不要犹豫，直接击倒它们。";
+		npctalk "如果它们攻击客人，那就是损坏的园丁，不要犹豫，直接击倒它们。";
+		close2;
+		if ('water_garden == 3) {
+			'water_garden = 4;
+			donpcevent instance_npcname("#172_wg_mob_2") + "::OnStart";	// mobs
+			donpcevent instance_npcname("#172_wg_area_2") + "::OnStart";	// traps
+		}
+		end;
+	}
+	if ('water_garden == 4) {
+		mes "[Juventus]";
+		mes "如果园丁攻击客人，那就是损坏的园丁，不要犹豫，直接击倒它们。";
+		close;
+	}
+	npctalk "障碍物已经消失，你可以前往下一个区域了。";
+	end;
+}
+
+1@ghg,1,1,0	script	#172_wg_mob_2	HIDDEN_WARP_NPC,{
+	end;
+OnStart:
+	.@event$ = instance_npcname("#172_wg_mob_2") + "::OnMobDead";
+	if ('mode == 0) {
+		monster 'map_ghg$,334,84,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,328,79,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,325,84,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,332,69,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,331,74,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,327,87,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,338,73,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,340,84,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,342,79,"--ja--",20677,1, .@event$;
+		monster 'map_ghg$,337,67,"--ja--",20622,1, .@event$;
+		monster 'map_ghg$,325,82,"--ja--",20622,1, .@event$;
+		monster 'map_ghg$,338,83,"--ja--",20622,1, .@event$;
+	}
+	else {
+		monster 'map_ghg$,322,82,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,322,82,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,327,73,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,327,73,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,328,69,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,329,73,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,329,79,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,330,78,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,332,67,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,332,82,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,333,74,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,334,69,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,334,78,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,333,83,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,332,83,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,336,74,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,338,84,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,338,84,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,339,80,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,341,78,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,341,83,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,333,86,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,332,86,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,344,78,"--ja--","MD_BETA_SCISSORE_NG_H",1, .@event$;
+		monster 'map_ghg$,332,89,"--ja--","MD_ARIES_H",1, .@event$;
+		monster 'map_ghg$,335,90,"--ja--","MD_VERPORTE_H",1, .@event$;
+		monster 'map_ghg$,327,90,"--ja--","MD_VERPORTE_H",1, .@event$;
+	}
+	end;
+OnMobDead:
+	if ('water_garden != 4)
+		end;
+	if (mobcount('map_ghg$, instance_npcname("#172_wg_mob_2") + "::OnMobDead") < 2) {	// note: stops when less than 2 mobs remain
+		killmonster 'map_ghg$, instance_npcname("#172_wg_mob_2") + "::OnMobDead";
+		'water_garden = 5;
+		enablenpc instance_npcname("#ghg_w3");
+		specialeffect EF_READYPORTAL, AREA, instance_npcname("#ghg_w3");
+		donpcevent instance_npcname("#172_wg_area_2") + "::OnStop";
+		enablenpc instance_npcname("Gardener#ghg_g3");
+		enablenpc instance_npcname("Gardener#gmck3");
+		mapannounce 'map_ghg$, "You have eliminated all the obstructions. Please proceed to the next area.", bc_map, 0xFFFF99;
+		end;
+	}
+	end;
+}
+
+1@ghg,1,1,0	script	#172_wg_area_2	HIDDEN_WARP_NPC,{
+	end;
+OnStart:
+	deletearray 'gid_area_2;
+	deletearray 'type_area_2;
+
+	mapannounce 'map_ghg$, "The Papilla's has returned!", bc_map, 0xFFFF99;
+
+	setarray .@xy[0],
+		320,91,325,91,330,91,335,91,340,91,345,91,
+		320,86,325,86,330,86,335,86,340,86,345,86,
+		320,81,325,81,330,81,335,81,340,81,345,81,
+		320,76,325,76,330,76,335,76,340,76,345,76,
+		320,71,325,71,330,71,335,71,340,71,345,71,
+		320,66,325,66,330,66,335,66,340,66,345,66;
+	.@size = getarraysize(.@xy) / 2;
+
+	.@event$ = instance_npcname("#172_wg_area_2") + "::OnMobDead";
+
+	for ( .@i = 0; .@i < 3; ++.@i ) {
+		.@r = rand( .@size ) * 2;
+		if (rand(2))	// (red) Cross Pattern
+			monster 'map_ghg$,.@xy[.@r],.@xy[.@r+1],"Papilla",20673,1, .@event$;
+		else	// (blue) Diagonal Pattern
+			monster 'map_ghg$,.@xy[.@r],.@xy[.@r+1],"Papilla",20676,1, .@event$;
+		'gid_area_2[.@i] = $@mobid[0];
+		deletearray .@xy[.@r],2;
+		.@size -= 2;
+	}
+	initnpctimer;
+	end;
+OnTimer5000:
+	callsub( S_Skill, 'gid_area_2[0], 'type_area_2[0] );
+OnTimer5600:
+	callsub( S_Skill, 'gid_area_2[1], 'type_area_2[1] );
+OnTimer6200:
+	callsub( S_Skill, 'gid_area_2[2], 'type_area_2[2] );
+OnTimer11800:
+	killmonster 'map_ghg$, instance_npcname("#172_wg_area_2") + "::OnMobDead";
+	end;
+OnTimer26800:
+	stopnpctimer;
+	donpcevent instance_npcname("#172_wg_area_2") + "::OnStart";
+	end;
+OnStop:
+	stopnpctimer;
+	killmonster 'map_ghg$, instance_npcname("#172_wg_area_2") + "::OnMobDead";
+	end;
+OnMobDead:
+	end;
+
+S_Skill:
+	.@gid = getarg(0);
+	if (!unitexists(.@gid))
+		end;
+	getunitdata( .@gid, .@data );
+	.@type = getarg(1);
+
+	for ( .@i = 0; .@i < 5; ++.@i ) {
+		if (!unitexists(.@gid))
+			end;
+
+		switch( .@data[UMOB_CLASS] ) {
+		case 20673:	// (red) Cross Pattern
+			setarray .@x[0],
+				(.@data[UMOB_X] + 5 * .@i),
+				(.@data[UMOB_X] - 5 * .@i),
+				.@data[UMOB_X],
+				.@data[UMOB_X];
+			setarray .@y[0],
+				.@data[UMOB_Y],
+				.@data[UMOB_Y],
+				(.@data[UMOB_Y] + 5 * .@i),
+				(.@data[UMOB_Y] - 5 * .@i);
+			break;
+		case 20676:	// (blue) Diagonal Pattern
+			setarray .@x[0],
+				(.@data[UMOB_X] + 5 * .@i),
+				(.@data[UMOB_X] + 5 * .@i),
+				(.@data[UMOB_X] - 5 * .@i),
+				(.@data[UMOB_X] - 5 * .@i);
+			setarray .@y[0],
+				(.@data[UMOB_Y] + 5 * .@i),
+				(.@data[UMOB_Y] - 5 * .@i),
+				(.@data[UMOB_Y] + 5 * .@i),
+				(.@data[UMOB_Y] - 5 * .@i);
+			break;
+		}
+		unitskillusepos .@gid,"WZ_HEAVENDRIVE",3,.@x[0],.@y[0],-2000,false,0,true;
+		unitskillusepos .@gid,"WZ_HEAVENDRIVE",3,.@x[1],.@y[1],-2000,false,0,true;
+		unitskillusepos .@gid,"WZ_HEAVENDRIVE",3,.@x[2],.@y[2],-2000,false,0,true;
+		unitskillusepos .@gid,"WZ_HEAVENDRIVE",3,.@x[3],.@y[3],-2000,false,0,true;	// note: can hit the player outside the board
+		sleep 50;
+	}
+	end;
+}
+
+
+// Area 3
+1@ghg,341,143,3	script(DISABLED)	Gardener#ghg_g3	4_EP17_SCISSORE,5,1,{
+	mes "[阿迪图拉]";
+	mes "玫瑰花园非常美丽，但最近成群出现的动物和植物让我们难以维护。";
+	npctalk "玫瑰花园是个非常美丽的地方，但最近成群出现的动物和植物让我们难以维护这里。";
+	next;
+	mes "[阿迪图拉]";
+	mes "客人，请修剪那些植物并处理动物。";
+	npctalk "Guest, I'd like you to please prune the plants and animals.";
+	next;
+	mes "[阿迪图拉]";
+	mes "花园尽头有一位管理者等待开启下一区域，到达后请和她交谈。";
+	npctalk "花园尽头有一位等待开启下个区域的管理员，到那里后请和她交谈。";
+	next;
+	mes "[阿迪图拉]";
+	mes "过程有点慢，可能需要等待，不过下一区域一定会开启。";
+	npctalk "It's a little slow, so you might have to wait, but... the next area will definitely open.";
+	close;
+
+OnTouch_:	// note: hidden player doesn't trigger it!
+	if ('water_garden == 5)
+		'water_garden = 6;
+	end;
+}
+
+1@ghg,315,149,0	script	mob3_1#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:	// note: hidden player doesn't trigger it!
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,315,150,"",20665,1;
+		monster 'map_ghg$,317,149,"",20665,1;
+		monster 'map_ghg$,317,150,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,318,147,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,317,147,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,318,149,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,316,150,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,317,149,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,315,148,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+1@ghg,295,149,0	script	mob3_2#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,298,148,"",20665,1;
+		monster 'map_ghg$,294,150,"",20665,1;
+		monster 'map_ghg$,296,147,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,298,151,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,296,151,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,297,150,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,296,148,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,296,150,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,298,148,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,275,149,0	script	mob3_3#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,274,148,"",20665,1;
+		monster 'map_ghg$,276,148,"",20665,1;
+		monster 'map_ghg$,278,147,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,278,151,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,278,148,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,276,148,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,275,151,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,278,150,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,277,151,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,255,149,0	script	mob3_4#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,254,151,"",20665,1;
+		monster 'map_ghg$,258,149,"",20665,1;
+		monster 'map_ghg$,256,150,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,256,151,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,254,149,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,256,147,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,256,151,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,256,147,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,256,147,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,231,162,0	script	mob3_5#ghg	HIDDEN_WARP_NPC,3,1,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,231,163,"",20665,1;
+		monster 'map_ghg$,230,160,"",20665,1;
+		monster 'map_ghg$,231,162,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,232,163,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,229,159,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,232,159,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,231,160,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,230,162,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,231,159,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,255,173,0	script	mob3_6#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,253,174,"",20665,1;
+		monster 'map_ghg$,254,173,"",20665,1;
+		monster 'map_ghg$,252,174,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,254,173,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,254,173,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,256,171,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,254,172,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,253,174,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,252,174,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,275,173,0	script	mob3_7#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,274,173,"",20665,1;
+		monster 'map_ghg$,275,175,"",20665,1;
+		monster 'map_ghg$,276,175,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,276,171,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,275,175,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,274,173,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,274,175,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,274,171,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,274,173,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,295,173,0	script	mob3_8#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,293,173,"",20665,1;
+		monster 'map_ghg$,295,171,"",20665,1;
+		monster 'map_ghg$,292,173,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,295,171,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,296,172,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,293,171,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,292,171,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,294,172,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,296,173,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,315,173,0	script	mob3_9#ghg	HIDDEN_WARP_NPC,1,3,{
+	end;
+OnTouch_:
+	disablenpc();
+	if ('mode == 0) {
+		monster 'map_ghg$,316,173,"",20665,1;
+		monster 'map_ghg$,316,174,"",20665,1;
+		monster 'map_ghg$,314,173,"",20665,1;
+	}
+	else {
+		monster 'map_ghg$,314,171,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,313,175,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,312,173,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,315,172,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,314,173,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+		monster 'map_ghg$,314,175,"--ja--","MD_BETA_SCISSORE_NG_H",1;
+	}
+	end;
+}
+
+1@ghg,344,173,3	script(DISABLED)	Gardener#gmck3	4_EP17_SCISSORE,2,2,{
+	if ('water_garden < 6) {
+	npctalk "发生错误……";
+		end;
+	}
+	progressbar_npc "00FF00",5;
+	mes "[希格尔]";
+	mes "下一个花园……传送门创建完成……向 12 点方向移动……即可使用……谢谢……";
+	npctalk "下一个花园……传送门创建完成……请前往 12 点方向……使用传送门……谢谢……";
+	next;
+	mes "[希格尔]";
+	mes "移动后……迷宫里的帕皮拉……请全部修剪。";
+	close2;
+	if ('water_garden == 6) {
+		// note: mobs from traps are not killed
+		disablenpc();
+		'water_garden = 7;
+		enablenpc instance_npcname("#ghg_w4");
+		specialeffect EF_READYPORTAL, AREA, instance_npcname("#ghg_w4");
+		enablenpc instance_npcname("Gardener#keeper" + rand(1,4));
+		donpcevent instance_npcname("#172_wg_mob_4") + "::OnStart";
+	}
+	end;
+
+OnTouch:	// unknown effect
+	end;
+}
+
+
+// Area 4
+1@ghg,1,1,0	script	#172_wg_mob_4	HIDDEN_WARP_NPC,{
+	end;
+OnStart:
+	.@event$ = instance_npcname("#172_wg_mob_4") + "::OnMobDead";
+	if ('mode == 0) {
+		monster 'map_ghg$,314,301,"--ja--",20665,1;
+		monster 'map_ghg$,317,296,"--ja--",20665,1;
+		monster 'map_ghg$,324,296,"--ja--",20665,1;
+		monster 'map_ghg$,317,275,"--ja--",20677,1;
+		monster 'map_ghg$,318,266,"--ja--",20677,1;
+		monster 'map_ghg$,311,268,"--ja--",20677,1;
+		monster 'map_ghg$,277,279,"--ja--",20665,1;
+		monster 'map_ghg$,286,284,"--ja--",20665,1;
+		monster 'map_ghg$,280,284,"--ja--",20665,1;
+		monster 'map_ghg$,278,241,"--ja--",20671,1, .@event$;	// other monsters are not required
+		monster 'map_ghg$,278,301,"--ja--",20674,1, .@event$;
+	}
+	else {
+		monster 'map_ghg$,334,304,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,333,310,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,327,304,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,327,303,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,326,302,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,321,299,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,318,295,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,314,296,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,318,291,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,313,297,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,315,271,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,320,271,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,318,266,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,322,264,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,311,269,"--ja--","MD_ARIES_H",1;
+		monster 'map_ghg$,275,273,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,275,277,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,285,279,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,275,282,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,286,282,"--ja--","MD_VERPORTE_H",1;
+		monster 'map_ghg$,278,301,"--ja--","MD_PAPILA_CAE_H",1, .@event$;	// other monsters are not required
+		monster 'map_ghg$,278,241,"--ja--","MD_PAPILA_RUBA_H",1, .@event$;
+	}
+	end;
+OnMobDead:
+	if ('water_garden != 7)
+		end;
+	if (mobcount('map_ghg$, instance_npcname("#172_wg_mob_4") + "::OnMobDead") < 1) {
+		'water_garden = 8;
+		enablenpc instance_npcname("#ghg_wb");
+		specialeffect EF_READYPORTAL, AREA, instance_npcname("#ghg_wb");
+		mapannounce 'map_ghg$, "最后一个花园已经开放。请前往下一个区域。", bc_map, 0xFFFF99;
+		enablenpc instance_npcname("Gardener#ghg_gb");
+		end;
+	}
+	end;
+}
+
+// (daily quest)
+1@ghg,346,248,3	script(DISABLED)	Gardener#keeper1	4_EP17_SCISSORE,{
+	if (isbegin_quest(16435) == 1) {
+		if (checkweight(1000099,1) == 0) {	// (custom)
+			mes "^008800请稍等！！";
+			mes "你携带的物品太多，无法再领取物品。减轻负重后再试。^000000";
+			close;
+		}
+		if (countitem(1000099) == 0) {
+		npctalk "哦，我忘了定期联系！我这就联系。你在这里要吃块饼干吗？", "", bc_self;
+			getitem 1000099,1;
+			end;
+		}
+		npctalk "别担心，我已经联系过阿尔法了。嘿嘿。", "", bc_self;
+		end;
+	}
+	if ('water_garden == 7) {
+		npctalk "That's strange, I forgot it yesterday, but I forgot it today as well.";
+		end;
+	}
+	npctalk "最后一个花园开放了。但是……我忘了接下来该做什么……";
+	end;
+}
+1@ghg,334,272,3	duplicate(Gardener#keeper1)	Gardener#keeper2	4_EP17_SCISSORE
+1@ghg,334,310,3	duplicate(Gardener#keeper1)	Gardener#keeper3	4_EP17_SCISSORE
+1@ghg,288,272,3	duplicate(Gardener#keeper1)	Gardener#keeper4	4_EP17_SCISSORE
+
+
+// Area 5 (boss)
+1@ghg,186,287,3	script(DISABLED)	Gardener#ghg_gb	4_EP17_SCISSORE,{
+	if ('water_garden == 8) {
+		mes "[维尔基娜]";
+		mes "战斗中出现帕皮拉时，让它跟随你前往同色柱子。";
+		next;
+		mes "[维尔基娜]";
+		mes "帕皮拉接触光芒后会受到伤害并死亡。";
+		next;
+		mes "[维尔基娜]";
+		mes "只要你能安全阻止希尔瓦帕皮拉，剩下的交给我们！";
+		next;
+		mes "[维尔基娜]";
+		mes "那么，我要点燃召唤希尔瓦帕皮拉的香……";
+		close2;
+		if ('water_garden == 8) {
+			'water_garden = 9;
+			cloakonnpcself();
+			donpcevent instance_npcname("#172_wg_boss") + "::OnStart";
+		}
+		end;
+	}
+	end;
+}
+
+1@ghg,1,1,0	script	#172_wg_boss	-1,{
+	end;
+OnStart:
+	monster 'map_ghg$,180,288,"--ja--",(20667+'mode),1, instance_npcname("#172_wg_boss") + "::OnBossDead";
+	'boss_id = $@mobid[0];
+	donpcevent instance_npcname("#172_wg_boss") + "::OnSlave";
+	end;
+OnBossDead:	// note: other events continue
+	killmonster 'map_ghg$, instance_npcname("#172_wg_boss") + "::OnBossDead";
+	// killmonster 'map_ghg$, instance_npcname("#172_wg_boss") + "::OnMobDead";
+	stopnpctimer;
+	if ('water_garden == 9)
+		'water_garden = 10;
+	enablenpc instance_npcname("Gardener#ghg_gb1");
+	disablenpc instance_npcname("#ghg_bosshw");
+	end;
+OnSlave:
+	'red = rand(1,3);
+	'blue = rand(1,3);
+	.@event$ = instance_npcname("#172_wg_boss") + "::OnMobDead";
+	monster 'map_ghg$,182,286,"Papilla Ruba",(20671+'mode),1, .@event$;
+	monster 'map_ghg$,182,286,"Papilla Cae",(20674+'mode),1, .@event$;
+	enablenpc instance_npcname("#blue" + 'blue + "ghg");
+	enablenpc instance_npcname("#red" + 'red + "ghg");
+	sleep 15000;
+	disablenpc instance_npcname("#blue" + 'blue + "ghg");
+	disablenpc instance_npcname("#red" + 'red + "ghg");
+	// note: the event continues when the boss dies up to this point
+	if (!unitexists('boss_id))
+		killmonster 'map_ghg$, instance_npcname("#172_wg_boss") + "::OnMobDead";
+	else {
+		initnpctimer;
+		enablenpc instance_npcname("#ghg_bosshw");
+		instance_warpall 'map_ghg$,182,286,instance_id(), IWA_NOTDEAD;	// (triggers the npc which makes lose hp)
+	}
+	end;
+
+OnTimer1000:
+	switch( rand(1,4)) {
+	case 1:
+		.@x = 152;
+		.@y = 'y_mob = 287;
+		'x_mob = 151;
+		break;
+	case 2:
+		.@x = 183;
+		.@y = 'y_mob = 256;
+		'x_mob = 182;
+		break;
+	case 3:
+		.@x = 183;
+		.@y = 'y_mob = 317;
+		'x_mob = 182;
+		break;
+	case 4:
+		.@x = 214;
+		.@y = 'y_mob = 287;
+		'x_mob = 215;
+		break;
+	}
+	instance_warpall 'map_ghg$,.@x,.@y,instance_id(), IWA_NOTDEAD;
+	disablenpc instance_npcname("#ghg_bosshw");
+	end;
+OnTimer3000:
+	monster 'map_ghg$,'x_mob,'y_mob,"",2537,1, instance_npcname("#172_wg_boss") + "::OnMobDead";
+	end;
+OnTimer13000:
+	killmonster 'map_ghg$, instance_npcname("#172_wg_boss") + "::OnMobDead";
+	end;
+OnTimer18000:
+	stopnpctimer;
+	donpcevent instance_npcname("#172_wg_boss") + "::OnSlave";
+	end;
+OnMobDead:
+	end;
+}
+
+1@ghg,183,286,0	script(DISABLED)	#ghg_bosshw	HIDDEN_WARP_NPC,4,4,{
+	end;
+OnTouch:
+	.@DAMAGE = MaxHp/2;
+	if (.@DAMAGE > Hp)
+		Hp = 1;
+	else
+		Hp -= .@DAMAGE;
+	end;
+}
+
+1@ghg,186,294,3	script(DISABLED)	#blue1ghg	4_ENERGY_BLUE,2,2,{
+	end;
+OnTouchNPC:
+	getunitdata( getattachedrid(), .@data );
+	if (.@data[UMOB_CLASS] == (20674+'mode))
+		unitkill getattachedrid();
+	end;
+}
+
+1@ghg,190,287,3	duplicate(#blue1ghg)	#blue2ghg	4_ENERGY_BLUE,2,2
+1@ghg,187,280,3	duplicate(#blue1ghg)	#blue3ghg	4_ENERGY_BLUE,2,2
+
+1@ghg,179,294,3	script(DISABLED)	#red1ghg	4_ENERGY_RED,2,2,{
+	end;
+OnTouchNPC:
+	getunitdata( getattachedrid(), .@data );
+	if (.@data[UMOB_CLASS] == (20671+'mode))
+		unitkill getattachedrid();
+	end;
+}
+
+1@ghg,174,287,3	duplicate(#red1ghg)	#red2ghg	4_ENERGY_RED,2,2
+1@ghg,178,280,3	duplicate(#red1ghg)	#red3ghg	4_ENERGY_RED,2,2
+
+1@ghg,187,287,3	script(DISABLED)	Gardener#ghg_gb1	4_EP17_SCISSORE,2,2,{
+	if ('water_garden == 10) {
+		mes "[维尔基娜]";
+		mes "你没有忘记西尤的请求，并来到了这里，对吧？";
+		next;
+		mes "[维尔基娜]";
+		mes "别忘了出去和西尤交谈，^0000CD领取今天工作的奖励^000000。";
+		next;
+		mes "[维尔基娜]";
+		mes "然后我会再次为你指引出去的路！";
+		close2;
+		warp "ba_maison",233,46;
+		end;
+	}
+	end;
+OnTouch_:	// unknown effect
+	end;
+}

@@ -11,6 +11,9 @@ from .checks import (
     normalize_newlines,
     preferred_newline,
     read_chunk,
+    validate_html_structure,
+    validate_protected_resource_file,
+    validate_yaml_structure,
     validate_chunk_line_count,
 )
 from .models import TERMINAL, MergeFailure, Output, Row
@@ -41,6 +44,9 @@ def merge_file(
         row = rows[0]
         if row.status == "已翻译":
             data = read_chunk(row, translated=True)
+            validate_protected_resource_file(base, data, f"{repo}/{logical_path}")
+            validate_html_structure(base, data, f"{repo}/{logical_path}")
+            validate_yaml_structure(base, data, f"{repo}/{logical_path}")
             line_delta = line_count(data) - line_count(base)
             warnings.extend(logic_warnings(base, data, f"{repo}/{logical_path}"))
             if line_delta and strict_line_count:
@@ -79,6 +85,9 @@ def merge_file(
             raise MergeFailure(f"{repo}/{logical_path}/{row.chunk_id}: source chunk differs from repository")
         if row.status == "已翻译":
             replacement = read_chunk(row, translated=True)
+            validate_protected_resource_file(source, replacement, f"{repo}/{logical_path}/{row.chunk_id}")
+            validate_html_structure(source, replacement, f"{repo}/{logical_path}/{row.chunk_id}")
+            validate_yaml_structure(source, replacement, f"{repo}/{logical_path}/{row.chunk_id}")
             actual = line_count(replacement)
             expected = row.end_line - row.start_line + 1
             warnings.extend(logic_warnings(source, replacement, f"{repo}/{logical_path}/{row.chunk_id}"))

@@ -1,25 +1,36 @@
-# kRO 2021-11-05 并行翻译进度
+# kRO 2021-11-05 汉化进度
 
-本目录是 kRO 专用翻译工作区，不写入 `docs/translation/zh-cn/kro-20211105/agents/agent-xx/`。工作单元基于最新提取 JSON 和直接文本源，全部重新切片并分配给八个 agent。
+## 当前状态
 
 - 工作单元总数：177
-- 已处理：0
-- 进度：0%（0 / 177）
-- 待处理：177
-- agent-01：23 个
-- agent-02：22 个
-- agent-03：22 个
-- agent-04：22 个
-- agent-05：22 个
-- agent-06：22 个
-- agent-07：22 个
-- agent-08：22 个
+- 已翻译：177
+- 跳过：0
+- 阻塞：0
+- 待处理：0
+- Agent 进度：100%（177 / 177 已完成校验）
+- 正式 merged：本批次为 `canonical-20260825-01`，111 个原保护 token 失败的工作单元已恢复中文候选，另 1 个 `tipOfTheDay.txt.full` 已恢复 CP949 编码并完成中文简译，全部通过 chunks/merged 校验。
+- LUB 回编译：Lua 5.0 的 1 个目标和 Lua 5.1 的 10 个目标已构建并通过逐值语义回环。
+- 剩余工作：完成整套 kRO 翻译资源的客户端渲染验收。
 
-## 切片规则
+## Agent 汇总
 
-- 直接文本按原始物理行处理；不超过 200 行的文件作为完整工作单元。
-- JSON 提取结果按顶层记录规范化为一条记录一行，再切成每片最多 200 个物理行。
-- `start_line`、`end_line` 表示规范化切片中的连续记录序号；各片不重叠、不遗漏。
-- 源切片位于本目录各 agent 的 `chunks/source/`，译文写入对应的 `chunks/translated/`。
+| Agent | 已翻译 | 跳过 | 阻塞 | 总计 | 状态 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| agent-01 | 23 | 0 | 0 | 23 | 完成校验 |
+| agent-02 | 22 | 0 | 0 | 22 | 完成校验 |
+| agent-03 | 22 | 0 | 0 | 22 | 完成校验 |
+| agent-04 | 22 | 0 | 0 | 22 | 完成校验 |
+| agent-05 | 22 | 0 | 0 | 22 | 完成校验 |
+| agent-06 | 22 | 0 | 0 | 22 | 完成校验 |
+| agent-07 | 22 | 0 | 0 | 22 | 完成校验 |
+| agent-08 | 22 | 0 | 0 | 22 | 完成校验 |
+| 合计 | 177 | 0 | 0 | 177 | 完成校验 |
 
-最新基准位于 `baseline/lub/source/` 和 `baseline/text/source/`；官方输入和提取说明仍保留在本目录。
+## 状态来源
+
+- 工作单元状态以八个 `agents/agent-xx/manifest.tsv` 为准。
+- 合并文件及来源以 `merged/manifest.tsv` 为准。
+- 回编译结果以 `status/recompile.tsv` 和 `artifacts/client/lub/manifest-lua*.tsv` 为准。
+- 根 `manifest.tsv` 是冻结分配基线，保留初始状态，不用作完成度统计。
+
+完成条件和后续发布步骤见 [`../WORKFLOW.md`](../WORKFLOW.md)。

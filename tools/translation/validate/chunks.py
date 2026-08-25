@@ -8,6 +8,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .common import display, read_tsv, resolve_agents
+from ..merge.checks import (
+    validate_html_structure,
+    validate_protected_resource_file,
+    validate_yaml_structure,
+)
+from ..merge.models import MergeFailure
 
 
 REPLACEMENT_BYTES = b"\xef\xbf\xbd"
@@ -111,6 +117,13 @@ def check_agent(agent_dir: Path, strict_lines: bool) -> Result:
                 f"{relative_translated}: added U+FFFD replacement characters "
                 f"({source_replacements} -> {translated_replacements})"
             )
+
+        try:
+            validate_protected_resource_file(source_bytes, translated_bytes, f"{row[0]}/{row[1]}/{row[5]}")
+            validate_html_structure(source_bytes, translated_bytes, f"{row[0]}/{row[1]}/{row[5]}")
+            validate_yaml_structure(source_bytes, translated_bytes, f"{row[0]}/{row[1]}/{row[5]}")
+        except MergeFailure as error:
+            result.errors.append(str(error))
 
         token_checks = TOKEN_CHECKS
         if (row[0], row[1]) in LEGACY_BYTE_ESCAPE_PATHS:

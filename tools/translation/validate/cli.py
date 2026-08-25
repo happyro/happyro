@@ -76,6 +76,7 @@ def parser() -> argparse.ArgumentParser:
     merged_parser.add_argument("--include-dialogue", action="store_true")
     merged_parser.add_argument("--include-ambiguous", action="store_true")
     merged_parser.add_argument("--max-findings", type=int, default=200)
+    merged_parser.add_argument("--allow-findings", action="store_true", help="允许审阅告警通过，但仍以错误为失败")
     merged_parser.add_argument("--no-color", action="store_true")
     return result
 
@@ -102,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
             args.include_dialogue,
             args.include_ambiguous,
             args.max_findings,
+            args.allow_findings,
         )
     sys.stdout.write(help_text(color))
     return 2

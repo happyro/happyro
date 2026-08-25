@@ -1,0 +1,1694 @@
+//===== rAthena Script ============================================
+//= Quest Warper Script
+//===== By: =======================================================
+//= DZeroX, Darkchild, Neouni
+//===== Current Version: ==========================================
+//= 2.3
+//===== Compatible With: ==========================================
+//= rAthena Project
+//===== Description: ==============================================
+//= Warper that works only after locations are unlocked.
+//===== Additional Comments: ======================================
+//= 1.0 - NPCs created
+//= 1.1 - Add Dungeons by sturm
+//= 1.2 - Add All char in account unlocked by ace_killer
+//= 1.3 - Add new 7 towns and 7 dungeons by escoteiro
+// - Correct bug jawaii town by escoteiro
+// - Remove some excessive warpras by escoteiro
+//= 1.4 - Rewrite of the Warpa system [Neouni]
+// - Corrected some bugs caused by autoconverting the old script
+//= 1.4a - Rewrite of menu to be custom for each player [Neouni]
+// - Dungeon listing rewrite
+// - Town listing rewrite
+// - GameMaster can Customise Main menu
+//= 1.4b - Pricing round [Neouni]
+// - GM menu added for pricing
+// - Town Warp pricing tags added
+// - Dungeon Warp pricing tags added
+//= 1.5 - storage functions pricing [Neouni]
+// - storage pricing added
+// - kafra points setting added
+// - kafra storage code security added
+// - Healing scripts pricing added
+// - Heal Part script added
+//= 1.6 - Dungeon warp [Neouni] (beta only)
+// - added option to add a extra fee for going down deeper into dungeon
+// partly by rebuilding the dungeon warping into variable menu's
+//= 1.6a - a lot of fixes for beta release [Neouni] (public release)
+// - fixed syntax problems
+// - fixed missing pyramid gats in @DGat$ array
+// - removed the culver level 5 that didn't exist
+//= 1.7 - Readability of Dungeon menu building increased [Neouni]
+// - Thanatos Tower & Luoyang Dungeon added
+//= 1.8 - changed around unlock variables [Neouni]
+// - Moved warp variables to mark what you have unlocked to an binary array in login based permanent variable
+// (warp variables are saved in login database, so all charservers have these unlocked)
+// - Town Warp unlock array max 21/(unknown max) items used instead of max account #variables 32 !
+// - Dungeon Warp unlock array 28/(unknown max) items used instead of max account #variables 32 !
+// - (max login ##variables = 16, i used 3)
+// - old variables are cleared on next save
+// - Extra Variable clear added for every character, just in case (request by Terces)
+//= 1.8a - Show amount of users on map [Neouni]
+//= 1.8b - Small typo fixed in stampcard script [Neouni]
+//= 1.9 - Making it more edit friendly [Neouni]
+// - Made Dungeon warp arrays more readable & editable (QWS_Darray)
+// - Made town warp arrays more readable & editable (QWS_Tarray)
+//= 2.0 - Special Warp menu added [Neouni]
+// - when all towns and dungeons are collected a new option on the main menu will show
+// - it will only show when you setup the mapname of the warp !
+//= 2.0a - Dungeon Level Limit & Split dungeon fees
+// - Limits dungeon based on Depth, access special setup menu thru GM-Menu
+// - Dungeon fees split up based on  Basic , Advanced & Overseas
+// - Old Dungeon fee system removed, all dungeon fees now set to 0
+//= 2.0b - Special warpname menu option name bug fixed
+//= 2.1 - Updated names to fall within retrictions. [L0ne_W0lf]
+//= 2.2 - #kafra_code is now stored as is. [brianluau]
+//= 2.3 - Added new town maps, cleanup, and removed pre-1.8 backwards fix. [Euphy]
+//=================================================================
+
+//========================Function=&=Script========================
+
+function	script	Q_Warpra	{
+	mes "[沃普拉]";
+	mes "你好，";
+	mes "我可以把你传送到任何城镇或地下城，但你必须先拜访我们解锁它们。";
+	mes "你需要什么？";
+	
+	if(getarg(0) == 0) callfunc "QWS_MMarray",0;
+	if(getarg(0) == 1) callfunc "QWS_MMarray",1;
+	
+	set @MMenu,select(@Mmenulist$[0],@Mmenulist$[1],@Mmenulist$[2],@Mmenulist$[3],@Mmenulist$[4],@Mmenulist$[5],@Mmenulist$[6],@Mmenulist$[7],@Mmenulist$[8],@Mmenulist$[9],@Mmenulist$[10],@Mmenulist$[11]);
+
+	switch(@Mmenuref[@MMenu-1]+1){
+	case 1: goto GM_Menu;
+	case 2:
+		warp $QW_SP_WarpMap$, $QW_SP_WarpX, $QW_SP_WarpY;
+		close2;
+		debugmes "请检查沃普拉的特殊传送菜单设置。";
+		end;
+	case 3: goto L_town;
+	case 4: goto L_dungeon;
+	case 5: goto L_FewWarps;
+	case 6: goto L_NoUnlock;
+	case 7: goto L_heal_Full;
+	case 8: goto L_heal_Part;
+	case 9: goto L_Storage;
+	case 10: goto L_GStorage;
+	case 11:
+	default:
+		goto L_end;
+	}
+
+//=====================GM-Menu=Functions===========================
+
+GM_Menu:
+	next;
+	mes "城镇传送 = "+(($QW_TW_OFF)?"^FF0000 关":"^00FF00 开")+"^000000";
+	mes "地下城传送 = "+(($QW_DW_OFF)?"^FF0000 关":"^00FF00 开")+"^000000";
+	mes "地下城深度限制 = "+(($QW_DL)?"^00FF00 开":"^FF0000 关")+"^000000";
+	mes "开启时深度限制为 ^0000FF"+$QW_DDL+"^000000";
+	mes "显示地图用户 = "+(($QW_MapUserShow)?"^00FF00 开":"^FF0000 关")+"^000000";
+
+	if ($QW_HF) mes "完全治疗 = ^00FF00 开 ^000000";
+	if ($QW_HP) mes "部分治疗 = ^00FF00 开 ^000000";
+	if (!$QW_HF && !$QW_HP) mes "治疗 = ^FF0000 关 ^000000";
+
+	mes "仓库 = "+(($QW_Stor)?"^00FF00 开":"^FF0000 关")+"^000000";
+	mes "公会仓库 = "+(($QW_GStor)?"^00FF00 开":"^FF0000 关")+"^000000";
+	mes "收集卡普拉点数 = "+(($QW_KPoint)?"^00FF00 开":"^FF0000 关")+"^000000";
+
+	switch(select("城镇传送","地下城传送","地下城等级限制","显示地图用户","完全治疗","部分治疗","仓库","公会仓库","收集卡普拉点数","设置价格","特殊传送","退出")) {
+	case 1: set $QW_TW_OFF,($QW_TW_OFF)?0:1; goto GM_Menu;
+	case 2: set $QW_DW_OFF,($QW_DW_OFF)?0:1; goto GM_Menu;
+	case 3: goto DungeonLevelLimit;
+	case 4: set $QW_MapUserShow,($QW_MapUserShow)?0:1; goto GM_Menu;
+	case 5:
+		if ($QW_HF == 0) {
+			set $QW_HF,1;
+			set $QW_HP,0;
+		}
+		else set $QW_HF,0;
+		goto GM_Menu;
+	case 6:
+		if ($QW_HP == 0) {
+			set $QW_HP,1;
+			set $QW_HF,0;
+		}
+		else set $QW_HP,0;
+		goto GM_Menu;
+	case 7: set $QW_Stor,($QW_Stor)?0:1; goto GM_Menu;
+	case 8: set $QW_GStor,($QW_GStor)?0:1; goto GM_Menu;
+	case 9: set $QW_KPoint,($QW_KPoint)?0:1; goto GM_Menu;
+	case 10: goto Setprice;
+	case 11: goto SpecialWarpMenu;
+	default:
+		close;
+		end;
+	}
+
+//======================GM-Menu=Pricing============================
+
+Setprice:
+	if ($QW_DW_FEE != 0) set $QW_DW_FEE,0;
+	next;
+	mes "滚动列表查看所有选项。";
+
+	mes "基础传送价格 = "+(($QW_BW_PRICE)?"^00FF00"+$QW_BW_PRICE:"^FF0000免费")+"^000000";
+	mes "高级传送价格 = "+(($QW_AW_PRICE)?"^00FF00"+$QW_AW_PRICE:"^FF0000免费")+"^000000";
+	mes "海外传送价格 = "+(($QW_OW_PRICE)?"^00FF00"+$QW_OW_PRICE:"^FF0000免费")+"^000000";
+
+	mes "基础地下城每级传送费 = "+(($QW_BW_FEE)?"^00FF00"+$QW_BW_FEE:"^FF0000无")+"^000000 Zeny";
+	mes "高级地下城每级传送费 = "+(($QW_AW_FEE)?"^00FF00"+$QW_AW_FEE:"^FF0000无")+"^000000 Zeny";
+	mes "海外地下城每级传送费 = "+(($QW_OW_FEE)?"^00FF00"+$QW_OW_FEE:"^FF0000无")+"^000000 Zeny";
+
+	mes "完全治疗 = "+(($QW_HF_PRICE)?"^00FF00"+$QW_HF_PRICE:"^FF0000免费")+"^000000";
+	mes "^FF0000HP ^000000Part Healing = "+(($QW_HP_H_PRICE)?"^00FF00"+$QW_HP_H_PRICE+"^000000 a point":"^FF0000Free^000000");
+	mes "^FF0000SP ^000000Part Healing = "+(($QW_HP_S_PRICE)?"^00FF00"+$QW_HP_S_PRICE+"^000000 a point":"^FF0000Free^000000");
+
+	if ($QW_S_PRICE && $QW_S_PRICE != 60) mes "仓库 = ^00FF00 "+$QW_S_PRICE+" ^000000";
+	if (!$QW_S_PRICE) mes "仓库 = ^FF0000 免费 ^000000";
+	if ($QW_S_PRICE == 60) mes "仓库 = ^0000FF 卡普拉模式 ^000000";
+	mes "公会仓库 = "+(($QW_GS_PRICE)?"^00FF00"+$QW_GS_PRICE:"^FF0000免费")+"^000000";
+	
+	switch(select("基础传送","高级传送","海外传送","基础地下城传送费","高级地下城传送费","海外地下城传送费","完全治疗","部分治疗","仓库","公会仓库","返回","退出")) {
+	case 1:
+		next;
+		mes "基础传送价格 = "+(($QW_BW_PRICE)?"^00FF00"+$QW_BW_PRICE:"^FF0000免费")+"^000000";
+		mes "基础传送包括新手城镇及相关地下城。";
+		input $QW_BW_PRICE;
+		goto Setprice;
+	case 2:
+		next;
+		mes "高级传送价格 = "+(($QW_AW_PRICE)?"^00FF00"+$QW_AW_PRICE:"^FF0000免费")+"^000000";
+		mes "高级传送包括同岛上但远离新手城镇的城镇和地下城。";
+		input $QW_AW_PRICE;
+		goto Setprice;
+	case 3:
+		next;
+		mes "海外传送价格 = "+(($QW_OW_PRICE)?"^00FF00"+$QW_OW_PRICE:"^FF0000免费")+"^000000";
+		mes "海外传送包括从艾尔贝塔乘船可达的海外城镇和地下城。";
+		input $QW_OW_PRICE;
+		goto Setprice;
+	case 4:
+		next;
+		mes "基础地下城每级传送费 = "+(($QW_BW_FEE)?"^00FF00"+$QW_BW_FEE:"^FF0000无")+"^000000 Zeny";
+		mes "基础传送包括新手城镇相关地下城。";
+		mes "地下城传送费按距离入口的地图数乘以地下城传送费计算。";
+		mes "这些费用会叠加在普通传送费之上。";
+		input $QW_BW_FEE;
+		goto Setprice;
+	case 5:
+		next;
+		mes "高级地下城每级传送费 = "+(($QW_AW_FEE)?"^00FF00"+$QW_AW_FEE:"^FF0000无")+"^000000 Zeny";
+		mes "高级传送包括远离新手城镇的地下城。";
+		mes "地下城传送费按距离入口的地图数乘以地下城传送费计算。";
+		mes "这些费用会叠加在普通传送费之上。";
+		input $QW_AW_FEE;
+		goto Setprice;
+	case 6:
+		next;
+		mes "海外地下城每级传送费 = "+(($QW_OW_FEE)?"^00FF00"+$QW_OW_FEE:"^FF0000无")+"^000000 Zeny";
+		mes "海外传送包括从艾尔贝塔乘船可达的海外城镇相关地下城。";
+		mes "地下城传送费按距离入口的地图数乘以地下城传送费计算。";
+		mes "这些费用会叠加在普通传送费之上。";
+		input $QW_OW_FEE;
+		goto Setprice;
+	case 7:
+		next;
+		mes "完全治疗 = "+(($QW_HF_PRICE)?"^00FF00"+$QW_HF_PRICE:"^FF0000免费")+"^000000";
+		mes "瞬间完全治疗的价格。";
+		input $QW_HF_PRICE;
+		goto Setprice;
+	case 8:
+		next;
+		mes "^FF0000HP ^000000Part Healing = "+(($QW_HP_H_PRICE)?"^00FF00"+$QW_HP_H_PRICE+"^000000 a point":"^FF0000Free^000000");
+		mes "^FF0000SP ^000000Part Healing = "+(($QW_HP_S_PRICE)?"^00FF00"+$QW_HP_S_PRICE+"^000000 a point":"^FF0000Free^000000");
+		mes "每 1 HP 的治疗价格。";
+		mes "每 1 SP 的治疗价格。";
+		mes "输入两项，先 HP 后 SP。";
+		input $QW_HP_H_PRICE;
+		input $QW_HP_S_PRICE;
+		goto Setprice;
+	case 9:
+		next;
+		if ($QW_S_PRICE && $QW_S_PRICE != 60) mes "仓库 = ^00FF00 "+$QW_S_PRICE+" ^000000";
+		if (!$QW_S_PRICE) mes "仓库 = ^FF0000 免费 ^000000";
+		if ($QW_S_PRICE == 60) mes "仓库 = ^0000FF 卡普拉模式 ^000000";
+		mes "仓库费用；设置为 60 时使用卡普拉价格。";
+		input $QW_S_PRICE;
+		goto Setprice;
+	case 10:
+		next;
+		mes "公会仓库 = "+(($QW_GS_PRICE)?"^00FF00"+$QW_GS_PRICE:"^FF0000免费")+"^000000";
+		mes "公会卡普拉处的公会仓库免费。";
+		input $QW_GS_PRICE;
+		goto Setprice;
+	case 11:
+		goto GM_Menu;
+	default:
+		close;
+		end;
+	}
+
+//======================Special=Warp=Menu==========================
+
+SpecialWarpMenu:
+	if ($QW_SP_Warpname$ == "") set $QW_SP_Warpname$,"Special Warp";
+	next;
+	mes "向下滚动查看全部信息。";
+	mes "解锁所有城镇和地下城后，特殊传送选项会显示在主菜单。";
+	mes "并且必须设置特殊传送地图。";
+	mes "菜单选项名称为 ^0000FF"+$QW_SP_Warpname$+"^000000";
+	if ($QW_SP_WarpMap$ == "") mes "当前^FF0000未^000000设置地图，特殊传送菜单关闭。";
+	if ($QW_SP_WarpMap$ != "") mes "当前地图为 ^0000FF"+$QW_SP_WarpMap$+"^000000，特殊传送菜单开启。";
+	mes "坐标为 ^0000FF"+$QW_SP_WarpX+","+$QW_SP_WarpY+"^000000";
+	switch(select("设置菜单中的特殊传送名称", "设置传送地图","设置坐标","返回 GM 菜单","退出")){
+	case 1:
+		next;
+		mes "设置菜单中显示的选项名称。";
+		input $QW_SP_Warpname$;
+		goto SpecialWarpMenu;
+	case 2:
+		next;
+		mes "请使用 ^0000FF地图名^000000 格式设置地图。";
+		mes "设置传送地图后，玩家满足条件时会看到该选项。";
+		mes "要禁用特殊传送菜单，请清除此项！";
+		input $QW_SP_WarpMap$;
+		goto SpecialWarpMenu;
+	case 3:
+		next;
+		mes "第一个输入 = X 坐标";
+		mes "第二个输入 = Y 坐标";
+		input $QW_SP_WarpX;
+		input $QW_SP_WarpY;
+		goto SpecialWarpMenu;
+	case 4:
+		goto GM_Menu;
+	default:
+		close;
+		end;
+	}
+
+//======================Dungeon=Level=Limit========================
+
+DungeonLevelLimit:
+	next;
+	mes "地下城深度限制 = "+(($QW_DL)?"^00FF00开":"^FF0000关")+"^000000";
+	mes "如果^00FF00开启^000000，地下城深度限制为 ^0000FF"+$QW_DDL+"^000000";
+
+	switch(select("切换地下城深度限制","设置地下城深度限制","返回 GM 菜单","退出")){
+	case 1: set $QW_DL,($QW_DL)?0:1; goto DungeonLevelLimit;
+	case 2:
+		next;
+		mes "设置地下城深度上限，0 = 入口。";
+		mes "深度 1 是与 0 相连的地图，以此类推。";
+		mes "到地图的最短路线计为深度。";
+		input $QW_DDL;
+		goto DungeonLevelLimit;
+	case 3: goto GM_Menu;
+	default:
+		close;
+		end;
+	}
+
+//===========================Towns=================================
+
+L_town:
+	callfunc "QWS_Tarray";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<35; set .@i,.@i+1)	// Expected maximum is 35
+		set .@menu$,.@menu$+@Tmenulist$[.@i]+":";
+	freeloop(0);
+	set @TWMenu,select(.@menu$);
+
+	if (@Tmenuref[@TWMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+
+	if(Zeny<@pTprice[@Tmenuref[@TWMenu-1]]) callsub L_Short_on_zeny,0;
+	set Zeny, Zeny-@pTprice[@Tmenuref[@TWMenu-1]];
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@pTprice[@Tmenuref[@TWMenu-1]]/16);
+	warp @pTmap$[@Tmenuref[@TWMenu-1]],@pTXcoords[@Tmenuref[@TWMenu-1]],@pTYcoords[@Tmenuref[@TWMenu-1]];
+	close2;
+	set Zeny, Zeny+@pTprice[@Tmenuref[@TWMenu-1]];
+	end;
+
+//=========================Dungeons================================
+
+L_dungeon:
+	callfunc "QWS_Darray";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<35; set .@i,.@i+1)	// Expected maximum is 35
+		set .@menu$,.@menu$+@Dmenulist$[.@i]+":";
+	freeloop(0);
+	set @DWMenu,select(.@menu$);
+
+	if (@Dmenuref[@DWMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+	set @DwarpMenu, (@Dmenuref[@DWMenu-1]);
+	callfunc "QWS_DLarray";
+
+	next;
+	mes "[沃普拉]";
+	mes "请选择目的地：";
+	freeloop(1);
+	set .@menu$,"";
+	for(set .@i,0; .@i<18; set .@i,.@i+1)	// Expected maximum is 18
+		set .@menu$,.@menu$+@DWLmenulist$[.@i]+":";
+	freeloop(0);
+	set @DWLMenu,select(.@menu$);
+
+	if (@DWLmenuref[@DWLMenu-1] == 57005) goto L_end; // 57005='dead' in hex
+
+	set @Darrayref, @DWLmenuref[@DWLMenu-1];
+	set @warpprice, @pDprice[@Dmenuref[@DWMenu-1]]+(getd(@pDfee$[@Dmenuref[@DWMenu-1]])*(@DDepth[@Darrayref]));
+
+	if(Zeny<@warpprice) callsub L_Short_on_zeny,1;
+	set Zeny, Zeny-(@warpprice);
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@warpprice/16);
+	warp @DGat$[@Darrayref],@DXcoords[@Darrayref],@DYcoords[@Darrayref];
+	close2;
+	set Zeny, Zeny+@pTprice[@Tmenuref[@DWMenu-1]];
+	end;
+
+//=============================Healing=============================
+
+L_heal_Full:
+	set @healfee, $QW_HF_PRICE;
+	if(Zeny<@healfee) callsub L_Short_on_zeny,4;
+	set Zeny, Zeny-@healfee;
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@healfee/500);
+	next;
+	mes "[沃普拉]";
+	mes "关闭窗口后我会为你治疗。";
+	close2;
+	percentheal 100,100;
+	end;
+
+L_heal_Part:
+	set @healchoice,select("完全治疗","仅生命值","仅技能点","退出");
+	if (@healchoice == 1) callsub PHeal,1,1;
+	if (@healchoice == 2) callsub PHeal,1,0;
+	if (@healchoice == 3) callsub PHeal,0,1;
+	goto L_end;
+	
+PHeal:
+	next;
+	set @Hp, MaxHp-Hp;
+	set @Sp, MaxSp-Sp;
+	set @HpPrice, @hp*$QW_HP_H_PRICE;
+	set @SpPrice, @sp*$QW_HP_S_PRICE;
+	mes "[Warpra]";
+	if(getarg(0) == 1) mes ""+@HpPrice+" Zeny for "+@Hp+" health points";
+	if(getarg(1) == 1) mes ""+@SpPrice+" Zeny for "+@Sp+" skill points";
+	set @total, @HpPrice+@SpPrice;
+	mes "总计 "+@total+" Zeny";
+    	if (select("治疗我","让我重新查看选项")==2) goto L_heal_Part;
+    	
+    	if(getarg(0) == 1)set @HpPrice, (MaxHp-Hp)*$QW_HP_H_PRICE;
+	if(getarg(1) == 1)set @SpPrice, (MaxSp-Sp)*$QW_HP_S_PRICE;
+	set @healfee, @HpPrice+@SpPrice;
+	if (getarg(0) == 1)&&(getarg(1) == 1)&&(Zeny<@healfee) goto Zeny_Short_Both;
+	if (getarg(0) == 1)&&(Zeny<@healfee) goto Zeny_short_HP;
+	if (getarg(1) == 1)&&(Zeny<@healfee) goto Zeny_short_SP;
+	set Zeny, Zeny-@healfee;
+	if (getarg(0) == 1)&&(getarg(1) == 1) percentheal 100,100;
+	if (getarg(0) == 1) percentheal 100,0;
+	if (getarg(1) == 1) percentheal 0,100;
+	close;
+	end;
+
+Zeny_Short_Both:
+	mes "[沃普拉]";
+	mes "选择另一个选项，你两种都付得起。";
+	mes "我也可以治疗到你能负担的程度。";
+	if (select("确定","退出") == 2) goto L_end;
+	goto PHeal;
+
+Zeny_short_HP:
+	mes "[沃普拉]";
+	mes "要我部分治疗你的生命值吗？";
+	if (select("是","否") == 2) goto L_end;
+	set @Hp, Zeny/$QW_HP_H_PRICE;
+    	set @HpPrice, @Hp*$QW_HP_H_PRICE;
+    	if (@Hp == 1) mes "你不值得花费这份力气。";
+    	if (@Hp == 1) goto L_end;
+    	set Zeny, Zeny-@HpPrice;
+	heal @Hp,0;
+	close;
+	end;
+
+Zeny_short_SP:
+	mes "[沃普拉]";
+	mes "要我部分治疗你的技能点吗？";
+	if (select("是","否") == 2) goto L_end;
+	set @Sp, Zeny/$QW_HP_S_PRICE;
+    	set @SpPrice, @Sp*$QW_HP_S_PRICE;
+    	if (@Sp == 1) mes "你不值得花费这份力气。";
+    	if (@Sp == 1) goto L_end;
+    	set Zeny, Zeny-@SpPrice;
+	heal 0,@Sp;
+	close;
+	end;
+
+//=============================Storage=============================
+
+L_Storage:
+	next;
+	if(!callfunc("F_CanOpenStorage")) goto L_StorageJBlow;
+	set @fee, $QW_S_PRICE;
+	if ($QW_S_PRICE == 60)&&(BaseJob == Job_Novice) set @fee, 30;
+	if ($QW_S_PRICE == 60)&&(BaseJob != Job_Novice) set @fee, 60;
+	if(Zeny<@fee) callsub L_Short_on_zeny,2;
+	set Zeny, Zeny-@fee;
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + (@fee/5);
+
+	mes "[Warpra]";
+	if(#kafra_code) {
+		mes "请输入仓库密码：";
+		set @code_,0;
+		input @code_;
+		if(@code_ != #kafra_code) {
+			dispbottom "仓库密码错误。";
+			close;
+		}
+		set @kafcode_try,0;
+		set @code_,0;
+	}
+	mes "关闭窗口后我会打开仓库。";
+	close2;
+	openstorage;
+	end;
+
+L_StorageJBlow:
+	mes "[Warpra]";
+	mes "抱歉，至少达到初心者 6 级才能使用仓库。";
+	return;
+
+L_GStorage:
+	if (!@GID) {
+		next;
+		mes "[Warpra]";
+		mes "你不属于任何公会，我无法帮助你。";
+		close;
+		end;
+	}
+	if (Zeny<$QW_GS_PRICE) callsub L_Short_on_zeny,3;
+	set Zeny, Zeny-$QW_GS_PRICE;
+	if ($QW_KPoint == 1) set RESRVPTS, RESRVPTS + ($QW_GS_PRICE/5);
+	next;
+	mes "[Warpra]";
+	mes "关闭窗口后我会打开 ^5533FF" + GetGuildName(@GID) + "^000000 公会仓库。";
+	close2;
+	guildopenstorage;
+	end;
+	
+L_end:
+	close;
+	end;
+
+//============================Few=Warp=============================
+L_FewWarps:
+	next;
+	mes "[Warpra]";
+	mes "你需要先解锁地点，才能使用它们。";
+	mes "要解锁地点，请与遍布世界各地的同事交谈。";
+	mes "每个账号都有自己的印章卡。";
+	mes "要我查看你目前收集的印章吗？";
+	if (select("是","否")==1) callsub stampcard;
+	close;
+	end;
+
+//============================No=Unlock============================
+L_NoUnlock:
+	next;
+	mes "[Warpra]";
+	mes "我不会解锁这个地点，地牢深处的助手会为你解锁。";
+	close;
+	end;
+	
+//=========================Short=On=Zeny===========================
+L_Short_on_zeny:
+	next;
+	switch(getarg(0)) {
+	case 0: mes "你的 Zeny 似乎不够支付前往 "+@pTmenuitems$[@Tmenuref[@TWMenu-1]]+" 的传送费。"; break;
+	case 1: mes "你的 Zeny 似乎不够支付前往 "+@DLevelName$[@DWLmenuref[@DWLMenu-1]]+"（位于 "+@pDmenuitems$[@Dmenuref[@DWMenu-1]]+"）的传送费。"; break;
+	case 2: mes "你的 Zeny 似乎不够支付仓储费。"; break;
+	case 3: mes "你的 Zeny 似乎不够支付公会仓库费。"; break;
+	case 4: mes "你的 Zeny 似乎不够支付治疗费。"; break;
+	}
+	close;
+	end;
+	
+//===========================Stamp=Card============================
+stampcard:
+// Counting of the amount of places you have unlocked
+	next;
+	mes "让我查看你解锁了哪些城镇。";
+	callfunc "QWS_TownStamps";
+	mes "你收集了^00FF00 "+@Tstamp+" / "+@MaxTstamp+" ^000000个城镇印章。";
+	if (@Tstamp == 15) {
+		mes "据说有座岛只有结婚后才能到达……";
+		emotion ET_SMILE;
+	}
+	next;
+	mes "让我查看你解锁了哪些地牢。";
+	callfunc "QWS_DungeonStamps";
+	mes "你收集了^00FF00 "+@Dstamp+" / "+@MaxDstamp+" ^000000个地牢印章。";
+	mes "要解锁地牢，请寻找我的同事。";
+	mes "通常可以在地牢中段或末尾找到他们。";
+	return;
+}
+
+function	script	QWS_TownStamps	{
+	set @Tstamp,0;
+	set @MaxTstamp,30; //maximum number of towns
+	set @binvalue,1;
+	set @Tstamploop,0;
+	do {
+		if ((@binvalue & ##QWS_T_Unlock) == @binvalue) set @Tstamp,@Tstamp+1;
+		set @binvalue, @binvalue *2;
+		set @Tstamploop, @Tstamploop + 1;
+	} while (@Tstamploop < @MaxTstamp);
+	return;
+}
+
+function	script	QWS_DungeonStamps	{
+	set @Dstamp,0;
+	set @MaxDstamp,29; //maximum number of dungeons
+	set @binvalue,1;
+	set @Dstamploop,0;
+	do {
+		if ((@binvalue & ##QWS_D_Unlock) == @binvalue) set @Dstamp,@Dstamp+1;
+		set @binvalue, @binvalue *2;
+		set @Dstamploop, @Dstamploop + 1;
+	} while (@Dstamploop < @MaxDstamp);
+	return;
+}
+
+//======================Main=Menu=Array============================
+
+function	script	QWS_MMarray	{
+
+	// Currently 9 items
+	setarray @pMmenuitems$[0], "GM 菜单", $QW_SP_Warpname$, "传送到城镇", "传送到地牢", "为什么只有这么少的传送点？", "为什么不解锁这个地点？", "治疗", "治疗", "仓库", "公会仓库", "取消";
+	set @Mi,0; // loop counter
+	set @Mj,0; // menu line counter
+
+//----------------GameMaster-Menu
+	if (getgmlevel()>= 80) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Special-Warp
+	callfunc "QWS_TownStamps";
+	callfunc "QWS_DungeonStamps";
+	if (@Tstamp == @MaxTstamp)&&(@Dstamp == @MaxDstamp)&&($QW_SP_WarpMap$ != "") {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Town-Warp
+	if ($QW_TW_OFF == 0) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Dungeon-Warp
+	if ($QW_DW_OFF == 0) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Why-So-Few-Warps
+	set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+	set @Mmenuref[@Mj],@Mi;
+	set @Mj,@Mj+1;
+	set @Mi,@Mi+1;
+//----------------No-Unlock
+	if (getarg(0) == 1) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Healfull
+	if ($QW_HF == 1) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Healpart
+	if ($QW_HP == 1) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Storage
+	if ($QW_Stor == 1) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------GuildStorage
+	if ($QW_GStor == 1) {
+		set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+		set @Mmenuref[@Mj],@Mi;
+		set @Mj,@Mj+1;
+	}
+	set @Mi,@Mi+1;
+//----------------Cancel
+	set @Mmenulist$[@Mj],@pMmenuitems$[@Mi];
+	set @Mmenuref[@Mj],@Mi;
+	return;
+}
+
+//======================Town=Menu=Array============================
+// Adding a town:
+//	setarray @pTmenuitems$[@Ti], "Prontera";// Name of Town shown in Town select Menu
+//	setarray @pTprice[@Ti], $QW_BW_PRICE;	// Warp prices: Basic ($QW_BW_PRICE), Advanced ($QW_AW_PRICE), Overseas ($QW_OW_PRICE)
+//
+//	setarray @pTmap$[@Ti], "prontera";	// Map name
+//	setarray @pTXcoords[@Ti], 156;		// X warp coords
+//	setarray @pTYcoords[@Ti], 187;		// Y warp coords
+//
+//	QWS_Make_Town_Menu 0;	// Use a free number (last used is 30, Eclage)
+//
+// Adding a warpra:
+//	map,x,y,facing	script	Warpra#example	113,{
+//		callfunc "QWS_Town_Warpra",<town number>,"Your Town";
+//		close;
+//	}
+//	Town number is the same as "QWS_Make_Town_Menu".
+//==================================================================
+
+function	script	QWS_Tarray	{
+	function QWS_Make_Town_Menu;
+
+	set @Ti,0; // loop counter
+	set @Tj,0; // menu lines counter
+
+//----------------Prontera
+	setarray @pTmenuitems$[@Ti], "Prontera";
+	setarray @pTprice[@Ti], $QW_BW_PRICE;
+
+	setarray @pTmap$[@Ti], "prontera";
+	setarray @pTXcoords[@Ti], 156;
+	setarray @pTYcoords[@Ti], 187;
+
+	QWS_Make_Town_Menu 0;
+//----------------Alberta
+	setarray @pTmenuitems$[@Ti], "Alberta";
+	setarray @pTprice[@Ti], $QW_BW_PRICE;
+
+	setarray @pTmap$[@Ti], "alberta";
+	setarray @pTXcoords[@Ti], 27;
+	setarray @pTYcoords[@Ti], 236;
+
+	QWS_Make_Town_Menu 1;
+//----------------Aldebaran
+	setarray @pTmenuitems$[@Ti], "Aldebaran";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "aldebaran";
+	setarray @pTXcoords[@Ti], 145;
+	setarray @pTYcoords[@Ti], 120;
+
+	QWS_Make_Town_Menu 2;
+//----------------Amatsu:
+	setarray @pTmenuitems$[@Ti], "Amatsu";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "amatsu";
+	setarray @pTXcoords[@Ti], 197;
+	setarray @pTYcoords[@Ti], 86;
+
+	QWS_Make_Town_Menu 3;
+//----------------Ayothaya:
+	setarray @pTmenuitems$[@Ti], "Ayothaya";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "ayothaya";
+	setarray @pTXcoords[@Ti], 150;
+	setarray @pTYcoords[@Ti], 57;
+
+	QWS_Make_Town_Menu 4;
+//----------------Brasilis:
+	setarray @pTmenuitems$[@Ti], "Brasilis";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "brasilis";
+	setarray @pTXcoords[@Ti], 195;
+	setarray @pTYcoords[@Ti], 220;
+
+	QWS_Make_Town_Menu 21;
+//----------------Comodo:
+	setarray @pTmenuitems$[@Ti], "Comodo";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "comodo";
+	setarray @pTXcoords[@Ti], 188;
+	setarray @pTYcoords[@Ti], 161;
+
+	QWS_Make_Town_Menu 5;
+//----------------Dewata:
+	setarray @pTmenuitems$[@Ti], "Dewata";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "dewata";
+	setarray @pTXcoords[@Ti], 199;
+	setarray @pTYcoords[@Ti], 179;
+
+	QWS_Make_Town_Menu 29;
+//----------------Eclage:
+	setarray @pTmenuitems$[@Ti], "Eclage";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "eclage";
+	setarray @pTXcoords[@Ti], 111;
+	setarray @pTYcoords[@Ti], 39;
+
+	QWS_Make_Town_Menu 30;
+//----------------Einbech:
+	setarray @pTmenuitems$[@Ti], "Einbech";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "einbech";
+	setarray @pTXcoords[@Ti], 172;
+	setarray @pTYcoords[@Ti], 126;
+
+	QWS_Make_Town_Menu 6;
+//----------------Einbroch:
+	setarray @pTmenuitems$[@Ti], "Einbroch";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "einbroch";
+	setarray @pTXcoords[@Ti], 230;
+	setarray @pTYcoords[@Ti], 191;
+
+	QWS_Make_Town_Menu 7;
+//----------------El Dicastes:
+	setarray @pTmenuitems$[@Ti], "El Dicastes";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "dicastes01";
+	setarray @pTXcoords[@Ti], 197;
+	setarray @pTYcoords[@Ti], 187;
+
+	QWS_Make_Town_Menu 22;
+//----------------Geffen:
+	setarray @pTmenuitems$[@Ti], "Geffen";
+	setarray @pTprice[@Ti], $QW_BW_PRICE;
+
+	setarray @pTmap$[@Ti], "geffen";
+	setarray @pTXcoords[@Ti], 119;
+	setarray @pTYcoords[@Ti], 66;
+
+	QWS_Make_Town_Menu 8;
+//----------------Kunlun:
+	setarray @pTmenuitems$[@Ti], "Kunlun";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "gonryun";
+	setarray @pTXcoords[@Ti], 150;
+	setarray @pTYcoords[@Ti], 130;
+
+	QWS_Make_Town_Menu 9;
+//----------------Hugel:
+	setarray @pTmenuitems$[@Ti], "Hugel";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "hugel";
+	setarray @pTXcoords[@Ti], 95;
+	setarray @pTYcoords[@Ti], 121;
+
+	QWS_Make_Town_Menu 10;
+//----------------Izlude:
+	setarray @pTmenuitems$[@Ti], "Izlude";
+	setarray @pTprice[@Ti], $QW_BW_PRICE;
+
+	setarray @pTmap$[@Ti], "izlude";
+	setarray @pTXcoords[@Ti], 128;
+	setarray @pTYcoords[@Ti], 111;
+
+	QWS_Make_Town_Menu 11;
+//----------------Jawaii:
+	setarray @pTmenuitems$[@Ti], "Jawaii";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "jawaii";
+	setarray @pTXcoords[@Ti], 243;
+	setarray @pTYcoords[@Ti], 115;
+
+	QWS_Make_Town_Menu 12;
+//----------------Lighthalzen:
+	setarray @pTmenuitems$[@Ti], "Lighthalzen";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "lighthalzen";
+	setarray @pTXcoords[@Ti], 158;
+	setarray @pTYcoords[@Ti], 110;
+
+	QWS_Make_Town_Menu 13;
+//----------------Luoyang:
+	setarray @pTmenuitems$[@Ti], "Luoyang";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "louyang";
+	setarray @pTXcoords[@Ti], 210;
+	setarray @pTYcoords[@Ti], 108;
+
+	QWS_Make_Town_Menu 14;
+//----------------Lutie
+	setarray @pTmenuitems$[@Ti], "Lutie";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "xmas";
+	setarray @pTXcoords[@Ti], 148;
+	setarray @pTYcoords[@Ti], 131;
+
+	QWS_Make_Town_Menu 15;
+//----------------Manuk
+	setarray @pTmenuitems$[@Ti], "Manuk";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "manuk";
+	setarray @pTXcoords[@Ti], 260;
+	setarray @pTYcoords[@Ti], 175;
+
+	QWS_Make_Town_Menu 23;
+//----------------Mora
+	setarray @pTmenuitems$[@Ti], "Mora";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "mora";
+	setarray @pTXcoords[@Ti], 111;
+	setarray @pTYcoords[@Ti], 97;
+
+	QWS_Make_Town_Menu 24;
+//----------------Morocc:
+	setarray @pTmenuitems$[@Ti], "Morocc";
+	setarray @pTprice[@Ti], $QW_BW_PRICE;
+
+	setarray @pTmap$[@Ti], "morocc";
+	setarray @pTXcoords[@Ti], 159;
+	setarray @pTYcoords[@Ti], 93;
+
+	QWS_Make_Town_Menu 16;
+//----------------Moscovia
+	setarray @pTmenuitems$[@Ti], "Moscovia";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "moscovia";
+	setarray @pTXcoords[@Ti], 219;
+	setarray @pTYcoords[@Ti], 193;
+
+	QWS_Make_Town_Menu 25;
+//----------------Niflheim:
+	setarray @pTmenuitems$[@Ti], "Niflheim";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "niflheim";
+	setarray @pTXcoords[@Ti], 195;
+	setarray @pTYcoords[@Ti], 186;
+
+	QWS_Make_Town_Menu 17;
+//----------------Payon:
+	setarray @pTmenuitems$[@Ti], "Payon";
+	setarray @pTprice[@Ti], $QW_BW_PRICE;
+
+	setarray @pTmap$[@Ti], "payon";
+	setarray @pTXcoords[@Ti], 152;
+	setarray @pTYcoords[@Ti], 75;
+
+	QWS_Make_Town_Menu 18;
+//----------------Rachel
+	setarray @pTmenuitems$[@Ti], "Rachel";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "rachel";
+	setarray @pTXcoords[@Ti], 130;
+	setarray @pTYcoords[@Ti], 111;
+
+	QWS_Make_Town_Menu 26;
+//----------------Splendide
+	setarray @pTmenuitems$[@Ti], "Splendide";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "splendide";
+	setarray @pTXcoords[@Ti], 200;
+	setarray @pTYcoords[@Ti], 153;
+
+	QWS_Make_Town_Menu 27;
+//----------------Umbala:
+	setarray @pTmenuitems$[@Ti], "Umbala";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "umbala";
+	setarray @pTXcoords[@Ti], 130;
+	setarray @pTYcoords[@Ti], 130;
+
+	QWS_Make_Town_Menu 19;
+//----------------Veins
+	setarray @pTmenuitems$[@Ti], "Veins";
+	setarray @pTprice[@Ti], $QW_OW_PRICE;
+
+	setarray @pTmap$[@Ti], "veins";
+	setarray @pTXcoords[@Ti], 216;
+	setarray @pTYcoords[@Ti], 123;
+
+	QWS_Make_Town_Menu 28;
+//----------------Juno:
+	setarray @pTmenuitems$[@Ti], "Juno";
+	setarray @pTprice[@Ti], $QW_AW_PRICE;
+
+	setarray @pTmap$[@Ti], "yuno";
+	setarray @pTXcoords[@Ti], 160;
+	setarray @pTYcoords[@Ti], 168;
+
+	QWS_Make_Town_Menu 20;
+//----------------Cancel
+	setarray @pTmenuitems$[@Ti], "Cancel";
+	setarray @pTprice[@Ti], 0;
+
+	set @Tmenulist$[@Tj],@pTmenuitems$[@Ti];
+	set @Tmenuref[@Tj],57005; // 57005='dead' in hex
+	return;
+
+
+//----------------Make Town Menu Function
+
+function	QWS_Make_Town_Menu	{
+	set @temptownmenubin,1;
+	if (getarg(0) == 0) goto menu_item;
+	set @templooptownmenu,0;
+	do {
+		set @temptownmenubin, @temptownmenubin * 2;
+		set @templooptownmenu, @templooptownmenu + 1;
+		}while (getarg(0) > @templooptownmenu);
+// check marker and make menu item
+menu_item:
+	if ((@temptownmenubin & ##QWS_T_Unlock) != @temptownmenubin) {
+		set @Ti,@Ti+1;
+		return;
+	}
+	if (@pTprice[@Ti] != 0)&&($QW_MapUserShow == 0) set @Tmenulist$[@Tj], @pTmenuitems$[@Ti]+" -> "+@pTprice[@Ti];
+	if (@pTprice[@Ti] == 0)&&($QW_MapUserShow == 0) set @Tmenulist$[@Tj], @pTmenuitems$[@Ti];
+	if (@pTprice[@Ti] != 0)&&($QW_MapUserShow == 1) set @Tmenulist$[@Tj], @pTmenuitems$[@Ti]+" ["+getmapusers(@pTmap$[@Ti])+"]"+" -> "+@pTprice[@Ti];
+	if (@pTprice[@Ti] == 0)&&($QW_MapUserShow == 1) set @Tmenulist$[@Tj], @pTmenuitems$[@Ti]+" ["+getmapusers(@pTmap$[@Ti])+"]";
+	set @Tmenuref[@Tj],@Ti;
+	set @Tj,@Tj+1;
+	set @Ti,@Ti+1;
+	return;
+}
+}
+
+//====================Dungeon=Menu=Arrays==========================
+// Adding a dungeon:
+//	setarray @pDmenuitems$[@Di], "Abyss Lake";	// Name of Dungeon shown in Dungeon select Menu
+//	setarray @pDprice[@Di], $QW_AW_PRICE;		// Warp prices: Basic ($QW_BW_PRICE), Advanced ($QW_AW_PRICE), Overseas ($QW_OW_PRICE)
+//	setarray @pDfee$[@Di], "$QW_AW_FEE";		// Identifier for fee caluclation: Basic ("$QW_BW_FEE"), Advanced ("$QW_AW_FEE"), Overseas ("$QW_OW_FEE")
+//	setarray @DLevels[@Di], 3;			// Number of levels in dungeon
+//
+//	setarray @DGat$[@Dref], "abyss_01", "abyss_02", "abyss_03";	// Map names of dungeon levels
+//	setarray @DLevelName$[@Dref], "Level 1", "Level 2", "Level 3";	// Name of dungeon levels shown in Menu
+//	setarray @DXcoords[@Dref], 265, 275, 116;			// X warp coords
+//	setarray @DYcoords[@Dref], 273, 270, 27;			// Y warp coords
+//	setarray @DDepth[@Dref], 0, 1, 2;				// Relative depth to entrance, to calculate extra warp fee
+//
+//	QWS_Make_Dungeon_Menu 0;	// Use a free number (last used is 28, Kiel Dungeon)
+//
+// Adding a warpra:
+//	map,x,y,facing	script	Warpra Helper#example	112,{
+//		callfunc "QWS_Dungeon_Warpra",<dungeon number>,"Your Dungeon";
+//		close;
+//	}
+//	Dungeon number is the same as "QWS_Make_Dungeon_Menu".
+//==================================================================
+
+function	script	QWS_Darray	{
+	function QWS_Make_Dungeon_Menu;
+
+	set @Di,0;
+	set @Dj,0;
+	set @Dref,0;
+
+//----------------ABYSS LAKE
+	setarray @pDmenuitems$[@Di], "深渊湖";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 3;
+
+	setarray @DGat$[@Dref], "abyss_01", "abyss_02", "abyss_03";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层";
+	setarray @DXcoords[@Dref], 265, 275, 116;
+	setarray @DYcoords[@Dref], 273, 270, 27;
+	setarray @DDepth[@Dref], 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 0;
+
+//----------------AMATSU DUNGEON
+	setarray @pDmenuitems$[@Di], "天津町地下城";
+	setarray @pDprice[@Di], $QW_OW_PRICE;
+	setarray @pDfee$[@Di], "$QW_OW_FEE";
+	setarray @DLevels[@Di], 3;
+
+	setarray @DGat$[@Dref], "ama_dun01", "ama_dun02", "ama_dun03";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层";
+	setarray @DXcoords[@Dref], 227, 32, 119;
+	setarray @DYcoords[@Dref], 10, 43, 15;
+	setarray @DDepth[@Dref], 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 1;
+
+//----------------ANT HELL
+	setarray @pDmenuitems$[@Di], "蚂蚁地狱地下城"; 
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[2], 2;
+
+	setarray @DGat$[@Dref], "anthell01", "anthell02";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层";
+	setarray @DXcoords[@Dref], 32, 34;
+	setarray @DYcoords[@Dref], 262, 263;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 2;
+
+//----------------AYOTHAYA
+	setarray @pDmenuitems$[@Di], "阿育王町地下城";
+	setarray @pDprice[@Di], $QW_OW_PRICE;
+	setarray @pDfee$[@Di], "$QW_OW_FEE";
+	setarray @DLevels[3], 2;
+
+	setarray @DGat$[@Dref], "ayo_dun01", "ayo_dun02";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层";
+	setarray @DXcoords[@Dref], 275, 150;
+	setarray @DYcoords[@Dref], 17, 13;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 3;
+
+//----------------BYALAN
+	setarray @pDmenuitems$[@Di], "拜亚兰地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[4], 5;
+
+	setarray @DGat$[@Dref], "iz_dun00", "iz_dun01", "iz_dun02", "iz_dun03", "iz_dun04";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层", "第 5 层";
+	setarray @DXcoords[@Dref], 168, 41, 236, 32, 26;
+	setarray @DYcoords[@Dref], 168, 37, 204, 63, 27;
+	setarray @DDepth[@Dref], 0, 1, 2, 3, 4;
+
+	QWS_Make_Dungeon_Menu 4;
+
+//----------------CLOCK TOWER
+	setarray @pDmenuitems$[@Di], "钟楼地下城";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[5], 8;
+
+	setarray @DGat$[@Dref], "c_tower1", "c_tower2", "c_tower3", "c_tower4", "alde_dun01", "alde_dun02", "alde_dun03", "alde_dun04";
+	setarray @DLevelName$[@Dref], "钟楼第 1 层", "钟楼第 2 层", "钟楼第 3 层", "钟楼第 4 层", "地下 1 层", "地下 2 层", "地下 3 层", "地下 4 层";
+	setarray @DXcoords[@Dref], 200, 268, 64, 32, 197, 262, 276, 122;
+	setarray @DYcoords[@Dref], 163, 26, 148, 63, 25, 41, 53, 125;
+	setarray @DDepth[@Dref], 0, 1, 2, 3, 1, 2, 3, 4;
+
+	QWS_Make_Dungeon_Menu 5;
+
+//----------------COAL MINE
+	setarray @pDmenuitems$[@Di], "矿山地下城";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[6], 3;
+
+	setarray @DGat$[@Dref], "mjo_dun01", "mjo_dun02", "mjo_dun03";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层";
+	setarray @DXcoords[@Dref], 52, 381, 302;
+	setarray @DYcoords[@Dref], 17, 343, 261;
+	setarray @DDepth[@Dref], 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 6;
+
+//----------------CULVERT
+	setarray @pDmenuitems$[@Di], "下水道地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[7], 4;
+
+	setarray @DGat$[@Dref], "prt_sewb1", "prt_sewb2", "prt_sewb3", "prt_sewb4";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层";
+	setarray @DXcoords[@Dref], 132, 19, 180, 100;
+	setarray @DYcoords[@Dref], 248, 19, 169, 92;
+	setarray @DDepth[@Dref], 0, 1, 2, 3;
+
+	QWS_Make_Dungeon_Menu 7;
+
+//----------------EINBECH DUNGEON
+	setarray @pDmenuitems$[@Di], "艾因贝赫地下城";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[8], 2;
+
+	setarray @DGat$[@Dref], "ein_dun01", "ein_dun02";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层";
+	setarray @DXcoords[@Dref], 22, 292;
+	setarray @DYcoords[@Dref], 14, 290;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 8;
+
+//----------------GEFENIA DUNGEON
+	setarray @pDmenuitems$[@Di], "吉芬尼亚地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[9], 4;
+
+	setarray @DGat$[@Dref], "gefenia01", "gefenia02", "gefenia03", "gefenia04";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层";
+	setarray @DXcoords[@Dref], 59, 201, 264, 33;
+	setarray @DYcoords[@Dref], 167, 35, 236, 270;
+	setarray @DDepth[@Dref], 0, 1, 2, 3;
+
+	QWS_Make_Dungeon_Menu 9;
+
+//----------------GEFFEN DUNGEON
+	setarray @pDmenuitems$[@Di], "吉芬地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 4;
+
+	setarray @DGat$[@Dref], "gef_dun00", "gef_dun01", "gef_dun02", "gef_dun03";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层";
+	setarray @DXcoords[@Dref], 104, 115, 106, 203;
+	setarray @DYcoords[@Dref], 100, 236, 132, 200;
+	setarray @DDepth[@Dref], 0, 1, 2, 3;
+
+	QWS_Make_Dungeon_Menu 10;
+
+//----------------GLAST HEIM
+	setarray @pDmenuitems$[@Di], "古城地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 17;
+
+	setarray @DGat$[@Dref], "glast_01", "gl_church", "gl_chyard", "gl_in01", "gl_cas01", "gl_cas02", "gl_knt01", "gl_knt02", "gl_prison", "gl_prison1", "gl_step", "gl_sew01", "gl_sew02", "gl_sew03", "gl_sew04", "gl_dun01", "gl_dun02";
+	setarray @DLevelName$[@Dref], "古城入口", "圣堂", "墓园", "古城内部", "城堡 1", "城堡 2", "骑士团 1", "骑士团 2", "监狱 1", "监狱 2", "阶梯", "下水道 1", "下水道 2", "下水道 3", "下水道 4", "最下层洞穴 1", "最下层洞穴 2";
+	setarray @DXcoords[@Dref], 370, 156, 147, 121, 199, 104, 150, 157, 14, 150, 117, 258, 108, 171, 68, 133, 224;
+	setarray @DYcoords[@Dref], 300, 8, 15, 59, 29, 25, 10, 287, 70, 14, 124, 255, 291, 273, 277, 271, 274;
+	setarray @DDepth[@Dref], 0, 1, 2, 1, 1, 2, 1, 2, 2, 3, 1, 4, 2, 3, 4, 5, 6;
+
+	QWS_Make_Dungeon_Menu 11;
+
+//----------------KUNLUN DUNGEON
+	setarray @pDmenuitems$[@Di], "昆仑地下城";
+	setarray @pDprice[@Di], $QW_OW_PRICE;
+	setarray @pDfee$[@Di], "$QW_OW_FEE";
+	setarray @DLevels[@Di], 3;
+
+	setarray @DGat$[@Dref], "gon_dun01", "gon_dun02", "gon_dun03";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层";
+	setarray @DXcoords[@Dref], 143, 17, 68;
+	setarray @DYcoords[@Dref], 59, 114, 9;
+	setarray @DDepth[@Dref], 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 12;
+
+//----------------HIDDEN DUNGEON
+	setarray @pDmenuitems$[@Di], "隐藏地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 3;
+
+	setarray @DGat$[@Dref], "prt_maze01", "prt_maze02", "prt_maze03";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层";
+	setarray @DXcoords[@Dref], 176, 94, 23;
+	setarray @DYcoords[@Dref], 6, 19, 8;
+	setarray @DDepth[@Dref], 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 13;
+
+//----------------JUPEROS CAVE
+	setarray @pDmenuitems$[@Di], "朱彼洛斯洞穴";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 2;
+
+	setarray @DGat$[@Dref], "juperos_01", "juperos_02";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层";
+	setarray @DXcoords[@Dref], 53, 36;
+	setarray @DYcoords[@Dref], 247, 60;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 14;
+
+//----------------KIEL DUNGEON
+	setarray @pDmenuitems$[@Di], "基尔地下城";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 2;
+
+	setarray @DGat$[@Dref], "kh_dun01", "kh_dun02";
+	setarray @DLevelName$[@Dref], "1st Floor", "2nd Floor";
+	setarray @DXcoords[@Dref], 63, 42;
+	setarray @DYcoords[@Dref], 10, 197;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 28;
+
+//----------------LIGHTHALZEN BIO LAB
+	setarray @pDmenuitems$[@Di], "里希塔乐生化实验室";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 3;
+
+	setarray @DGat$[@Dref], "lhz_dun01", "lhz_dun02", "lhz_dun03";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层";
+	setarray @DXcoords[@Dref], 150, 150, 140;
+	setarray @DYcoords[@Dref], 287, 18, 137;
+	setarray @DDepth[@Dref], 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 15;
+
+//----------------LOUYANG DUNGEON
+	setarray @pDmenuitems$[@Di], "洛阳地下城";
+	setarray @pDprice[@Di], $QW_OW_PRICE;
+	setarray @pDfee$[@Di], "$QW_OW_FEE";
+	setarray @DLevels[@Di], 2;
+
+	setarray @DGat$[@Dref], "lou_dun02", "lou_dun03";
+	setarray @DLevelName$[@Dref], "王陵第 1 层", "王陵第 2 层";
+	setarray @DXcoords[@Dref], 282, 165;
+	setarray @DYcoords[@Dref], 20, 38;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 16;
+
+//----------------MAGMA DUNGEON
+	setarray @pDmenuitems$[@Di], "熔岩地下城";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 2;
+
+	setarray @DGat$[@Dref], "mag_dun01", "mag_dun02";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层";
+	setarray @DXcoords[@Dref], 126, 47;
+	setarray @DYcoords[@Dref], 69, 32;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 17;
+
+//----------------ODIN TEMPLE
+	setarray @pDmenuitems$[@Di], "奥丁神殿";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 1;
+
+	setarray @DGat$[@Dref], "odin_tem01";
+	setarray @DLevelName$[@Dref], "第 1 层";
+	setarray @DXcoords[@Dref], 96;
+	setarray @DYcoords[@Dref], 145;
+	setarray @DDepth[@Dref], 0;
+
+	QWS_Make_Dungeon_Menu 18;
+
+//----------------ORC DUNGEON
+	setarray @pDmenuitems$[@Di], "兽人地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 2;
+
+	setarray @DGat$[@Dref], "orcsdun01", "orcsdun02";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层";
+	setarray @DXcoords[@Dref], 32, 21;
+	setarray @DYcoords[@Dref], 169, 185;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 19;
+
+//----------------PAYON DUNGEON
+	setarray @pDmenuitems$[@Di], "帕扬地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 5;
+
+	setarray @DGat$[@Dref], "pay_dun00", "pay_dun01", "pay_dun02", "pay_dun03", "pay_dun04";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层", "第 5 层";
+	setarray @DXcoords[@Dref], 22, 19, 19, 155, 201;
+	setarray @DYcoords[@Dref], 180, 33, 63, 159, 204;
+	setarray @DDepth[@Dref], 0, 1, 2, 3, 4;
+
+	QWS_Make_Dungeon_Menu 20;
+
+//----------------PYRAMIDS
+	setarray @pDmenuitems$[@Di], "金字塔地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 6;
+
+	setarray @DGat$[@Dref], "moc_pryd01", "moc_pryd02", "moc_pryd03", "moc_pryd04", "moc_pryd05", "moc_pryd06";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层", "地下 1 层", "地下 2 层";
+	setarray @DXcoords[@Dref], 192, 10, 100, 181, 94, 192;
+	setarray @DYcoords[@Dref], 9, 192, 92, 11, 96, 8;
+	setarray @DDepth[@Dref], 0, 1, 2, 3, 1, 2;
+
+	QWS_Make_Dungeon_Menu 21;
+
+//----------------SPHINX
+	setarray @pDmenuitems$[@Di], "斯芬克斯地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 5;
+
+	setarray @DGat$[@Dref], "in_sphinx1", "in_sphinx2", "in_sphinx3", "in_sphinx4", "in_sphinx5";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层", "第 5 层";
+	setarray @DXcoords[@Dref], 192, 149, 210, 10, 100;
+	setarray @DYcoords[@Dref], 9, 81, 54, 222, 99;
+	setarray @DDepth[@Dref], 0, 1, 2, 3, 4;
+
+	QWS_Make_Dungeon_Menu 22;
+
+//----------------SUNKEN SHIP
+	setarray @pDmenuitems$[@Di], "沉船地下城";
+	setarray @pDprice[@Di], $QW_BW_PRICE;
+	setarray @pDfee$[@Di], "$QW_BW_FEE";
+	setarray @DLevels[@Di], 2;
+
+	setarray @DGat$[@Dref], "treasure01", "treasure02";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层";
+	setarray @DXcoords[@Dref], 69, 102;
+	setarray @DYcoords[@Dref], 24, 27;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 23;
+
+//----------------THANATOS TOWER
+	setarray @pDmenuitems$[@Di], "塔纳托斯塔";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 13;
+
+	setarray @DGat$[@Dref], "tha_t01", "tha_t02", "tha_t03", "tha_t04", "tha_t05", "tha_t06", "tha_t07", "tha_t08", "tha_t09", "tha_t10", "tha_t11", "tha_t12", "thana_boss";
+	setarray @DLevelName$[@Dref], "第 1 层", "第 2 层", "第 3 层", "第 4 层", "第 5 层", "第 6 层", "第 7 层", "第 8 层", "第 9 层", "第 10 层", "第 11 层", "第 12 层", "塔纳托斯 Boss";
+	setarray @DXcoords[@Dref], 150, 150, 220, 59, 62, 206, 35, 105, 88, 168, 90, 129, 85;
+	setarray @DYcoords[@Dref], 35, 136, 158, 143, 11, 8, 166, 44, 145, 138, 36, 83, 76;
+	setarray @DDepth[@Dref], 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12;
+
+	QWS_Make_Dungeon_Menu 24;
+
+//----------------TOY FACTORY
+	setarray @pDmenuitems$[@Di], "玩具工厂地下城";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 2;
+
+	setarray @DGat$[@Dref], "xmas_dun01", "xmas_dun02";
+	setarray @DLevelName$[@Dref], "工厂仓库", "分类室";
+	setarray @DXcoords[@Dref], 205, 129;
+	setarray @DYcoords[@Dref], 16, 133;
+	setarray @DDepth[@Dref], 0, 1;
+
+	QWS_Make_Dungeon_Menu 25;
+
+//----------------TURTLE ISTLAND
+	setarray @pDmenuitems$[@Di], "乌龟岛地下城";
+	setarray @pDprice[@Di], $QW_AW_PRICE;
+	setarray @pDfee$[@Di], "$QW_AW_FEE";
+	setarray @DLevels[@Di], 4;
+
+	setarray @DGat$[@Dref], "tur_dun01", "tur_dun02", "tur_dun03", "tur_dun04";
+	setarray @DLevelName$[@Dref], "外部", "第 1 层", "第 2 层", "第 3 层";
+	setarray @DXcoords[@Dref], 161, 148, 132, 100;
+	setarray @DYcoords[@Dref], 34, 256, 190, 192;
+	setarray @DDepth[@Dref], 0, 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 26;
+
+//----------------UMBALA
+	setarray @pDmenuitems$[@Di], "乌帕拉地下城";
+	setarray @pDprice[@Di], $QW_OW_PRICE;
+	setarray @pDfee$[@Di], "$QW_OW_FEE";
+	setarray @DLevels[@Di], 3;
+
+	setarray @DGat$[@Dref], "um_dun01", "um_dun02", "yggdrasil01";
+	setarray @DLevelName$[@Dref], "树中木匠店", "通往异世界的通道", "赫维尔格米尔泉";
+	setarray @DXcoords[@Dref], 205, 48, 40;
+	setarray @DYcoords[@Dref], 26, 30, 63;
+	setarray @DDepth[@Dref], 0, 1, 2;
+
+	QWS_Make_Dungeon_Menu 27;
+
+//----------------Cancel
+	setarray @pDmenuitems$[@Di], "取消";
+	setarray @pDprice[@Di], 0;
+
+	set @Dmenulist$[@Dj],@pDmenuitems$[@Di];
+	set @Dmenuref[@Dj],57005; // 57005='dead' in hex
+	return;
+
+
+//----------------Make Dungeon Menu Function
+
+function	QWS_Make_Dungeon_Menu	{
+	set @tempdungeonmenubin,1;
+	if (getarg(0) == 0) goto menu_item;
+	set @temploopdungeonmenu,0;
+	do {
+		set @tempdungeonmenubin, @tempdungeonmenubin * 2;
+		set @temploopdungeonmenu, @temploopdungeonmenu + 1;
+		}while (getarg(0) > @temploopdungeonmenu);
+// check marker and make menu item
+menu_item:
+	if ((@tempdungeonmenubin & ##QWS_D_Unlock) != @tempdungeonmenubin) {
+		setarray @DLocRef[@Di], @Dref;
+		set @Dref, @Dref+@DLevels[@Di];
+		set @Di,@Di+1;
+		return;
+	}
+	if ($QW_MapUserShow == 1) {
+		set @tempmapusers,0;
+		set @mapusersloop,0;
+		do {
+			set @tempmapusers,(getmapusers(@DGat$[@Dref+@mapusersloop]) + @tempmapusers);
+			set @mapusersloop, (@mapusersloop + 1);
+		} while (@DLevels[@Di] > @mapusersloop);
+		if (@pDprice[@Di] != 0) set @Dmenulist$[@Dj], @pDmenuitems$[@Di]+" ["+@tempmapusers+"] -> "+@pDprice[@Di];
+		if (@pDprice[@Di] == 0) set @Dmenulist$[@Dj], @pDmenuitems$[@Di]+" ["+@tempmapusers+"]";
+		set @Dmenuref[@Dj],@Di;
+		set @Dj,@Dj+1;
+		setarray @DLocRef[@Di], @Dref;
+		set @Dref, @Dref+@DLevels[@Di];
+		set @Di,@Di+1;
+		return;
+	}
+	if (@pDprice[@Di] != 0) set @Dmenulist$[@Dj], @pDmenuitems$[@Di]+" -> "+@pDprice[@Di];
+	if (@pDprice[@Di] == 0) set @Dmenulist$[@Dj], @pDmenuitems$[@Di];
+	set @Dmenuref[@Dj],@Di;
+	set @Dj,@Dj+1;
+	setarray @DLocRef[@Di], @Dref;
+	set @Dref, @Dref+@DLevels[@Di];
+	set @Di,@Di+1;
+	return;
+}
+}
+
+function	script	QWS_DLarray	{
+//----------------Start building Menu
+	set @DWref,@DLocRef[@DwarpMenu]; // reference to the arrays with leveldata
+	set @DWi,0;  // loop counter
+	set @DWj,0; // menu lines counter
+	cleararray @DWLmenulist$[0],"",20; // Clearing the array to get rid off ghost items in menu
+	do {
+		if ($QW_DL == 0)||($QW_DDL >= @DDepth[@DWref]) {
+			set @warpprice, (@pDprice[@DwarpMenu]+ (getd(@pDfee$[@DwarpMenu])*@DDepth[@DWref]));
+			if (@warpprice != 0)&&($QW_MapUserShow == 0) set @DWLmenulist$[@DWj], @DLevelName$[@DWref]+" -> "+@warpprice;
+			if (@warpprice == 0)&&($QW_MapUserShow == 0) set @DWLmenulist$[@DWj], @DLevelName$[@DWref];
+			if (@warpprice != 0)&&($QW_MapUserShow == 1) set @DWLmenulist$[@DWj], @DLevelName$[@DWref]+" ["+getmapusers(@DGat$[@DWref])+"] -> "+@warpprice;
+			if (@warpprice == 0)&&($QW_MapUserShow == 1) set @DWLmenulist$[@DWj], @DLevelName$[@DWref]+" ["+getmapusers(@DGat$[@DWref])+"]";
+			set @DWLmenuref[@DWj],@DWref;
+			set @DWj,@DWj+1;
+		}
+		set @DWref, @DWref+1;
+		set @DWi,@DWi+1;
+	} while (@DWi < @DLevels[@DwarpMenu]);
+	set @DWLmenulist$[@DWj], "退出";
+	set @DWLmenuref[@DWj],57005; // 57005='dead' in hex
+	return;
+}
+
+//================Dungeon=Warpras=That=Only=Unlock=================
+
+function	script	QWS_Dungeon_Warpra	{
+	function QWS_D_getbin;
+	function QWS_D_setbin;
+	
+	if ((QWS_D_getbin(getarg(0)) == 0) && (getarg(1) != "")) {
+		mes "[Warpra]";
+		mes getarg(1)+" 已解锁！";
+		QWS_D_setbin(getarg(0));
+		return;
+	} else if (QWS_D_getbin(getarg(0)) == 1) {
+		mes "[Warpra]";
+		mes "抱歉，我只能解锁这个地点。";
+	} else
+		debugmes "QWS_Dungeon_Warpra error, improper syntax?";
+	return;
+
+
+function	QWS_D_setbin	{
+	set @tempsetbindata,1;
+	if (getarg(0) == 0) goto binset;
+	set @temploopsetbin,0;
+	do {
+		set @tempsetbindata, @tempsetbindata * 2;
+		set @temploopsetbin, @temploopsetbin + 1;
+	} while (getarg(0) > @temploopsetbin);
+binset:
+	set ##QWS_D_Unlock,(##QWS_D_Unlock | @tempsetbindata);
+	return;
+}
+
+function	QWS_D_getbin	{
+	set @tempgetbindata,1;
+	if (getarg(0) == 0) goto binget;
+	set @temploopgetbin,0;
+	do {
+		set @tempgetbindata, @tempgetbindata * 2;
+		set @temploopgetbin, @temploopgetbin + 1;
+	} while (getarg(0) > @temploopgetbin);
+binget:
+	if ((@tempgetbindata & ##QWS_D_Unlock) == @tempgetbindata) return 1;
+	return 0;
+}
+}
+
+//==========================Town=Warpras===========================
+
+function	script	QWS_Town_Warpra	{
+	function QWS_T_getbin;
+	function QWS_T_setbin;
+	
+	if ((QWS_T_getbin(getarg(0)) == 0) && (getarg(1) != "")) {
+		mes "[Warpra]";
+		mes getarg(1)+" 已解锁！";
+		QWS_T_setbin(getarg(0));
+		return;
+	} else if (QWS_T_getbin(getarg(0)) == 1) {
+		callfunc "Q_Warpra",0;
+	} else
+		debugmes "QWS_Town_Warpra error, improper syntax ?";
+	return;
+
+function	QWS_T_setbin	{
+	set @tempsetbindata,1;
+	if (getarg(0) == 0) goto binset;
+	set @temploopsetbin,0;
+	do {
+		set @tempsetbindata, @tempsetbindata * 2;
+		set @temploopsetbin, @temploopsetbin + 1;
+	} while (getarg(0) > @temploopsetbin);
+binset:
+	set ##QWS_T_Unlock,(##QWS_T_Unlock | @tempsetbindata);
+	return;
+}
+
+function	QWS_T_getbin	{
+	set @tempgetbindata,1;
+	if (getarg(0) == 0) goto binget;
+	set @temploopgetbin,0;
+	do {
+		set @tempgetbindata, @tempgetbindata * 2;
+		set @temploopgetbin, @temploopgetbin + 1;
+	} while (getarg(0) > @temploopgetbin);
+binget:
+	if ((@tempgetbindata & ##QWS_T_Unlock) == @tempgetbindata) return 1;
+	return 0;
+}
+}
+//============================Warpras==============================
+
+-	script	Warpra#0	-1,{ callfunc "Q_Warpra",1; }
+alb2trea,73,101,4	duplicate(Warpra#0)	Warpra#1	113
+ama_fild01,178,325,1	duplicate(Warpra#0)	Warpra#2	113
+gef_fild10,71,339,4	duplicate(Warpra#0)	Warpra#3	113
+izlu2dun,104,82,4	duplicate(Warpra#0)	Warpra#4	113
+mjolnir_02,85,363,4	duplicate(Warpra#0)	Warpra#5	113
+moc_fild04,207,331,4	duplicate(Warpra#0)	Warpra#6	113
+moc_fild19,106,97,4	duplicate(Warpra#0)	Warpra#7	113
+moc_ruins,64,166,4	duplicate(Warpra#0)	Warpra#8	113
+niflheim,197,192,3	duplicate(Warpra#0)	Warpra#9	113
+pay_arche,39,135,4	duplicate(Warpra#0)	Warpra#10	113
+prt_fild05,273,215,4	duplicate(Warpra#0)	Warpra#11	113
+tur_dun01,148,239,4	duplicate(Warpra#0)	Warpra#12	113
+valkyrie,48,35,8	duplicate(Warpra#0)	Warpra#13	113
+yuno_fild03,37,135,4	duplicate(Warpra#0)	Warpra#14	113
+
+alberta,32,240,4	script	Warpra#15	113,{ callfunc "QWS_Town_Warpra",1,"Alberta Town"; close; }
+aldebaran,146,118,4	script	Warpra#16	113,{ callfunc "QWS_Town_Warpra",2,"Aldebaran Town"; close; }
+ayothaya,216,171,5	script	Warpra#17	113,{ callfunc "QWS_Town_Warpra",4,"Ayothaya Town"; close; }
+amatsu,193,81,1	script	Warpra#18	113,{ callfunc "QWS_Town_Warpra",3,"Amatsu Town"; close; }
+comodo,195,158,4	script	Warpra#19	113,{ callfunc "QWS_Town_Warpra",5,"Comodo Town"; close; }
+einbroch,229,196,5	script	Warpra#20	113,{ callfunc "QWS_Town_Warpra",7,"Einbroch Town"; close; }
+einbech,173,131,5	script	Warpra#21	113,{ callfunc "QWS_Town_Warpra",6,"Einbech Town"; close; }
+geffen,116,66,4	script	Warpra#22	113,{ callfunc "QWS_Town_Warpra",8,"Geffen Town"; close; }
+gonryun,152,130,4	script	Warpra#23	113,{ callfunc "QWS_Town_Warpra",9,"Kunlun Town"; close; }
+hugel,90,127,5	script	Warpra#24	113,{ callfunc "QWS_Town_Warpra",10,"Hugel Town"; close; }
+jawaii,107,182,5	script	Warpra#25	113,{ callfunc "QWS_Town_Warpra",12,"Jawaii Town"; close; }
+izlude,132,116,4	script	Warpra#26	113,{ callfunc "QWS_Town_Warpra",11,"Izlude Town"; close; }
+lighthalzen,153,100,5	script	Warpra#27	113,{ callfunc "QWS_Town_Warpra",13,"Lighthalzen Town"; close; }
+louyang,211,106,4	script	Warpra#28	113,{ callfunc "QWS_Town_Warpra",14,"Luoyang Town"; close; }
+morocc,157,95,4	script	Warpra#29	113,{ callfunc "QWS_Town_Warpra",16,"Morocc Town"; close; }
+nif_fild01,319,77,1	script	Warpra#30	113,{ callfunc "QWS_Town_Warpra",17,"Niflheim Town"; close; }
+payon,183,110,4	script	Warpra#31	113,{ callfunc "QWS_Town_Warpra",18,"Payon Town"; close; }
+prontera,147,172,5	script	Warpra#32	113,{ callfunc "QWS_Town_Warpra",0,"Prontera Town"; close; }
+umbala,133,130,4	script	Warpra#33	113,{ callfunc "QWS_Town_Warpra",19,"Umbala Town"; close; }
+xmas,151,136,4	script	Warpra#34	113,{ callfunc "QWS_Town_Warpra",15,"Lutie Town"; close; }
+yuno,138,162,4	script	Warpra#35	113,{ callfunc "QWS_Town_Warpra",20,"Juno Town"; close; }
+brasilis,201,222,4	script	Warpra#36	113,{ callfunc "QWS_Town_Warpra",21,"Brasilis Town"; close; }
+dicastes01,194,194,6	script	Warpra#37	113,{ callfunc "QWS_Town_Warpra",22,"El Dicastes Town"; close; }
+manuk,262,177,4	script	Warpra#38	113,{ callfunc "QWS_Town_Warpra",23,"Manuk Town"; close; }
+mora,110,100,4	script	Warpra#39	113,{ callfunc "QWS_Town_Warpra",24,"Mora Town"; close; }
+moscovia,216,196,6	script	Warpra#40	113,{ callfunc "QWS_Town_Warpra",25,"Moscovia Town"; close; }
+rachel,135,116,4	script	Warpra#41	113,{ callfunc "QWS_Town_Warpra",26,"Rachel Town"; close; }
+splendide,205,153,4	script	Warpra#42	113,{ callfunc "QWS_Town_Warpra",27,"Splendide Town"; close; }
+veins,214,123,4	script	Warpra#43	113,{ callfunc "QWS_Town_Warpra",28,"Veins Town"; close; }
+dewata,194,178,6	script	Warpra#44	113,{ callfunc "QWS_Town_Warpra",29,"Dewata Town"; close; }
+eclage,107,37,4	script	Warpra#45	113,{ callfunc "QWS_Town_Warpra",30,"Eclage Town"; close; }
+
+abyss_02,274,266,1	script	Warpra Helper#0	112,{ callfunc "QWS_Dungeon_Warpra",0,"Abyss Lake"; close; }
+ama_dun02,192,118,5	script	Warpra Helper#1	112,{ callfunc "QWS_Dungeon_Warpra",1,"Amatsu Dungeon"; close; }
+anthell02,170,165,3	script	Warpra Helper#2	112,{ callfunc "QWS_Dungeon_Warpra",2,"Ant Hell Dungeon"; close; }
+ayo_dun02,258,193,5	script	Warpra Helper#3	112,{ callfunc "QWS_Dungeon_Warpra",3,"Ayothaya Dungeon"; close; }
+ein_dun02,292,282,1	script	Warpra Helper#4	112,{ callfunc "QWS_Dungeon_Warpra",8,"Einbech Dungeon"; close; }
+iz_dun03,202,47,2	script	Warpra Helper#5	112,{ callfunc "QWS_Dungeon_Warpra",4,"Byalan Dungeon"; close; }
+c_tower3,129,106,4	script	Warpra Helper#6	112,{ callfunc "QWS_Dungeon_Warpra",5,"Clock Tower Dungeon"; close; }
+mjo_dun02,39,25,4	script	Warpra Helper#7	112,{ callfunc "QWS_Dungeon_Warpra",6,"Coal Mine Dungeon"; close; }
+prt_sewb2,176,30,3	script	Warpra Helper#8	112,{ callfunc "QWS_Dungeon_Warpra",7,"Culvert Dungeon"; close; }
+gefenia03,137,34,0	script	Warpra Helper#9	112,{ callfunc "QWS_Dungeon_Warpra",9,"Gefenia Dungeon"; close; }
+gef_dun02,218,61,2	script	Warpra Helper#10	112,{ callfunc "QWS_Dungeon_Warpra",10,"Gefen Dungeon"; close; }
+glast_01,371,308,3	script	Warpra Helper#11	112,{ callfunc "QWS_Dungeon_Warpra",11,"Glast Heim Dungeon"; close; }
+gon_dun01,167,273,4	script	Warpra Helper#12	112,{ callfunc "QWS_Dungeon_Warpra",12,"Kunlun Dungeon"; close; }
+juperos_02,127,154,5	script	Warpra Helper#13	112,{ callfunc "QWS_Dungeon_Warpra",14,"Juperos Cave"; close; }
+kh_dun01,14,224,3	script	Warpra Helper#14	112,{ callfunc "QWS_Dungeon_Warpra",28,"Kiel Dungeon"; close; }
+lhz_dun02,156,151,5	script	Warpra Helper#15	112,{ callfunc "QWS_Dungeon_Warpra",15,"Lighthalzen Bio Lab"; close; }
+lou_dun02,168,264,4	script	Warpra Helper#16	112,{ callfunc "QWS_Dungeon_Warpra",16,"Luoyang Dungeon"; close; }
+mag_dun02,46,41,3	script	Warpra Helper#17	112,{ callfunc "QWS_Dungeon_Warpra",17,"Magma Dungeon"; close; }
+odin_tem01,115,148,3	script	Warpra Helper#18	112,{ callfunc "QWS_Dungeon_Warpra",18,"Odin Temple"; close; }
+orcsdun01,185,11,3	script	Warpra Helper#19	112,{ callfunc "QWS_Dungeon_Warpra",19,"Orc Dungeon"; close; }
+pay_dun03,162,143,3	script	Warpra Helper#20	112,{ callfunc "QWS_Dungeon_Warpra",20,"Payon Dungeon"; close; }
+moc_pryd02,101,95,3	script	Warpra Helper#21	112,{ callfunc "QWS_Dungeon_Warpra",21,"Pyramides Dungeon"; close; }
+in_sphinx2,274,268,1	script	Warpra Helper#22	112,{ callfunc "QWS_Dungeon_Warpra",22,"Sphinx Dungeon"; close; }
+tha_t07,111,162,3	script	Warpra Helper#23	112,{ callfunc "QWS_Dungeon_Warpra",24,"Thanatos Tower"; close; }
+treasure02,104,40,3	script	Warpra Helper#24	112,{ callfunc "QWS_Dungeon_Warpra",23,"Sunken Ship Dungeon"; close; }
+xmas_dun02,124,131,3	script	Warpra Helper#25	112,{ callfunc "QWS_Dungeon_Warpra",25,"Toy Factory Dungeon"; close; }
+um_dun02,44,28,3	script	Warpra Helper#26	112,{ callfunc "QWS_Dungeon_Warpra",27,"Umbala Dungeon"; close; }
+tur_dun02,162,23,3	script	Warpra Helper#27	112,{ callfunc "QWS_Dungeon_Warpra",26,"Turtle Island Dungeon"; close; }
+prt_maze02,102,69,4	script	Warpra Helper#28	112,{ callfunc "QWS_Dungeon_Warpra",13,"Hidden Dungeon"; close; }

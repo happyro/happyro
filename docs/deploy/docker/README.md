@@ -55,7 +55,7 @@ web-api
 
 ## 运行时资源挂载
 
-`inputs/runtime/kro-20211105/` 不参与镜像构建，只在运行时以只读目录挂载给网关。
+`inputs/runtime/kro-20211105/` 不参与镜像构建，只在运行时以只读目录挂载给网关。中文 loose-data 和回编译资源属于独立覆盖层，不能写入该官方目录。
 
 建议只挂载客户端子目录，而不是整个输入目录：
 
@@ -72,10 +72,18 @@ services:
 data.grf
 DATA.INI
 BGM/
+AI/
 System/
 ```
 
-如果后续增加经过核验的 loose files，也放在宿主机的该客户端目录下，通过同一个只读挂载提供。
+覆盖资源应使用独立只读挂载：
+
+```text
+localization/client/data/  -> zh-cn loose-data 覆盖
+artifacts/client/lub/      -> 已验证的回编译 LUB 产物
+```
+
+具体容器路径和覆盖优先级要在 Compose 实现时显式配置。不得为了简化挂载而把覆盖文件复制回 `inputs/runtime/kro-20211105/client/`。
 
 服务端和 MariaDB 不需要挂载这套 kRO 客户端资源。
 
@@ -166,7 +174,7 @@ docker compose up -d
 
 ## 当前实现与后续工作
 
-当前仓库中的 `deploy/mariadb/compose.yml` 已经提供 MariaDB 的基础容器定义。Gateway、rAthena 和完整栈的 Compose 文件尚未落地，后续实现顺序建议为：
+本文仍是未实施的目标方案，不是当前运行手册。当前仓库中的 `deploy/mariadb/compose.yml` 已经提供 MariaDB 的基础容器定义；Gateway、rAthena 和完整栈的 Compose 文件尚未落地，后续实现顺序建议为：
 
 1. 固定 gateway 和 server 的构建上下文及启动命令；
 2. 为两类自有镜像分别添加 Dockerfile；
