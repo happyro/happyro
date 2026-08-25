@@ -4,6 +4,8 @@ HappyRO 是仅限局域网运行的 roBrowserLegacy 开发栈。它独立于
 `happyro-desktop`，不使用 Windows 客户端、公共 GRF 服务或公共 WebSocket
 代理。
 
+HappyRO 自有修改按日期记录在 [`changelog/`](changelog/README.md)。
+
 ## 仓库布局
 
 ```text
