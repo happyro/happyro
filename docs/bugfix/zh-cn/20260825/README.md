@@ -16,6 +16,7 @@
 | [client-mail-lifecycle.md](client-mail-lifecycle.md) | 客户端邮件窗口生命周期 |
 | [client-signboard-localization.md](client-signboard-localization.md) | NPC 头顶标牌的本地化来源与覆盖规则 |
 | [client-monster-name-localization.md](client-monster-name-localization.md) | 魔物悬停名称的本地化来源与回退规则 |
+| [client-npc-name-display.md](client-npc-name-display.md) | NPC 初始实体名称包与对话标题不一致 |
 | [server-runtime.md](server-runtime.md) | MOTD、服务端数据和数据库重建判断 |
 | [resources-and-gateway.md](resources-and-gateway.md) | 装备图片、编码路径、AI 和资源网关 |
 | [build-and-environment.md](build-and-environment.md) | 需要重新构建或重启的环境 |
