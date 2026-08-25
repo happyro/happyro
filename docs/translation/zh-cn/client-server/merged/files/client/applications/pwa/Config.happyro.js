@@ -1,0 +1,26 @@
+window.ROConfigHappyRO = {
+	development: true,
+	remoteClient: `${window.location.origin}/`,
+	servers: [
+		{
+			display: 'HappyRO 局域网',
+			desc: 'Renewal 2021-11-03',
+			address: '10.24.1.1',
+			port: 6900,
+			version: 25,
+			langtype: 12,
+			packetver: 20211103,
+			renewal: true,
+			worldMapSettings: { episode: 18 },
+			packetKeys: false,
+			socketProxy: `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/`,
+			forceUseAddress: true,
+			adminList: []
+		}
+	],
+	packetDump: false,
+	skipServerList: true,
+	skipIntro: true,
+	registrationweb: '',
+	autoLogin: []
+};
