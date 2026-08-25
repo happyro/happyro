@@ -42,6 +42,20 @@ mkdir -p "$map_import_dir"
 if [[ ! -e "$map_import_dir/map_cache.dat" && -f "$map_cache_source" ]]; then
 	ln -s ../re/map_cache.dat "$map_import_dir/map_cache.dat"
 fi
+
+copy_missing_import_templates() {
+	local template_dir="$1"
+	local target_dir="$2"
+	local template
+
+	for template in "$template_dir"/*; do
+		[[ -f "$template" ]] || continue
+		[[ -e "$target_dir/${template##*/}" ]] || cp "$template" "$target_dir/"
+	done
+}
+
+copy_missing_import_templates "$SERVER_REPO/conf/import-tmpl" "$import_dir"
+copy_missing_import_templates "$SERVER_REPO/db/import-tmpl" "$map_import_dir"
 umask 077
 
 write_database_entry() {
