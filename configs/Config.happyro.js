@@ -3,7 +3,7 @@ window.ROConfigHappyRO = {
 	remoteClient: `${window.location.origin}/`,
 	servers: [
 		{
-			display: 'HappyRO 局域网',
+			display: 'HappyRO',
 			desc: 'Renewal 2021-11-03',
 			address: '10.24.1.1',
 			port: 6900,
@@ -23,7 +23,7 @@ window.ROConfigHappyRO = {
 	enableMapName: true,
 	enableAchievements: true,
 	skipServerList: true,
-	skipIntro: true,
+	skipIntro: false,
 	registrationweb: '',
 	autoLogin: []
 };

@@ -120,7 +120,7 @@ rAthena login/char/map/web-api
 MariaDB:3306
 ```
 
-推荐只向局域网暴露网关端口 `3338`。rAthena 和 MariaDB 端口应使用 Compose 内部网络连接；如果需要宿主机调试，再单独配置绑定地址和端口。
+推荐只暴露网关端口 `3338`。rAthena 和 MariaDB 端口应使用 Compose 内部网络连接；如果需要宿主机调试，再单独配置绑定地址和端口。
 
 运行时继续使用固定的 `PACKETVER=20211103`、Renewal 以及客户端和服务端一致的封包设置。
 
@@ -168,7 +168,7 @@ docker compose up -d
 3. 构建或拉取 `happyro-gateway` 和 `happyro-server`；
 4. 启动 MariaDB，等待健康检查通过；
 5. 启动 rAthena 服务；
-6. 启动 Gateway 并访问 `http://<局域网地址>:3338/`。
+6. 启动 Gateway 并访问 `http://<服务器地址>:3338/`。
 
 停止 Compose 栈时只停止容器，不删除数据库数据卷、运行时资源和密钥目录。
 
@@ -181,4 +181,4 @@ docker compose up -d
 3. 将四个 rAthena 服务定义加入 Compose；
 4. 添加只读客户端资源挂载和 `.dockerignore`；
 5. 增加健康检查、日志目录和优雅停止配置；
-6. 在局域网环境完成完整启动、登录和资源加载验证。
+6. 在目标部署环境完成完整启动、登录和资源加载验证。
