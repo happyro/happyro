@@ -194,11 +194,14 @@ def _merge_json_value(
     translated: object,
     label: str,
     path: tuple[str, ...] = (),
+    reject_source_fallback: bool = False,
 ) -> tuple[object, list[str]]:
     """Keep source structure while replacing translated text values."""
     location = f"{label}{_json_path(path)}"
     if isinstance(source, dict):
         if not isinstance(translated, dict):
+            if reject_source_fallback:
+                raise MergeFailure(f"{location}: translated value changed from object")
             return source, [f"{location}: translated value changed from object; source retained"]
         extra = sorted(set(translated) - set(source))
         merged: dict[str, object] = {}
@@ -207,16 +210,22 @@ def _merge_json_value(
             warnings.append(f"{location}: translated JSON added keys ignored: {', '.join(extra)}")
         for key, source_value in source.items():
             if key not in translated:
+                if reject_source_fallback:
+                    raise MergeFailure(f"{location}.{key}: missing translated field")
                 merged[key] = source_value
                 warnings.append(f"{location}.{key}: missing translated field; source retained")
                 continue
-            value, value_warnings = _merge_json_value(source_value, translated[key], label, (*path, key))
+            value, value_warnings = _merge_json_value(
+                source_value, translated[key], label, (*path, key), reject_source_fallback
+            )
             merged[key] = value
             warnings.extend(value_warnings)
         return merged, warnings
 
     if isinstance(source, list):
         if not isinstance(translated, list):
+            if reject_source_fallback:
+                raise MergeFailure(f"{location}: translated value changed from array")
             return source, [f"{location}: translated value changed from array; source retained"]
         field = path[-1] if path else ""
         if field in PAGE_ARRAY_FIELDS:
@@ -228,19 +237,27 @@ def _merge_json_value(
                         return [text[:boundary], text[boundary + 1 :]], [
                             f"{location}: reconstructed two pages from one translated page"
                         ]
+                if reject_source_fallback:
+                    raise MergeFailure(f"{location}: translated page count changed")
                 return source, [f"{location}: page count changed {len(source)} -> {len(translated)}; source retained"]
         elif field in TEXT_ARRAY_FIELDS:
             if not all(isinstance(item, str) for item in source + translated):
                 raise MergeFailure(f"{location}: text array contains a non-string value")
             if field == "unidentifiedDescriptionName" and source and all(item == "" for item in source):
                 if translated != source:
+                    if reject_source_fallback:
+                        return translated, []
                     return source, [f"{location}: unidentified text changed; source retained"]
             if not translated and source:
+                if reject_source_fallback:
+                    raise MergeFailure(f"{location}: empty translation")
                 return source, [f"{location}: empty translation; source retained"]
             if len(source) != len(translated):
                 return translated, [f"{location}: text line count changed {len(source)} -> {len(translated)}"]
             return translated, []
         elif len(source) != len(translated):
+            if reject_source_fallback:
+                raise MergeFailure(f"{location}: non-text array length changed")
             return source, [
                 f"{location}: non-text array length changed {len(source)} -> {len(translated)}; source retained"
             ]
@@ -248,7 +265,7 @@ def _merge_json_value(
         warnings: list[str] = []
         for index, (source_item, translated_item) in enumerate(zip(source, translated)):
             value, value_warnings = _merge_json_value(
-                source_item, translated_item, label, (*path, str(index))
+                source_item, translated_item, label, (*path, str(index)), reject_source_fallback
             )
             merged_items.append(value)
             warnings.extend(value_warnings)
@@ -256,21 +273,32 @@ def _merge_json_value(
 
     if isinstance(source, str):
         if not isinstance(translated, str):
+            if reject_source_fallback:
+                raise MergeFailure(f"{location}: translated value changed from string")
             return source, [f"{location}: translated value changed from string; source retained"]
         return translated, []
 
     if type(source) is not type(translated) or source != translated:
+        if reject_source_fallback:
+            raise MergeFailure(f"{location}: non-text value changed")
         return source, [f"{location}: non-text value changed; source retained"]
     return source, []
 
 
-def normalize_json_pair(source: bytes, translated: bytes, label: str) -> tuple[bytes, list[str]]:
+def normalize_json_pair(
+    source: bytes,
+    translated: bytes,
+    label: str,
+    reject_source_fallback: bool = False,
+) -> tuple[bytes, list[str]]:
     try:
         source_value = json.loads(source.decode("utf-8"))
         translated_value = json.loads(translated.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise MergeFailure(f"{label}: invalid JSON: {error}") from error
-    merged, warnings = _merge_json_value(source_value, translated_value, label)
+    merged, warnings = _merge_json_value(
+        source_value, translated_value, label, reject_source_fallback=reject_source_fallback
+    )
     return json.dumps(merged, ensure_ascii=False, separators=(",", ":")).encode("utf-8"), warnings
 
 

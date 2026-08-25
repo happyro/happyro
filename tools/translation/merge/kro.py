@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .checks import (
     line_count,
     logic_warnings,
@@ -14,9 +16,20 @@ from .checks import (
 from .models import MergeFailure, Output, Row
 
 
+STRICT_SOURCE_FALLBACK_OUTPUTS = {
+    "itemInfo_true.json",
+    "OngoingQuestInfoList.json",
+    "OngoingQuestInfoList_True.json",
+    "tipbox.json",
+}
+HANGUL_RE = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
+
+
 def merge_file(rows: list[Row], allow_incomplete: bool, strict_line_count: bool) -> Output:
     repo, logical_path = rows[0].repo, rows[0].logical_path
     output_path = target_from_chunk(rows[0])
+    strict_output = any(output_path.endswith(name) for name in STRICT_SOURCE_FALLBACK_OUTPUTS)
+    reject_source_fallback = strict_output
     translated_count = sum(row.status == "已翻译" for row in rows)
     skipped_count = sum(row.status == "跳过" for row in rows)
     warnings: list[str] = []
@@ -28,7 +41,9 @@ def merge_file(rows: list[Row], allow_incomplete: bool, strict_line_count: bool)
             line_delta = line_count(data) - line_count(source)
             if output_path.endswith(".json"):
                 warnings.extend(logic_warnings(source, data, logical_path))
-                data, shape_warnings = normalize_json_pair(source, data, logical_path)
+                data, shape_warnings = normalize_json_pair(
+                    source, data, logical_path, reject_source_fallback
+                )
                 warnings.extend(shape_warnings)
             if line_delta and strict_line_count:
                 raise MergeFailure(f"{logical_path}: complete translation changes line count {line_delta}")
@@ -63,7 +78,10 @@ def merge_file(rows: list[Row], allow_incomplete: bool, strict_line_count: bool)
             if output_path.endswith(".json"):
                 warnings.extend(logic_warnings(source, replacement, f"{logical_path}/{row.chunk_id}"))
                 replacement, shape_warnings = normalize_json_pair(
-                    source, replacement, f"{logical_path}/{row.chunk_id}"
+                    source,
+                    replacement,
+                    f"{logical_path}/{row.chunk_id}",
+                    reject_source_fallback,
                 )
                 warnings.extend(shape_warnings)
             if delta and strict_line_count:
@@ -78,6 +96,8 @@ def merge_file(rows: list[Row], allow_incomplete: bool, strict_line_count: bool)
         chunks.append(replacement)
     data = merge_framed_json(chunks) if output_path.endswith(".json") else b"".join(chunks)
     parse_json_if_needed(output_path, data)
+    if strict_output and HANGUL_RE.search(data.decode("utf-8")):
+        raise MergeFailure(f"{logical_path}: Hangul remains after translation merge")
     return Output(
         repo,
         logical_path,
