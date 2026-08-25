@@ -19,6 +19,9 @@ against the 2021 client skill IDs and the Chinese RO handbook entries for
 table contains a skill that is not yet covered here, the client shows an honest
 Chinese mechanical summary instead of leaking Korean text.
 
+<!-- Archived: data/itemlocalization.json was superseded by the translated
+itemInfo_true.lub and is retained under archive/localization/client/data/. -->
+
 ## Runtime integration
 
 The client keeps translated static names when official Lua tables are loaded:
@@ -31,12 +34,13 @@ The client keeps translated static names when official Lua tables are loaded:
 - Item display names remain localized, while item resource names are decoded
   with the configured client character set. This keeps Korean GRF filenames
   valid without exposing Korean item names in the UI.
+<!-- DBManager.loadItemLocalization is archived; itemInfo_true.lub now contains
+the complete player-visible item names and descriptions. -->
 
 The resource gateway converts mojibake path segments independently. A request
 may contain a legacy CP949 directory such as `À¯ÀúÀÎÅÍÆäÀÌ½º` and a valid
 Unicode filename such as `나이프.bmp`; converting the whole path would corrupt
 the filename and make equipment icons return HTTP 404.
 
-Gateway startup validates both localization overlay files. Client changes are
-covered by the Vitest suite and the translation chunks are checked with
-`tools/translation/validate/main.py chunks`.
+Gateway startup validates the remaining localization overlays. Client changes
+are covered by the Vitest suite.

@@ -35,6 +35,8 @@ verify_gateway() {
 		"http://127.0.0.1:$port/data/skilldesctable.txt")" || fail "skill description table endpoint failed"
 	rg -q '^NV_BASIC#' <<<"$skill_description_table" || \
 		fail "skill description table endpoint returned unexpected content"
+	# Archived itemlocalization overlay endpoint check is intentionally disabled;
+	# translated itemInfo_true.lub is now authoritative.
 	curl --fail --silent --show-error --max-time 10 \
 		"http://127.0.0.1:$port/AI/AI.lua" >/dev/null || fail "homunculus AI endpoint failed"
 
