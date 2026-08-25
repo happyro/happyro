@@ -34,14 +34,14 @@
 - 翻译期间不修改正式源码、不合并切片，只更新自己的 `agents/agent-xx/` 目录（包括 chunks/source/ 和 chunks/translated/），不修改工作区总表，不提交代码。
 - 完成处理后，只将实际翻译完成的文件或切片登记到自己的 translated-files.tsv，并更新 progress.md 中的已处理文件数和百分比；最终合并到本工作区根目录的 translated-files.tsv。
 - 新增稳定译名、人名和保留原样项登记到自己的 terms-names.csv；最终合并到本工作区根目录的 terms-names.csv。
-- 四个 agent 全部完成后，先在 `work/translation-merge/client-server/<batch>/` 中严格校验切片范围、源内容和逻辑结构，统一生成完整文件；确认后将结果复制到 `merged/files/`，更新 `merged/manifest.tsv`，再重新运行扫描器。
+- 四个 agent 全部完成后，使用 `tools/translation/release/main.py` 在 `work/translation-release/client-server/<batch>/` 中严格校验切片范围、源内容和逻辑结构，统一生成完整文件；确认后使用 `--promote-merged --write` 晋级正式 `merged/`，再通过 `--target-root` 回写两个源码仓库。
 
 ## 分片合并与回写
 
 本工作区的完整合并结果不放回任何 agent 目录。临时合并目录结构如下：
 
 ```text
-work/translation-merge/client-server/<batch>/
+work/translation-release/client-server/<batch>/
 └── merged/
     ├── manifest.tsv                    # 本次运行的来源和状态清单
     ├── files/                          # 本次运行的完整文件
@@ -61,6 +61,8 @@ merged/
 ```
 
 `merged/files/` 是本工作区完整翻译文件的 Git 跟踪副本。后续回写脚本以此目录为输入，按清单将文件写入独立的 `repos/happyro-client`、`repos/happyro-server` 工作树或其他明确的目标目录；回写前仍需保留源文件、检查逻辑结构，并记录回写结果。
+
+本批次已完成晋级并标记为关闭，状态见 [`merged/BATCH_STATE`](merged/BATCH_STATE)。关闭批次是历史发布快照，不再作为后续源码修复的 writeback 输入。需要复现时复制到新的 replay/staging 批次，并在验证后重新应用当前源码 bugfix。
 
 合并工具的完整说明见 [`tools/translation/README.md`](../../../../tools/translation/README.md)。
 

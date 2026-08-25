@@ -30,14 +30,14 @@ docs/translation/zh-cn/kro-20211105/
 翻译分片完成后，先在被 Git 忽略的临时目录中合并和校验：
 
 ```text
-work/translation-merge/<workspace>/<batch>/
+work/translation-release/<workspace>/<batch>/
 └── merged/
     ├── manifest.tsv                    # 本次运行的来源和状态清单
     ├── files/                          # 本次运行的完整合并结果
     └── validation/merge-warnings.tsv   # 结构和标记复核项
 ```
 
-确认结果后，将完整文件复制到对应工作区的 Git 跟踪目录：
+确认结果后，使用发布工具的 `--promote-merged --write` 将完整文件、manifest、BATCH_STATE 和验证记录晋级到对应工作区的 Git 跟踪目录；kRO 的运行时资源另通过 `--runtime-root` 明确写回：
 
 ```text
 docs/translation/zh-cn/<workspace>/merged/
@@ -51,4 +51,4 @@ docs/translation/zh-cn/<workspace>/merged/
 
 合并器和分片校验器的职责、命令和校验边界见 [`tools/translation/README.md`](../../../tools/translation/README.md)。
 
-合并问题修复批次见 [`repair/`](repair/)。Repair 是校验失败时的条件回路，不是每次翻译必经阶段。当前批次 [`repair/20260824-01/`](repair/20260824-01/) 的 `agent-01` 至 `agent-12` 相互独立；修复结果必须回填原工作区 translated 分片后，重新执行校验和合并。
+Repair 是校验失败时的条件回路，不是每次翻译必经阶段。本次修复已回填原工作区 translated 分片，并在最新正式基准 `canonical-20260825-01` 中完成校验、合并和回写；过程 repair 目录不作为长期维护入口。
