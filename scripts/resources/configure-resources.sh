@@ -9,6 +9,8 @@ resources_dir="$GATEWAY_REPO/resources"
 message_table="$PROJECT_ROOT/localization/client/data/msgstringtable.txt"
 title_table="$PROJECT_ROOT/localization/client/data/titletable.json"
 skill_description_table="$PROJECT_ROOT/localization/client/data/skilldesctable.txt"
+# Archived itemlocalization overlay; itemInfo_true.lub is the active source.
+# item_localization_table="$PROJECT_ROOT/localization/client/data/itemlocalization.json"
 
 [[ -d "$runtime_client" ]] || {
 	echo "missing runtime client: $runtime_client" >&2
@@ -51,6 +53,30 @@ rg -q '^NV_BASIC#' "$skill_description_table" || {
 	echo "localized skill description table is incomplete: $skill_description_table" >&2
 	exit 1
 }
+if false; then # Archived itemlocalization overlay validation.
+[[ -f "$item_localization_table" ]] || {
+	echo "missing item localization table: $item_localization_table" >&2
+	exit 1
+}
+jq -e '
+	length == 16127 and
+	."501"[1] == "红色药水" and
+	all(.[];
+		length == 4 and
+		(.[0] | type == "string") and
+		(.[1] | type == "string") and
+		(.[2] | type == "array") and
+		(.[3] | type == "array")
+	)
+' "$item_localization_table" >/dev/null || {
+	echo "item localization table is incomplete: $item_localization_table" >&2
+	exit 1
+}
+if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$item_localization_table"; then
+	echo "item localization table contains Korean text: $item_localization_table" >&2
+	exit 1
+fi
+fi
 
 mkdir -p "$resources_dir"
 
@@ -89,3 +115,4 @@ echo "configured: $resources_dir/DATA.INI"
 echo "configured: $message_table"
 echo "configured: $title_table"
 echo "configured: $skill_description_table"
+# Archived itemlocalization overlay is not configured.
