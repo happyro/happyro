@@ -51,6 +51,8 @@
 
 当前已完成的 P0/P1 范围见 [batches/fields/p0-p1-fields.md](batches/fields/p0-p1-fields.md)。P2 八城周边野外也已完成，妙勒尼山脉与朱诺周边分别见对应批次页，其余六个地图族见 [batches/fields/p2-major-city-fields.md](batches/fields/p2-major-city-fields.md)。
 
+P3 第一批核心城市地下城已完成，范围与证据见 [batches/dungeons/p3-core-dungeons.md](batches/dungeons/p3-core-dungeons.md)。
+
 ## 范围边界
 
 纳入：
