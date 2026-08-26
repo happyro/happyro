@@ -3,7 +3,7 @@ FROM node:22-bookworm AS client-builder
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 WORKDIR /src/client
 COPY repos/happyro-client/package*.json ./
-RUN npm ci
+RUN npm install --ignore-scripts
 COPY repos/happyro-client/ ./
 RUN npm run build:pwa
 
@@ -19,7 +19,7 @@ ENV NODE_ENV=production \
 
 WORKDIR /opt/gateway
 COPY vendor/robrowserlegacy-remote-client-js/package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm install --omit=dev --ignore-scripts
 COPY vendor/robrowserlegacy-remote-client-js/ ./
 COPY --from=client-builder /src/client/dist/Web /opt/robrowser
 
