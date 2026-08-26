@@ -1,104 +1,124 @@
 # HappyRO
 
-HappyRO 是基于 roBrowserLegacy、rAthena 和 RemoteClient-JS 的中文 Web
-游戏栈，不依赖 Windows 客户端、公共 GRF 服务或公共 WebSocket 代理。
+HappyRO 致力于提供一个简单易用、汉化完整、自由开放的 RO 世界。得益于现代
+浏览器技术的发展和 roBrowserLegacy 的持续演进，现在无需安装桌面客户端，
+便可以直接在浏览器中运行《仙境传说》。这既减少了传统客户端的兼容问题和
+存储负担，也让游戏能够运行在 macOS、iPadOS 等支持现代浏览器的平台上。
 
-运行基线固定为 kRO 2021-11-05、`PACKETVER=20211103`、Renewal，客户端与
-服务端必须使用一致的封包配置。
+项目基于 rAthena、roBrowserLegacy 和 RemoteClient-JS 开发。个人精力有限，
+问题和疏漏在所难免；我会定期整理大家反馈的问题并集中修复。希望这个项目能
+让大家找回小时候的感觉，偶尔回到南门走一走。
+
+## 关于汉化
+
+HappyRO 的汉化不是简单替换一份语言文件。项目首先扫描客户端、服务端和运行
+资源中的源文件，识别需要处理的文本，再将结果拆分成可追踪、可校验的工作
+分片，交由多个 AI Agent 并行翻译，最后统一合并。
+
+AI 翻译可能出现误译、漏译，也可能破坏文件格式或造成内容不一致，因此首次
+合并的 `merged` 版本不能直接作为发布结果。当前版本是在初次合并后，经过多轮
+格式检查、内容校准、实机验证和问题修复才逐步形成的；后续仍会根据实际游戏
+体验持续修正。
+
+kRO 客户端资源采用独立流程处理。二进制 LUB 资源则先提取为结构化 JSON，
+分片翻译其中玩家可见的文本，合并校验后再回编译为对应的 Lua 5.0 或 Lua 5.1
+字节码。生成结果还要经过逐值语义回环和客户端实机验证，确认键名、索引、控制
+流及运行时行为没有改变。整个过程始终保持官方输入资源只读。
+
+项目所需的 kRO 客户端资源属于第三方版权内容，受原权利人的版权和许可条款
+约束，不能随项目源码在 Git 仓库中公开分发。使用者需要自行确认资源来源及
+使用方式符合相关授权和当地法律。如需了解本项目兼容的资源版本和准备方式，
+可以加入 QQ 交流群联系：
+
+- QQ 群：`928171346`
+- 群名称：熊猫模拟器
+
+`docs/translation/zh-cn/` 仅保存已完成翻译批次的历史记录，不再用于当前翻译
+或发布。产品翻译直接维护在 `repos/happyro-client`、
+`repos/happyro-server` 和 `localization/client/data`，不得从归档目录回写。
 
 ## 仓库结构
 
 ```text
 happyro/
-├── configs/                         # 本地 HappyRO 客户端配置
-├── deploy/                          # 本地及生产运行时配置
-├── docs/                            # 部署、翻译历史和故障记录
-├── inputs/                          # 只读官方源材料与运行时资源
-├── localization/client/data/        # 中文 loose-data 运行时覆盖层
+├── configs/                         # 客户端默认配置
+├── deploy/                          # 数据库、服务端和网关默认配置
+├── docs/                            # 部署文档与历史归档
+├── inputs/                          # 官方源材料与运行时资源
+├── localization/client/data/        # 客户端中文运行时覆盖
 ├── repos/happyro-client/            # roBrowserLegacy 派生仓库
 ├── repos/happyro-server/            # rAthena 派生仓库
-├── scripts/                         # 本地检查、构建和服务管理脚本
-├── tools/                           # 发布、翻译和工作区工具
+├── scripts/                         # 构建、运行和维护脚本
 ├── vendor/robrowserlegacy-remote-client-js/
-├── versions/                        # 锁定的依赖版本
-├── artifacts/                       # 可重建或经验证的生成产物
-└── work/                            # 被 Git 忽略的临时输出和运行状态
+└── work/                            # 本地生成文件与运行状态
 ```
 
-根仓库、`repos/happyro-client` 和 `repos/happyro-server` 是三个独立 Git
-仓库，各自提交并只推送到自己的 `origin`。`vendor/` 中的网关保持锁定版本，
-包含 HappyRO 所需的可复现补丁。
+根仓库、客户端和服务端是三个独立 Git 仓库，只推送到各自的 `origin`。
 
-## 分支模型
+## 安装部署
 
-- `main`：长期中文产品分支，也是日常维护和发布基线。
-- `demo`：中文演示环境分支，只增加演示专属配置，并持续同步 `main`。
+先按实际环境修改以下配置：
 
-## 中文资源边界
+- `configs/Config.happyro.js`：客户端和游戏服务器连接配置；
+- `deploy/mariadb/profile.env`：数据库配置；
+- `deploy/rathena/profile.env`：rAthena 服务配置；
+- `deploy/remote-client/.env.example`：资源网关配置。
 
-`docs/translation/zh-cn/` 保存已经关闭的翻译批次、清单和历史验证记录，
-不再作为客户端或服务端产品源码的发布源。后续产品翻译直接修改：
+部署前，将准备好的 kRO 运行时资源放入
+`inputs/runtime/kro-20211105/client/`。其中 `data.grf` 和 `DATA.INI` 为必需
+文件；需要音乐、人工生命 AI 和系统字体时，同时放入对应目录：
 
 ```text
-repos/happyro-client
-repos/happyro-server
+inputs/runtime/kro-20211105/client/
+├── data.grf
+├── DATA.INI
+├── AI/                              # 可选
+├── BGM/                             # 可选
+└── System/                          # 可选
 ```
 
-kRO 资源翻译和回编译历史仍可从
-[`docs/translation/zh-cn/kro-20211105/`](docs/translation/zh-cn/kro-20211105/README.md)
-复现。运行时 loose-data 覆盖位于 `localization/client/data/`。
-
-以下目录中的核验文件视为不可修改的官方源材料：
-
-```text
-inputs/official/
-inputs/runtime/kro-20211105/
-```
-
-新生成的文件写入 `work/` 或 `artifacts/`，不得覆盖官方源材料。HappyRO
-自有变更按日期汇总在 [`changelog/`](changelog/README.md)；客户端和服务端
-同时维护各自仓库内、与产品提交同行的 changelog。
-
-## 本地准备
-
-先检查依赖和工作区状态：
-
-```bash
-make doctor
-make status
-```
-
-首次运行或源码更新后，按需准备客户端、资源和服务端：
+资源就位后，准备并构建客户端：
 
 ```bash
 make configure-client
+npm --prefix repos/happyro-client install
+npm --prefix repos/happyro-client run build:pwa
 make configure-resources
-make test-client
-make build-server
 ```
 
-`make test-client` 会运行客户端测试并重新生成
-`repos/happyro-client/dist/Web`。`make configure-resources` 只把核验过的 GRF、
-`DATA.INI`、BGM、AI 和 System 资源链接到网关，不复制完整的 3.4 GB 客户端
-目录。
-
-## 本地运行
-
-按依赖顺序启动数据库、rAthena 和网关：
+按依赖顺序启动数据库，构建并启动服务端，最后启动网关：
 
 ```bash
 make database-start
+make build-server
 make server-start
 make gateway-start
 ```
 
-浏览器入口：
+停止全部服务：
 
-```text
-http://10.24.1.1:3338/applications/pwa/index.html
+```bash
+make gateway-stop
+make server-stop
+make database-stop
 ```
 
-验证整个运行栈：
+## 测试
+
+检查本地环境和仓库配置：
+
+```bash
+make doctor
+```
+
+运行客户端和网关测试：
+
+```bash
+make test-client
+make test-gateway
+```
+
+验证已启动的数据库、服务端和网关：
 
 ```bash
 make database-verify
@@ -107,52 +127,4 @@ make gateway-verify
 make status
 ```
 
-`make test-account` 维护手动测试账号 `happyro1 / happyro`；
-`make automation-account` 维护隔离的浏览器回归测试账号
-`autotest / happyro` 及其 `AutoTest` 角色。
-
-按反向依赖顺序停止：
-
-```bash
-make gateway-stop
-make server-stop
-make database-stop
-```
-
-停止服务不会删除数据库数据、运行时资源或本地生成的密钥。
-
-## 本地运行架构
-
-网关监听 `3338`，在同一来源提供 PWA、客户端资源、GRF 资源 API、rAthena
-Web API 代理和 WebSocket 代理。它以 `happyro-gateway.service` 运行，并从
-`repos/happyro-client/dist/Web` 发布 `/applications/pwa/`。
-
-rAthena 的 login、char 和 map 服务监听 `10.24.1.1` 的 `6900`、`6121` 和
-`5121` 端口；Web API 只监听 `127.0.0.1:8889`。四个进程通过临时 systemd
-服务运行。MariaDB 10.11.18 只绑定 `127.0.0.1:33062`，数据保存在被 Git
-忽略的 `work/runtime/mariadb-10.11/`。
-
-网关不会在客户端初始化时访问 GitHub。HappyRO 不启用 RemoteClient-JS
-中的 ESRGAN 功能。
-
-## 中文演示部署
-
-生产演示站点为：
-
-```text
-https://happyro-demo.kugarocks.com/applications/pwa/index.html
-```
-
-在开发机生成包含客户端、服务端、网关和部署配置的发布包：
-
-```bash
-tools/deploy/package-demo.sh --build
-```
-
-归档默认写入 `work/deploy/`，不会包含 Git 历史、密钥、日志、数据库数据或
-kRO 运行时资源。生产环境使用系统 MariaDB、systemd 和 OpenResty，不使用
-Docker。完整发布、数据库初始化、每日重置和验收步骤见
-[`docs/deploy/production/README.md`](docs/deploy/production/README.md)。
-
-Docker 文档目前只是后续方案，不是现行运行手册，见
-[`docs/deploy/docker/README.md`](docs/deploy/docker/README.md)。
+HappyRO 自有修改记录在 [`changelog/`](changelog/README.md)。
