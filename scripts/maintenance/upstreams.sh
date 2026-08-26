@@ -20,7 +20,7 @@ show_status() {
 	for spec in \
 		"happyro-client|$CLIENT_REPO|$ROBROWSERLEGACY_BRANCH" \
 		"happyro-server|$SERVER_REPO|$RATHENA_BRANCH" \
-		"remote-client-js|$GATEWAY_REPO|$REMOTE_CLIENT_JS_BRANCH"; do
+		"happyro-gateway|$GATEWAY_REPO|$REMOTE_CLIENT_JS_BRANCH"; do
 		IFS='|' read -r label repo branch <<<"$spec"
 		read -r ahead behind < <(git -C "$repo" rev-list --left-right --count "HEAD...upstream/$branch")
 		printf '%-28s %-8s %-8s upstream/%s\n' "$label" "$ahead" "$behind" "$branch"

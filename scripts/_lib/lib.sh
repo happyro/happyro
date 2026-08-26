@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLIENT_REPO="$PROJECT_ROOT/repos/happyro-client"
 SERVER_REPO="$PROJECT_ROOT/repos/happyro-server"
-GATEWAY_REPO="$PROJECT_ROOT/vendor/robrowserlegacy-remote-client-js"
+GATEWAY_REPO="$PROJECT_ROOT/repos/happyro-gateway"
 MARIADB_PROFILE="$PROJECT_ROOT/deploy/mariadb/profile.env"
 MARIADB_COMPOSE_FILE="$PROJECT_ROOT/deploy/mariadb/compose.yml"
 MARIADB_RUNTIME="$PROJECT_ROOT/work/runtime/mariadb-10.11"

@@ -9,9 +9,9 @@
 | HappyRO 根仓库 | 翻译分块、zh-cn 覆盖、部署脚本和本文档 |
 | `repos/happyro-client` | 客户端源码与测试 |
 | `repos/happyro-server` | 服务端 MOTD |
-| `vendor/robrowserlegacy-remote-client-js` | 网关资源路径修复；另有待确认改动 |
+| `repos/happyro-gateway` | HappyRO Gateway 独立仓库，包含网关资源路径和 WebSocket 目标修复 |
 
-如果“三个仓库”指三个应用工作树，则是 client、server、gateway；根仓库仍需单独提交其编排、翻译源和文档。提交前必须分别在各自工作树检查状态。
+三个应用仓库分别是 client、server 和 HappyRO Gateway；根仓库仍需单独提交其编排、翻译源和文档。提交前必须分别在各自工作树检查状态。
 
 ## 根仓库
 
