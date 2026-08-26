@@ -1,5 +1,7 @@
 # 第二阶段主要城市 NPC 名称
 
+> 批次组：`town-phase-2`。各城市当前状态以 [`../../progress.md`](../../progress.md) 为准。
+
 ## 状态
 
 八座城市均已实现。活动脚本清单、客户端显式映射、封包截断检查、客户端构建和代表性实机取样均已完成。
@@ -33,7 +35,7 @@
 
 ## 清单与实现
 
-- [`../second-stage-inventory.csv`](../second-stage-inventory.csv) 从 Renewal 活动入口 `npc/re/scripts_main.conf` 递归展开，只收集纳入地图中的 `script`、`shop`、`cashshop` 和 `duplicate` 玩家可见实体。
+- [`../inventories/phase-2-towns.csv`](../inventories/phase-2-towns.csv) 从 Renewal 活动入口 `npc/re/scripts_main.conf` 递归展开，只收集纳入地图中的 `script`、`shop`、`cashshop` 和 `duplicate` 玩家可见实体。
 - 客户端 `src/DB/SecondStageNpcNameTable.js` 包含 877 个显式中文映射；不存在运行时机器翻译或“城镇居民”通用兜底。
 - `NpcNameTable.js` 为超过 23 个 ASCII 字符的名称自动建立封包截断别名，并在前缀对应不同译名时直接报错。
 - `NPC.js` 在每一页 `SAY_DIALOG` 到达时重新本地化方括号标题，避免点击“继续”后恢复英文。
