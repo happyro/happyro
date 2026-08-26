@@ -22,6 +22,7 @@ COPY repos/happyro-gateway/package*.json ./
 RUN npm install --omit=dev --ignore-scripts
 COPY repos/happyro-gateway/ ./
 COPY --from=client-builder /src/client/dist/Web /opt/robrowser
+COPY localization/client/data/ /opt/overrides/
 
 RUN mkdir -p /opt/gateway/resources /opt/overrides /opt/gateway/logs \
     && chown -R node:node /opt/gateway /opt/robrowser

@@ -38,7 +38,7 @@ create_runtime_config() {
 		{
 			printf 'MARIADB_ROOT_PASSWORD=%s\n' "$(openssl rand -hex 24)"
 			printf 'DB_PASSWORD=%s\n' "$(openssl rand -hex 24)"
-			printf 'INTERSERVER_USER=happyro\n'
+			printf 'INTERSERVER_USER=happyro_interserver\n'
 			printf 'INTERSERVER_PASSWORD=%s\n' "$(openssl rand -hex 10)"
 		} > "$secret_file"
 	fi
