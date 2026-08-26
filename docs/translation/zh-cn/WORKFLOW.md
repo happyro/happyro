@@ -167,6 +167,8 @@ node tools/workspace/validate-kro/main.mjs
 docs/translation/zh-cn/repair/<batch>/
 ```
 
+没有活动批次时不保留 `repair/` 目录或批次索引。批次完成、修复结果回填原工作区并通过重新校验后，删除对应 repair 工作区；历史记录由 Git 保留。
+
 Repair agent 的 `fixed/` 是临时修复结果。协调者复核后必须按 `target_file` 回填原工作区的 `agents/*/chunks/translated/`，同步对应 manifest、进度和术语记录，然后从“校验原始分片”重新开始。
 
 禁止只修改以下位置：
