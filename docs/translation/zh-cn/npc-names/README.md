@@ -14,7 +14,9 @@
 - [batches/core-towns.md](batches/core-towns.md)：核心六城第一批范围
 - [batches/prontera.md](batches/prontera.md)：普隆德拉全地图范围和验收基准
 - [batches/second-stage.md](batches/second-stage.md)：第二阶段八城范围、排除项和验收证据
+- [batches/p0-p1-fields.md](batches/p0-p1-fields.md)：P0/P1 四组常用野外地图范围和验收证据
 - [second-stage-inventory.csv](second-stage-inventory.csv)：第二阶段活动 NPC 全量名称清单
+- [p0-p1-field-inventory.csv](p0-p1-field-inventory.csv)：P0/P1 常用野外活动 NPC 全量实例清单
 - NPC 初始名称包的客户端本地化原因和验收方式见 [`../../../bugfix/zh-cn/20260825/client-npc-name-display.md`](../../../bugfix/zh-cn/20260825/client-npc-name-display.md)。
 
 ## 维护边界
