@@ -1,0 +1,86 @@
+services:
+  database:
+    image: ${MARIADB_IMAGE:-mariadb:10.11}
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${DB_MAIN_DATABASE:-happyro}
+      MARIADB_USER: ${DB_USER:-happyro}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+      HAPPYRO_LOG_DATABASE: ${DB_LOG_DATABASE:-happyro_log}
+      HAPPYRO_INTERSERVER_USER: ${INTERSERVER_USER:-happyro}
+      HAPPYRO_INTERSERVER_PASSWORD: ${INTERSERVER_PASSWORD:?set INTERSERVER_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--skip-name-resolve"]
+    volumes:
+      - ${DB_DATA_DIR:-../../work/runtime/docker-mariadb}:/var/lib/mysql
+      - ../../repos/happyro-server/sql-files:/opt/rathena/sql:ro
+      - ../mariadb/init/20-happyro-databases.sh:/docker-entrypoint-initdb.d/20-happyro-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping --host=127.0.0.1 --user=$$MARIADB_USER --password=$$MARIADB_PASSWORD --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 60
+    restart: unless-stopped
+
+  login:
+    build: { context: ../.., dockerfile: deploy/docker/server/Dockerfile }
+    image: happyro/server:local
+    command: ["login-server"]
+    environment: &server-env
+      DB_HOST: database
+      DB_PORT: 3306
+      DB_MAIN_DATABASE: ${DB_MAIN_DATABASE:-happyro}
+      DB_LOG_DATABASE: ${DB_LOG_DATABASE:-happyro_log}
+      DB_USER: ${DB_USER:-happyro}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+      INTERSERVER_USER: ${INTERSERVER_USER:-happyro}
+      INTERSERVER_PASSWORD: ${INTERSERVER_PASSWORD:?set INTERSERVER_PASSWORD}
+      WEB_ALLOWED_ORIGIN: ${WEB_ALLOWED_ORIGIN:-http://localhost:3338}
+    depends_on: { database: { condition: service_healthy } }
+    ports: ["${LOGIN_PORT:-6900}:6900"]
+
+  char:
+    image: happyro/server:local
+    command: ["char-server"]
+    environment: *server-env
+    depends_on: { login: { condition: service_started } }
+    ports: ["${CHAR_PORT:-6121}:6121"]
+
+  map:
+    image: happyro/server:local
+    command: ["map-server"]
+    environment: *server-env
+    depends_on: { char: { condition: service_started } }
+    ports: ["${MAP_PORT:-5121}:5121"]
+
+  web-api:
+    image: happyro/server:local
+    command: ["web-server"]
+    environment: *server-env
+    depends_on: { database: { condition: service_healthy } }
+    expose: ["8889"]
+
+  gateway:
+    build: { context: ../.., dockerfile: deploy/docker/gateway/Dockerfile }
+    image: happyro/gateway:local
+    environment:
+      PORT: 3338
+      CLIENT_PUBLIC_URL: ${CLIENT_PUBLIC_URL:-http://localhost:3338}
+      RATHENA_WEB_API_URL: http://web-api:8889
+      WS_ALLOWED_TARGETS: ${WS_ALLOWED_TARGETS:-host.docker.internal:6900,host.docker.internal:6121,host.docker.internal:5121}
+      ENABLE_WSPROXY: "true"
+      ENABLE_STATIC_SERVE: "true"
+      ROBROWSER_PATH: /opt/robrowser
+      ROBROWSER_PUBLIC_PATH: /applications/pwa
+      DATA_OVERRIDE_PATH: /opt/overrides
+    volumes:
+      - ${KRO_CLIENT_DIR:?set KRO_CLIENT_DIR}:/opt/gateway/resources:ro
+      - ../../localization/client/data:/opt/overrides:ro
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: { web-api: { condition: service_started }, login: { condition: service_started }, char: { condition: service_started }, map: { condition: service_started } }
+    ports: ["${GATEWAY_PORT:-3338}:3338"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3338/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
