@@ -1,5 +1,6 @@
 services:
   database:
+    container_name: happyro-database
     image: ${MARIADB_IMAGE:-mariadb:10.11}
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set MARIADB_ROOT_PASSWORD}
@@ -22,8 +23,9 @@ services:
     restart: unless-stopped
 
   login:
+    container_name: happyro-login
     build: { context: ../.., dockerfile: deploy/docker/server/Dockerfile }
-    image: happyro/server:local
+    image: kugarocks/happyro-server:latest
     command: ["login-server"]
     environment: &server-env
       DB_HOST: database
@@ -34,39 +36,42 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
       INTERSERVER_USER: ${INTERSERVER_USER:-happyro}
       INTERSERVER_PASSWORD: ${INTERSERVER_PASSWORD:?set INTERSERVER_PASSWORD}
+      GAME_SERVER_IP: 127.0.0.1
       WEB_ALLOWED_ORIGIN: ${WEB_ALLOWED_ORIGIN:-http://localhost:3338}
     depends_on: { database: { condition: service_healthy } }
-    ports: ["${LOGIN_PORT:-6900}:6900"]
 
   char:
-    image: happyro/server:local
+    container_name: happyro-char
+    image: kugarocks/happyro-server:latest
     command: ["char-server"]
     environment: *server-env
     depends_on: { login: { condition: service_started } }
-    ports: ["${CHAR_PORT:-6121}:6121"]
 
   map:
-    image: happyro/server:local
+    container_name: happyro-map
+    image: kugarocks/happyro-server:latest
     command: ["map-server"]
     environment: *server-env
     depends_on: { char: { condition: service_started } }
-    ports: ["${MAP_PORT:-5121}:5121"]
 
   web-api:
-    image: happyro/server:local
+    container_name: happyro-web-api
+    image: kugarocks/happyro-server:latest
     command: ["web-server"]
     environment: *server-env
     depends_on: { database: { condition: service_healthy } }
     expose: ["8889"]
 
   gateway:
+    container_name: happyro-gateway
     build: { context: ../.., dockerfile: deploy/docker/gateway/Dockerfile }
-    image: happyro/gateway:local
+    image: kugarocks/happyro-gateway:latest
     environment:
       PORT: 3338
       CLIENT_PUBLIC_URL: ${CLIENT_PUBLIC_URL:-http://localhost:3338}
       RATHENA_WEB_API_URL: http://web-api:8889
-      WS_ALLOWED_TARGETS: ${WS_ALLOWED_TARGETS:-host.docker.internal:6900,host.docker.internal:6121,host.docker.internal:5121}
+      WS_ALLOWED_TARGETS: 127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121
+      WS_TARGET_REDIRECTS: 127.0.0.1:6900=login:6900,127.0.0.1:6121=char:6121,127.0.0.1:5121=map:5121
       ENABLE_WSPROXY: "true"
       ENABLE_STATIC_SERVE: "true"
       ROBROWSER_PATH: /opt/robrowser
@@ -74,8 +79,10 @@ services:
       DATA_OVERRIDE_PATH: /opt/overrides
     volumes:
       - ${KRO_CLIENT_DIR:?set KRO_CLIENT_DIR}:/opt/gateway/resources:ro
+      - ${KRO_CLIENT_DIR:?set KRO_CLIENT_DIR}/AI:/opt/gateway/AI:ro
+      - ${KRO_CLIENT_DIR:?set KRO_CLIENT_DIR}/BGM:/opt/gateway/BGM:ro
+      - ${KRO_CLIENT_DIR:?set KRO_CLIENT_DIR}/System:/opt/gateway/System:ro
       - ../../localization/client/data:/opt/overrides:ro
-    extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on: { web-api: { condition: service_started }, login: { condition: service_started }, char: { condition: service_started }, map: { condition: service_started } }
     ports: ["${GATEWAY_PORT:-3338}:3338"]
     healthcheck:

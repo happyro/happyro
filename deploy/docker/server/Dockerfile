@@ -9,7 +9,7 @@ RUN apt-get update \
 WORKDIR /src
 COPY repos/happyro-server/ ./
 RUN cmake -S . -B /tmp/build -DPACKETVER=20211103 -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build /tmp/build --parallel
+    && cmake --build /tmp/build --parallel 2
 
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim
 
@@ -19,10 +19,10 @@ RUN apt-get update \
 
 WORKDIR /opt/rathena
 COPY --from=builder /src/ ./
-COPY --from=builder /tmp/build/login-server /opt/rathena/login-server
-COPY --from=builder /tmp/build/char-server /opt/rathena/char-server
-COPY --from=builder /tmp/build/map-server /opt/rathena/map-server
-COPY --from=builder /tmp/build/web-server /opt/rathena/web-server
+COPY --from=builder /src/login-server /opt/rathena/login-server
+COPY --from=builder /src/char-server /opt/rathena/char-server
+COPY --from=builder /src/map-server /opt/rathena/map-server
+COPY --from=builder /src/web-server /opt/rathena/web-server
 COPY deploy/docker/server/entrypoint.sh /usr/local/bin/happyro-server
 
 RUN chmod +x /opt/rathena/login-server /opt/rathena/char-server \

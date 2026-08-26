@@ -9,6 +9,7 @@ set -eu
 : "${DB_PASSWORD:?DB_PASSWORD is required}"
 : "${INTERSERVER_USER:=happyro}"
 : "${INTERSERVER_PASSWORD:?INTERSERVER_PASSWORD is required}"
+: "${GAME_SERVER_IP:=127.0.0.1}"
 : "${LOGIN_PORT:=6900}"
 : "${CHAR_PORT:=6121}"
 : "${MAP_PORT:=5121}"
@@ -64,7 +65,7 @@ passwd: ${INTERSERVER_PASSWORD}
 login_ip: login
 login_port: ${LOGIN_PORT}
 bind_ip: 0.0.0.0
-char_ip: char
+char_ip: ${GAME_SERVER_IP}
 char_port: ${CHAR_PORT}
 server_name: HappyRO
 pincode_enabled: no
@@ -76,7 +77,7 @@ passwd: ${INTERSERVER_PASSWORD}
 char_ip: char
 char_port: ${CHAR_PORT}
 bind_ip: 0.0.0.0
-map_ip: 0.0.0.0
+map_ip: ${GAME_SERVER_IP}
 map_port: ${MAP_PORT}
 EOF
 
@@ -87,4 +88,3 @@ allowed_origin_cors: ${WEB_ALLOWED_ORIGIN:-http://localhost:3338}
 EOF
 
 exec "/opt/rathena/$1"
-
