@@ -31,6 +31,8 @@ git -C "$GATEWAY_REPO" apply --check --reverse \
 	"$PROJECT_ROOT/patches/remote-client-js/0002-proxy-rathena-web-api.patch"
 git -C "$GATEWAY_REPO" apply --check --reverse \
 	"$PROJECT_ROOT/patches/remote-client-js/0003-redirect-websocket-targets.patch"
+git -C "$GATEWAY_REPO" apply --check --reverse \
+	"$PROJECT_ROOT/patches/remote-client-js/0004-decode-mixed-encoding-path-segments.patch"
 rg -q '^WS_ALLOWED_TARGETS=127\.0\.0\.1:6900,127\.0\.0\.1:6121,127\.0\.0\.1:5121$' \
 	"$PROJECT_ROOT/deploy/remote-client/.env.example"
 rg -q '^RATHENA_WEB_API_URL=http://127\.0\.0\.1:8889$' \
@@ -45,6 +47,7 @@ rg -q '^pincode_enabled: no$' "$SERVER_REPO/conf/import/char_conf.txt"
 bash -n \
 	"$PROJECT_ROOT/scripts/database/database.sh" \
 	"$PROJECT_ROOT/scripts/server/configure-server.sh" \
+	"$PROJECT_ROOT/scripts/gateway/apply-patches.sh" \
 	"$PROJECT_ROOT/scripts/gateway/gateway.sh" \
 	"$PROJECT_ROOT/scripts/account/test-account.sh" \
 	"$PROJECT_ROOT/scripts/account/automation-account.sh" \
