@@ -45,7 +45,8 @@
 | `field-moc-p1` | P1 | 梦罗克周边 | `moc_fild01` 至 `moc_fild22` | 22 | 已实现 | 42 个可见实例、22 个基础名称；`moc_fild11` 悬停取样通过。 |
 | `field-pay-p1` | P1 | 斐扬周边 | `pay_fild01` 至 `pay_fild11` | 11 | 已实现 | 28 个可见实例、20 个基础名称；`pay_fild07` 悬停与点击寻路取样通过。 |
 | `field-mjolnir-p2` | P2 | 妙勒尼山脉 | `mjolnir_01` 至 `mjolnir_12` | 12 | 已实现 | 19 个可见实例、15 个基础名称；`mjolnir_02` 卡普拉员工悬停与点击取样通过。 |
-| `field-major-cities-p2` | P2 | 第二阶段八城周边 | 按地图族确定 | 待定 | 已排期 | 依次定义地图边界和排除项。 |
+| `field-yuno-p2` | P2 | 朱诺周边 | `yuno_fild01` 至 `yuno_fild12` | 12 | 已实现 | 36 个可见实例、19 个基础名称；`yuno_fild08` 的“哈妮”悬停取样通过。 |
+| `field-major-cities-p2` | P2 | 其余第二阶段城市周边 | 按地图族确定 | 待定 | 已排期 | 下一批从科摩多周边 `cmd_fild01` 至 `cmd_fild09` 开始。 |
 | `dungeon-common-p3` | P3 | 常用地下城、岛屿和交通地图 | 按批次确定 | 待定 | 已排期 | 不与野外批次混算。 |
 | `instance-low-frequency-p4` | P4 | 任务专图、副本和活动区域 | 按使用频率确定 | 待定 | 未规划 | 常用固定区域完成后处理。 |
 
