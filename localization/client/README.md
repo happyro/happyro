@@ -1,46 +1,38 @@
-# Client localization overlays
+# 客户端本地化覆盖资源
 
-These UTF-8 files fill loose client resources that are not present in the
-official 2021-11-05 kRO GRF. The gateway serves them through
-`DATA_OVERRIDE_PATH`; files in the verified official runtime remain unchanged.
+这些 UTF-8 文件用于补充官方 kRO 2021-11-05 GRF 中不存在的客户端散装资源。网关通过
+`DATA_OVERRIDE_PATH` 提供这些文件；经过核验的官方运行时文件保持不变。
 
-`data/msgstringtable.txt` is based on OpenKore's cRO message table at commit
-`51de1ddfc4449ae5217f6886de702f87ca934030`. It contains message IDs 0 through
-4070 and has SHA-256
-`b0fa22e17ec01688828157b215c58d452dae389d4601a52087c1e1324be794ce`.
+`data/msgstringtable.txt` 基于 OpenKore 在提交
+`51de1ddfc4449ae5217f6886de702f87ca934030` 时的 cRO 消息表。该文件包含 0 至 4070
+的消息 ID，其 SHA-256 为
+`b0fa22e17ec01688828157b215c58d452dae389d4601a52087c1e1324be794ce`。
 
-`data/titletable.json` contains Simplified Chinese names for the fixed 2021
-client title ID range 1000 through 1046.
+`data/titletable.json` 包含 2021 客户端固定称号 ID 范围 1000 至 1046 的简体中文名称。
 
-`data/skilldesctable.txt` contains reviewed Simplified Chinese descriptions for
-the novice skills available to a newly created character. The text was checked
-against the 2021 client skill IDs and the Chinese RO handbook entries for
-`NV_BASIC`, `NV_FIRSTAID`, and `NV_TRICKDEAD`. When the official Korean Lua
-table contains a skill that is not yet covered here, the client shows an honest
-Chinese mechanical summary instead of leaking Korean text.
+`data/skilldesctable.txt` 包含经过校对的新建角色可用初心者技能简体中文说明。文本已根据
+2021 客户端技能 ID 以及中文 RO 手册中 `NV_BASIC`、`NV_FIRSTAID` 和
+`NV_TRICKDEAD` 的条目核对。当官方韩文 Lua 表包含尚未在此覆盖的技能时，客户端会显示
+准确的中文机制摘要，避免直接显示韩文。
 
-<!-- Archived: data/itemlocalization.json was superseded by the translated
-itemInfo_true.lub and is retained under archive/localization/client/data/. -->
+<!-- 已归档：data/itemlocalization.json 已由翻译后的 itemInfo_true.lub 取代，
+现保留在 archive/localization/client/data/ 中。 -->
 
-## Runtime integration
+## 运行时集成
 
-The client keeps translated static names when official Lua tables are loaded:
+加载官方 Lua 表时，客户端会保留已翻译的静态名称：
 
-- `DBManager.loadTitleTable` applies `titletable.json` after the official title
-  table, so earned titles do not fall back to Korean.
-- `DBManager.loadWorldMapInfo` combines official world-map geometry with the
-  translated `WorldMap.js` and `MapTable.js` names. Dynamic map IDs that are not
-  present in the old world-map layout use the translated map-info snapshot.
-- Item display names remain localized, while item resource names are decoded
-  with the configured client character set. This keeps Korean GRF filenames
-  valid without exposing Korean item names in the UI.
-<!-- DBManager.loadItemLocalization is archived; itemInfo_true.lub now contains
-the complete player-visible item names and descriptions. -->
+- `DBManager.loadTitleTable` 在官方称号表之后应用 `titletable.json`，使已获得的称号不会
+  回退为韩文。
+- `DBManager.loadWorldMapInfo` 将官方世界地图几何数据与已翻译的 `WorldMap.js` 和
+  `MapTable.js` 名称合并。旧世界地图布局中不存在的动态地图 ID 使用已翻译的地图信息快照。
+- 道具显示名称保持本地化，道具资源名称则使用配置的客户端字符集解码。这样既能保持韩文
+  GRF 文件名有效，也不会在界面中显示韩文道具名称。
+<!-- DBManager.loadItemLocalization 已归档；itemInfo_true.lub 现已包含完整的玩家可见
+道具名称和说明。 -->
 
-The resource gateway converts mojibake path segments independently. A request
-may contain a legacy CP949 directory such as `À¯ÀúÀÎÅÍÆäÀÌ½º` and a valid
-Unicode filename such as `나이프.bmp`; converting the whole path would corrupt
-the filename and make equipment icons return HTTP 404.
+资源网关会分别转换各个乱码路径片段。请求可能同时包含旧式 CP949 目录
+`À¯ÀúÀÎÅÍÆäÀÌ½º` 和有效的 Unicode 文件名 `나이프.bmp`；转换整个路径会破坏文件名，
+导致装备图标返回 HTTP 404。
 
-Gateway startup validates the remaining localization overlays. Client changes
-are covered by the Vitest suite.
+网关启动时会验证剩余的本地化覆盖资源。客户端变更由 Vitest 测试套件覆盖。
