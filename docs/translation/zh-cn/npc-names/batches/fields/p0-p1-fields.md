@@ -1,5 +1,7 @@
 # P0/P1 常用野外 NPC 名称
 
+> 批次组：`field-p0-p1`。各地图族当前状态以 [`../../progress.md`](../../progress.md) 为准。
+
 ## 状态
 
 P0 普隆德拉周边和 P1 吉芬、梦罗克、斐扬周边的活动 NPC 清单、客户端显式映射、封包截断检查、测试、构建和代表性实机取样均已完成，四个批次已标记为“已实现”。
@@ -17,7 +19,7 @@ P0 普隆德拉周边和 P1 吉芬、梦罗克、斐扬周边的活动 NPC 清�
 
 ## 清单与分类
 
-- [`../p0-p1-field-inventory.csv`](../p0-p1-field-inventory.csv) 从 Renewal 活动入口 `npc/re/scripts_main.conf` 递归展开 850 个活动脚本文件。
+- [`../inventories/p0-p1-fields.csv`](../inventories/p0-p1-fields.csv) 从 Renewal 活动入口 `npc/re/scripts_main.conf` 递归展开 850 个活动脚本文件。
 - 原始定义共 253 条，只纳入 `script`、`shop`、`cashshop` 和 `duplicate` 类型。
 - 人工规则排除 96 条：75 条空显示名、17 条隐藏或触发实体、4 条内部控制实体。
 - 清单逐实例保留地图、坐标、完整内部名称、基础名称、译文、定义类型和服务端源文件行号。
