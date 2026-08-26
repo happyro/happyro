@@ -40,6 +40,10 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 
 汉化问题会在使用中逐步发现，项目会持续修复和完善，稳定性也需要时间积累。
 
+## 安装文档
+
+Docker、Linux、macOS 和 Windows 安装方式请查看 [HappyRO 文档](https://happyro.kugarocks.com)。
+
 ## 版权资源
 
 kRO 客户端资源属于第三方版权内容，未经授权不得分发，可加群交流：
