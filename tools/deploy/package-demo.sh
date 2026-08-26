@@ -8,18 +8,18 @@ GATEWAY_REPO="$PROJECT_ROOT/vendor/robrowserlegacy-remote-client-js"
 DEFAULT_OUTPUT="$PROJECT_ROOT/work/deploy/happyro-demo-$(date +%Y%m%d-%H%M).tar.gz"
 
 usage() {
-	local esc=$'\033'
-	[[ "${color:-true}" == true ]] || esc=''
-	printf '\n%s[1;36mHappyRO demo package tool%s[0m\n\n' "$esc" "$esc"
-	printf '%s[1;33mUsage%s[0m\n  %s[1;32mpackage-demo.sh%s[0m --output <archive.tar.gz> [--build] [--no-color]\n\n' "$esc" "$esc" "$esc" "$esc"
-	printf '%s[1;33mOptions%s[0m\n' "$esc" "$esc"
+	local title=$'\033[1;36m' section=$'\033[1;33m' command=$'\033[1;32m' example=$'\033[36m' reset=$'\033[0m'
+	[[ "${color:-true}" == true ]] || title='' section='' command='' example='' reset=''
+	printf '\n%sHappyRO demo package tool%s\n\n' "$title" "$reset"
+	printf '%sUsage%s\n  %spackage-demo.sh%s --output <archive.tar.gz> [--build] [--no-color]\n\n' "$section" "$reset" "$command" "$reset"
+	printf '%sOptions%s\n' "$section" "$reset"
 	cat <<'EOF'
   --output <archive.tar.gz>  Output archive (default: timestamped tar.gz in work/deploy)
   --build               Build the client and server before packaging
   --no-color             Disable ANSI colors in this help and errors
 
 EOF
-	printf '%s[1;33mExamples%s[0m\n  %s[36mtools/deploy/package-demo.sh%s[0m --output work/deploy/happyro-demo-20260828-1816.tar.gz\n  %s[36mtools/deploy/package-demo.sh%s[0m --build --output work/deploy/happyro-demo-20260828-1816.tar.gz\n\n' "$esc" "$esc" "$esc" "$esc" "$esc" "$esc"
+	printf '%sExamples%s\n  %stools/deploy/package-demo.sh%s --output work/deploy/happyro-demo-20260828-1816.tar.gz\n  %stools/deploy/package-demo.sh%s --build --output work/deploy/happyro-demo-20260828-1816.tar.gz\n\n' "$section" "$reset" "$example" "$reset" "$example" "$reset"
 }
 
 build=false
@@ -63,6 +63,13 @@ fail() {
 	exit 1
 }
 
+repository_version() {
+	local repository="$1" version
+	version="$(git -C "$repository" rev-parse HEAD)"
+	[[ -z "$(git -C "$repository" status --porcelain --untracked-files=normal)" ]] || version+='-dirty'
+	printf '%s\n' "$version"
+}
+
 [[ "$archive" == *.tar.gz ]] || fail "output must end with .tar.gz"
 output="$(mktemp -d "${TMPDIR:-/tmp}/happyro-demo-package.XXXXXX")"
 trap 'rm -rf "$output"' EXIT
@@ -90,10 +97,43 @@ rm -rf "$output/client" "$output/gateway" "$output/rathena" "$output/runtime" "$
 mkdir -p "$output/client" "$output/gateway" "$output/rathena" "$output/localization/client" "$output/deployment"
 
 rsync -a --delete "$CLIENT_REPO/dist/Web/" "$output/client/"
+cat > "$output/client/Config.happyro.js" <<'EOF'
+window.ROConfigHappyRO = {
+	development: false,
+	remoteClient: `${window.location.origin}/`,
+	servers: [
+		{
+			display: 'HappyRO 演示服',
+			desc: 'Renewal 2021-11-03',
+			address: '127.0.0.1',
+			port: 6900,
+			version: 25,
+			langtype: 0xf0,
+			packetver: 20211103,
+			renewal: true,
+			worldMapSettings: { episode: 18 },
+			packetKeys: false,
+			socketProxy: `wss://${window.location.host}/ws/`,
+			forceUseAddress: true,
+			adminList: []
+		}
+	],
+	packetDump: false,
+	loadLua: true,
+	enableMapName: true,
+	enableAchievements: true,
+	skipServerList: true,
+	skipIntro: false,
+	registrationweb: '',
+	registrationNotice: '此站点仅作 HappyRO 中文演示。测试账号：happyro1 至 happyro9，密码均为 happyro。数据库每天 7:00 自动重置，所有角色和游戏进度届时会被清除。',
+	autoLogin: []
+};
+EOF
 rsync -a --delete --exclude='.git/' --exclude='.env' --exclude='.env.example' --exclude='logs/' "$GATEWAY_REPO/" "$output/gateway/"
+patch --directory="$output/gateway" --strip=1 < "$PROJECT_ROOT/deploy/production/gateway-bind-loopback.patch"
 rsync -a --delete --exclude='.git/' --exclude='src/' --exclude='3rdparty/' --exclude='tests/' --exclude='doc/' --exclude='build/' --exclude='CMakeFiles/' --exclude='.*.pid' --exclude='log/' "$SERVER_REPO/" "$output/rathena/"
 rsync -a --delete "$PROJECT_ROOT/localization/client/data/" "$output/localization/client/data/"
-rsync -a "$PROJECT_ROOT/deploy/" "$output/deployment/deploy/"
+rsync -a --exclude='/mariadb/' "$PROJECT_ROOT/deploy/" "$output/deployment/deploy/"
 rsync -a "$PROJECT_ROOT/scripts/" "$output/deployment/scripts/"
 rsync -a "$PROJECT_ROOT/docs/deploy/production/" "$output/deployment/docs/deploy/production/" 2>/dev/null || true
 
@@ -107,6 +147,11 @@ cat > "$output/README.md" <<'EOF'
 不包含 Git 历史、.env、密钥、日志、数据库数据和运行时缓存。
 EOF
 
+{
+	printf 'root=%s\n' "$(repository_version "$PROJECT_ROOT")"
+	printf 'client=%s\n' "$(repository_version "$CLIENT_REPO")"
+	printf 'server=%s\n' "$(repository_version "$SERVER_REPO")"
+} > "$output/VERSION"
 (cd "$output" && find . -type f -printf '%P\n' | sort > MANIFEST.txt && sha256sum MANIFEST.txt > MANIFEST.sha256)
 tar -C "$output" -czf "$archive" .
 printf 'archive: %s\n' "$archive"
