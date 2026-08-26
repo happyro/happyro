@@ -53,6 +53,20 @@
 
 P3 第一批核心城市地下城已完成，范围与证据见 [batches/dungeons/p3-core-dungeons.md](batches/dungeons/p3-core-dungeons.md)。
 
+P3 第二批沿海地下城与交通区域已完成，范围与证据见 [batches/dungeons/p3-coastal-dungeons.md](batches/dungeons/p3-coastal-dungeons.md)。P3 第三批艾尔帕兰钟楼也已完成，范围与证据见 [batches/dungeons/p3-clock-tower.md](batches/dungeons/p3-clock-tower.md)。
+
+P3 第四批早中期地下城已完成，范围与证据见 [batches/dungeons/p3-early-dungeons.md](batches/dungeons/p3-early-dungeons.md)。
+
+P3 第五批格拉斯特海姆经典区域已完成，范围与证据见 [batches/dungeons/p3-glast-heim.md](batches/dungeons/p3-glast-heim.md)。
+
+P3 第六批经典地下城已完成，范围与证据见 [batches/dungeons/p3-classic-dungeons.md](batches/dungeons/p3-classic-dungeons.md)。
+
+P3 第七批龟岛已完成，范围与证据见 [batches/dungeons/p3-turtle-island.md](batches/dungeons/p3-turtle-island.md)。P3 第八批区域型地下城也已完成，范围与证据见 [batches/dungeons/p3-regional-dungeons.md](batches/dungeons/p3-regional-dungeons.md)。
+
+P3 第九批中后期固定地下城已完成，范围与证据见 [batches/dungeons/p3-midgame-dungeons.md](batches/dungeons/p3-midgame-dungeons.md)。
+
+P3 第十批其余常用固定地图已完成，范围与证据见 [batches/dungeons/p3-remaining-common.md](batches/dungeons/p3-remaining-common.md)。至此 P3 结束；扩展层、异世界任务洞窟、副本和活动专图归入 P4。
+
 ## 范围边界
 
 纳入：
