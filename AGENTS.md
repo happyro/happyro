@@ -9,7 +9,7 @@
 - 允许的 type：feat、fix、config、docs、refactor、test、build、ci、chore、perf、style、revert。
 - subject 使用祈使语气的英文，不以句号结尾，首行总长度不超过 72 个字符。
 - 一个提交只包含一个逻辑变更；上游合并提交和上游作者提交不受此限制。
-- 每次变更如果需要提交，提交前必须同步添加或更新对应的 changelog 记录。
+- 产品改动如果需要提交，提交前必须自动添加或更新对应的 changelog 记录；只有用户明确说明不写 changelog 时才可跳过。
 - lang/zh-cn 是长期中文产品分支；语言分支不合并回 main。
 - 三个仓库只推送到各自的 origin，不推送到 upstream。
 - 未经用户明确要求，不提交、不推送。
