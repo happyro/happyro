@@ -13,7 +13,7 @@
 
 ## 扫描版本
 
-- 分支：lang/zh-cn
+- 分支：main
 - 扫描日期：2026-08-21
 - 扫描工具：scripts/localization/scan-localization-inventory.py
 - 扫描工具提交：6d36b252ce5653978f640c61f2b6319c45a9e827

@@ -6,6 +6,11 @@ HappyRO 是基于 roBrowserLegacy 和 rAthena 的 Web 游戏栈。它独立于
 
 HappyRO 自有修改按日期记录在 [`changelog/`](changelog/README.md)。
 
+## 分支模型
+
+- `main`：长期中文产品分支，也是日常维护和发布基线。
+- `demo`：中文演示环境分支，只增加演示专属配置，并持续同步 `main`。
+
 ## 仓库布局
 
 ```text
@@ -102,7 +107,7 @@ make database-stop
 
 ## 更新上游
 
-所有 HappyRO 自有仓库都使用 `main`。各派生仓库使用 `origin` 指向 HappyRO，
+所有 HappyRO 自有仓库都以 `main` 作为主要维护分支。各派生仓库使用 `origin` 指向 HappyRO，
 使用 `upstream` 指向原始项目。
 
 ```bash
