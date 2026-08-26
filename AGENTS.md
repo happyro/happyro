@@ -20,6 +20,7 @@
 - inputs/official/ 和 inputs/runtime/kro-20211105/ 中经过核验的官方 kRO 2021-11-05 文件视为不可修改的源材料。
 - 生成文件放在 work/ 或 artifacts/。
 - repos/happyro-client 和 repos/happyro-server 是独立 Git 仓库。
+- docs/translation/zh-cn/ 中的旧翻译工作区仅作为历史记录，后续不得再作为发布源向客户端或服务端仓库回写；产品翻译直接修改对应仓库。
 
 ## 代码实现
 
