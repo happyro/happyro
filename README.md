@@ -2,6 +2,15 @@
 
 HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowserLegacy) 的开源中文 RO 项目，致力于提供完整的中文体验和简单易用的部署方式，让玩家打开浏览器即可进入游戏，省去安装桌面客户端的麻烦，也让开发者能够更轻松地部署、维护和参与项目。
 
+## 项目组成
+
+HappyRO 由一个编排仓库和三个独立的应用仓库组成：
+
+- 根仓库：部署脚本、配置、资源链接和文档。
+- [happyro-client](https://github.com/happyro/happyro-client)：浏览器客户端和 PWA 构建产物。
+- [happyro-server](https://github.com/happyro/happyro-server)：基于 rAthena 的登录、角色、地图和 Web API 服务。
+- [happyro-gateway](https://github.com/happyro/happyro-gateway)：Node.js 网关、静态资源服务和 WebSocket 代理。
+
 ## 项目基线
 
 | 项目 | 基线 |
@@ -14,7 +23,7 @@ HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowser
 | --- | --- |
 | [rAthena](https://github.com/rathena/rathena) | `master` @ [`2fe6ab3dc4d8`](https://github.com/rathena/rathena/commit/2fe6ab3dc4d830b11d93fb44c3b48436571890bd) |
 | [roBrowserLegacy](https://github.com/MrAntares/roBrowserLegacy) | `master` @ [`402e61ce7ae8`](https://github.com/MrAntares/roBrowserLegacy/commit/402e61ce7ae80cd45c76365371d4dbfd6aa10f49) |
-| [HappyRO Gateway](https://github.com/happyro/happyro-gateway) | `main` @ [`400dad7`](https://github.com/happyro/happyro-gateway/commit/400dad7)（基于 [RemoteClient-JS](https://github.com/FranciscoWallison/roBrowserLegacy-RemoteClient-JS)） |
+| [RemoteClient-JS](https://github.com/FranciscoWallison/roBrowserLegacy-RemoteClient-JS) | HappyRO Gateway `main` @ [`400dad7`](https://github.com/happyro/happyro-gateway/commit/400dad7) |
 | Node.js | 22 或更高版本 |
 | MariaDB | 10.11 |
 | LUB 回编译工具链 | Lua 5.0.2、Lua 5.1.5 |
