@@ -1,51 +1,90 @@
 # HappyRO
 
-HappyRO 是基于 roBrowserLegacy 和 rAthena 的 Web 游戏栈。它独立于
-`happyro-desktop`，不使用 Windows 客户端、公共 GRF 服务或公共 WebSocket
-代理。
+HappyRO 是基于 roBrowserLegacy、rAthena 和 RemoteClient-JS 的中文 Web
+游戏栈，不依赖 Windows 客户端、公共 GRF 服务或公共 WebSocket 代理。
 
-HappyRO 自有修改按日期记录在 [`changelog/`](changelog/README.md)。
+运行基线固定为 kRO 2021-11-05、`PACKETVER=20211103`、Renewal，客户端与
+服务端必须使用一致的封包配置。
+
+## 仓库结构
+
+```text
+happyro/
+├── configs/                         # 本地 HappyRO 客户端配置
+├── deploy/                          # 本地及生产运行时配置
+├── docs/                            # 部署、翻译历史和故障记录
+├── inputs/                          # 只读官方源材料与运行时资源
+├── localization/client/data/        # 中文 loose-data 运行时覆盖层
+├── repos/happyro-client/            # roBrowserLegacy 派生仓库
+├── repos/happyro-server/            # rAthena 派生仓库
+├── scripts/                         # 本地检查、构建和服务管理脚本
+├── tools/                           # 发布、翻译和工作区工具
+├── vendor/robrowserlegacy-remote-client-js/
+├── versions/                        # 锁定的依赖版本
+├── artifacts/                       # 可重建或经验证的生成产物
+└── work/                            # 被 Git 忽略的临时输出和运行状态
+```
+
+根仓库、`repos/happyro-client` 和 `repos/happyro-server` 是三个独立 Git
+仓库，各自提交并只推送到自己的 `origin`。`vendor/` 中的网关保持锁定版本，
+包含 HappyRO 所需的可复现补丁。
 
 ## 分支模型
 
 - `main`：长期中文产品分支，也是日常维护和发布基线。
 - `demo`：中文演示环境分支，只增加演示专属配置，并持续同步 `main`。
 
-## 仓库布局
+## 中文资源边界
+
+`docs/translation/zh-cn/` 保存已经关闭的翻译批次、清单和历史验证记录，
+不再作为客户端或服务端产品源码的发布源。后续产品翻译直接修改：
 
 ```text
-happyro/
-├── configs/                         # HappyRO 客户端配置
-├── docs/translation/zh-cn/          # 两个独立的中文翻译工作区
-├── deploy/mariadb/                  # 固定版本的开发数据库
-├── deploy/rathena/                  # rAthena 运行时配置
-├── deploy/remote-client/            # 网关环境
-├── inputs/                          # 不可变源材料和暂存的运行时资源
-├── repos/happyro-client/            # HappyRO roBrowserLegacy 派生仓库
-├── repos/happyro-server/            # HappyRO rAthena 派生仓库
-├── vendor/robrowserlegacy-remote-client-js/
-├── versions/                        # 锁定的上游基线版本
-├── scripts/                         # 可重复执行的检查和构建脚本
-└── work/                            # 生成的输出
+repos/happyro-client
+repos/happyro-server
 ```
 
-中文翻译工作区分别位于：
+kRO 资源翻译和回编译历史仍可从
+[`docs/translation/zh-cn/kro-20211105/`](docs/translation/zh-cn/kro-20211105/README.md)
+复现。运行时 loose-data 覆盖位于 `localization/client/data/`。
 
-- [`docs/translation/zh-cn/client-server/`](docs/translation/zh-cn/client-server/README.md)：HappyRO client 和 server 项目的主产品翻译；
-- [`docs/translation/zh-cn/kro-20211105/`](docs/translation/zh-cn/kro-20211105/README.md)：kRO 2021-11-05 官方客户端资源的独立翻译工作区。
-
-两个工作区各自维护清单、进度、术语表、基准文件和 `agents/` 目录，不共用工作状态。
-
-Docker 部署规划见 [`docs/deploy/docker/README.md`](docs/deploy/docker/README.md)。
-
-网关的统一模式在 `3338` 端口提供 PWA、基于 GRF 的资源 API，以及连接
-rAthena 的 WebSocket 代理。浏览器入口为：
+以下目录中的核验文件视为不可修改的官方源材料：
 
 ```text
-http://10.24.1.1:3338/applications/pwa/index.html
+inputs/official/
+inputs/runtime/kro-20211105/
 ```
 
-## 运行 HappyRO
+新生成的文件写入 `work/` 或 `artifacts/`，不得覆盖官方源材料。HappyRO
+自有变更按日期汇总在 [`changelog/`](changelog/README.md)；客户端和服务端
+同时维护各自仓库内、与产品提交同行的 changelog。
+
+## 本地准备
+
+先检查依赖和工作区状态：
+
+```bash
+make doctor
+make status
+```
+
+首次运行或源码更新后，按需准备客户端、资源和服务端：
+
+```bash
+make configure-client
+make configure-resources
+make test-client
+make build-server
+```
+
+`make test-client` 会运行客户端测试并重新生成
+`repos/happyro-client/dist/Web`。`make configure-resources` 只把核验过的 GRF、
+`DATA.INI`、BGM、AI 和 System 资源链接到网关，不复制完整的 3.4 GB 客户端
+目录。
+
+## 本地运行
+
+按依赖顺序启动数据库、rAthena 和网关：
 
 ```bash
 make database-start
@@ -53,48 +92,26 @@ make server-start
 make gateway-start
 ```
 
-如果客户端或 server 尚未构建，或者运行时资源尚未配置，首次准备时再执行
-`make configure-client`、`make configure-resources`、`make build-server`；
-`make doctor`、`make test-client` 和 `make test-gateway` 属于检查和测试命令，
-不属于日常启动步骤。
+浏览器入口：
 
-`make configure-resources` 会将经过核验的运行时 GRF、`DATA.INI`、BGM 和
-System 文件链接到 vendor 目录中的网关，不会复制 3.4 GB 的客户端目录。
-随后，`make test-gateway` 会使用这些资源运行网关检查。网关从
-`repos/happyro-client/dist/Web` 发布经过测试的 PWA，路径为
-`/applications/pwa/`；它在同一来源代理 rAthena HTTP API，并作为
-`happyro-gateway.service` 运行。
+```text
+http://10.24.1.1:3338/applications/pwa/index.html
+```
 
-客户端会在初始化前同步加载所需的 `Config.happyro.js`，运行时不会连接
-GitHub。锁定的 RemoteClient-JS 版本引用了一个未发布的本地 ESRGAN 包。
-HappyRO 不启用 ESRGAN，因此 vendor 工作树包含该依赖的可复现补丁，以及
-同源的 rAthena API 代理。
-
-`make test-account` 维护手动测试账号 `happyro1 / happyro`。
-`make automation-account` 维护隔离的浏览器回归测试账号
-`autotest / happyro` 及其 `AutoTest` 角色。
-
-## 数据库和 rAthena 运行时
-
-Web 栈使用独立的 MariaDB 10.11.18 实例。镜像通过摘要固定，数据存放在
-被 Git 忽略的 `work/runtime/mariadb-10.11/` 下，并且只绑定到
-`127.0.0.1:33062`。数据库模式为 `happyro` 和 `happyro_log`；密码在
-本地生成，绝不提交到仓库。
+验证整个运行栈：
 
 ```bash
-make database-start
 make database-verify
-make server-start
 make server-verify
+make gateway-verify
 make status
 ```
 
-rAthena 的 login、char 和 map 服务监听 `10.24.1.1` 的 `6900`、`6121` 和
-`5121` 端口。其 HTTP API 仅监听 `127.0.0.1:8889`；`8888` 端口仍由 NAS
-上的 `tinyproxy` 服务使用。四个 rAthena 进程以临时 systemd 服务运行，
-`make server-start` 返回后仍会保持活动状态。
+`make test-account` 维护手动测试账号 `happyro1 / happyro`；
+`make automation-account` 维护隔离的浏览器回归测试账号
+`autotest / happyro` 及其 `AutoTest` 角色。
 
-按依赖顺序停止整个栈：
+按反向依赖顺序停止：
 
 ```bash
 make gateway-stop
@@ -102,21 +119,40 @@ make server-stop
 make database-stop
 ```
 
-停止命令会保留 MariaDB 数据和生成的密钥。初始 schema 脚本只会在数据库
-数据目录为空时运行。
+停止服务不会删除数据库数据、运行时资源或本地生成的密钥。
 
-## 更新上游
+## 本地运行架构
 
-所有 HappyRO 自有仓库都以 `main` 作为主要维护分支。各派生仓库使用 `origin` 指向 HappyRO，
-使用 `upstream` 指向原始项目。
+网关监听 `3338`，在同一来源提供 PWA、客户端资源、GRF 资源 API、rAthena
+Web API 代理和 WebSocket 代理。它以 `happyro-gateway.service` 运行，并从
+`repos/happyro-client/dist/Web` 发布 `/applications/pwa/`。
 
-```bash
-make fetch-upstreams
-make upstream-status
+rAthena 的 login、char 和 map 服务监听 `10.24.1.1` 的 `6900`、`6121` 和
+`5121` 端口；Web API 只监听 `127.0.0.1:8889`。四个进程通过临时 systemd
+服务运行。MariaDB 10.11.18 只绑定 `127.0.0.1:33062`，数据保存在被 Git
+忽略的 `work/runtime/mariadb-10.11/`。
 
-git -C repos/happyro-client merge --no-ff upstream/master
-git -C repos/happyro-server merge --no-ff upstream/master
+网关不会在客户端初始化时访问 GitHub。HappyRO 不启用 RemoteClient-JS
+中的 ESRGAN 功能。
+
+## 中文演示部署
+
+生产演示站点为：
+
+```text
+https://happyro-demo.kugarocks.com/applications/pwa/index.html
 ```
 
-推送合并结果前运行相关测试。RemoteClient-JS 会保持锁定的 vendor 版本，
-直到其兼容性补丁已针对更新的上游提交完成核验。
+在开发机生成包含客户端、服务端、网关和部署配置的发布包：
+
+```bash
+tools/deploy/package-demo.sh --build
+```
+
+归档默认写入 `work/deploy/`，不会包含 Git 历史、密钥、日志、数据库数据或
+kRO 运行时资源。生产环境使用系统 MariaDB、systemd 和 OpenResty，不使用
+Docker。完整发布、数据库初始化、每日重置和验收步骤见
+[`docs/deploy/production/README.md`](docs/deploy/production/README.md)。
+
+Docker 文档目前只是后续方案，不是现行运行手册，见
+[`docs/deploy/docker/README.md`](docs/deploy/docker/README.md)。
