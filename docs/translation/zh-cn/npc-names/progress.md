@@ -46,7 +46,12 @@
 | `field-pay-p1` | P1 | 斐扬周边 | `pay_fild01` 至 `pay_fild11` | 11 | 已实现 | 28 个可见实例、20 个基础名称；`pay_fild07` 悬停与点击寻路取样通过。 |
 | `field-mjolnir-p2` | P2 | 妙勒尼山脉 | `mjolnir_01` 至 `mjolnir_12` | 12 | 已实现 | 19 个可见实例、15 个基础名称；`mjolnir_02` 卡普拉员工悬停与点击取样通过。 |
 | `field-yuno-p2` | P2 | 朱诺周边 | `yuno_fild01` 至 `yuno_fild12` | 12 | 已实现 | 36 个可见实例、19 个基础名称；`yuno_fild08` 的“哈妮”悬停取样通过。 |
-| `field-major-cities-p2` | P2 | 其余第二阶段城市周边 | 按地图族确定 | 待定 | 已排期 | 下一批从科摩多周边 `cmd_fild01` 至 `cmd_fild09` 开始。 |
+| `field-comodo-p2` | P2 | 科摩多周边 | `cmd_fild01` 至 `cmd_fild09` | 9 | 已实现 | 30 个可见实例、27 个基础名称；`cmd_fild07` 卡普拉员工悬停取样通过。 |
+| `field-rachel-p2` | P2 | 拉赫周边 | `ra_fild01` 至 `ra_fild13` | 13 | 已实现 | 13 个可见实例、12 个基础名称；`ra_fild08` 露西亚悬停取样通过。 |
+| `field-veins-p2` | P2 | 维因斯周边 | `ve_fild01` 至 `ve_fild07` | 7 | 已实现 | 12 个可见实例、12 个基础名称；`ve_fild01` 徐伊伦悬停取样通过。 |
+| `field-einbroch-p2` | P2 | 艾因布洛克周边 | `ein_fild01` 至 `ein_fild10` | 10 | 已实现 | 26 个可见实例、13 个基础名称；`ein_fild06` 巴斯特悬停取样通过。 |
+| `field-lighthalzen-p2` | P2 | 里希塔乐镇周边 | `lhz_fild01` 至 `lhz_fild03` | 3 | 已实现 | 4 个可见实例、4 个基础名称；`lhz_fild01` 利皮里悬停取样通过。 |
+| `field-hugel-p2` | P2 | 胡戈尔周边 | `hu_fild01` 至 `hu_fild07` | 7 | 已实现 | 19 个可见实例、13 个基础名称；`hu_fild01` 塔楼看守悬停取样通过。 |
 | `dungeon-common-p3` | P3 | 常用地下城、岛屿和交通地图 | 按批次确定 | 待定 | 已排期 | 不与野外批次混算。 |
 | `instance-low-frequency-p4` | P4 | 任务专图、副本和活动区域 | 按使用频率确定 | 待定 | 未规划 | 常用固定区域完成后处理。 |
 

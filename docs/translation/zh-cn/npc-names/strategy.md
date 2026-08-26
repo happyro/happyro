@@ -49,7 +49,7 @@
 | P3 | 常用地下城、岛屿和交通地图 | 按实际进入频率拆分批次，不与野外进度混算。 |
 | P4 | 低频任务专图、副本和活动区域 | 地图数量多、触发条件分散，在常用固定区域之后处理。 |
 
-当前已完成的 P0/P1 范围见 [batches/fields/p0-p1-fields.md](batches/fields/p0-p1-fields.md)。
+当前已完成的 P0/P1 范围见 [batches/fields/p0-p1-fields.md](batches/fields/p0-p1-fields.md)。P2 八城周边野外也已完成，妙勒尼山脉与朱诺周边分别见对应批次页，其余六个地图族见 [batches/fields/p2-major-city-fields.md](batches/fields/p2-major-city-fields.md)。
 
 ## 范围边界
 
