@@ -69,6 +69,7 @@ char_ip: ${GAME_SERVER_IP}
 char_port: ${CHAR_PORT}
 server_name: HappyRO
 pincode_enabled: no
+char_name_option: 0
 EOF
 
 cat > conf/import/map_conf.txt <<EOF
