@@ -11,6 +11,10 @@ HappyRO 由一个编排仓库和三个独立的应用仓库组成：
 - [happyro-server](https://github.com/happyro/happyro-server)：基于 rAthena 的登录、角色、地图和 Web API 服务。
 - [happyro-gateway](https://github.com/happyro/happyro-gateway)：Node.js 网关、静态资源服务和 WebSocket 代理。
 
+## 安装文档
+
+Docker、Linux、macOS 和 Windows 安装方式请查看 [HappyRO 文档](https://happyro.kugarocks.com)。
+
 ## 项目基线
 
 | 项目 | 基线 |
