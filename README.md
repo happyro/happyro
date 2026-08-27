@@ -11,10 +11,6 @@ HappyRO 由一个编排仓库和三个独立的应用仓库组成：
 - [happyro-server](https://github.com/happyro/happyro-server)：基于 rAthena 的登录、角色、地图和 Web API 服务。
 - [happyro-gateway](https://github.com/happyro/happyro-gateway)：Node.js 网关、静态资源服务和 WebSocket 代理。
 
-## 安装文档
-
-Docker、Linux、macOS 和 Windows 安装方式请查看 [HappyRO 文档](https://happyro.kugarocks.com)。
-
 ## 项目基线
 
 | 项目 | 基线 |
@@ -43,6 +39,10 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 运行时汉化还会遇到更多情况：有些文字来自图片，有些文件使用特殊编码，有些译文会被其他资源覆盖，还有一些内容只有进入游戏后才能确认是否生效。因此，项目无法保证所有内容都达到 100% 汉化，只能优先完善玩家最常接触的界面和功能，并在发现问题后持续修复。
 
 汉化问题会在使用中逐步发现，项目会持续修复和完善，稳定性也需要时间积累。
+
+## 安装文档
+
+Docker、Linux、macOS 和 Windows 安装方式请查看 [HappyRO 文档](https://happyro.kugarocks.com)。
 
 ## 版权资源
 
