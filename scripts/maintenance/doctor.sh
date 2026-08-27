@@ -11,7 +11,11 @@ docker compose version >/dev/null
 
 check_upstream_base roBrowserLegacy "$CLIENT_REPO" "$ROBROWSERLEGACY_UPSTREAM_COMMIT"
 check_upstream_base rAthena "$SERVER_REPO" "$RATHENA_UPSTREAM_COMMIT"
-check_upstream_base RemoteClient-JS "$GATEWAY_REPO" "$REMOTE_CLIENT_JS_UPSTREAM_COMMIT"
+check_upstream_base HappyRO-Gateway "$GATEWAY_REPO" "$REMOTE_CLIENT_JS_UPSTREAM_COMMIT"
+[[ "$(git -C "$GATEWAY_REPO" rev-parse HEAD)" == "$HAPPYRO_GATEWAY_COMMIT" ]] || {
+	echo "HappyRO Gateway is not at locked commit $HAPPYRO_GATEWAY_COMMIT; run git checkout from versions/sources.lock" >&2
+	exit 1
+}
 
 rg -q "packetver: 20211103" "$PROJECT_ROOT/configs/Config.happyro.js"
 rg -q "packetKeys: false" "$PROJECT_ROOT/configs/Config.happyro.js"
@@ -25,14 +29,6 @@ rg -q '<script type="text/javascript" src="Config\.happyro\.js"></script>' \
 rg -q 'window\.ROConfigHappyRO' "$CLIENT_REPO/applications/pwa/index.html"
 rg -q '^#undef PACKET_OBFUSCATION$' "$SERVER_REPO/src/custom/defines_post.hpp"
 ! rg -q '@chicowall/robrowser-esrgan' "$GATEWAY_REPO/package.json"
-git -C "$GATEWAY_REPO" apply --check --reverse \
-	"$PROJECT_ROOT/patches/remote-client-js/0001-disable-unavailable-esrgan-dependency.patch"
-git -C "$GATEWAY_REPO" apply --check --reverse \
-	"$PROJECT_ROOT/patches/remote-client-js/0002-proxy-rathena-web-api.patch"
-git -C "$GATEWAY_REPO" apply --check --reverse \
-	"$PROJECT_ROOT/patches/remote-client-js/0003-redirect-websocket-targets.patch"
-git -C "$GATEWAY_REPO" apply --check --reverse \
-	"$PROJECT_ROOT/patches/remote-client-js/0004-decode-mixed-encoding-path-segments.patch"
 rg -q '^WS_ALLOWED_TARGETS=127\.0\.0\.1:6900,127\.0\.0\.1:6121,127\.0\.0\.1:5121$' \
 	"$PROJECT_ROOT/deploy/remote-client/.env.example"
 rg -q '^RATHENA_WEB_API_URL=http://127\.0\.0\.1:8889$' \
@@ -47,7 +43,6 @@ rg -q '^pincode_enabled: no$' "$SERVER_REPO/conf/import/char_conf.txt"
 bash -n \
 	"$PROJECT_ROOT/scripts/database/database.sh" \
 	"$PROJECT_ROOT/scripts/server/configure-server.sh" \
-	"$PROJECT_ROOT/scripts/gateway/apply-patches.sh" \
 	"$PROJECT_ROOT/scripts/gateway/gateway.sh" \
 	"$PROJECT_ROOT/scripts/account/test-account.sh" \
 	"$PROJECT_ROOT/scripts/account/automation-account.sh" \
