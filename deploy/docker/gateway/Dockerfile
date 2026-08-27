@@ -18,9 +18,9 @@ ENV NODE_ENV=production \
     DATA_OVERRIDE_PATH=/opt/overrides
 
 WORKDIR /opt/gateway
-COPY vendor/robrowserlegacy-remote-client-js/package*.json ./
+COPY repos/happyro-gateway/package*.json ./
 RUN npm install --omit=dev --ignore-scripts
-COPY vendor/robrowserlegacy-remote-client-js/ ./
+COPY repos/happyro-gateway/ ./
 COPY --from=client-builder /src/client/dist/Web /opt/robrowser
 
 RUN mkdir -p /opt/gateway/resources /opt/overrides /opt/gateway/logs \

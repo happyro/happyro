@@ -8,7 +8,7 @@ printf '%-28s %-8s %-12s %s\n' repository branch commit state
 for spec in \
 	"happyro-client|$CLIENT_REPO" \
 	"happyro-server|$SERVER_REPO" \
-	"remote-client-js|$GATEWAY_REPO"; do
+	"happyro-gateway|$GATEWAY_REPO"; do
 	IFS='|' read -r label repo <<<"$spec"
 	branch="$(git -C "$repo" branch --show-current)"
 	commit="$(git -C "$repo" rev-parse --short=12 HEAD)"
