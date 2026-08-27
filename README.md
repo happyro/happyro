@@ -14,7 +14,7 @@ HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowser
 | --- | --- |
 | [rAthena](https://github.com/rathena/rathena) | `master` @ [`2fe6ab3dc4d8`](https://github.com/rathena/rathena/commit/2fe6ab3dc4d830b11d93fb44c3b48436571890bd) |
 | [roBrowserLegacy](https://github.com/MrAntares/roBrowserLegacy) | `master` @ [`402e61ce7ae8`](https://github.com/MrAntares/roBrowserLegacy/commit/402e61ce7ae80cd45c76365371d4dbfd6aa10f49) |
-| [HappyRO Gateway](https://github.com/happyro/happyro-gateway) | `main` @ [`400dad7`](https://github.com/happyro/happyro-gateway/commit/400dad7)（基于 [RemoteClient-JS](https://github.com/FranciscoWallison/roBrowserLegacy-RemoteClient-JS)） |
+| [RemoteClient-JS](https://github.com/FranciscoWallison/roBrowserLegacy-RemoteClient-JS) | HappyRO Gateway `main` @ [`400dad7`](https://github.com/happyro/happyro-gateway/commit/400dad7) |
 | Node.js | 22 或更高版本 |
 | MariaDB | 10.11 |
 | LUB 回编译工具链 | Lua 5.0.2、Lua 5.1.5 |
