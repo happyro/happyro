@@ -10,8 +10,6 @@ HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowser
 | `PACKETVER` | `20211103` |
 | 服务端模式 | Renewal |
 
-主要源码和工具依赖如下。上游源码以 [`versions/sources.lock`](versions/sources.lock) 中记录的提交为准。
-
 | 依赖 | 版本或基线 |
 | --- | --- |
 | [rAthena](https://github.com/rathena/rathena) | `master` @ [`2fe6ab3dc4d8`](https://github.com/rathena/rathena/commit/2fe6ab3dc4d830b11d93fb44c3b48436571890bd) |
@@ -31,7 +29,7 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 
 运行时汉化还会遇到更多情况：有些文字来自图片，有些文件使用特殊编码，有些译文会被其他资源覆盖，还有一些内容只有进入游戏后才能确认是否生效。因此，项目无法保证所有内容都达到 100% 汉化，只能优先完善玩家最常接触的界面和功能，并在发现问题后持续修复。
 
-汉化问题会在使用中逐步发现，项目会持续修复和完善，稳定性也需要时间积累。`docs/translation/zh-cn/` 仅保存已完成翻译批次的历史记录，不再用于当前翻译或发布；产品翻译直接维护在 `repos/happyro-client`、`repos/happyro-server` 和 `localization/client/data`。
+汉化问题会在使用中逐步发现，项目会持续修复和完善，稳定性也需要时间积累。
 
 ## 版权资源
 
@@ -40,8 +38,8 @@ kRO 客户端资源属于第三方版权内容，未经授权不得分发，可�
 - QQ：`928171346`
 - 名称：[熊猫模拟器](https://github.com/PandasWS/Pandas)
 
-这个是熊猫模拟器的交流群。群里有很多技术大佬，提问、求助或索取资料时，请尊重他人的时间和劳动成果，友好交流。
+群里有很多技术大佬，提问、求助或索取资源时，请尊重他人的时间和劳动成果。
 
 ## 开源协议
 
-客户端、服务端和网关代码采用 [GNU GPL v3](repos/happyro-client/LICENSE)；kRO 客户端资源及其他第三方内容不包含在本协议内。
+[GNU General Public License v3.0](LICENSE)
