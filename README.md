@@ -19,6 +19,8 @@ HappyRO 由一个编排仓库和三个独立的应用仓库组成：
 | `PACKETVER` | `20211103` |
 | 服务端模式 | Renewal |
 
+## 依赖基线
+
 | 依赖 | 版本或基线 |
 | --- | --- |
 | [rAthena](https://github.com/rathena/rathena) | `master` @ [`2fe6ab3dc4d8`](https://github.com/rathena/rathena/commit/2fe6ab3dc4d830b11d93fb44c3b48436571890bd) |
