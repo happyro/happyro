@@ -7,7 +7,7 @@ set -eu
 : "${DB_LOG_DATABASE:=happyro_log}"
 : "${DB_USER:=happyro}"
 : "${DB_PASSWORD:?DB_PASSWORD is required}"
-: "${INTERSERVER_USER:=happyro}"
+: "${INTERSERVER_USER:=happyro_interserver}"
 : "${INTERSERVER_PASSWORD:?INTERSERVER_PASSWORD is required}"
 : "${GAME_SERVER_IP:=127.0.0.1}"
 : "${LOGIN_PORT:=6900}"
