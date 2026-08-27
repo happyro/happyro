@@ -1,6 +1,6 @@
 window.ROConfigHappyRO = {
 	development: true,
-	remoteClient: `${window.location.origin}/`,
+	remoteClient: (window.ROConfigRuntime || {}).remoteClient || `${window.location.origin}/`,
 	servers: [
 		{
 			display: 'HappyRO',
@@ -13,7 +13,9 @@ window.ROConfigHappyRO = {
 			renewal: true,
 			worldMapSettings: { episode: 18 },
 			packetKeys: false,
-			socketProxy: `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/`,
+			socketProxy:
+				(window.ROConfigRuntime || {}).socketProxy ||
+				`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/`,
 			forceUseAddress: true,
 			adminList: []
 		}
