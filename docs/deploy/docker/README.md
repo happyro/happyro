@@ -7,8 +7,8 @@
 运行时使用三个镜像：
 
 ```text
-happyro-gateway  ──┐
-happyro-server    ──┼── Docker Compose
+kugarocks/happyro-gateway  ──┐
+kugarocks/happyro-server    ──┼── Docker Compose
 mariadb 官方镜像  ──┘
 ```
 
@@ -16,7 +16,7 @@ mariadb 官方镜像  ──┘
 
 ## 容器和镜像职责
 
-### `happyro-gateway`
+### `kugarocks/happyro-gateway`
 
 技术栈为 Node.js、Express 和 WebSocket。容器负责：
 
@@ -28,7 +28,7 @@ mariadb 官方镜像  ──┘
 
 客户端源码位于 `repos/happyro-client/`，构建产物 `dist/Web` 可以在构建镜像时写入网关镜像。kRO 运行时资源不写入镜像。
 
-### `happyro-server`
+### `kugarocks/happyro-server`
 
 镜像内包含编译后的 rAthena 服务端程序。使用同一个镜像启动四类容器：
 

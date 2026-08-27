@@ -29,20 +29,25 @@ git -C "$GATEWAY_REPO" apply --check --reverse \
 	"$PROJECT_ROOT/patches/remote-client-js/0001-disable-unavailable-esrgan-dependency.patch"
 git -C "$GATEWAY_REPO" apply --check --reverse \
 	"$PROJECT_ROOT/patches/remote-client-js/0002-proxy-rathena-web-api.patch"
-rg -q '^WS_ALLOWED_TARGETS=10\.24\.1\.1:6900,10\.24\.1\.1:6121,10\.24\.1\.1:5121$' \
+git -C "$GATEWAY_REPO" apply --check --reverse \
+	"$PROJECT_ROOT/patches/remote-client-js/0003-redirect-websocket-targets.patch"
+git -C "$GATEWAY_REPO" apply --check --reverse \
+	"$PROJECT_ROOT/patches/remote-client-js/0004-decode-mixed-encoding-path-segments.patch"
+rg -q '^WS_ALLOWED_TARGETS=127\.0\.0\.1:6900,127\.0\.0\.1:6121,127\.0\.0\.1:5121$' \
 	"$PROJECT_ROOT/deploy/remote-client/.env.example"
 rg -q '^RATHENA_WEB_API_URL=http://127\.0\.0\.1:8889$' \
 	"$PROJECT_ROOT/deploy/remote-client/.env.example"
 rg -q '^MARIADB_IMAGE=mariadb:10\.11@sha256:[0-9a-f]{64}$' "$MARIADB_PROFILE"
 rg -q '^DB_BIND_IP=127\.0\.0\.1$' "$MARIADB_PROFILE"
 rg -q '^DB_PORT=33062$' "$MARIADB_PROFILE"
-rg -q '^SERVER_LAN_IP=10\.24\.1\.1$' "$RATHENA_PROFILE"
+rg -q '^SERVER_LAN_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
 rg -q '^WEB_BIND_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
 rg -q '^WEB_PORT=8889$' "$RATHENA_PROFILE"
 rg -q '^pincode_enabled: no$' "$SERVER_REPO/conf/import/char_conf.txt"
 bash -n \
 	"$PROJECT_ROOT/scripts/database/database.sh" \
 	"$PROJECT_ROOT/scripts/server/configure-server.sh" \
+	"$PROJECT_ROOT/scripts/gateway/apply-patches.sh" \
 	"$PROJECT_ROOT/scripts/gateway/gateway.sh" \
 	"$PROJECT_ROOT/scripts/account/test-account.sh" \
 	"$PROJECT_ROOT/scripts/account/automation-account.sh" \
