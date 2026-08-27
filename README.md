@@ -19,6 +19,15 @@ HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowser
 | MariaDB | 10.11 |
 | LUB 回编译工具链 | Lua 5.0.2、Lua 5.1.5 |
 
+## 项目组成
+
+HappyRO 由一个编排仓库和三个独立的应用仓库组成：
+
+- 根仓库：部署脚本、配置、资源链接和文档。
+- [happyro-client](https://github.com/happyro/happyro-client)：浏览器客户端和 PWA 构建产物。
+- [happyro-server](https://github.com/happyro/happyro-server)：基于 rAthena 的登录、角色、地图和 Web API 服务。
+- [happyro-gateway](https://github.com/happyro/happyro-gateway)：Node.js 网关、静态资源服务和 WebSocket 代理。
+
 ## 关于汉化
 
 AI 并不能自动完成高质量的汉化，尤其是在面对数量庞大、结构复杂的客户端和服务端文件时。单个文件可能有几千甚至上万行，直接交给 AI 处理不仅速度慢，也容易出现遗漏、误改和格式损坏。
