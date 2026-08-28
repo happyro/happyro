@@ -2,6 +2,8 @@
 
 HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowserLegacy) 的开源中文 RO 项目，致力于提供完整的中文体验和简单易用的部署方式，让玩家打开浏览器即可进入游戏，省去安装桌面客户端的麻烦，也让开发者能够更轻松地部署、维护和参与项目。
 
+[在线演示](https://happyro-demo.kugarocks.com/applications/pwa/index.html)：仅作演示使用，数据每天会重置。
+
 ## 项目组成
 
 HappyRO 由一个编排仓库和三个独立的应用仓库组成：
@@ -42,9 +44,19 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 
 汉化问题会在使用中逐步发现，项目会持续修复和完善，稳定性也需要时间积累。
 
-## 安装文档
+## 相关文档
 
-Docker、Linux、macOS 和 Windows 安装方式请查看 [HappyRO 文档](https://happyro.kugarocks.com)。
+| 站点 | 地址 |
+| --- | --- |
+| 阿里云 | [happyro.kugarocks.com](https://happyro.kugarocks.com) |
+| GitHub Page | [happyro.org](https://happyro.org) |
+
+安装教程：
+
+- [Docker](https://happyro.kugarocks.com/installation/docker)
+- [Linux](https://happyro.kugarocks.com/installation/linux)
+- [macOS](https://happyro.kugarocks.com/installation/macos)
+- [Windows](https://happyro.kugarocks.com/installation/windows)
 
 ## 版权资源
 
