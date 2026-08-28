@@ -2,7 +2,9 @@
 
 HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowserLegacy) 的开源中文 RO 项目，致力于提供完整的中文体验和简单易用的部署方式，让玩家打开浏览器即可进入游戏，省去安装桌面客户端的麻烦，也让开发者能够更轻松地部署、维护和参与项目。
 
-[在线演示](https://happyro-demo.kugarocks.com/applications/pwa/index.html)：仅作演示使用，数据每天会重置。
+## 在线演示
+
+[roBrowser 应用启动器](https://happyro-demo.kugarocks.com/applications/pwa/index.html)
 
 ## 项目组成
 
@@ -53,9 +55,12 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 
 安装教程：[Docker](https://happyro.kugarocks.com/installation/docker) / [Linux](https://happyro.kugarocks.com/installation/linux) / [macOS](https://happyro.kugarocks.com/installation/macos) / [Windows](https://happyro.kugarocks.com/installation/windows)
 
-## 版权资源
+## kRO 客户端
 
-kRO 客户端资源属于第三方版权内容，未经授权不得分发，可加群交流：
+[kro-20211105.zip](https://pan.baidu.com/s/1dHzJ2RGMt4zZkA-MXF_BxQ?pwd=jy3k) 仅供个人学习与研究，任何商业用途均须自行承担相应责任。
+
+## 交流
+
 
 - QQ：`928171346`
 - 名称：[熊猫模拟器](https://github.com/PandasWS/Pandas)
