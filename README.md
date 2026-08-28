@@ -2,7 +2,9 @@
 
 HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowserLegacy) 的开源中文 RO 项目，致力于提供完整的中文体验和简单易用的部署方式，让玩家打开浏览器即可进入游戏，省去安装桌面客户端的麻烦，也让开发者能够更轻松地部署、维护和参与项目。
 
-[在线演示](https://happyro-demo.kugarocks.com/applications/pwa/index.html)：仅作演示使用，数据每天会重置。
+## 在线演示
+
+[https://happyro-demo.kugarocks.com/applications/pwa/index.html](https://happyro-demo.kugarocks.com/applications/pwa/index.html)
 
 ## 项目组成
 
