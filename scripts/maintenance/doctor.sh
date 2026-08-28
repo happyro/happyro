@@ -40,6 +40,7 @@ rg -q '^SERVER_LAN_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
 rg -q '^WEB_BIND_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
 rg -q '^WEB_PORT=8889$' "$RATHENA_PROFILE"
 rg -q '^pincode_enabled: no$' "$SERVER_REPO/conf/import/char_conf.txt"
+rg -q '^char_name_option: 0$' "$SERVER_REPO/conf/import/char_conf.txt"
 bash -n \
 	"$PROJECT_ROOT/scripts/database/database.sh" \
 	"$PROJECT_ROOT/scripts/server/configure-server.sh" \
