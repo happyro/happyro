@@ -4,7 +4,7 @@ HappyRO 是一个基于 [roBrowserLegacy](https://github.com/MrAntares/roBrowser
 
 ## 在线演示
 
-[https://happyro-demo.kugarocks.com/applications/pwa/index.html](https://happyro-demo.kugarocks.com/applications/pwa/index.html)
+[roBrowser 应用启动器](https://happyro-demo.kugarocks.com/applications/pwa/index.html)
 
 ## 项目组成
 
