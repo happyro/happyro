@@ -51,12 +51,7 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 | 阿里云 | [happyro.kugarocks.com](https://happyro.kugarocks.com) |
 | GitHub Page | [happyro.org](https://happyro.org) |
 
-安装教程：
-
-- [Docker](https://happyro.kugarocks.com/installation/docker)
-- [Linux](https://happyro.kugarocks.com/installation/linux)
-- [macOS](https://happyro.kugarocks.com/installation/macos)
-- [Windows](https://happyro.kugarocks.com/installation/windows)
+安装教程：[Docker](https://happyro.kugarocks.com/installation/docker) / [Linux](https://happyro.kugarocks.com/installation/linux) / [macOS](https://happyro.kugarocks.com/installation/macos) / [Windows](https://happyro.kugarocks.com/installation/windows)
 
 ## 版权资源
 
