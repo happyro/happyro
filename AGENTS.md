@@ -18,6 +18,7 @@
 - demo 是中文演示环境分支；演示专属改动只提交到 demo，并持续同步 main。
 - 三个仓库只推送到各自的 origin，不推送到 upstream。
 - 未经用户明确要求，不提交、不推送。
+- 用户说“重建镜像”且未指定版号时，先同步根仓库、`repos/happyro-client`、`repos/happyro-server` 和 `repos/happyro-gateway` 的 `origin/main`，确认工作区干净，再运行 `./scripts/deploy/push-docker-images.sh --version VERSION` 构建并推送 `kugarocks/happyro-server`、`kugarocks/happyro-gateway` 和 `kugarocks/happyro-database` 的 `linux/amd64`、`linux/arm64` 镜像，同时更新 `latest` 并校验远端 manifest。当前版号基线为 `v0.1.3`，下一个默认版号为 `v0.1.4`；后续未指定版号时递增 patch 号，用户指定版号时以用户指定值为准。
 
 ## 仓库边界
 
