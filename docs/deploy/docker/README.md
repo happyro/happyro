@@ -172,39 +172,10 @@ docker compose up -d
 
 停止 Compose 栈时只停止容器，不删除数据库数据卷、运行时资源和密钥目录。
 
-## 当前镜像发布流程
+## 镜像发布
 
-镜像发布脚本为 `scripts/deploy/push-docker-images.sh`，默认推送到 Docker Hub 的
-`kugarocks` 命名空间。当前发布版本为 `v0.1.3`；未明确指定版本时，下一个版本默认
-递增 patch 号，即 `v0.1.4`，之后按此规则继续递增。用户明确指定版本时，以用户指定的
-`vMAJOR.MINOR.PATCH` 为准。
-
-发布前先在根仓库和三个产品仓库同步 `origin/main`，确认工作区没有未提交变更：
-
-```bash
-for repo in . repos/happyro-client repos/happyro-server repos/happyro-gateway; do
-  git -C "$repo" pull --ff-only origin main
-done
-```
-
-确认 Docker 和 Buildx 可用并已登录 Docker Hub 后，从根目录执行：
-
-```bash
-./scripts/deploy/push-docker-images.sh --version v0.1.3
-```
-
-脚本会对以下镜像执行 `linux/amd64` 和 `linux/arm64` 构建，并同时推送版本标签和
-`latest` 标签：
-
-```text
-kugarocks/happyro-server:v0.1.3
-kugarocks/happyro-gateway:v0.1.3
-kugarocks/happyro-database:v0.1.3
-```
-
-脚本结束时会使用 `docker buildx imagetools inspect` 校验三个镜像的版本和 `latest`
-远端 manifest。构建警告不等于发布失败；只有脚本返回非零状态或 manifest 校验失败时，
-才视为发布未完成。
+新版本的完整重建范围、禁用缓存要求、版本号规则、构建与 push 的阶段边界以及失败处理，
+统一以 [Docker 镜像构建与发布规则](image-release.md) 为准。
 
 ## 当前实现与后续工作
 
