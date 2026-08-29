@@ -59,13 +59,11 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 
 [kro-20211105.zip](https://pan.baidu.com/s/1dHzJ2RGMt4zZkA-MXF_BxQ?pwd=jy3k) 仅供个人学习与研究，任何商业用途均须自行承担相应责任。
 
-# 联系方式
+## 联系方式
 
 - GitHub：[happyro/happyro](https://github.com/happyro/happyro)
 - QQ 群：`662191549`
 - 群名称：HappyRO
-
-提问、求助或索取资源时，请尊重他人的时间和劳动成果。
 
 ## 开源协议
 
