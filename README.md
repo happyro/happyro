@@ -55,9 +55,12 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 
 安装教程：[Docker](https://happyro.kugarocks.com/installation/docker) / [Linux](https://happyro.kugarocks.com/installation/linux) / [macOS](https://happyro.kugarocks.com/installation/macos) / [Windows](https://happyro.kugarocks.com/installation/windows)
 
-## 版权资源
+## kRO 客户端
 
-kRO 客户端资源属于第三方版权内容，未经授权不得分发，可加群交流：
+[kro-20211105.zip](https://pan.baidu.com/s/1dHzJ2RGMt4zZkA-MXF_BxQ?pwd=jy3k) 仅供个人学习与研究，任何商业用途均须自行承担相应责任。
+
+## 交流
+
 
 - QQ：`928171346`
 - 名称：[熊猫模拟器](https://github.com/PandasWS/Pandas)
