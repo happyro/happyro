@@ -27,6 +27,10 @@
 - repos/happyro-client 和 repos/happyro-server 是独立 Git 仓库。
 - docs/translation/zh-cn/ 中的旧翻译工作区仅作为历史记录，后续不得再作为发布源向客户端或服务端仓库回写；产品翻译直接修改对应仓库。
 
+## Docker 镜像发布规则
+
+- 用户说“重建镜像”且未指定版号时，先同步根仓库、`repos/happyro-client`、`repos/happyro-server` 和 `repos/happyro-gateway` 的 `origin/main`，确认工作区干净，再运行 `./scripts/deploy/push-docker-images.sh --version VERSION` 构建并推送 `kugarocks/happyro-server`、`kugarocks/happyro-gateway` 和 `kugarocks/happyro-database` 的 `linux/amd64`、`linux/arm64` 镜像，同时更新 `latest` 并校验远端 manifest。当前版号基线为 `v0.1.3`，下一个默认版号为 `v0.1.4`；后续未指定版号时递增 patch 号，用户指定版号时以用户指定值为准。
+
 ## 代码实现
 
 - 默认按当前最佳实践实现，不为了历史写法、旧接口、旧字段、旧环境变量、旧参数名或临时方案保留兼容分支。
