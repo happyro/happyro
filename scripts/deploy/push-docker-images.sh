@@ -70,17 +70,42 @@ docker buildx inspect >/dev/null 2>&1 || fail 'no usable Docker Buildx builder'
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 images=("$namespace/happyro-server" "$namespace/happyro-gateway" "$namespace/happyro-database")
 dockerfiles=("deploy/docker/server/Dockerfile" "deploy/docker/gateway/Dockerfile" "deploy/docker/database/Dockerfile")
-printf '\n%sPushing HappyRO images%s\nnamespace: %s\nversion: %s\nplatforms: linux/amd64,linux/arm64\n' "$bold_yellow" "$reset" "$namespace" "$version"
+build_dir="$(mktemp -d "${TMPDIR:-/tmp}/happyro-images.XXXXXX")"
+trap 'rm -rf "$build_dir"' EXIT
+
+verify_platforms() {
+	local reference="$1"
+	local manifest
+	manifest="$(docker buildx imagetools inspect "$reference")"
+	grep -Fq 'linux/amd64' <<<"$manifest" || fail "$reference is missing linux/amd64"
+	grep -Fq 'linux/arm64' <<<"$manifest" || fail "$reference is missing linux/arm64"
+}
+
+printf '\n%sBuilding HappyRO images%s\nnamespace: %s\nversion: %s\nplatforms: linux/amd64,linux/arm64\n' "$bold_yellow" "$reset" "$namespace" "$version"
 for i in "${!images[@]}"; do
 	image="${images[$i]}"
+	layout="$build_dir/${image##*/}"
 	docker buildx build --platform linux/amd64,linux/arm64 \
+		--no-cache \
 		--file "$root/${dockerfiles[$i]}" \
-		--tag "$image:$version" --tag "$image:latest" --push "$root"
+		--output "type=oci,dest=$layout,tar=false" "$root"
+	verify_platforms "oci-layout://$layout"
+	printf '%sbuilt%s %s\n' "$bold_green" "$reset" "$image"
 done
+
+printf '\n%sPushing HappyRO images%s\n' "$bold_yellow" "$reset"
+for i in "${!images[@]}"; do
+	image="${images[$i]}"
+	layout="$build_dir/${image##*/}"
+	docker buildx imagetools create \
+		--tag "$image:$version" --tag "$image:latest" "oci-layout://$layout"
+	printf '%spushed%s %s:%s and :latest\n' "$bold_green" "$reset" "$image" "$version"
+done
+
 printf '\n%sVerifying remote manifests%s\n' "$bold_yellow" "$reset"
 for image in "${images[@]}"; do
-	docker buildx imagetools inspect "$image:$version" >/dev/null
-	docker buildx imagetools inspect "$image:latest" >/dev/null
+	verify_platforms "$image:$version"
+	verify_platforms "$image:latest"
 	printf '%sverified%s %s:%s and :latest\n' "$bold_green" "$reset" "$image" "$version"
 done
 printf '\n'
