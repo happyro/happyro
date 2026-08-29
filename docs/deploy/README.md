@@ -14,5 +14,4 @@ HappyRO 当前通过根仓库 `scripts/`、systemd transient units 和 `deploy/`
 ## 方案文档
 
 - [Docker 部署方案](docker/README.md)：尚未实施的完整 gateway、rAthena、MariaDB Compose 目标架构，不是当前运行手册。
-
-其中 [Docker 部署方案](docker/README.md) 的“当前镜像发布流程”章节记录了仓库同步、版本号递增、镜像构建推送和远端 manifest 校验步骤。
+- [Docker 镜像构建与发布规则](docker/image-release.md)：新版本完整重建、统一版本、禁用缓存、推送和失败处理的强制规则。
