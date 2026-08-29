@@ -63,7 +63,7 @@ kRO 客户端中的部分文字保存在 LUB 文件中，不能直接修改。�
 
 - GitHub：[happyro/happyro](https://github.com/happyro/happyro)
 - QQ 群：`662191549`
-- 群名称：HappyRO
+- 群名：HappyRO
 
 ## 开源协议
 
