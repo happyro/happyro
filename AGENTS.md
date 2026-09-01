@@ -22,7 +22,7 @@
 ## 仓库边界
 
 - 固定 PACKETVER=20211103、Renewal，以及客户端和服务端一致的封包设置。
-- inputs/official/ 和 inputs/runtime/kro-20211105/ 中经过核验的官方 kRO 2021-11-05 文件视为不可修改的源材料。
+- `inputs/official/` 中经过核验的官方 kRO 2021-11-05 文件是不可修改的源材料；`inputs/runtime/kro-20211105/` 是运行目录，允许用已审查、已编译并通过语义校验的翻译产物直接覆盖对应文件，覆盖后必须校验目标哈希并记录来源。
 - 生成文件放在 work/ 或 artifacts/。
 - repos/happyro-client 和 repos/happyro-server 是独立 Git 仓库。
 - repos/happyro-admin 是独立的 HappyRO GM 管理后台仓库；其代码实现规范和仓库 changelog 规则以 `repos/happyro-admin/AGENTS.md` 与 `repos/happyro-admin/changelog/` 为准。

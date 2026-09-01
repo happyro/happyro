@@ -75,7 +75,7 @@
 开始前确认：
 
 - client/server 的源码提交和清单基线已经冻结，分片仍对应原始行范围。
-- kRO 的官方输入来自 `inputs/official/` 或 `inputs/runtime/kro-20211105/`，并保持只读。
+- kRO 的不可变官方输入来自 `inputs/official/`；`inputs/runtime/kro-20211105/` 是客户端运行目录，可由发布工具写入已通过校验的翻译产物。
 - LUB 提取基线、Lua 版本和目标 ABI 已登记。
 - `work/` 用于可重建的临时产物，`artifacts/` 用于构建产物，两者都不是翻译维护源。
 
