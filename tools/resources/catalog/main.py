@@ -1,4 +1,4 @@
-"""Executable entry point for HappyRO item catalog generation."""
+"""Executable entry point for HappyRO game data catalog generation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tools.resources.item_catalog.cli import main
+from tools.resources.catalog.cli import main
 
 
 if __name__ == "__main__":
