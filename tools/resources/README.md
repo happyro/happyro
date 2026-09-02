@@ -10,6 +10,7 @@ item_catalog/
 ├── cli.py        # 参数、帮助和流程选择
 ├── service.py    # 可注入读写适配器的应用服务
 ├── client.py     # 客户端集合及双语名称合并规则
+├── assets.py     # 客户端图标映射与说明索引规则
 ├── server.py     # rAthena 双语服务端快照规则
 ├── storage.py    # JSON、YAML、Git 和原子写出适配器
 ├── errors.py     # 领域错误
@@ -32,7 +33,7 @@ python3 tools/resources/item_catalog/main.py
 python3 tools/resources/item_catalog/main.py client
 ```
 
-该命令读取 `docs/translation/zh-cn/kro-20211105/merged/files/lub/itemInfo_true.json` 与后台 Renewal 快照，生成 `repos/happyro-admin/backend/resources/game/items/client-kro-20211105.json`。客户端物品 ID 必须全部命中服务端快照，中文和英文名称不能为空。
+该命令读取 `docs/translation/zh-cn/kro-20211105/merged/files/lub/itemInfo_true.json` 与后台 Renewal 快照，一次生成 `client-kro-20211105.json`、`icon-map.json` 和 `descriptions.json`。客户端物品 ID 必须全部命中服务端快照，中文、英文名称和说明不能为空；空资源名允许存在，但不会写入图标映射。
 
 生成 Renewal 与 Pre-Renewal 服务端快照：
 

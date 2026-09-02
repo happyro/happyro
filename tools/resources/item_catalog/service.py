@@ -5,7 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from .assets import descriptions, icon_map
 from .client import build_catalog as build_client_catalog
+from .client import indexed_items
 from .server import ITEM_TYPES, MODES, body, build_catalog as build_server_catalog
 
 
@@ -18,18 +20,29 @@ GitYamlReader = Callable[[Path, str, Path], dict[str, Any]]
 def generate_client(
     client_source: Path,
     server_catalog: Path,
-    output: Path,
+    output_directory: Path,
     read_json: JsonReader,
-    write_json: JsonWriter,
-) -> int:
+    write_catalog: JsonWriter,
+    write_asset: JsonWriter,
+) -> dict[str, int]:
+    client_payload = read_json(client_source)
     payload = build_client_catalog(
-        read_json(client_source),
+        client_payload,
         read_json(server_catalog),
         str(client_source),
         str(server_catalog),
     )
-    write_json(output, payload)
-    return len(payload["items"])
+    client_items = indexed_items(client_payload, "data", "client itemInfo")
+    icons = icon_map(client_items, str(client_source))
+    item_descriptions = descriptions(client_items, str(client_source))
+    write_catalog(output_directory / "client-kro-20211105.json", payload)
+    write_asset(output_directory / "icon-map.json", icons)
+    write_asset(output_directory / "descriptions.json", item_descriptions)
+    return {
+        "catalog": len(payload["items"]),
+        "icons": len(icons["items"]),
+        "descriptions": len(item_descriptions["items"]),
+    }
 
 
 def generate_server(

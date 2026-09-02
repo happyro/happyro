@@ -11,12 +11,11 @@ import sys
 from .errors import CatalogError
 from .server import DEFAULT_ENGLISH_REF
 from .service import generate_client, generate_server
-from .storage import read_git_yaml, read_json, read_yaml, write_json
+from .storage import read_git_yaml, read_json, read_yaml, write_json, write_pretty_json
 
 
 DEFAULT_CLIENT_SOURCE = Path("docs/translation/zh-cn/kro-20211105/merged/files/lub/itemInfo_true.json")
 DEFAULT_SERVER_CATALOG = Path("repos/happyro-admin/backend/resources/game/items/renewal.json")
-DEFAULT_CLIENT_OUTPUT = Path("repos/happyro-admin/backend/resources/game/items/client-kro-20211105.json")
 DEFAULT_SERVER_ROOT = Path("repos/happyro-server/db")
 DEFAULT_SERVER_REPOSITORY = Path("repos/happyro-server")
 DEFAULT_OUTPUT_DIRECTORY = Path("repos/happyro-admin/backend/resources/game/items")
@@ -63,7 +62,7 @@ def command_help_text(command_name: str, color: bool) -> str:
         options = [
             "  --client-source PATH   客户端 itemInfo JSON",
             "  --server-catalog PATH  Renewal 服务端快照",
-            "  --output PATH          仅客户端快照输出路径",
+            "  --output-dir PATH      客户端快照与索引输出目录",
         ]
     else:
         options = [
@@ -97,7 +96,7 @@ def parser() -> argparse.ArgumentParser:
     client = subcommands.add_parser("client", add_help=False)
     client.add_argument("--client-source", type=Path, default=DEFAULT_CLIENT_SOURCE)
     client.add_argument("--server-catalog", type=Path, default=DEFAULT_SERVER_CATALOG)
-    client.add_argument("--output", type=Path, default=DEFAULT_CLIENT_OUTPUT)
+    client.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIRECTORY)
     server = subcommands.add_parser("server", add_help=False)
     server.add_argument("--server-root", type=Path, default=DEFAULT_SERVER_ROOT)
     server.add_argument("--server-repo", type=Path, default=DEFAULT_SERVER_REPOSITORY)
@@ -108,8 +107,17 @@ def parser() -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> None:
     if args.command == "client":
-        count = generate_client(args.client_source, args.server_catalog, args.output, read_json, write_json)
-        print(f"client-only: {count} items -> {args.output}")
+        counts = generate_client(
+            args.client_source,
+            args.server_catalog,
+            args.output_dir,
+            read_json,
+            write_json,
+            write_pretty_json,
+        )
+        print(f"client catalog: {counts['catalog']} items")
+        print(f"icon map: {counts['icons']} items")
+        print(f"descriptions: {counts['descriptions']} items")
         return
     counts = generate_server(
         args.server_root,
