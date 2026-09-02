@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from tools.resources.item_catalog.assets import descriptions, icon_map
-from tools.resources.item_catalog.client import build_catalog as build_client_catalog
-from tools.resources.item_catalog.errors import CatalogError
-from tools.resources.item_catalog.server import build_catalog as build_server_catalog
-from tools.resources.item_catalog.service import generate_client
+from tools.resources.catalog.assets import descriptions, icon_map
+from tools.resources.catalog.client import build_catalog as build_client_catalog
+from tools.resources.catalog.errors import CatalogError
+from tools.resources.catalog.server import build_catalog as build_server_catalog
+from tools.resources.catalog.service import generate_client
 
 
 class ClientCatalogTests(unittest.TestCase):
