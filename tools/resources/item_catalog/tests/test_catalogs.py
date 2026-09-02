@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
+from tools.resources.item_catalog.assets import descriptions, icon_map
 from tools.resources.item_catalog.client import build_catalog as build_client_catalog
 from tools.resources.item_catalog.errors import CatalogError
 from tools.resources.item_catalog.server import build_catalog as build_server_catalog
@@ -31,17 +32,27 @@ class ClientCatalogTests(unittest.TestCase):
             build_client_catalog(client, server, "client.json", "server.json")
 
     def test_service_uses_injected_storage_adapters(self) -> None:
-        client = {"data": {"501": {"identifiedDisplayName": "红色药水"}}}
+        client = {"data": {"501": {"identifiedDisplayName": "红色药水", "identifiedResourceName": "红药", "identifiedDescriptionName": ["恢复 HP"]}}}
         server = {"englishSource": {"revision": "abc123"}, "items": {"501": {"names": {"en-US": "Red Potion"}}}}
         reader = Mock(side_effect=[client, server])
-        writer = Mock()
+        catalog_writer = Mock()
+        asset_writer = Mock()
 
-        count = generate_client(Path("client.json"), Path("server.json"), Path("output.json"), reader, writer)
+        counts = generate_client(Path("client.json"), Path("server.json"), Path("output"), reader, catalog_writer, asset_writer)
 
-        self.assertEqual(count, 1)
+        self.assertEqual(counts, {"catalog": 1, "icons": 1, "descriptions": 1})
         self.assertEqual(reader.call_count, 2)
-        writer.assert_called_once()
-        self.assertEqual(writer.call_args.args[0], Path("output.json"))
+        catalog_writer.assert_called_once()
+        self.assertEqual(asset_writer.call_count, 2)
+
+    def test_builds_client_asset_indexes(self) -> None:
+        items = {
+            "501": {"identifiedResourceName": "红药", "identifiedDescriptionName": ["恢复 HP"]},
+            "502": {"identifiedResourceName": "", "identifiedDescriptionName": ["恢复更多 HP"]},
+        }
+
+        self.assertEqual(icon_map(items, "itemInfo.json")["items"], {"501": "红药"})
+        self.assertEqual(descriptions(items, "itemInfo.json")["items"]["502"], ["恢复更多 HP"])
 
 
 class ServerCatalogTests(unittest.TestCase):

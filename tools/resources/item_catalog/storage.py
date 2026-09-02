@@ -54,8 +54,15 @@ def read_git_yaml(repository: Path, revision: str, path: Path) -> dict[str, Any]
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
+    write_serialized(path, json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def write_pretty_json(path: Path, payload: dict[str, Any]) -> None:
+    write_serialized(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+
+
+def write_serialized(path: Path, serialized: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     temporary: Path | None = None
     try:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
