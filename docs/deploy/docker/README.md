@@ -55,7 +55,7 @@ web-api
 
 ## 运行时资源挂载
 
-`inputs/runtime/kro-20211105/` 不参与镜像构建，只在运行时以只读目录挂载给网关。中文 loose-data 和回编译资源属于独立覆盖层，不能写入该官方目录。
+`inputs/runtime/kro-20211105/` 不参与镜像构建，它是宿主机上的客户端运行目录，允许发布已校验的中文 loose-data 和回编译资源；容器只以只读方式挂载该目录。不可变官方源文件保存在 `inputs/official/`。
 
 建议只挂载客户端子目录，而不是整个输入目录：
 
@@ -83,7 +83,7 @@ localization/client/data/  -> zh-cn loose-data 覆盖
 artifacts/client/lub/      -> 已验证的回编译 LUB 产物
 ```
 
-具体容器路径和覆盖优先级要在 Compose 实现时显式配置。不得为了简化挂载而把覆盖文件复制回 `inputs/runtime/kro-20211105/client/`。
+具体容器路径和覆盖优先级要在 Compose 实现时显式配置。已通过审查、编译和语义校验的覆盖文件可以发布到 `inputs/runtime/kro-20211105/client/`，但不得覆盖 `inputs/official/` 中的原始文件。
 
 服务端和 MariaDB 不需要挂载这套 kRO 客户端资源。
 

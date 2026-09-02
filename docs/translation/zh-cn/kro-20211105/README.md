@@ -1,6 +1,6 @@
 # kRO 2021-11-05 汉化工作区
 
-本目录是 kRO 2021-11-05 官方客户端资源的独立汉化工作区。八个专用 `agent-xx` 已完成全部工作单元；官方源文件位于 `inputs/runtime/kro-20211105/client/`，只读。本目录保存清单、提取结果、译文切片、完整合并结果和状态记录。
+本目录是 kRO 2021-11-05 官方客户端资源的独立汉化工作区。八个专用 `agent-xx` 已完成全部工作单元；不可变官方源文件位于 `inputs/official/`，`inputs/runtime/kro-20211105/client/` 是允许发布已校验翻译产物的运行目录。本目录保存清单、提取结果、译文切片、完整合并结果和状态记录。
 
 本工作区在端到端流程中的位置、repair 回路、正式产物晋级和回编译要求见 [`../WORKFLOW.md`](../WORKFLOW.md)。
 
@@ -14,6 +14,7 @@
 - `terms-names.csv`：本目录新增术语、人名和保留项，后续并入总术语表。
 - `status/checkpoint.md`：暂停或切换 agent 前的恢复断点。
 - `status/recompile.tsv`：LUB 版本、提取和回编译状态。
+- `artifacts.md`：当前客户端编译产物、哈希、语义校验和运行时发布状态。
 - `LUB-EXTRACTION.md`：Playwright LUB 提取器的重现、比较和维护说明。
 - `merged/`：各 agent 译文切片合并后的完整文件，经过确认后纳入 Git 管理。
 
@@ -51,7 +52,7 @@ LUB 的目录名与源表名保持一致，切片范围以 `manifest.tsv` 为准
 
 合并前的临时结果写入 `work/translation-release/kro-20211105/<batch>/`，其中的 `merged/files/`、`manifest.tsv`、`validation/` 和 Lua 编译产物由发布工具生成。校验通过后，使用 `--promote-merged --write` 将完整文件、manifest、BATCH_STATE 和验证记录晋级到本目录的 `merged/`；该目录是整个 kRO 工作区的 Git 跟踪合并结果，不再按 agent 拆分。
 
-后续回写或回编译脚本以 `merged/files/` 为输入，生成到批次 `artifacts/` 或通过发布工具明确写入运行时资源目录。`inputs/runtime/kro-20211105/client/` 中的官方源材料保持只读；运行时发布只能通过 `--runtime-root`，并由批次备份和日志记录。
+后续回写或回编译脚本以 `merged/files/` 为输入，生成到批次 `artifacts/` 或通过发布工具明确写入运行时资源目录。运行时发布使用 `--runtime-root inputs/runtime/kro-20211105/client`，只允许写入已通过编译和语义校验的产物，并由批次备份、日志和目标哈希记录；`inputs/official/` 始终保持只读。
 
 本批次已完成晋级并标记为关闭，状态见 [`merged/BATCH_STATE`](merged/BATCH_STATE)。关闭批次只作为历史翻译快照；后续修复应创建新的 canonical 批次。
 
