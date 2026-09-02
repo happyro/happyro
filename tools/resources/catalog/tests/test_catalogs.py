@@ -97,6 +97,25 @@ class ClientCatalogTests(unittest.TestCase):
         self.assertEqual(assets["items"]["552"]["icon"], "texture/유저인터페이스/item/ketupat.bmp")
         self.assertEqual(assets["items"]["552"]["illustration"], "texture/유저인터페이스/collection/ketupat.bmp")
 
+    def test_resolves_grf_mojibake_paths(self) -> None:
+        items = {
+            "566": {"identifiedResourceName": "똠양꿍"},
+            "480000": {"identifiedResourceName": "웤웤망토"},
+        }
+        manifest = {
+            "files": [
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/\x8cc양꿍.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/collection/\x8cc양꿍.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/\x9fp\x9fp망토.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/collection/\x9fp\x9fp망토.bmp"},
+            ],
+        }
+
+        assets = asset_map(items, manifest, "itemInfo.json", "manifest.json")
+
+        self.assertEqual(assets["items"]["566"]["status"], "complete")
+        self.assertEqual(assets["items"]["480000"]["status"], "complete")
+
     def test_resolves_unicode_normalized_grf_paths(self) -> None:
         items = {"501": {"identifiedResourceName": "Cafe\u0301"}}
         manifest = {

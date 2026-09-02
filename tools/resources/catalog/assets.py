@@ -22,13 +22,14 @@ def asset_map(
     paths = manifest_paths(manifest)
     normalized_paths = path_index(paths, normalize_path)
     folded_paths = path_index(paths, lambda path: normalize_path(path).casefold())
+    mojibake_paths = path_index(paths, lambda path: normalize_path(decode_mojibake_path(path)))
     assets: dict[str, dict[str, str | None]] = {}
     for item_id, item in items.items():
         resource_name = item.get("identifiedResourceName")
         if not isinstance(resource_name, str):
             raise CatalogError(f"invalid identified resource name for item {item_id}")
-        icon = resolve_asset(resource_name, ICON_ROOT, paths, normalized_paths, folded_paths)
-        illustration = resolve_asset(resource_name, ILLUSTRATION_ROOT, paths, normalized_paths, folded_paths)
+        icon = resolve_asset(resource_name, ICON_ROOT, paths, normalized_paths, folded_paths, mojibake_paths)
+        illustration = resolve_asset(resource_name, ILLUSTRATION_ROOT, paths, normalized_paths, folded_paths, mojibake_paths)
         assets[item_id] = {
             "resourceName": resource_name or None,
             "icon": relative_resource_path(icon),
@@ -70,6 +71,7 @@ def resolve_asset(
     paths: set[str],
     normalized_paths: dict[str, list[str]],
     folded_paths: dict[str, list[str]],
+    mojibake_paths: dict[str, list[str]],
 ) -> str | None:
     if not resource_name:
         return None
@@ -79,7 +81,10 @@ def resolve_asset(
     normalized = unique_match(normalized_paths.get(normalize_path(expected), []), expected)
     if normalized:
         return normalized
-    return unique_match(folded_paths.get(normalize_path(expected).casefold(), []), expected)
+    folded = unique_match(folded_paths.get(normalize_path(expected).casefold(), []), expected)
+    if folded:
+        return folded
+    return unique_match(mojibake_paths.get(normalize_path(expected), []), expected)
 
 
 def unique_match(matches: list[str], expected: str) -> str | None:
@@ -90,6 +95,36 @@ def unique_match(matches: list[str], expected: str) -> str | None:
 
 def normalize_path(path: str) -> str:
     return unicodedata.normalize("NFC", path)
+
+
+def decode_mojibake_path(path: str) -> str:
+    segments = path.replace("\\", "/").split("/")
+    return "/".join(decode_mojibake_segment(segment) for segment in segments)
+
+
+def decode_mojibake_segment(segment: str) -> str:
+    result: list[str] = []
+    latin_run: list[str] = []
+
+    def flush() -> None:
+        if not latin_run:
+            return
+        raw = "".join(latin_run)
+        try:
+            decoded = raw.encode("latin-1").decode("cp949")
+        except UnicodeError:
+            decoded = raw
+        result.append(decoded)
+        latin_run.clear()
+
+    for character in segment:
+        if ord(character) <= 0xFF:
+            latin_run.append(character)
+        else:
+            flush()
+            result.append(character)
+    flush()
+    return "".join(result)
 
 
 def relative_resource_path(path: str | None) -> str | None:
