@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from tools.resources.catalog.assets import descriptions, icon_map
+from tools.resources.catalog.assets import asset_map, descriptions
 from tools.resources.catalog.client import build_catalog as build_client_catalog
 from tools.resources.catalog.errors import CatalogError
 from tools.resources.catalog.server import build_catalog as build_server_catalog
@@ -34,14 +34,23 @@ class ClientCatalogTests(unittest.TestCase):
     def test_service_uses_injected_storage_adapters(self) -> None:
         client = {"data": {"501": {"identifiedDisplayName": "红色药水", "identifiedResourceName": "红药", "identifiedDescriptionName": ["恢复 HP"]}}}
         server = {"englishSource": {"revision": "abc123"}, "items": {"501": {"names": {"en-US": "Red Potion"}}}}
-        reader = Mock(side_effect=[client, server])
+        manifest = {"source": "data.grf", "files": []}
+        reader = Mock(side_effect=[client, manifest, server])
         catalog_writer = Mock()
         asset_writer = Mock()
 
-        counts = generate_client(Path("client.json"), Path("server.json"), Path("output"), reader, catalog_writer, asset_writer)
+        counts = generate_client(
+            Path("client.json"),
+            Path("server.json"),
+            Path("manifest.json"),
+            Path("output"),
+            reader,
+            catalog_writer,
+            asset_writer,
+        )
 
-        self.assertEqual(counts, {"catalog": 1, "icons": 1, "descriptions": 1})
-        self.assertEqual(reader.call_count, 2)
+        self.assertEqual(counts, {"catalog": 1, "assets": 1, "icons": 0, "illustrations": 0, "descriptions": 1})
+        self.assertEqual(reader.call_count, 3)
         catalog_writer.assert_called_once()
         self.assertEqual(asset_writer.call_count, 2)
 
@@ -49,10 +58,68 @@ class ClientCatalogTests(unittest.TestCase):
         items = {
             "501": {"identifiedResourceName": "红药", "identifiedDescriptionName": ["恢复 HP"]},
             "502": {"identifiedResourceName": "", "identifiedDescriptionName": ["恢复更多 HP"]},
+            "503": {"identifiedResourceName": "只有图标", "identifiedDescriptionName": ["只有图标"]},
+            "504": {"identifiedResourceName": "只有大图", "identifiedDescriptionName": ["只有大图"]},
+            "505": {"identifiedResourceName": "完全缺失", "identifiedDescriptionName": ["完全缺失"]},
         }
 
-        self.assertEqual(icon_map(items, "itemInfo.json")["items"], {"501": "红药"})
+        manifest = {
+            "source": "data.grf",
+            "files": [
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/红药.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/collection/红药.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/只有图标.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/collection/只有大图.bmp"},
+            ],
+        }
+
+        assets = asset_map(items, manifest, "itemInfo.json", "manifest.json")
+
+        self.assertEqual(assets["items"]["501"]["icon"], "texture/유저인터페이스/item/红药.bmp")
+        self.assertEqual(assets["items"]["501"]["status"], "complete")
+        self.assertEqual(assets["items"]["502"]["status"], "resource_name_missing")
+        self.assertEqual(assets["items"]["503"]["status"], "illustration_missing")
+        self.assertEqual(assets["items"]["504"]["status"], "icon_missing")
+        self.assertEqual(assets["items"]["505"]["status"], "asset_missing")
         self.assertEqual(descriptions(items, "itemInfo.json")["items"]["502"], ["恢复更多 HP"])
+
+    def test_resolves_grf_paths_without_case_sensitivity(self) -> None:
+        items = {"552": {"identifiedResourceName": "KETUPAT"}}
+        manifest = {
+            "files": [
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/ketupat.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/collection/ketupat.bmp"},
+            ],
+        }
+
+        assets = asset_map(items, manifest, "itemInfo.json", "manifest.json")
+
+        self.assertEqual(assets["items"]["552"]["icon"], "texture/유저인터페이스/item/ketupat.bmp")
+        self.assertEqual(assets["items"]["552"]["illustration"], "texture/유저인터페이스/collection/ketupat.bmp")
+
+    def test_resolves_unicode_normalized_grf_paths(self) -> None:
+        items = {"501": {"identifiedResourceName": "Cafe\u0301"}}
+        manifest = {
+            "files": [
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/Café.bmp"},
+            ],
+        }
+
+        assets = asset_map(items, manifest, "itemInfo.json", "manifest.json")
+
+        self.assertEqual(assets["items"]["501"]["icon"], "texture/유저인터페이스/item/Café.bmp")
+
+    def test_rejects_ambiguous_case_insensitive_grf_paths(self) -> None:
+        items = {"552": {"identifiedResourceName": "KeTuPaT"}}
+        manifest = {
+            "files": [
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/KETUPAT.bmp"},
+                {"status": "ok", "path": "data/texture/유저인터페이스/item/ketupat.bmp"},
+            ],
+        }
+
+        with self.assertRaisesRegex(CatalogError, "ambiguous GRF asset path"):
+            asset_map(items, manifest, "itemInfo.json", "manifest.json")
 
 
 class ServerCatalogTests(unittest.TestCase):

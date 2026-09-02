@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .assets import descriptions, icon_map
+from .assets import asset_map, descriptions
 from .client import build_catalog as build_client_catalog
 from .client import indexed_items
 from .server import ITEM_TYPES, MODES, body, build_catalog as build_server_catalog
@@ -20,12 +20,14 @@ GitYamlReader = Callable[[Path, str, Path], dict[str, Any]]
 def generate_client(
     client_source: Path,
     server_catalog: Path,
+    grf_manifest: Path,
     output_directory: Path,
     read_json: JsonReader,
     write_catalog: JsonWriter,
     write_asset: JsonWriter,
 ) -> dict[str, int]:
     client_payload = read_json(client_source)
+    manifest_payload = read_json(grf_manifest)
     payload = build_client_catalog(
         client_payload,
         read_json(server_catalog),
@@ -33,14 +35,16 @@ def generate_client(
         str(server_catalog),
     )
     client_items = indexed_items(client_payload, "data", "client itemInfo")
-    icons = icon_map(client_items, str(client_source))
+    assets = asset_map(client_items, manifest_payload, str(client_source), str(grf_manifest))
     item_descriptions = descriptions(client_items, str(client_source))
     write_catalog(output_directory / "client-kro-20211105.json", payload)
-    write_asset(output_directory / "icon-map.json", icons)
+    write_asset(output_directory / "item-assets.json", assets)
     write_asset(output_directory / "descriptions.json", item_descriptions)
     return {
         "catalog": len(payload["items"]),
-        "icons": len(icons["items"]),
+        "assets": len(assets["items"]),
+        "icons": sum(asset["icon"] is not None for asset in assets["items"].values()),
+        "illustrations": sum(asset["illustration"] is not None for asset in assets["items"].values()),
         "descriptions": len(item_descriptions["items"]),
     }
 
