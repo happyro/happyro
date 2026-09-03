@@ -13,9 +13,9 @@ def paint(value: str, code: str, enabled: bool) -> str:
 def root_help(color: bool) -> str:
     return render(
         "HappyRO 游戏资料构建工具",
-        f"{ENTRYPOINT} <资料类型> <流水线> [选项]",
-        ["items  构建客户端和服务端物品资料"],
-        [f"{ENTRYPOINT} items client", f"{ENTRYPOINT} items server"],
+        f"{ENTRYPOINT} <资料类型> [流水线] [选项]",
+        ["items  构建客户端和服务端物品资料", "monsters  构建双语魔物资料和图片"],
+        [f"{ENTRYPOINT} items client", f"{ENTRYPOINT} items server", f"{ENTRYPOINT} monsters"],
         color,
     )
 
@@ -31,11 +31,12 @@ def items_help(color: bool) -> str:
 
 
 def pipeline_help(pipeline: str, options: list[str], color: bool) -> str:
+    is_monster = pipeline == "monsters"
     return render(
-        f"HappyRO 物品资料构建: {pipeline}",
-        f"{ENTRYPOINT} items {pipeline} [选项]",
+        "HappyRO 魔物资料构建" if is_monster else f"HappyRO 物品资料构建: {pipeline}",
+        f"{ENTRYPOINT} monsters [选项]" if is_monster else f"{ENTRYPOINT} items {pipeline} [选项]",
         options,
-        [f"{ENTRYPOINT} items {pipeline}"],
+        [f"{ENTRYPOINT} monsters" if is_monster else f"{ENTRYPOINT} items {pipeline}"],
         color,
         "选项",
     )

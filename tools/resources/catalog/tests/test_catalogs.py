@@ -9,6 +9,9 @@ from unittest.mock import Mock
 from tools.resources.catalog.assets import asset_map, descriptions
 from tools.resources.catalog.client import build_catalog as build_client_catalog
 from tools.resources.catalog.errors import CatalogError
+from tools.resources.catalog.monster import build_asset_map as build_monster_assets
+from tools.resources.catalog.monster import build_catalog as build_monster_catalog
+from tools.resources.catalog.monster import javascript_table
 from tools.resources.catalog.server import build_catalog as build_server_catalog
 from tools.resources.catalog.service import generate_client
 
@@ -161,6 +164,19 @@ class ServerCatalogTests(unittest.TestCase):
                 "abc123",
                 [("one.yml", [item], [english]), ("two.yml", [item], [english])],
             )
+
+
+class MonsterCatalogTests(unittest.TestCase):
+    def test_builds_bilingual_monsters_and_asset_status(self) -> None:
+        current = {"Body": [{"Id": 1002, "AegisName": "PORING", "Name": "波利", "Race": "Plant"}]}
+        english = {"Body": [{"Id": 1002, "AegisName": "PORING", "Name": "Poring"}]}
+        catalog = build_monster_catalog(current, english, {1002: "波利"}, {1002: "PORING"}, "abc", "mob.yml", ["names.js", "sprites.js"])
+
+        self.assertEqual(catalog["monsters"]["1002"]["names"], {"zh-CN": "波利", "en-US": "Poring"})
+        self.assertEqual(build_monster_assets(catalog["monsters"], Path("missing"))["monsters"]["1002"]["status"], "missing")
+
+    def test_parses_client_javascript_table(self) -> None:
+        self.assertEqual(javascript_table("export default {\n  1002: '波利',\n};", "table.js"), {1002: "波利"})
 
 
 if __name__ == "__main__":

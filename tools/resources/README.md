@@ -1,6 +1,6 @@
 # 游戏资料构建工具
 
-`catalog/` 是 HappyRO Admin 游戏资料的独立构建工程。当前实现物品的客户端与服务端流水线，后续魔物、NPC 和地图作为并列资料类型扩展；生成逻辑和跨仓库来源校验归根仓库维护。
+`catalog/` 是 HappyRO Admin 游戏资料的独立构建工程。当前实现物品和魔物流水线，后续 NPC 和地图作为并列资料类型扩展；生成逻辑和跨仓库来源校验归根仓库维护。
 
 ## 结构
 
@@ -12,6 +12,8 @@ catalog/
 ├── client.py     # 客户端集合及双语名称合并规则
 ├── assets.py     # 客户端图标映射与说明索引规则
 ├── server.py     # rAthena 双语服务端快照规则
+├── monster.py    # 服务端与客户端魔物资料合并规则
+├── sprite.py     # SPR 首帧 PNG 转换
 ├── storage.py    # JSON、YAML、Git 和原子写出适配器
 ├── errors.py     # 领域错误
 └── tests/        # 单元测试
@@ -20,6 +22,12 @@ catalog/
 `client.py` 和 `server.py` 只处理内存数据，不读取文件或调用 Git；`service.py` 通过参数注入读写函数，因此核心流程可以独立 Mock 和测试。`storage.py` 是唯一执行文件系统及 Git I/O 的模块。
 
 ## 使用
+
+安装固定版本的 Python 依赖：
+
+```bash
+python3 -m pip install -r tools/resources/catalog/requirements.txt
+```
 
 不带参数运行只显示帮助：
 
@@ -44,6 +52,14 @@ python3 tools/resources/catalog/main.py items server
 ```
 
 该命令读取当前 `repos/happyro-server/db/` 中文数据，并通过 Git 读取英文基线 `2fe6ab3dc4d8`，生成后台的 `renewal.json` 和 `pre-renewal.json`。两个子命令都支持显式覆盖输入和输出路径；完整选项通过对应子命令的 `--help` 查看。
+
+生成魔物快照和图片：
+
+```bash
+python3 tools/resources/catalog/main.py monsters
+```
+
+该命令合并 Renewal 魔物库、英文 Git 基线和 HappyRO Client 的名称、精灵映射，生成后台双语快照与资源清单，并把 GRF 中可解析的 SPR 首帧转换到 `work/game-data/monsters/kro-20211105/`。大体积 PNG 不提交 Git。
 
 ## 测试
 
