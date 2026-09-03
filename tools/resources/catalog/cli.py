@@ -11,7 +11,7 @@ import sys
 from .errors import CatalogError
 from .help import items_help, pipeline_help, root_help
 from .server import DEFAULT_ENGLISH_REF
-from .service import generate_client, generate_server
+from .service import generate_client, generate_monsters, generate_server
 from .storage import read_git_yaml, read_json, read_yaml, write_json, write_pretty_json
 
 
@@ -21,6 +21,12 @@ DEFAULT_GRF_MANIFEST = Path("work/grf-extract/kro-20211105/data/manifest.json")
 DEFAULT_SERVER_ROOT = Path("repos/happyro-server/db")
 DEFAULT_SERVER_REPOSITORY = Path("repos/happyro-server")
 DEFAULT_OUTPUT_DIRECTORY = Path("repos/happyro-admin/backend/resources/game-data/items")
+DEFAULT_MONSTER_DATABASE = Path("repos/happyro-server/db/re/mob_db.yml")
+DEFAULT_MONSTER_NAMES = Path("repos/happyro-client/src/DB/Monsters/MonsterNameTable.js")
+DEFAULT_MONSTER_SPRITES = Path("repos/happyro-client/src/DB/Monsters/MonsterTable.js")
+DEFAULT_MONSTER_SPRITE_ROOT = Path("work/grf-extract/kro-20211105/data/data/sprite/몬스터")
+DEFAULT_MONSTER_OUTPUT = Path("repos/happyro-admin/backend/resources/game-data/monsters")
+DEFAULT_MONSTER_IMAGES = Path("work/game-data/monsters/kro-20211105")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -38,10 +44,28 @@ def parser() -> argparse.ArgumentParser:
     server.add_argument("--server-repo", type=Path, default=DEFAULT_SERVER_REPOSITORY)
     server.add_argument("--english-ref", default=DEFAULT_ENGLISH_REF)
     server.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIRECTORY)
+    monsters = data_types.add_parser("monsters", add_help=False)
+    monsters.add_argument("--server-database", type=Path, default=DEFAULT_MONSTER_DATABASE)
+    monsters.add_argument("--server-repo", type=Path, default=DEFAULT_SERVER_REPOSITORY)
+    monsters.add_argument("--english-ref", default=DEFAULT_ENGLISH_REF)
+    monsters.add_argument("--name-table", type=Path, default=DEFAULT_MONSTER_NAMES)
+    monsters.add_argument("--sprite-table", type=Path, default=DEFAULT_MONSTER_SPRITES)
+    monsters.add_argument("--sprite-root", type=Path, default=DEFAULT_MONSTER_SPRITE_ROOT)
+    monsters.add_argument("--output-dir", type=Path, default=DEFAULT_MONSTER_OUTPUT)
+    monsters.add_argument("--image-dir", type=Path, default=DEFAULT_MONSTER_IMAGES)
     return result
 
 
 def run(args: argparse.Namespace) -> None:
+    if args.data_type == "monsters":
+        counts = generate_monsters(
+            args.server_database, args.server_repo, args.english_ref, args.name_table,
+            args.sprite_table, args.sprite_root, args.output_dir, args.image_dir,
+            read_yaml, read_git_yaml, lambda path: path.read_text(encoding="utf-8"), write_json,
+        )
+        print(f"monster catalog: {counts['catalog']} monsters")
+        print(f"monster images: {counts['assets']} PNG files")
+        return
     if args.pipeline == "client":
         counts = generate_client(
             args.client_source,
@@ -78,6 +102,8 @@ def requested_help(argv: list[str], color: bool) -> str | None:
         return root_help(color)
     if argv[0] == "items" and (len(argv) == 1 or (help_requested and len(argv) < 3)):
         return items_help(color)
+    if argv[0] == "monsters" and help_requested:
+        return pipeline_help("monsters", ["--server-database PATH  当前 Renewal 魔物数据库", "--english-ref REF  英文数据 Git 基线", "--name-table PATH  客户端中文名称表", "--sprite-table PATH  客户端精灵名称表", "--sprite-root PATH  GRF 解压精灵目录", "--output-dir PATH  后台快照输出目录", "--image-dir PATH  PNG 图片输出目录"], color)
     if len(argv) >= 2 and argv[:2] in (["items", "client"], ["items", "server"]) and help_requested:
         options = [
             "--client-source PATH   客户端 itemInfo JSON",
