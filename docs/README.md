@@ -4,6 +4,7 @@
 
 ## 导航
 
+- [架构文档](architecture/README.md)：跨客户端、服务端和资源生成流程的长期设计与约束。
 - [翻译文档](translation/README.md)：语言工作区、agent、校验、合并、回写和资源构建流程。
 - [Bugfix 记录](bugfix/README.md)：跨仓库缺陷、根因、验证证据和提交边界。
 - [部署文档](deploy/README.md)：当前部署入口和尚未实施的目标方案。
