@@ -24,8 +24,8 @@ def items_help(color: bool) -> str:
     return render(
         "HappyRO 物品资料构建",
         f"{ENTRYPOINT} items <流水线> [选项]",
-        ["client  构建客户端快照、图标映射和说明索引", "server  构建 Renewal 与 Pre-Renewal 服务端快照"],
-        [f"{ENTRYPOINT} items client", f"{ENTRYPOINT} items server"],
+        ["client  构建客户端快照、图标映射和说明索引", "server  构建 Renewal 与 Pre-Renewal 服务端快照", "images  生成透明 PNG 图标和详情图片"],
+        [f"{ENTRYPOINT} items client", f"{ENTRYPOINT} items server", f"{ENTRYPOINT} items images"],
         color,
     )
 
