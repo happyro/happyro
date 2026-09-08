@@ -10,10 +10,10 @@
 
 `data/titletable.json` 包含 2021 客户端固定称号 ID 范围 1000 至 1046 的简体中文名称。
 
-`data/skilldesctable.txt` 包含经过校对的新建角色可用初心者技能简体中文说明。文本已根据
-2021 客户端技能 ID 以及中文 RO 手册中 `NV_BASIC`、`NV_FIRSTAID` 和
-`NV_TRICKDEAD` 的条目核对。当官方韩文 Lua 表包含尚未在此覆盖的技能时，客户端会显示
-准确的中文机制摘要，避免直接显示韩文。
+`data/skillnametable.txt` 和 `data/skilldesctable.txt` 从固定版本服务端技能数据库生成，
+覆盖全部 1635 个技能的简体中文名称和机制信息。狂击、怒爆等常用技能还包含与服务端实现
+核对过的伤害、命中和范围说明。运行 `node scripts/resources/generate-skill-localization.mjs`
+可从当前服务端数据库重新生成两份资源。
 
 <!-- 已归档：data/itemlocalization.json 已由翻译后的 itemInfo_true.lub 取代，
 现保留在 archive/localization/client/data/ 中。 -->
