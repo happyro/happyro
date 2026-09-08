@@ -9,6 +9,7 @@ resources_dir="$GATEWAY_REPO/resources"
 message_table="$PROJECT_ROOT/localization/client/data/msgstringtable.txt"
 title_table="$PROJECT_ROOT/localization/client/data/titletable.json"
 skill_description_table="$PROJECT_ROOT/localization/client/data/skilldesctable.txt"
+skill_name_table="$PROJECT_ROOT/localization/client/data/skillnametable.txt"
 # Archived itemlocalization overlay; itemInfo_true.lub is the active source.
 # item_localization_table="$PROJECT_ROOT/localization/client/data/itemlocalization.json"
 
@@ -49,10 +50,22 @@ jq -e 'length == 47 and ."1000" == "生命的交汇" and ."1046" == "造王者"'
 	echo "missing localized skill description table: $skill_description_table" >&2
 	exit 1
 }
-rg -q '^NV_BASIC#' "$skill_description_table" || {
+[[ "$(rg -c '^[A-Z0-9_]+#' "$skill_description_table")" -ge 1600 ]] || {
 	echo "localized skill description table is incomplete: $skill_description_table" >&2
 	exit 1
 }
+[[ -f "$skill_name_table" ]] || {
+	echo "missing localized skill name table: $skill_name_table" >&2
+	exit 1
+}
+[[ "$(rg -c '^[A-Z0-9_]+#' "$skill_name_table")" -ge 1600 ]] || {
+	echo "localized skill name table is incomplete: $skill_name_table" >&2
+	exit 1
+}
+if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$skill_name_table" "$skill_description_table"; then
+	echo "localized skill tables contain Korean text" >&2
+	exit 1
+fi
 if false; then # Archived itemlocalization overlay validation.
 [[ -f "$item_localization_table" ]] || {
 	echo "missing item localization table: $item_localization_table" >&2
@@ -115,4 +128,5 @@ echo "configured: $resources_dir/DATA.INI"
 echo "configured: $message_table"
 echo "configured: $title_table"
 echo "configured: $skill_description_table"
+echo "configured: $skill_name_table"
 # Archived itemlocalization overlay is not configured.
