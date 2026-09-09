@@ -11,6 +11,9 @@ from .errors import CatalogError
 CLIENT_RESOURCE_VERSION = "kro-20211105"
 CARD_SUFFIX = "_card"
 ENGLISH_CARD_SUFFIX = " card"
+REVIEWED_ZH_CN_NAMES = {
+    "909": "杰勒比结晶",
+}
 
 
 def indexed_items(payload: dict[str, Any], field: str, source: str) -> dict[str, dict[str, Any]]:
@@ -49,6 +52,7 @@ def build_items(
         monster_name = card_names.get(item_id)
         if monster_name is not None:
             chinese_name = f"{monster_name}卡片"
+        chinese_name = REVIEWED_ZH_CN_NAMES.get(item_id, chinese_name)
         item = {
             key: value
             for key, value in client_item.items()
