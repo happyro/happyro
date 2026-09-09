@@ -12,6 +12,7 @@ from .errors import CatalogError
 from .help import items_help, pipeline_help, root_help
 from .server import DEFAULT_ENGLISH_REF
 from .service import generate_client, generate_monsters, generate_server
+from .item_image import render_item_images
 from .storage import read_git_yaml, read_json, read_yaml, write_json, write_pretty_json
 
 
@@ -21,6 +22,9 @@ DEFAULT_GRF_MANIFEST = Path("work/grf-extract/kro-20211105/data/manifest.json")
 DEFAULT_SERVER_ROOT = Path("repos/happyro-server/db")
 DEFAULT_SERVER_REPOSITORY = Path("repos/happyro-server")
 DEFAULT_OUTPUT_DIRECTORY = Path("repos/happyro-admin/backend/resources/game-data/items")
+DEFAULT_ITEM_ASSET_MAP = DEFAULT_OUTPUT_DIRECTORY / "item-assets.json"
+DEFAULT_ITEM_SOURCE_ROOT = Path("work/grf-extract/kro-20211105/data/data")
+DEFAULT_ITEM_IMAGES = Path("work/game-data/items/kro-20211105")
 DEFAULT_MONSTER_DATABASE = Path("repos/happyro-server/db/re/mob_db.yml")
 DEFAULT_MONSTER_NAMES = Path("repos/happyro-client/src/DB/Monsters/MonsterNameTable.js")
 DEFAULT_MONSTER_SPRITES = Path("repos/happyro-client/src/DB/Monsters/MonsterTable.js")
@@ -44,6 +48,10 @@ def parser() -> argparse.ArgumentParser:
     server.add_argument("--server-repo", type=Path, default=DEFAULT_SERVER_REPOSITORY)
     server.add_argument("--english-ref", default=DEFAULT_ENGLISH_REF)
     server.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIRECTORY)
+    images = pipelines.add_parser("images", add_help=False)
+    images.add_argument("--asset-map", type=Path, default=DEFAULT_ITEM_ASSET_MAP)
+    images.add_argument("--source-root", type=Path, default=DEFAULT_ITEM_SOURCE_ROOT)
+    images.add_argument("--image-dir", type=Path, default=DEFAULT_ITEM_IMAGES)
     monsters = data_types.add_parser("monsters", add_help=False)
     monsters.add_argument("--server-database", type=Path, default=DEFAULT_MONSTER_DATABASE)
     monsters.add_argument("--server-repo", type=Path, default=DEFAULT_SERVER_REPOSITORY)
@@ -82,6 +90,11 @@ def run(args: argparse.Namespace) -> None:
         print(f"illustrations: {counts['illustrations']} items")
         print(f"descriptions: {counts['descriptions']} items")
         return
+    if args.pipeline == "images":
+        counts = render_item_images(read_json(args.asset_map), args.source_root, args.image_dir)
+        print(f"item icons: {counts['icons']} PNG files")
+        print(f"item illustrations: {counts['illustrations']} PNG files")
+        return
     counts = generate_server(
         args.server_root,
         args.server_repo,
@@ -104,7 +117,7 @@ def requested_help(argv: list[str], color: bool) -> str | None:
         return items_help(color)
     if argv[0] == "monsters" and help_requested:
         return pipeline_help("monsters", ["--server-database PATH  当前 Renewal 魔物数据库", "--english-ref REF  英文数据 Git 基线", "--name-table PATH  客户端中文名称表", "--sprite-table PATH  客户端精灵名称表", "--sprite-root PATH  GRF 解压精灵目录", "--output-dir PATH  后台快照输出目录", "--image-dir PATH  PNG 图片输出目录"], color)
-    if len(argv) >= 2 and argv[:2] in (["items", "client"], ["items", "server"]) and help_requested:
+    if len(argv) >= 2 and argv[:2] in (["items", "client"], ["items", "server"], ["items", "images"]) and help_requested:
         options = [
             "--client-source PATH   客户端 itemInfo JSON",
             "--server-catalog PATH  Renewal 服务端快照",
@@ -115,6 +128,10 @@ def requested_help(argv: list[str], color: bool) -> str | None:
             "--server-repo PATH  HappyRO Server Git 仓库",
             "--english-ref REF   英文数据 Git 基线",
             "--output-dir PATH   服务端产物输出目录",
+        ] if argv[1] == "server" else [
+            "--asset-map PATH   物品资源清单",
+            "--source-root PATH  GRF 解压资源根目录",
+            "--image-dir PATH    透明 PNG 输出目录",
         ]
         return pipeline_help(argv[1], options, color)
     return None

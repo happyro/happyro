@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+import tempfile
 from unittest.mock import Mock
+
+from PIL import Image
 
 from tools.resources.catalog.assets import asset_map, descriptions
 from tools.resources.catalog.client import build_catalog as build_client_catalog
@@ -14,6 +17,7 @@ from tools.resources.catalog.monster import build_catalog as build_monster_catal
 from tools.resources.catalog.monster import javascript_table
 from tools.resources.catalog.server import build_catalog as build_server_catalog
 from tools.resources.catalog.service import generate_client
+from tools.resources.catalog.item_image import render_item_images
 
 
 class ClientCatalogTests(unittest.TestCase):
@@ -85,6 +89,31 @@ class ClientCatalogTests(unittest.TestCase):
         self.assertEqual(assets["items"]["504"]["status"], "icon_missing")
         self.assertEqual(assets["items"]["505"]["status"], "asset_missing")
         self.assertEqual(descriptions(items, "itemInfo.json")["items"]["502"], ["恢复更多 HP"])
+
+    def test_renders_item_assets_with_only_edge_background_transparent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source" / "item.bmp"
+            source.parent.mkdir(parents=True)
+            image = Image.new("RGB", (5, 5), (0, 0, 255))
+            for x in range(1, 4):
+                for y in range(1, 4):
+                    image.putpixel((x, y), (220, 20, 20))
+            image.putpixel((2, 2), (0, 0, 255))
+            image.putpixel((3, 3), (255, 0, 255))
+            image.save(source)
+
+            counts = render_item_images(
+                {"items": {"501": {"icon": "item.bmp", "illustration": None}}},
+                root / "source",
+                root / "output",
+            )
+
+            with Image.open(root / "output" / "icons" / "501.png") as rendered:
+                self.assertEqual(counts, {"icons": 1, "illustrations": 0})
+                self.assertEqual(rendered.getpixel((0, 0))[3], 0)
+                self.assertEqual(rendered.getpixel((2, 2)), (0, 0, 255, 255))
+                self.assertEqual(rendered.getpixel((3, 3))[3], 0)
 
     def test_resolves_grf_paths_without_case_sensitivity(self) -> None:
         items = {"552": {"identifiedResourceName": "KETUPAT"}}
