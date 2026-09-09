@@ -78,6 +78,8 @@ const typeLabels = {
 };
 const elementLabels = {
 	Weapon: '武器属性',
+	Endowed: '赋予属性',
+	Random: '随机属性',
 	Neutral: '无属性',
 	Fire: '火属性',
 	Water: '水属性',
@@ -88,6 +90,220 @@ const elementLabels = {
 	Ghost: '念属性',
 	Undead: '不死属性',
 	Poison: '毒属性'
+};
+const visibleNameOverrides = {
+	AL_ANGELUS: '天使之障壁',
+	ALL_ANGEL_PROTECT: '谢谢你！',
+	AM_SPHEREMINE: '召唤气泡虫',
+	AM_CP_WEAPON: '化学武器保护',
+	AM_CP_SHIELD: '化学盾牌保护',
+	AM_CP_ARMOR: '化学铠甲保护',
+	AM_CP_HELM: '化学头盔保护',
+	AS_CLOAKING: '伪装',
+	AS_GRIMTOOTH: '无影之牙',
+	ASC_BREAKER: '气功炮',
+	BA_FROSTJOKER: '冷笑话',
+	BA_WHISTLE: '口哨',
+	BA_ASSASSINCROSS: '夕阳下的刺客十字',
+	BA_POEMBRAGI: '布莱奇之诗',
+	BA_APPLEIDUN: '伊登的苹果',
+	BD_ADAPTATION: '临机应变',
+	BD_RICHMANKIM: '金先生发财了',
+	BD_ETERNALCHAOS: '永恒的混沌',
+	BD_DRUMBATTLEFIELD: '战鼓震天',
+	BD_RINGNIBELUNGEN: '尼贝隆根之戒',
+	BD_ROKISWEIL: '洛奇的悲鸣',
+	BD_INTOABYSS: '深渊中',
+	BD_SIEGFRIED: '不死神齐格弗里德',
+	BS_HILTBINDING: '武器保有',
+	BS_ADRENALINE: '速度激发',
+	BS_WEAPONPERFECT: '无视体型攻击',
+	BS_OVERTHRUST: '凶砍',
+	BS_MAXIMIZE: '武器值最大化',
+	CH_PALMSTRIKE: '猛虎硬爬山',
+	CH_TIGERFIST: '伏虎拳',
+	CH_CHAINCRUSH: '连柱崩击',
+	CR_AUTOGUARD: '自动防御',
+	CR_DEVOTION: '牺牲',
+	CR_PROVIDENCE: '神祐之光',
+	CR_DEFENDER: '光之盾',
+	CR_SLIMPITCHER: '投掷纤细药水',
+	CR_ACIDDEMONSTRATION: '强酸火烟瓶投掷',
+	DC_UGLYDANCE: '丑陋之舞',
+	DC_SCREAM: '惊声尖叫',
+	DC_HUMMING: '哼唱',
+	DC_DONTFORGETME: '勿忘我',
+	DC_FORTUNEKISS: '幸运之吻',
+	DC_SERVICEFORYOU: '为您服务',
+	GS_GLITTERING: '抛硬币',
+	GS_TRIPLEACTION: '三连行动',
+	GS_SINGLEACTION: '单枪射击',
+	GS_RAPIDSHOWER: '五连击',
+	GS_DESPERADO: '亡命之徒',
+	GS_DUST: '霰弹',
+	GS_GROUNDDRIFT: '四面埋伏',
+	HFLI_FLEET: '疾速移动',
+	HFLI_SPEED: '超速',
+	HW_NAPALMVULCAN: '念力连击',
+	KN_BRANDISHSPEAR: '长矛挥击',
+	LK_JOINTBEAT: '关节攻击',
+	ML_AUTOGUARD: '自动防御',
+	ML_DEFENDER: '光之盾',
+	ML_DEVOTION: '牺牲',
+	MO_SPIRITSRECOVERY: '运气调息',
+	MO_BLADESTOP: '真剑百破道',
+	MO_CHAINCOMBO: '连环全身掌',
+	MO_COMBOFINISH: '猛龙夸强',
+	NJ_TOBIDOUGU: '飞刀修炼',
+	NJ_TATAMIGAESHI: '榻榻米翻转',
+	NJ_KASUMIKIRI: '霞斩',
+	NJ_UTSUSEMI: '金蝉脱壳',
+	NJ_BUNSINJYUTSU: '幻影分身',
+	NJ_NINPOU: '忍术修炼',
+	NJ_SUITON: '水遁',
+	NJ_HYOUSYOURAKU: '冰晶落',
+	NJ_RAIGEKISAI: '雷击碎',
+	NJ_KAMAITACHI: '朔风',
+	NJ_NEN: '念',
+	NJ_ISSEN: '一闪',
+	PA_PRESSURE: '圣十字压力',
+	PA_GOSPEL: '福音',
+	PF_HPCONVERSION: '生命力转换',
+	PF_SOULCHANGE: '灵魂交换',
+	PF_SOULBURN: '精神冲击',
+	PF_MEMORIZE: '速读术',
+	PF_SPIDERWEB: '易燃之网',
+	PR_IMPOSITIO: '神威祈福',
+	PR_BENEDICTIO: '圣体降福',
+	PR_REDEMPTIO: '赎罪祈福',
+	RG_SNATCHER: '自动偷窃',
+	RG_STEALCOIN: '偷钱',
+	RG_TUNNELDRIVE: '潜遁',
+	RG_RAID: '潜击',
+	RG_INTIMIDATE: '胁持',
+	RG_FLAGGRAFFITI: '旗帜涂鸦',
+	RG_CLEANER: '清洗',
+	RG_GANGSTER: '流氓天国',
+	RG_COMPULSION: '强制减价',
+	RG_PLAGIARISM: '抄袭',
+	SA_ADVANCEDBOOK: '进阶书籍',
+	SA_FROSTWEAPON: '寒冰附加',
+	SA_LIGHTNINGLOADER: '雷电附加',
+	SA_LANDPROTECTOR: '地面保护',
+	SA_ABRACADABRA: '随机魔法',
+	SA_MONOCELL: '单细胞',
+	SA_SUMMONMONSTER: '召唤魔物',
+	SA_REVERSEORCISH: '兽人脸',
+	SA_FORTUNE: '幸运',
+	SA_TAMINGMONSTER: '驯服魔物',
+	SA_FULLRECOVERY: '完全恢复',
+	SA_COMA: '濒死',
+	SL_STAR: '拳圣之魂',
+	SL_ROGUE: '流氓之魂',
+	SL_SOULLINKER: '悟灵士之魂',
+	SM_FATALBLOW: '致命攻击',
+	SN_SIGHT: '狙杀瞄准',
+	ST_REJECTSWORD: '卸除剑',
+	ST_PRESERVE: '保护',
+	WS_WEAPONREFINE: '武器精炼',
+	WZ_SIGHTRASHER: '火狩芽',
+	WZ_FROSTNOVA: '霜冻之术',
+	WZ_HEAVENDRIVE: '崩裂术',
+	CG_ARROWVULCAN: '奥义箭乱舞',
+	WE_FEMALE: '我愿为你牺牲',
+	RA_ELECTRICSHOCKER: '电击陷阱',
+	RA_CLUSTERBOMB: '集束炸弹',
+	RA_MAIZETRAP: '淡黄陷阱',
+	NC_MAINFRAME: '主框架改造',
+	NC_RESEARCHFE: '火与大地研究',
+	WM_LESSON: '乐理课程',
+	WM_RANDOMIZESPELL: '不确定要素的语言',
+	SO_EL_CONTROL: '精灵控制',
+	SO_EL_ANALYSIS: '四元素分析',
+	GN_S_PHARMACY: '特殊制药',
+	SP_SOULREAPER: '灵魂收割',
+	SP_SOULREVOLVE: '灵魂循环',
+	KO_YAMIKUMO: '暗云',
+	KO_HAPPOKUNAI: '八方苦无',
+	KO_MUCHANAGE: '暴投',
+	KO_HUUMARANKA: '风魔手里剑·乱华',
+	KO_MEIKYOUSISUI: '明镜止水',
+	KO_ZANZOU: '幻术·残像',
+	KO_KYOUGAKU: '幻术·惊愕',
+	KO_JYUSATSU: '幻术·咒杀',
+	KO_KAHU_ENTEN: '火符·炎天',
+	KO_HYOUHU_HUBUKI: '冰符·吹雪',
+	KO_KAZEHU_SEIRAN: '风符·青岚',
+	KO_DOHU_KOUKAI: '土符·刚块',
+	KO_KAIHOU: '术式解放',
+	KO_ZENKAI: '术式展开',
+	OB_AKAITSUKI: '不祥红月',
+	SU_STOOP: '蜷缩',
+	SU_LOPE: '跳跃',
+	SU_SPRITEMABLE: '灵魂珠',
+	SU_POWEROFFLOCK: '群体之力',
+	SU_BUNCHOFSHRIMP: '虾群',
+	WE_CALLALLFAMILY: '我们在一起',
+	WE_ONEFOREVER: '死亡也无法将我们分开',
+	WE_CHEERUP: '爸爸妈妈加油',
+	AB_CONVENIO: '集结',
+	IQ_THIRD_EXOR_FLAME: '最终章·驱魔之火',
+	CD_EFFLIGO: '神罚',
+	CD_FRAMEN: '弗拉门',
+	TR_AIN_RHAPSODY: '矿工狂想曲',
+	TR_JAWAII_SERENADE: '晚霞小夜曲',
+	EM_ACTIVITY_BURN: '活力燃烧',
+	EM_INCREASING_ACTIVITY: '活力提升',
+	SOA_EXORCISM_OF_MALICIOUS_SOUL: '死灵净化',
+	SOA_CIRCLE_OF_DIRECTIONS_AND_ELEMENTALS: '四方五行阵',
+	SOA_SOUL_OF_HEAVEN_AND_EARTH: '天地神灵',
+	SH_MYSTICAL_CREATURE_MASTERY: '灵物理解',
+	SH_COMMUNE_WITH_CHUL_HO: '与铁虎共鸣',
+	SH_CHUL_HO_SONIC_CLAW: '铁虎音速爪',
+	SH_HOWLING_OF_CHUL_HO: '铁虎咆哮',
+	SH_HOGOGONG_STRIKE: '虎高功乱打',
+	SH_COMMUNE_WITH_KI_SUL: '与龟雪共鸣',
+	SH_KI_SUL_WATER_SPRAYING: '龟雪洒水',
+	SH_MARINE_FESTIVAL_OF_KI_SUL: '龟雪海洋祭典',
+	SH_SANDY_FESTIVAL_OF_KI_SUL: '龟雪沙滩祭典',
+	SH_KI_SUL_RAMPAGE: '龟雪翻腾',
+	SH_COMMUNE_WITH_HYUN_ROK: '与玄鹿共鸣',
+	SH_COLORS_OF_HYUN_ROK: '玄鹿五色角',
+	SH_HYUN_ROKS_BREEZE: '玄鹿叶风',
+	SH_HYUN_ROK_CANNON: '玄鹿炮',
+	SH_CHUL_HO_BATTERING: '铁虎重击',
+	SH_TEMPORARY_COMMUNION: '快速共鸣',
+	SH_BLESSING_OF_MYSTICAL_CREATURES: '灵物祝福',
+	HN_SELFSTUDY_SOCERY: '魔法自学',
+	HN_NAPALM_VULCAN_STRIKE: '念力连击·冲击',
+	SS_SEKIENHOU: '红炎炮',
+	SS_REIKETSUHOU: '冷血炮',
+	SS_RAIDENPOU: '雷电炮',
+	SS_KINRYUUHOU: '金龙炮',
+	SS_ANTENPOU: '暗转炮',
+	MH_ERASER_CUTTER: '抹杀切割',
+	MH_SILVERVEIN_RUSH: '银脉冲锋',
+	MER_ESTIMATION: '怪物情报',
+	NPC_DANCINGBLADE_ATK: '舞刃攻击',
+	NPC_MAXPAIN_ATK: '最大痛苦攻击',
+	GN_CRAZYWEED_ATK: '狂野杂草攻击',
+	GN_FIRE_EXPANSION_SMOKE_POWDER: '火焰扩散·烟雾粉',
+	GN_FIRE_EXPANSION_TEAR_GAS: '火焰扩散·催泪瓦斯',
+	SU_SV_STEMSPEAR: '银藤茎之矛',
+	SU_CN_POWDERING: '猫薄荷撒粉',
+	SU_CN_METEOR: '猫薄荷陨石',
+	SU_SV_ROOTTWIST: '银藤根缠绕',
+	DK_SERVANTWEAPON_ATK: '侍从武器攻击',
+	DK_SERVANT_W_SIGN: '侍从武器·标记',
+	DK_SERVANT_W_PHANTOM: '侍从武器·幻影',
+	DK_SERVANT_W_DEMOL: '侍从武器·爆破',
+	DK_HACKANDSLASHER_ATK: '砍杀者攻击',
+	CD_ARBITRIUM_ATK: '裁决攻击',
+	EM_ELEMENTAL_BUSTER_FIRE: '元素破坏·火',
+	EM_ELEMENTAL_BUSTER_WATER: '元素破坏·水',
+	EM_ELEMENTAL_BUSTER_WIND: '元素破坏·风',
+	EM_ELEMENTAL_BUSTER_GROUND: '元素破坏·地',
+	EM_ELEMENTAL_BUSTER_POISON: '元素破坏·毒'
 };
 const additionalNames = {
 	TF_POISON: '施毒',
@@ -201,7 +417,7 @@ const additionalNames = {
 function formatProse(value) {
 	return value
 		.split(/\n+/)
-		.flatMap(line => line.split(/(?<=[。；！？])/u))
+		.flatMap(line => line.split(/(?<=[。；！？])(?![”’])/u))
 		.map(line => line.trim())
 		.filter(Boolean)
 		.join('\n');
@@ -245,6 +461,67 @@ const detailedDescriptionEntries = Object.entries(detailedDescriptions);
 if (detailedDescriptionEntries.length !== 1279) {
 	throw new Error(`Expected 1279 official skill descriptions, found ${detailedDescriptionEntries.length}`);
 }
+const bossTermCount = detailedDescriptionEntries.reduce(
+	(total, [, description]) => total + (description.match(/\bBoss\b/g) || []).length,
+	0
+);
+if (bossTermCount !== 61 || detailedDescriptionEntries.some(([, description]) => description.includes('首领'))) {
+	throw new Error(`Expected 61 untranslated Boss terms, found ${bossTermCount}`);
+}
+const requiredDescriptionFragments = {
+	241: ['自动归自己饲养'],
+	387: ['无视敏捷下降等减速效果'],
+	495: ['使用后服用的攻速药水仍会生效'],
+	26: ['地面保护效果范围内不能使用'],
+	136: ['昏迷概率受目标异常状态抗性影响'],
+	225: ['不能超过被复制技能的最高等级'],
+	233: ['召唤气泡虫', '气泡虫 HP'],
+	364: ['取决于击败魔物前使用的技能'],
+	513: ['卸除武器的成功率越高'],
+	539: ['目标等级、MDEF 与 LUK'],
+	2027: ['麻痹：', '吸血末端：', '毒液出血：'],
+	2040: ['圣属性魔法伤害'],
+	2213: ['施加魔力中毒'],
+	2231: ['不能保存尚未学会的魔法'],
+	2249: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2250: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2251: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2252: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2253: ['周围 3×3 格时触发', '周围 5×5 格所有敌人', '可设置在目标脚下'],
+	2254: ['周围 3×3 格时触发', '周围 5×5 格所有敌人', '可设置在目标脚下'],
+	2287: ['可能被侦测技能解除'],
+	2333: ['随施法者职业等级提高'],
+	2419: ['随目标等级提高而缩短'],
+	2414: ['箭矢不足 5 支时不会发动'],
+	2418: ['箭矢不足 10 支时不会发动'],
+	2422: ['无法移动、攻击、使用物品或技能', '无法对话'],
+	2494: ['准确的物品名称和数量', '不会制作成功'],
+	2495: ['制作时必须持有对应食谱'],
+	2574: ['提高满月踢的威力', '不能与太阳之光或星之光效果叠加'],
+	2590: ['提高太阳爆发的威力', '不能与月之光或星之光效果叠加'],
+	2430: ['装备乐器或鞭子', '狂乱成功率随施法者乐理课程等级提高'],
+	2581: ['并施加沉默'],
+	3031: ['解除着火、出血、深度睡眠和睡眠'],
+	3032: ['解除冰冻、冷冻和冻结'],
+	455: ['口哨与哼唱', '伊登的苹果与为您服务'],
+	2465: ['按技能等级消耗 1 / 2 / 3 个火灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2466: ['按技能等级消耗 1 / 2 / 3 个水灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2467: ['按技能等级消耗 1 / 2 / 3 个风灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2468: ['按技能等级消耗 1 / 2 / 3 个地灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	5064: ['倒地成员为不死属性时不会生效'],
+	5068: ['立即解除'],
+	5253: ['伤害随施法者基础等级和 POW 提高'],
+	5463: ['朝阳、正午爆破、日落爆破、月升、午夜踢、破晓、闪耀银河、星辰爆发和星辰炮'],
+	5479: ['本体使用红炎炮、冷血炮、雷电炮、金龙炮或暗转炮时，分身均施放暗转炮'],
+	8025: ['伤害随生命体基础等级和 INT 提高']
+};
+for (const [id, fragments] of Object.entries(requiredDescriptionFragments)) {
+	for (const fragment of fragments) {
+		if (!detailedDescriptions[id]?.includes(fragment)) {
+			throw new Error(`Official skill description ${id} is missing audited detail: ${fragment}`);
+		}
+	}
+}
 if (
 	Object.keys(visibleLabels).length !== 1279 ||
 	Object.keys(visibleLabels).some(id => !Object.hasOwn(detailedDescriptions, id))
@@ -262,7 +539,7 @@ const visibleLabelCounts = Object.fromEntries(
 );
 if (
 	JSON.stringify(visibleLabelCounts) !==
-	JSON.stringify({ maxLevel: 1117, category: 1169, type: 533, target: 609, range: 2 })
+	JSON.stringify({ maxLevel: 1141, category: 1169, type: 547, target: 622, range: 2 })
 ) {
 	throw new Error(`Official skill description labels are incomplete: ${JSON.stringify(visibleLabelCounts)}`);
 }
@@ -318,7 +595,11 @@ for (const [id, description] of detailedDescriptionEntries) {
 	if (/(官方技能效果数据已收录|尚未收录|相关技能效果)/.test(description)) {
 		throw new Error(`Official skill description ${id} still contains placeholder text`);
 	}
-	if (/(专用的[^。\n]+技能。|召唤或运用[^。\n]+之魂|发动[^。\n]+灵魂攻击)/.test(description)) {
+	if (
+		/(专用的[^。\n]+技能。|召唤或运用[^。\n]+之魂|发动[^。\n]+灵魂攻击|解除或抵抗特定状态异常的[^。\n]+消耗品技能)/.test(
+			description
+		)
+	) {
 		throw new Error(`Official skill description ${id} still contains a generic summary`);
 	}
 }
@@ -357,6 +638,10 @@ function summarizeValues(value) {
 	return [...new Set(list)].length === 1 ? String(list[0]) : list.join(' / ');
 }
 
+function summarizeRanges(value) {
+	return summarizeValues(values(value).map(entry => (typeof entry === 'number' ? Math.abs(entry) : entry)));
+}
+
 function summarizeElements(value) {
 	if (!Array.isArray(value)) return elementLabels[value] || value;
 	return value.map(entry => elementLabels[entry.Element] || entry.Element).join(' / ');
@@ -380,8 +665,7 @@ function describe(skill) {
 	if (officialLabels.range) lines.push(`范围：${officialLabels.range.join('；或')}`);
 	if (skill.Element) lines.push(`属性：${summarizeElements(skill.Element)}`);
 	if (skill.Range != null) {
-		const range = skill.Range === -1 ? '武器攻击距离' : summarizeValues(skill.Range);
-		lines.push(`施放范围：${range}`);
+		lines.push(`施放范围：${summarizeRanges(skill.Range)}`);
 	}
 	if (skill.SplashArea != null) lines.push(`作用范围：${summarizeValues(skill.SplashArea)}`);
 	const sp = summarizeValues(skill.Requires?.SpCost);
@@ -433,11 +717,13 @@ for (const match of fs
 const skills = database.Body.filter(skill => Number.isInteger(skill.Id) && skill.Name && skill.Description)
 	.map(skill => ({
 		...skill,
-		Description: (/[\u3400-\u9fff]/.test(skill.Description)
-			? skill.Description
-			: /[\u3400-\u9fff]/.test(legacyNames.get(skill.Name) || '')
-				? legacyNames.get(skill.Name)
-				: staticNames.get(skill.Name) || additionalNames[skill.Name] || skill.Description
+		Description: (
+			visibleNameOverrides[skill.Name] ||
+			(/[\u3400-\u9fff]/.test(skill.Description)
+				? skill.Description
+				: /[\u3400-\u9fff]/.test(legacyNames.get(skill.Name) || '')
+					? legacyNames.get(skill.Name)
+					: staticNames.get(skill.Name) || additionalNames[skill.Name] || skill.Description)
 		).trim()
 	}))
 	.sort((left, right) => left.Id - right.Id);
@@ -481,9 +767,10 @@ const officialRequirementOverrides = {
 	88: '冰冻术 Lv.1、冰墙术 Lv.1',
 	259: '恶魔克星、天使之护 Lv.10',
 	355: '狂击 Lv.5、怒爆 Lv.5、双手剑修炼 Lv.5',
+	369: '信仰 Lv.8、天使之障壁 Lv.3、恶魔克星 Lv.5',
 	399: '矛术修炼 Lv.9、骑乘大嘴鸟 Lv.1、骑兵修炼 Lv.3、创伤重击 Lv.3',
 	444: '太阳、月亮与星星之知识 Lv.9，且处于灵魂状态',
-	459: '狂怒之枪 Lv.5，且处于灵魂状态',
+	459: '速度激发 Lv.5，且处于灵魂状态',
 	495: '双手剑加速 Lv.10，且处于灵魂状态',
 	496: '制作药水 Lv.10，且处于灵魂状态',
 	497: '制作药水 Lv.10，且处于灵魂状态',
@@ -558,6 +845,11 @@ const missingDetailedIds = Object.keys(detailedDescriptions).filter(id => !stati
 if (missingDetailedIds.length) {
 	throw new Error(`Detailed descriptions reference missing skills: ${missingDetailedIds.join(', ')}`);
 }
+for (const [id, skill] of Object.entries(staticTable)) {
+	if (/^施放范围：-/mu.test(skill.description)) {
+		throw new Error(`Generated skill ${id} exposes an internal signed cast range`);
+	}
+}
 for (const id of Object.keys(detailedDescriptions)) {
 	const description = staticTable[id].description;
 	if (visibleLabels[id].maxLevel != null && !description.includes(`最高等级：${visibleLabels[id].maxLevel}`)) {
@@ -584,6 +876,18 @@ for (const id of Object.keys(detailedDescriptions)) {
 	}
 }
 const localizedEntries = Object.entries(staticTable).sort(([leftId], [rightId]) => Number(leftId) - Number(rightId));
+const untranslatedVisibleText =
+	/\b(?:Attack|Demolition|Endowed|Fire|Ground|MAX|Phantom|Poison|Random|Sign|Smoke Powder|Tear Gas|Water|Wind)\b/i;
+const inconsistentVisibleText =
+	/首领|[\u3400-\u9fff]Boss|Boss[\u3400-\u9fff]|\bFlee\b|\bzeny\b|\d+z\b|\s[Xx](?=\s?\d)|受课程|按课程|施法者课程|课程和职业|教训|符咒修炼|灵道术修炼|神秘生物精通|战斗自学|独学·魔导学|自学巫术|天机修炼|影子猎杀|冰闪炮|风魔手里剑－|苦无－|\(掌握等级/;
+for (const [id, skill] of localizedEntries) {
+	if (
+		untranslatedVisibleText.test(`${skill.name}\n${skill.description}`) ||
+		inconsistentVisibleText.test(`${skill.name}\n${skill.description}`)
+	) {
+		throw new Error(`Generated skill ${id} still contains noncanonical visible text`);
+	}
+}
 const names = localizedEntries.map(([, skill]) => `${skill.key}#${skill.name}#`).join('\n') + '\n';
 const descriptions = localizedEntries.map(([, skill]) => `${skill.key}#${skill.description}#`).join('\n') + '\n';
 const staticModule = await prettier.format(
