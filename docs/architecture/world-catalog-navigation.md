@@ -30,6 +30,16 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为�
 
 地图目录合并客户端世界地图、地图信息、图片和 GAT 资源。地图图片或 GAT 缺失只影响预览和寻路能力，不应决定地图实体是否存在。服务器负责判断目标地图是否已加载、角色能否进入、地图是否禁止传送以及目标坐标是否合法。
 
+## 图像资源生成与加载
+
+三类图像均以官方客户端资源为只读源，由离线工具生成运行时产物；后台和游戏端不在请求或渲染期间转换 BMP。
+
+- 物品：根仓库 `tools/resources/catalog/main.py items images` 将资源映射中的官方 BMP 生成透明 PNG，输出到 `work/game-data/items/kro-20211105/icons/` 和 `illustrations/`。后台按物品 ID读取 PNG，游戏端按需请求列表图标和选中物品的详情图。
+- NPC：后台保留预生成的 NPC PNG；客户端构建脚本 `scripts/generate-world-catalog-assets.mjs` 将 NPC PNG 合成为 WebP 图集，并通过 `npc-assets.json` 的图集坐标显示。游戏端不逐个请求 NPC 图片。
+- 地图：后台保留有效地图 PNG，客户端按需读取当前列表可见的地图图片；选中地图时另外读取对应 GAT，用于坐标换算、缩略预览和当前地图寻路。没有真实图片时只使用 GAT 预览。
+
+资源产物与客户端资源版本绑定。重新生成图片后，服务端图片 URL 携带生成版本，避免浏览器继续使用旧缓存；生成目录属于运行时产物，不提交到 Git。
+
 ## 统一世界实体模型
 
 客户端通过 `WorldCatalogService.js` 将不同来源转换为统一实体。当前核心类型为：
