@@ -83,7 +83,8 @@ const typeLabels = { Weapon: '物理', Magic: '魔法', Misc: '特殊', None: '�
 const elementLabels = { Weapon: '武器属性', Neutral: '无属性', Fire: '火属性', Water: '水属性', Wind: '风属性', Earth: '地属性', Holy: '圣属性', Dark: '暗属性', Ghost: '念属性', Undead: '不死属性', Poison: '毒属性' };
 const curatedDescriptions = {
 	SM_BASH: '对单个敌人发动强力近战攻击。\n伤害：基础 100% + 每级 30% 武器物理伤害。\n命中：每级提高最终命中率 5%。\n等级 6 以上且习得“致命攻击”后，有概率使目标昏迷。',
-	SM_MAGNUM: '以自身为中心引发火属性爆炸并击退周围敌人。\n内圈 3×3：基础 100% + 每级 20% 武器物理伤害。\n外圈 5×5：基础 100% + 每级 10% 武器物理伤害。\n命中：每级提高最终命中率 10%。施放后短时间内，普通攻击会追加火属性伤害。'
+	SM_MAGNUM: '以自身为中心引发火属性爆炸并击退周围敌人。\n内圈 3×3：基础 100% + 每级 20% 武器物理伤害。\n外圈 5×5：基础 100% + 每级 10% 武器物理伤害。\n命中：每级提高最终命中率 10%。施放后短时间内，普通攻击会追加火属性伤害。',
+	KN_PIERCE: '枪类武器专用；根据目标体型发动 1 至 3 次突刺，小型 1 次、中型 2 次、大型 3 次，并获得命中修正。\n等级 1 至 10：单次攻击力为 110% / 120% / 130% / 140% / 150% / 160% / 170% / 180% / 190% / 200%，命中修正为 5% / 10% / 15% / 20% / 25% / 30% / 35% / 40% / 45% / 50%。'
 };
 const additionalNames = {
 	TF_POISON: '施毒', TF_DETOXIFY: '解毒', NPC_LEASH: '束缚', NPC_WIDELEASH: '广域束缚', NPC_WIDECRITICALWOUND: '广域致命伤口', NPC_ALL_STAT_DOWN: '全属性下降', NPC_GRADUAL_GRAVITY: '重力增强', NPC_DAMAGE_HEAL: '伤害转化治疗', NPC_IMMUNE_PROPERTY: '属性免疫', NPC_MOVE_COORDINATE: '位置转移', NPC_BLEEDING2: '出血', NPC_ICEBREATH2: '寒冰吐息', NPC_RAINOFMETEOR: '陨石雨', NPC_RELIEVE_ON: '解除状态开启', NPC_RELIEVE_OFF: '解除状态关闭',
