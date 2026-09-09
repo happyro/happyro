@@ -39,6 +39,7 @@ verify_gateway() {
 	# translated itemInfo_true.lub is now authoritative.
 	curl --fail --silent --show-error --max-time 10 \
 		"http://127.0.0.1:$port/AI/AI.lua" >/dev/null || fail "homunculus AI endpoint failed"
+	bash "$PROJECT_ROOT/scripts/client/refresh-client.sh" verify
 
 	status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 \
 		-X POST "http://127.0.0.1:$port/userconfig/load")"
@@ -48,7 +49,7 @@ verify_gateway() {
 
 start_gateway() {
 	is_running && fail "service is already running"
-	ss -H -ltn "sport = :$port" | rg -q ":$port[[:space:]]" && fail "port $port is already in use"
+	ss -H -ltn "sport = :$port" | rg -q ":${port}[[:space:]]" && fail "port $port is already in use"
 	bash "$PROJECT_ROOT/scripts/server/server.sh" verify
 	bash "$PROJECT_ROOT/scripts/gateway/configure-gateway.sh"
 	bash "$PROJECT_ROOT/scripts/resources/configure-resources.sh"
