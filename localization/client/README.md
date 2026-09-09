@@ -12,7 +12,7 @@
 
 `data/skillnametable.txt` 和 `data/skilldesctable.txt` 从固定版本服务端技能数据库生成，
 覆盖全部 1635 个技能的简体中文名称和机制信息。狂击、怒爆等常用技能还包含与服务端实现
-核对过的伤害、命中和范围说明。运行 `node scripts/resources/generate-skill-localization.mjs`
+核对过的伤害、命中和范围说明。运行 `node scripts/resources/generate-skill-localization.mjs --write`
 可从当前服务端数据库重新生成两份资源。
 
 <!-- 已归档：data/itemlocalization.json 已由翻译后的 itemInfo_true.lub 取代，

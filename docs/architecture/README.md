@@ -5,4 +5,4 @@
 ## 文档
 
 - [世界图鉴与导航](world-catalog-navigation.md)：NPC、魔物、地图的数据来源、统一实体模型、双入口职责和服务器权威交互。
-
+- [客户端静态运行数据与 Lua 生命周期](client-static-runtime-data.md)：技能与导航静态生成、按需加载边界、AI Lua 生命周期及性能基准。

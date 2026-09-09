@@ -96,6 +96,8 @@ map-server 校验账号权限、跨地图策略、地图加载状态、进入限
 
 ## 数据重放
 
+导航 LUB 的静态快照、NavigationCatalog、NavigationGraph 及其加载时序统一记录在[客户端静态运行数据与 Lua 生命周期](client-static-runtime-data.md)。
+
 静态目录可以由固定输入重新生成：
 
 ```bash
