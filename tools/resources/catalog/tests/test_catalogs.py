@@ -190,12 +190,13 @@ class ClientCatalogTests(unittest.TestCase):
 
 class ServerCatalogTests(unittest.TestCase):
     def test_builds_bilingual_server_catalog(self) -> None:
-        current = [{"Id": 501, "AegisName": "Red_Potion", "Name": "红色药水"}]
+        current = [{"Id": 501, "AegisName": "Red_Potion", "Name": "红色药水", "Buy": 50}]
         english = [{"Id": 501, "AegisName": "Red_Potion", "Name": "Red Potion"}]
 
         catalog = build_server_catalog("renewal", "abc123", [("db/re/items.yml", current, english)])
 
         self.assertEqual(catalog["items"]["501"]["names"], {"zh-CN": "红色药水", "en-US": "Red Potion"})
+        self.assertEqual(catalog["items"]["501"]["Sell"], 25)
         self.assertNotIn("Name", catalog["items"]["501"])
 
     def test_rejects_duplicate_ids_across_files(self) -> None:

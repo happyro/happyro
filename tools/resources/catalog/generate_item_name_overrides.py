@@ -29,14 +29,16 @@ def main(arguments: list[str]) -> int:
 
     root = Path(__file__).resolve().parents[3]
     catalog = json.loads(
-        (root / "repos/happyro-admin/backend/resources/game-data/items/client-kro-20211105.json").read_text()
+        (root / "repos/happyro-admin/backend/resources/game-data/items/renewal.json").read_text()
     )
-    items = catalog["items"]
-    client_items = json.loads((root / catalog["clientSource"]["path"]).read_text())["data"]
+    items = dict(catalog["items"])
+    client_items = json.loads(
+        (root / "repos/happyro-admin/backend/resources/game-data/items/client-kro-20211105.json").read_text()
+    )["items"]
+    items.update(client_items)
     overrides = {
         item_id: item["names"]["zh-CN"]
         for item_id, item in items.items()
-        if item["names"]["zh-CN"] != client_items[item_id]["identifiedDisplayName"]
     }
     output = root / "repos/happyro-client/src/DB/Items/ItemNameOverrides.generated.js"
     output.write_text(
