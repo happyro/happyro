@@ -78,6 +78,8 @@ const typeLabels = {
 };
 const elementLabels = {
 	Weapon: '武器属性',
+	Endowed: '赋予属性',
+	Random: '随机属性',
 	Neutral: '无属性',
 	Fire: '火属性',
 	Water: '水属性',
@@ -88,6 +90,28 @@ const elementLabels = {
 	Ghost: '念属性',
 	Undead: '不死属性',
 	Poison: '毒属性'
+};
+const visibleNameOverrides = {
+	NPC_DANCINGBLADE_ATK: '舞刃攻击',
+	NPC_MAXPAIN_ATK: '最大痛苦攻击',
+	GN_CRAZYWEED_ATK: '狂野杂草攻击',
+	GN_FIRE_EXPANSION_SMOKE_POWDER: '火焰扩散·烟雾粉',
+	GN_FIRE_EXPANSION_TEAR_GAS: '火焰扩散·催泪瓦斯',
+	SU_SV_STEMSPEAR: '银藤茎之矛',
+	SU_CN_POWDERING: '猫薄荷撒粉',
+	SU_CN_METEOR: '猫薄荷陨石',
+	SU_SV_ROOTTWIST: '银藤根缠绕',
+	DK_SERVANTWEAPON_ATK: '侍从武器攻击',
+	DK_SERVANT_W_SIGN: '侍从武器·标记',
+	DK_SERVANT_W_PHANTOM: '侍从武器·幻影',
+	DK_SERVANT_W_DEMOL: '侍从武器·爆破',
+	DK_HACKANDSLASHER_ATK: '砍杀者攻击',
+	CD_ARBITRIUM_ATK: '裁决攻击',
+	EM_ELEMENTAL_BUSTER_FIRE: '元素破坏·火',
+	EM_ELEMENTAL_BUSTER_WATER: '元素破坏·水',
+	EM_ELEMENTAL_BUSTER_WIND: '元素破坏·风',
+	EM_ELEMENTAL_BUSTER_GROUND: '元素破坏·地',
+	EM_ELEMENTAL_BUSTER_POISON: '元素破坏·毒'
 };
 const additionalNames = {
 	TF_POISON: '施毒',
@@ -201,7 +225,7 @@ const additionalNames = {
 function formatProse(value) {
 	return value
 		.split(/\n+/)
-		.flatMap(line => line.split(/(?<=[。；！？])/u))
+		.flatMap(line => line.split(/(?<=[。；！？])(?![”’])/u))
 		.map(line => line.trim())
 		.filter(Boolean)
 		.join('\n');
@@ -262,7 +286,7 @@ const visibleLabelCounts = Object.fromEntries(
 );
 if (
 	JSON.stringify(visibleLabelCounts) !==
-	JSON.stringify({ maxLevel: 1117, category: 1169, type: 533, target: 609, range: 2 })
+	JSON.stringify({ maxLevel: 1117, category: 1169, type: 547, target: 622, range: 2 })
 ) {
 	throw new Error(`Official skill description labels are incomplete: ${JSON.stringify(visibleLabelCounts)}`);
 }
@@ -433,11 +457,13 @@ for (const match of fs
 const skills = database.Body.filter(skill => Number.isInteger(skill.Id) && skill.Name && skill.Description)
 	.map(skill => ({
 		...skill,
-		Description: (/[\u3400-\u9fff]/.test(skill.Description)
-			? skill.Description
-			: /[\u3400-\u9fff]/.test(legacyNames.get(skill.Name) || '')
-				? legacyNames.get(skill.Name)
-				: staticNames.get(skill.Name) || additionalNames[skill.Name] || skill.Description
+		Description: (
+			visibleNameOverrides[skill.Name] ||
+			(/[\u3400-\u9fff]/.test(skill.Description)
+				? skill.Description
+				: /[\u3400-\u9fff]/.test(legacyNames.get(skill.Name) || '')
+					? legacyNames.get(skill.Name)
+					: staticNames.get(skill.Name) || additionalNames[skill.Name] || skill.Description)
 		).trim()
 	}))
 	.sort((left, right) => left.Id - right.Id);
@@ -584,6 +610,13 @@ for (const id of Object.keys(detailedDescriptions)) {
 	}
 }
 const localizedEntries = Object.entries(staticTable).sort(([leftId], [rightId]) => Number(leftId) - Number(rightId));
+const untranslatedVisibleText =
+	/\b(?:Attack|Demolition|Endowed|Fire|Ground|MAX|Phantom|Poison|Random|Sign|Smoke Powder|Tear Gas|Water|Wind)\b/i;
+for (const [id, skill] of localizedEntries) {
+	if (untranslatedVisibleText.test(`${skill.name}\n${skill.description}`)) {
+		throw new Error(`Generated skill ${id} still contains translatable visible English text`);
+	}
+}
 const names = localizedEntries.map(([, skill]) => `${skill.key}#${skill.name}#`).join('\n') + '\n';
 const descriptions = localizedEntries.map(([, skill]) => `${skill.key}#${skill.description}#`).join('\n') + '\n';
 const staticModule = await prettier.format(
