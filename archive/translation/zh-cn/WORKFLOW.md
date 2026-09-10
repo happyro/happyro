@@ -1,6 +1,8 @@
 # zh-cn 翻译、修复与发布流程
 
-本文是 HappyRO 简体中文翻译工作的端到端流程入口。工作区规则、工具参数和具体批次记录仍由各自文档维护；当它们对阶段顺序或产物边界描述不一致时，以本文为准。
+> 本文是 2026-08 批次的历史流程。当前产品翻译直接修改对应仓库；有效说明见 [`docs/localization/`](../../../docs/localization/README.md)。kRO 回编译源见 [`localization/sources/kro-20211105/`](../../../localization/sources/kro-20211105/README.md)。下文路径按归档后的位置阅读：`docs/translation/` 对应 `archive/translation/`，kRO `merged/` 对应 `localization/sources/kro-20211105/merged/`。
+
+本文是当时 HappyRO 简体中文翻译工作的端到端流程记录。工作区规则、工具参数和具体批次记录仍由各自文档维护；当它们对阶段顺序或产物边界描述不一致时，以当时本文为准。
 
 ## 适用范围
 

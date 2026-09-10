@@ -16,7 +16,7 @@ from .item_image import render_item_images
 from .storage import read_git_yaml, read_json, read_yaml, write_json, write_pretty_json
 
 
-DEFAULT_CLIENT_SOURCE = Path("docs/translation/zh-cn/kro-20211105/merged/files/lub/itemInfo_true.json")
+DEFAULT_CLIENT_SOURCE = Path("localization/sources/kro-20211105/merged/files/lub/itemInfo_true.json")
 DEFAULT_SERVER_CATALOG = Path("repos/happyro-admin/backend/resources/game-data/items/renewal.json")
 DEFAULT_MONSTER_CATALOG = Path("repos/happyro-admin/backend/resources/game-data/monsters/renewal.json")
 DEFAULT_GRF_MANIFEST = Path("work/grf-extract/kro-20211105/data/manifest.json")

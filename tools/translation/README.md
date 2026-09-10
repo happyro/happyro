@@ -1,6 +1,6 @@
 # 翻译工具
 
-工具命令在完整发布流程中的顺序、输入晋级和完成条件见 [`docs/translation/zh-cn/WORKFLOW.md`](../../docs/translation/zh-cn/WORKFLOW.md)。本文只定义各工具的行为和参数。
+工具命令在历史发布流程中的顺序见 [`archive/translation/zh-cn/WORKFLOW.md`](../../archive/translation/zh-cn/WORKFLOW.md)。当前产品本地化见 [`docs/localization/`](../../docs/localization/README.md)。本文只定义各工具的行为和参数。
 
 ## 工具职责
 
@@ -44,7 +44,7 @@ python3 tools/translation/validate/main.py merged \
 
 ## Release 编排
 
-完整流程可以通过 [`release/main.py`](release/main.py) 一次执行。它把每次运行的中间文件集中放在 `work/translation-release/<workspace>/<batch>/`，包括 merged 文件、manifest、校验日志、kRO Lua 5.0/5.1 产物、writeback 备份和 `STATE.json`。默认是 dry-run，只有显式增加 `--write` 才会发布到目标目录；使用 `--promote-merged` 可以将本批次的 merged 文件、manifest、BATCH_STATE 和 validation 晋级到正式 `docs/translation/zh-cn/<workspace>/merged/`；使用 kRO 的 `--runtime-root inputs/runtime/...` 时，还会将编译出的 `.lub` 和直接文本发布到运行时并单独备份。它不会删除目标中的旧文件、重建数据库或重启服务。
+完整流程可以通过 [`release/main.py`](release/main.py) 一次执行。它把每次运行的中间文件集中放在 `work/translation-release/<workspace>/<batch>/`，包括 merged 文件、manifest、校验日志、kRO Lua 5.0/5.1 产物、writeback 备份和 `STATE.json`。默认是 dry-run，只有显式增加 `--write` 才会发布到目标目录；使用 `--promote-merged` 可以将本批次的 merged 文件、manifest、BATCH_STATE 和 validation 晋级到对应工作区的正式 `merged/`（历史 client-server 在 `archive/translation/`，kRO 回编译源在 `localization/sources/kro-20211105/`）；使用 kRO 的 `--runtime-root inputs/runtime/...` 时，还会将编译出的 `.lub` 和直接文本发布到运行时并单独备份。它不会删除目标中的旧文件、重建数据库或重启服务。
 
 三个工具的实现按职责拆分：`validate/` 将分片校验、merged 校验和公共清单逻辑分开；`writeback/` 将清单读取、目标安全检查和文件发布分开；`release/` 将阶段执行、状态管理、正式 merged 晋级和运行时回写分开。`client-server` 源码已经发生回写时，使用 release 的 `--repo-root` 指向冻结基线。`main.py` 保持为稳定的命令入口。
 
@@ -52,7 +52,7 @@ python3 tools/translation/validate/main.py merged \
 python3 tools/translation/release/main.py \
   --workspace kro-20211105 \
   --batch canonical-20260825-01 \
-  --target-root client=docs/translation/zh-cn/kro-20211105/merged/files
+  --target-root client=localization/sources/kro-20211105/merged/files
 ```
 对于 kRO，合并器会将 `.lub` 分片输出为规范化 JSON；使用 `--merged-manifest` 让校验器按合并清单中的 `output_path` 定位这些文件。
 
@@ -95,12 +95,12 @@ kRO 的译文分片同样默认允许物理行数变化。合并器以源 JSON �
 python3 tools/translation/writeback/main.py \
   --merged-root work/translation-merge/kro-20211105/<batch>/merged/files \
   --manifest work/translation-merge/kro-20211105/<batch>/merged/manifest.tsv \
-  --target-root client=docs/translation/zh-cn/kro-20211105/merged/files
+  --target-root client=localization/sources/kro-20211105/merged/files
 
 # 从正式 client-server merged 预览目标仓库回写（dry-run）
 python3 tools/translation/writeback/main.py \
-  --merged-root docs/translation/zh-cn/client-server/merged/files \
-  --manifest docs/translation/zh-cn/client-server/merged/manifest.tsv \
+  --merged-root archive/translation/zh-cn/client-server/merged/files \
+  --manifest archive/translation/zh-cn/client-server/merged/manifest.tsv \
   --target-root client=repos/happyro-client \
   --target-root server=repos/happyro-server \
   --backup-dir work/translation-writeback-backup/<batch>

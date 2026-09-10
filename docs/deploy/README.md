@@ -1,17 +1,7 @@
 # 部署文档
 
-HappyRO 当前通过根仓库 `scripts/`、systemd transient units 和 `deploy/` 配置运行。这里的文档需要明确区分当前可执行流程与未来方案。
+部署说明已分类到 [docs/operations/](../operations/README.md)。
 
-## 当前入口
-
-- `scripts/database/database.sh`：MariaDB 启停和健康检查。
-- `scripts/server/server.sh`：rAthena login、char、map、web 服务管理。
-- `scripts/gateway/gateway.sh`：客户端资源网关管理和健康检查。
-- `scripts/maintenance/doctor.sh`：环境诊断。
-- `scripts/deploy/push-docker-images.sh`：构建并推送三枚 HappyRO 多架构镜像。
-- `deploy/mariadb/compose.yml`：当前已落地的 MariaDB Compose 定义。
-
-## 方案文档
-
-- [Docker 部署方案](docker/README.md)：尚未实施的完整 gateway、rAthena、MariaDB Compose 目标架构，不是当前运行手册。
-- [Docker 镜像构建与发布规则](docker/image-release.md)：新版本完整重建、统一版本、禁用缓存、推送和失败处理的强制规则。
+- 当前服务与端口：[services.md](../operations/services.md)
+- Docker 镜像发布：[docker-release.md](../operations/docker-release.md)
+- 尚未实施的 Compose 方案：[docker-compose.md](../operations/docker-compose.md)

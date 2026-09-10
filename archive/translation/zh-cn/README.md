@@ -1,6 +1,8 @@
 # 中文翻译工作区
 
-完整的翻译、校验、repair、合并晋级、回写、kRO 回编译、运行验证和 bugfix 回溯顺序，以 [`WORKFLOW.md`](WORKFLOW.md) 为准。本 README 只介绍工作区结构。
+> 本目录是历史翻译工作区。当前说明见 [`docs/localization/`](../../../docs/localization/README.md)；kRO 回编译源见 [`localization/sources/kro-20211105/`](../../../localization/sources/kro-20211105/README.md)。
+
+完整的翻译、校验、repair、合并晋级、回写、kRO 回编译、运行验证和 bugfix 回溯顺序，以当时的 [`WORKFLOW.md`](WORKFLOW.md) 为准。本 README 只介绍工作区结构。
 
 本目录包含两个相互独立的中文翻译工作区：
 

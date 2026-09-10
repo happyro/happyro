@@ -44,12 +44,12 @@ The directory contains:
 python3 tools/translation/release/main.py \
   --workspace kro-20211105 \
   --batch canonical-20260825-01 \
-  --target-root client=docs/translation/zh-cn/kro-20211105/merged/files
+  --target-root client=localization/sources/kro-20211105/merged/files
 ```
 
 检查 `STATE.json`、日志、merged 文件和编译清单后，再增加 `--write` 发布清单中的文件。只有明确提供 `--write` 才会写入目标文件；命令不会删除目标中的旧文件、修改数据库或重启服务。
 
-要将本次结果晋级为正式 `docs/translation/zh-cn/<workspace>/merged/`，增加 `--promote-merged`。该选项会写入 `merged/files/`、`manifest.tsv`、`BATCH_STATE` 和 `validation/`，并备份被替换的正式文件：
+要将本次结果晋级为正式工作区 `merged/`（历史批次在 `archive/translation/`，kRO 源在 `localization/sources/kro-20211105/`），增加 `--promote-merged`。该选项会写入 `merged/files/`、`manifest.tsv`、`BATCH_STATE` 和 `validation/`，并备份被替换的正式文件：
 
 ```bash
 python3 tools/translation/release/main.py \
@@ -80,7 +80,7 @@ python3 tools/translation/release/main.py \
 python3 tools/translation/release/main.py \
   --workspace kro-20211105 \
   --batch canonical-20260825-01 \
-  --target-root client=docs/translation/zh-cn/kro-20211105/merged/files \
+  --target-root client=localization/sources/kro-20211105/merged/files \
   --runtime-root inputs/runtime/kro-20211105/client \
   --write
 ```

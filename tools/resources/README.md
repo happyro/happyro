@@ -41,7 +41,7 @@ python3 tools/resources/catalog/main.py
 python3 tools/resources/catalog/main.py items client
 ```
 
-该命令读取 `docs/translation/zh-cn/kro-20211105/merged/files/lub/itemInfo_true.json`、GRF 解压 `manifest.json` 与后台 Renewal 快照，一次生成 `client-kro-20211105.json`、`item-assets.json` 和 `descriptions.json`。客户端物品 ID 必须全部命中服务端快照，中文、英文名称和说明不能为空。
+该命令读取 `localization/sources/kro-20211105/merged/files/lub/itemInfo_true.json`、GRF 解压 `manifest.json` 与后台 Renewal 快照，一次生成 `client-kro-20211105.json`、`item-assets.json` 和 `descriptions.json`。客户端物品 ID 必须全部命中服务端快照，中文、英文名称和说明不能为空。
 
 `item-assets.json` 会先精确匹配 GRF 路径，再依次使用 Unicode NFC、不区分大小写和 Gateway 同源的 CP949 乱码恢复方式解析官方资源名，最终记录解压目录中的真实 icon 与 collection 相对路径。多个文件命中同一规范化路径时生成失败；资源名或图片缺失时保留物品，并写入明确的资源状态。
 
@@ -52,6 +52,15 @@ python3 tools/resources/catalog/main.py items images
 ```
 
 该命令依据 `item-assets.json` 批量转换图标与详情 BMP，从图片边缘移除连通的官方色键背景，并将完整结果原子写入 `work/game-data/items/kro-20211105/`。请求期间不再转换图片。
+
+生成客户端名称差异补丁和 UTF-8 中文卡片前缀表：
+
+```bash
+python3 tools/resources/catalog/generate_item_name_overrides.py --write
+```
+
+普通物品名称继续由翻译后的 `itemInfo_true.lub` 提供；名称补丁只保留目录与 ItemInfo
+不同的审查项，卡片装备前缀由 `localization/client/data/cardprefixnametable.txt` 提供。
 
 生成 Renewal 与 Pre-Renewal 服务端快照：
 

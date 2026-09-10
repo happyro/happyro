@@ -9,8 +9,8 @@ from .models import MergeFailure
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKSPACES = {
-    "client-server": ROOT / "docs/translation/zh-cn/client-server",
-    "kro-20211105": ROOT / "docs/translation/zh-cn/kro-20211105",
+    "client-server": ROOT / "archive/translation/zh-cn/client-server",
+    "kro-20211105": ROOT / "archive/translation/zh-cn/kro-20211105",
 }
 
 

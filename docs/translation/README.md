@@ -1,9 +1,7 @@
 # 翻译文档
 
-本目录按语言维护相互隔离的翻译工作区。翻译分片、清单、正式 merged 和语言专属流程位于对应 locale 目录；通用命令实现在 `tools/translation/`。
+当前有效的本地化说明已迁移到 [docs/localization/](../localization/README.md)。
 
-## 语言工作区
+历史翻译工作区（Agent 分片、批次清单、旧 merged 文本）在 [archive/translation/](../../archive/translation/README.md)。
 
-- [简体中文（zh-cn）](zh-cn/README.md)
-
-新增语言时应建立独立的基线、清单、agent 状态、术语表和正式 merged，不能复用 zh-cn 的进度或译文分片。
+kRO 回编译仍使用的 JSON 与文本源在 [localization/sources/kro-20211105/](../../localization/sources/kro-20211105/README.md)。

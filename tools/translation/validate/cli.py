@@ -52,7 +52,7 @@ def parser() -> argparse.ArgumentParser:
     chunks_parser = subparsers.add_parser("chunks", add_help=False)
     chunks_parser.add_argument("--agent", action="append", default=[])
     chunks_parser.add_argument("--agent-dir", action="append", type=Path, default=[])
-    chunks_parser.add_argument("--root", type=Path, default=Path("docs/translation/zh-cn/client-server/agents"))
+    chunks_parser.add_argument("--root", type=Path, default=Path("archive/translation/zh-cn/client-server/agents"))
     chunks_parser.add_argument("--all", action="store_true")
     chunks_parser.add_argument("--strict-lines", action="store_true")
     chunks_parser.add_argument("--no-color", action="store_true")
@@ -60,7 +60,7 @@ def parser() -> argparse.ArgumentParser:
     merged_parser = subparsers.add_parser("merged", add_help=False)
     merged_parser.add_argument("--agent", action="append", default=[])
     merged_parser.add_argument("--agent-dir", action="append", type=Path, default=[])
-    merged_parser.add_argument("--root", type=Path, default=Path("docs/translation/zh-cn/client-server/agents"))
+    merged_parser.add_argument("--root", type=Path, default=Path("archive/translation/zh-cn/client-server/agents"))
     merged_parser.add_argument("--all", action="store_true")
     merged_parser.add_argument(
         "--merged-root",

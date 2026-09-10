@@ -119,7 +119,7 @@ class Pipeline:
             return []
         if self.args.workspace == "client-server":
             return ["client=repos/happyro-client", "server=repos/happyro-server"]
-        return ["client=docs/translation/zh-cn/kro-20211105/merged/files"]
+        return ["client=localization/sources/kro-20211105/merged/files"]
 
     def command(self, name: str, command: list[str]) -> None:
         run_stage(name, command, ROOT, self.logs, self.state, self.state_path, paint)

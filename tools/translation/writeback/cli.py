@@ -25,7 +25,7 @@ def help_text(color: bool) -> str:
             paint("  python3 tools/translation/writeback/main.py \\", "36"),
             paint("    --merged-root work/translation-merge/<batch>/merged/files \\", "36"),
             paint("    --manifest work/translation-merge/<batch>/merged/manifest.tsv \\", "36"),
-            paint("    --target-root client=docs/translation/zh-cn/kro-20211105/merged/files", "36"),
+            paint("    --target-root client=localization/sources/kro-20211105/merged/files", "36"),
             "",
             paint("Options", "1;33"),
             "  --merged-root PATH       Root containing merged output files",
