@@ -276,6 +276,23 @@ const bossTermCount = detailedDescriptionEntries.reduce(
 if (bossTermCount !== 61 || detailedDescriptionEntries.some(([, description]) => description.includes('首领'))) {
 	throw new Error(`Expected 61 untranslated Boss terms, found ${bossTermCount}`);
 }
+const requiredDescriptionFragments = {
+	2249: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2250: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2251: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2252: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2465: ['按技能等级消耗 1 / 2 / 3 个火灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2466: ['按技能等级消耗 1 / 2 / 3 个水灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2467: ['按技能等级消耗 1 / 2 / 3 个风灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2468: ['按技能等级消耗 1 / 2 / 3 个地灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP']
+};
+for (const [id, fragments] of Object.entries(requiredDescriptionFragments)) {
+	for (const fragment of fragments) {
+		if (!detailedDescriptions[id]?.includes(fragment)) {
+			throw new Error(`Official skill description ${id} is missing audited detail: ${fragment}`);
+		}
+	}
+}
 if (
 	Object.keys(visibleLabels).length !== 1279 ||
 	Object.keys(visibleLabels).some(id => !Object.hasOwn(detailedDescriptions, id))
