@@ -499,7 +499,7 @@ const requiredDescriptionFragments = {
 	2495: ['制作时必须持有对应食谱'],
 	2574: ['提高满月踢的威力', '不能与太阳之光或星之光效果叠加'],
 	2590: ['提高太阳爆发的威力', '不能与月之光或星之光效果叠加'],
-	2430: ['装备乐器或鞭子', '狂乱成功率随施法者课程等级提高'],
+	2430: ['装备乐器或鞭子', '狂乱成功率随施法者乐理课程等级提高'],
 	2581: ['并施加沉默'],
 	3031: ['解除着火、出血、深度睡眠和睡眠'],
 	3032: ['解除冰冻、冷冻和冻结'],
@@ -879,7 +879,7 @@ const localizedEntries = Object.entries(staticTable).sort(([leftId], [rightId]) 
 const untranslatedVisibleText =
 	/\b(?:Attack|Demolition|Endowed|Fire|Ground|MAX|Phantom|Poison|Random|Sign|Smoke Powder|Tear Gas|Water|Wind)\b/i;
 const inconsistentVisibleText =
-	/首领|[\u3400-\u9fff]Boss|Boss[\u3400-\u9fff]|\bFlee\b|\bzeny\b|\d+z\b|\s[Xx](?=\s?\d)/;
+	/首领|[\u3400-\u9fff]Boss|Boss[\u3400-\u9fff]|\bFlee\b|\bzeny\b|\d+z\b|\s[Xx](?=\s?\d)|受课程|按课程|施法者课程|课程和职业|教训|符咒修炼|灵道术修炼|神秘生物精通|战斗自学|独学·魔导学|自学巫术|天机修炼|影子猎杀|冰闪炮|风魔手里剑－|苦无－|\(掌握等级/;
 for (const [id, skill] of localizedEntries) {
 	if (
 		untranslatedVisibleText.test(`${skill.name}\n${skill.description}`) ||
