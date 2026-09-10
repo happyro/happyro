@@ -269,6 +269,13 @@ const detailedDescriptionEntries = Object.entries(detailedDescriptions);
 if (detailedDescriptionEntries.length !== 1279) {
 	throw new Error(`Expected 1279 official skill descriptions, found ${detailedDescriptionEntries.length}`);
 }
+const bossTermCount = detailedDescriptionEntries.reduce(
+	(total, [, description]) => total + (description.match(/\bBoss\b/g) || []).length,
+	0
+);
+if (bossTermCount !== 61 || detailedDescriptionEntries.some(([, description]) => description.includes('首领'))) {
+	throw new Error(`Expected 61 untranslated Boss terms, found ${bossTermCount}`);
+}
 if (
 	Object.keys(visibleLabels).length !== 1279 ||
 	Object.keys(visibleLabels).some(id => !Object.hasOwn(detailedDescriptions, id))
@@ -612,9 +619,14 @@ for (const id of Object.keys(detailedDescriptions)) {
 const localizedEntries = Object.entries(staticTable).sort(([leftId], [rightId]) => Number(leftId) - Number(rightId));
 const untranslatedVisibleText =
 	/\b(?:Attack|Demolition|Endowed|Fire|Ground|MAX|Phantom|Poison|Random|Sign|Smoke Powder|Tear Gas|Water|Wind)\b/i;
+const inconsistentVisibleText =
+	/首领|[\u3400-\u9fff]Boss|Boss[\u3400-\u9fff]|\bFlee\b|\bzeny\b|\d+z\b|\s[Xx](?=\s?\d)/;
 for (const [id, skill] of localizedEntries) {
-	if (untranslatedVisibleText.test(`${skill.name}\n${skill.description}`)) {
-		throw new Error(`Generated skill ${id} still contains translatable visible English text`);
+	if (
+		untranslatedVisibleText.test(`${skill.name}\n${skill.description}`) ||
+		inconsistentVisibleText.test(`${skill.name}\n${skill.description}`)
+	) {
+		throw new Error(`Generated skill ${id} still contains noncanonical visible text`);
 	}
 }
 const names = localizedEntries.map(([, skill]) => `${skill.key}#${skill.name}#`).join('\n') + '\n';
