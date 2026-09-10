@@ -24,6 +24,7 @@ TextReader = Callable[[Path], str]
 def generate_client(
     client_source: Path,
     server_catalog: Path,
+    monster_catalog: Path,
     grf_manifest: Path,
     output_directory: Path,
     read_json: JsonReader,
@@ -35,8 +36,10 @@ def generate_client(
     payload = build_client_catalog(
         client_payload,
         read_json(server_catalog),
+        read_json(monster_catalog),
         str(client_source),
         str(server_catalog),
+        str(monster_catalog),
     )
     client_items = indexed_items(client_payload, "data", "client itemInfo")
     assets = asset_map(client_items, manifest_payload, str(client_source), str(grf_manifest))

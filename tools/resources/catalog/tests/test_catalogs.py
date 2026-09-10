@@ -24,8 +24,9 @@ class ClientCatalogTests(unittest.TestCase):
     def test_builds_bilingual_client_catalog(self) -> None:
         client = {"data": {"501": {"identifiedDisplayName": "红色药水", "identifiedResourceName": "사과"}}}
         server = {"englishSource": {"revision": "abc123"}, "items": {"501": {"names": {"en-US": "Red Potion"}}}}
+        monsters = {"monsters": {}}
 
-        catalog = build_client_catalog(client, server, "client.json", "server.json")
+        catalog = build_client_catalog(client, server, monsters, "client.json", "server.json", "monsters.json")
 
         self.assertEqual(catalog["items"]["501"]["names"], {"zh-CN": "红色药水", "en-US": "Red Potion"})
         self.assertNotIn("identifiedDisplayName", catalog["items"]["501"])
@@ -34,21 +35,24 @@ class ClientCatalogTests(unittest.TestCase):
     def test_rejects_client_item_missing_from_server(self) -> None:
         client = {"data": {"501": {"identifiedDisplayName": "红色药水"}}}
         server = {"englishSource": {"revision": "abc123"}, "items": {}}
+        monsters = {"monsters": {}}
 
         with self.assertRaisesRegex(CatalogError, "missing from Renewal"):
-            build_client_catalog(client, server, "client.json", "server.json")
+            build_client_catalog(client, server, monsters, "client.json", "server.json", "monsters.json")
 
     def test_service_uses_injected_storage_adapters(self) -> None:
         client = {"data": {"501": {"identifiedDisplayName": "红色药水", "identifiedResourceName": "红药", "identifiedDescriptionName": ["恢复 HP"]}}}
         server = {"englishSource": {"revision": "abc123"}, "items": {"501": {"names": {"en-US": "Red Potion"}}}}
+        monsters = {"monsters": {}}
         manifest = {"source": "data.grf", "files": []}
-        reader = Mock(side_effect=[client, manifest, server])
+        reader = Mock(side_effect=[client, manifest, server, monsters])
         catalog_writer = Mock()
         asset_writer = Mock()
 
         counts = generate_client(
             Path("client.json"),
             Path("server.json"),
+            Path("monsters.json"),
             Path("manifest.json"),
             Path("output"),
             reader,
@@ -57,7 +61,7 @@ class ClientCatalogTests(unittest.TestCase):
         )
 
         self.assertEqual(counts, {"catalog": 1, "assets": 1, "icons": 0, "illustrations": 0, "descriptions": 1})
-        self.assertEqual(reader.call_count, 3)
+        self.assertEqual(reader.call_count, 4)
         catalog_writer.assert_called_once()
         self.assertEqual(asset_writer.call_count, 2)
 
