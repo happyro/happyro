@@ -12,18 +12,9 @@ const clientStaticTable = path.join(
 	projectRoot,
 	'repos/happyro-client/src/DB/Skills/SkillLocalizationTable.generated.js'
 );
-const clientSkillInfoTable = path.join(
-	projectRoot,
-	'repos/happyro-client/src/DB/Skills/SkillInfo.generated.js'
-);
-const clientSkillTreeTable = path.join(
-	projectRoot,
-	'repos/happyro-client/src/DB/Skills/SkillTreeView.generated.js'
-);
-const runtimeSourceDirectory = path.join(
-	projectRoot,
-	'repos/happyro-gateway/data/luafiles514/lua files'
-);
+const clientSkillInfoTable = path.join(projectRoot, 'repos/happyro-client/src/DB/Skills/SkillInfo.generated.js');
+const clientSkillTreeTable = path.join(projectRoot, 'repos/happyro-client/src/DB/Skills/SkillTreeView.generated.js');
+const runtimeSourceDirectory = path.join(projectRoot, 'repos/happyro-gateway/data/luafiles514/lua files');
 const runtimeSourcePath = path.join(outputDirectory, 'skill-runtime-source.json');
 const expectedRuntimeSources = [
 	'skillinfoz/skillid.lub',
@@ -36,14 +27,9 @@ const expectedRuntimeSources = [
 ];
 const legacySkillDatabase = path.join(projectRoot, 'repos/happyro-server/db/pre-re/skill_db.yml');
 const clientSkillInfo = path.join(projectRoot, 'repos/happyro-client/src/DB/Skills/SkillInfo.js');
-const detailedDescriptionPath = path.join(
-	projectRoot,
-	'localization/client/data/skill-description-prose.zh-CN.json'
-);
-const runtimeOnlySkillPath = path.join(
-	projectRoot,
-	'localization/client/data/skill-info-runtime-only.zh-CN.json'
-);
+const detailedDescriptionPath = path.join(projectRoot, 'localization/client/data/skill-description-prose.zh-CN.json');
+const visibleLabelsPath = path.join(projectRoot, 'localization/client/data/skill-description-labels.zh-CN.json');
+const runtimeOnlySkillPath = path.join(projectRoot, 'localization/client/data/skill-info-runtime-only.zh-CN.json');
 
 function usage(color = true) {
 	const paint = (code, value) => (color ? `\u001b[${code}m${value}\u001b[0m` : value);
@@ -78,18 +64,139 @@ if (!options.action) {
 	process.exit(0);
 }
 
-const targetLabels = { Attack: '敌方目标', Support: '友方目标', Self: '自身', Ground: '指定地面' };
-const typeLabels = { Weapon: '物理', Magic: '魔法', Misc: '特殊', None: '辅助' };
-const elementLabels = { Weapon: '武器属性', Neutral: '无属性', Fire: '火属性', Water: '水属性', Wind: '风属性', Earth: '地属性', Holy: '圣属性', Dark: '暗属性', Ghost: '念属性', Undead: '不死属性', Poison: '毒属性' };
+const targetLabels = {
+	Attack: '敌方目标',
+	Support: '友方目标',
+	Self: '自身',
+	Ground: '指定地面'
+};
+const typeLabels = {
+	Weapon: '物理',
+	Magic: '魔法',
+	Misc: '特殊',
+	None: '辅助'
+};
+const elementLabels = {
+	Weapon: '武器属性',
+	Neutral: '无属性',
+	Fire: '火属性',
+	Water: '水属性',
+	Wind: '风属性',
+	Earth: '地属性',
+	Holy: '圣属性',
+	Dark: '暗属性',
+	Ghost: '念属性',
+	Undead: '不死属性',
+	Poison: '毒属性'
+};
 const additionalNames = {
-	TF_POISON: '施毒', TF_DETOXIFY: '解毒', NPC_LEASH: '束缚', NPC_WIDELEASH: '广域束缚', NPC_WIDECRITICALWOUND: '广域致命伤口', NPC_ALL_STAT_DOWN: '全属性下降', NPC_GRADUAL_GRAVITY: '重力增强', NPC_DAMAGE_HEAL: '伤害转化治疗', NPC_IMMUNE_PROPERTY: '属性免疫', NPC_MOVE_COORDINATE: '位置转移', NPC_BLEEDING2: '出血', NPC_ICEBREATH2: '寒冰吐息', NPC_RAINOFMETEOR: '陨石雨', NPC_RELIEVE_ON: '解除状态开启', NPC_RELIEVE_OFF: '解除状态关闭',
-	WL_HELLINFERNO: '地狱炼狱', WL_CHAINLIGHTNING_ATK: '连锁闪电攻击', WL_EARTHSTRAIN: '地裂术', WL_TETRAVORTEX_FIRE: '元素漩涡·火', WL_TETRAVORTEX_WATER: '元素漩涡·水', WL_TETRAVORTEX_WIND: '元素漩涡·风', RA_WUGMASTERY: '狼群精通', RA_WUGBITE: '狼咬', RA_RESEARCHTRAP: '陷阱研究', SR_GENTLETOUCH_ENERGYGAIN: '点穴·球', WA_SWING_DANCE: '摇摆舞', SO_VACUUM_EXTREME: '极限真空', SO_VARETYR_SPEAR: '雷霆之枪', ALL_RAY_OF_PROTECTION: '守护之光',
-	SU_SV_ROOTTWIST_ATK: '银藤根缠绕攻击', SU_PICKYPECK_DOUBLE_ATK: '啄击连击', SU_CN_METEOR2: '猫薄荷陨石二段', SU_LUNATICCARROTBEAT2: '疯兔胡萝卜重击二段', AG_ALL_BLOOM_ATK2: '万紫千红二段', AG_CRYSTAL_IMPACT_ATK: '水晶冲击攻击', AG_ASTRAL_STRIKE_ATK: '星界冲击攻击', AG_CRIMSON_ARROW_ATK: '绯红箭攻击',
-	MT_AXE_STOMP: '战斧践踏', MT_RUSH_QUAKE: '冲锋震击', MT_M_MACHINE: '制造装置', MT_A_MACHINE: '攻击装置', MT_D_MACHINE: '防御装置', MT_TWOAXEDEF: '双手斧防御', MT_ABR_M: 'ABR 精通', MT_SUMMON_ABR_BATTLE_WARIOR: '召唤 ABR 战斗勇士', MT_POWERFUL_SWING: '强力挥击', MT_ENERGY_CANNONADE: '能量炮击', TR_ROSEBLOSSOM_ATK: '玫瑰绽放攻击',
-	NW_P_F_I: '枪械精通', NW_GRENADE_MASTERY: '榴弹精通', NW_INTENSIVE_AIM: '集中瞄准', NW_GRENADE_FRAGMENT: '榴弹碎片', NW_THE_VIGILANTE_AT_NIGHT: '暗夜守望者', NW_ONLY_ONE_BULLET: '致命一弹', NW_SPIRAL_SHOOTING: '螺旋射击', NW_MAGAZINE_FOR_ONE: '单人弹匣', NW_WILD_FIRE: '野火', NW_BASIC_GRENADE: '基础榴弹', NW_HASTY_FIRE_IN_THE_HOLE: '急袭榴弹', NW_GRENADES_DROPPING: '榴弹倾泻', NW_AUTO_FIRING_LAUNCHER: '自动发射器', NW_HIDDEN_CARD: '隐藏王牌', NW_MISSION_BOMBARD: '任务轰炸',
-	SOA_TALISMAN_MASTERY: '符咒精通', SOA_SOUL_MASTERY: '灵魂精通', SOA_TALISMAN_OF_PROTECTION: '守护符', SOA_TALISMAN_OF_WARRIOR: '武士符', SOA_TALISMAN_OF_MAGICIAN: '魔法师符', SOA_SOUL_GATHERING: '灵魂聚集', SOA_TOTEM_OF_TUTELARY: '守护图腾', SKE_RISING_MOON: '月升', SKE_MIDNIGHT_KICK: '午夜踢', SKE_DAWN_BREAK: '破晓', SKE_TWINKLING_GALAXY: '闪耀银河', SKE_STAR_BURST: '星辰爆发', SKE_STAR_CANNON: '星辰炮', SKE_ALL_IN_THE_SKY: '天穹万象', SKE_ENCHANTING_SKY: '苍穹附魔',
-	SS_TOKEDASU: '消融', SS_SHIMIRU: '渗透', SS_AKUMUKESU: '噩梦消除', SS_SHINKIROU: '蜃景', SS_KAGEGARI: '猎影', SS_KAGENOMAI: '影舞', SS_KAGEGISSEN: '影闪', SS_FUUMASHOUAKU: '风魔手里剑·掌握', BO_MYSTERY_POWDER: '神秘粉末', BO_DUST_EXPLOSION: '粉尘爆炸', ABC_HIT_AND_SLIDING: '滑步打击', ABC_CHASING_BREAK: '追击破坏', ABC_CHASING_SHOT: '追击射击', ABC_ABYSS_FLAME: '深渊烈焰', AG_ENERGY_CONVERSION: '能量转换', SHC_CROSS_SLASH: '交叉斩', EM_PSYCHIC_STREAM: '念力洪流', CD_DIVINUS_FLOS: '神圣之花', IQ_BLAZING_FLAME_BLAST: '炽焰爆破', WH_WILD_WALK: '荒野疾行',
-	HFLI_SBR44: '蜂鸟 S.B.R.44', MH_BLAST_FORGE: '爆裂熔炉', MH_TEMPERING: '淬炼', MH_CLASSY_FLUTTER: '优雅振翅', MH_TWISTER_CUTTER: '旋风切割', MH_ABSOLUTE_ZEPHYR: '绝对和风', MH_BRUSHUP_CLAW: '磨砺利爪', MH_BLAZING_AND_FURIOUS: '炽烈狂怒', MH_THE_ONE_FIGHTER_RISES: '唯一斗士崛起'
+	TF_POISON: '施毒',
+	TF_DETOXIFY: '解毒',
+	NPC_LEASH: '束缚',
+	NPC_WIDELEASH: '广域束缚',
+	NPC_WIDECRITICALWOUND: '广域致命伤口',
+	NPC_ALL_STAT_DOWN: '全属性下降',
+	NPC_GRADUAL_GRAVITY: '重力增强',
+	NPC_DAMAGE_HEAL: '伤害转化治疗',
+	NPC_IMMUNE_PROPERTY: '属性免疫',
+	NPC_MOVE_COORDINATE: '位置转移',
+	NPC_BLEEDING2: '出血',
+	NPC_ICEBREATH2: '寒冰吐息',
+	NPC_RAINOFMETEOR: '陨石雨',
+	NPC_RELIEVE_ON: '解除状态开启',
+	NPC_RELIEVE_OFF: '解除状态关闭',
+	WL_HELLINFERNO: '地狱炼狱',
+	WL_CHAINLIGHTNING_ATK: '连锁闪电攻击',
+	WL_EARTHSTRAIN: '地裂术',
+	WL_TETRAVORTEX_FIRE: '元素漩涡·火',
+	WL_TETRAVORTEX_WATER: '元素漩涡·水',
+	WL_TETRAVORTEX_WIND: '元素漩涡·风',
+	RA_WUGMASTERY: '狼群精通',
+	RA_WUGBITE: '狼咬',
+	RA_RESEARCHTRAP: '陷阱研究',
+	SR_GENTLETOUCH_ENERGYGAIN: '点穴·球',
+	WA_SWING_DANCE: '摇摆舞',
+	SO_VACUUM_EXTREME: '极限真空',
+	SO_VARETYR_SPEAR: '雷霆之枪',
+	ALL_RAY_OF_PROTECTION: '守护之光',
+	SU_SV_ROOTTWIST_ATK: '银藤根缠绕攻击',
+	SU_PICKYPECK_DOUBLE_ATK: '啄击连击',
+	SU_CN_METEOR2: '猫薄荷陨石二段',
+	SU_LUNATICCARROTBEAT2: '疯兔胡萝卜重击二段',
+	AG_ALL_BLOOM_ATK2: '万紫千红二段',
+	AG_CRYSTAL_IMPACT_ATK: '水晶冲击攻击',
+	AG_ASTRAL_STRIKE_ATK: '星界冲击攻击',
+	AG_CRIMSON_ARROW_ATK: '绯红箭攻击',
+	MT_AXE_STOMP: '战斧践踏',
+	MT_RUSH_QUAKE: '冲锋震击',
+	MT_M_MACHINE: '制造装置',
+	MT_A_MACHINE: '攻击装置',
+	MT_D_MACHINE: '防御装置',
+	MT_TWOAXEDEF: '双手斧防御',
+	MT_ABR_M: 'ABR 精通',
+	MT_SUMMON_ABR_BATTLE_WARIOR: '召唤 ABR 战斗勇士',
+	MT_POWERFUL_SWING: '强力挥击',
+	MT_ENERGY_CANNONADE: '能量炮击',
+	TR_ROSEBLOSSOM_ATK: '玫瑰绽放攻击',
+	NW_P_F_I: '枪械精通',
+	NW_GRENADE_MASTERY: '榴弹精通',
+	NW_INTENSIVE_AIM: '集中瞄准',
+	NW_GRENADE_FRAGMENT: '榴弹碎片',
+	NW_THE_VIGILANTE_AT_NIGHT: '暗夜守望者',
+	NW_ONLY_ONE_BULLET: '致命一弹',
+	NW_SPIRAL_SHOOTING: '螺旋射击',
+	NW_MAGAZINE_FOR_ONE: '单人弹匣',
+	NW_WILD_FIRE: '野火',
+	NW_BASIC_GRENADE: '基础榴弹',
+	NW_HASTY_FIRE_IN_THE_HOLE: '急袭榴弹',
+	NW_GRENADES_DROPPING: '榴弹倾泻',
+	NW_AUTO_FIRING_LAUNCHER: '自动发射器',
+	NW_HIDDEN_CARD: '隐藏王牌',
+	NW_MISSION_BOMBARD: '任务轰炸',
+	SOA_TALISMAN_MASTERY: '符咒精通',
+	SOA_SOUL_MASTERY: '灵魂精通',
+	SOA_TALISMAN_OF_PROTECTION: '守护符',
+	SOA_TALISMAN_OF_WARRIOR: '武士符',
+	SOA_TALISMAN_OF_MAGICIAN: '魔法师符',
+	SOA_SOUL_GATHERING: '灵魂聚集',
+	SOA_TOTEM_OF_TUTELARY: '守护图腾',
+	SKE_RISING_MOON: '月升',
+	SKE_MIDNIGHT_KICK: '午夜踢',
+	SKE_DAWN_BREAK: '破晓',
+	SKE_TWINKLING_GALAXY: '闪耀银河',
+	SKE_STAR_BURST: '星辰爆发',
+	SKE_STAR_CANNON: '星辰炮',
+	SKE_ALL_IN_THE_SKY: '天穹万象',
+	SKE_ENCHANTING_SKY: '苍穹附魔',
+	SS_TOKEDASU: '消融',
+	SS_SHIMIRU: '渗透',
+	SS_AKUMUKESU: '噩梦消除',
+	SS_SHINKIROU: '蜃景',
+	SS_KAGEGARI: '猎影',
+	SS_KAGENOMAI: '影舞',
+	SS_KAGEGISSEN: '影闪',
+	SS_FUUMASHOUAKU: '风魔手里剑·掌握',
+	BO_MYSTERY_POWDER: '神秘粉末',
+	BO_DUST_EXPLOSION: '粉尘爆炸',
+	ABC_HIT_AND_SLIDING: '滑步打击',
+	ABC_CHASING_BREAK: '追击破坏',
+	ABC_CHASING_SHOT: '追击射击',
+	ABC_ABYSS_FLAME: '深渊烈焰',
+	AG_ENERGY_CONVERSION: '能量转换',
+	SHC_CROSS_SLASH: '交叉斩',
+	EM_PSYCHIC_STREAM: '念力洪流',
+	CD_DIVINUS_FLOS: '神圣之花',
+	IQ_BLAZING_FLAME_BLAST: '炽焰爆破',
+	WH_WILD_WALK: '荒野疾行',
+	HFLI_SBR44: '蜂鸟 S.B.R.44',
+	MH_BLAST_FORGE: '爆裂熔炉',
+	MH_TEMPERING: '淬炼',
+	MH_CLASSY_FLUTTER: '优雅振翅',
+	MH_TWISTER_CUTTER: '旋风切割',
+	MH_ABSOLUTE_ZEPHYR: '绝对和风',
+	MH_BRUSHUP_CLAW: '磨砺利爪',
+	MH_BLAZING_AND_FURIOUS: '炽烈狂怒',
+	MH_THE_ONE_FIGHTER_RISES: '唯一斗士崛起'
 };
 function formatProse(value) {
 	return value
@@ -101,8 +208,12 @@ function formatProse(value) {
 }
 
 const detailedDescriptions = Object.fromEntries(
-	Object.entries(JSON.parse(fs.readFileSync(detailedDescriptionPath, 'utf8'))).map(([id, value]) => [id, formatProse(value)])
+	Object.entries(JSON.parse(fs.readFileSync(detailedDescriptionPath, 'utf8'))).map(([id, value]) => [
+		id,
+		formatProse(value)
+	])
 );
+const visibleLabels = JSON.parse(fs.readFileSync(visibleLabelsPath, 'utf8'));
 const runtimeOnlySkills = JSON.parse(fs.readFileSync(runtimeOnlySkillPath, 'utf8'));
 const runtimeSource = JSON.parse(fs.readFileSync(runtimeSourcePath, 'utf8'));
 
@@ -134,6 +245,27 @@ const detailedDescriptionEntries = Object.entries(detailedDescriptions);
 if (detailedDescriptionEntries.length !== 1279) {
 	throw new Error(`Expected 1279 official skill descriptions, found ${detailedDescriptionEntries.length}`);
 }
+if (
+	Object.keys(visibleLabels).length !== 1279 ||
+	Object.keys(visibleLabels).some(id => !Object.hasOwn(detailedDescriptions, id))
+) {
+	throw new Error('Official skill description labels do not match the 1279 translated descriptions');
+}
+const visibleLabelCounts = Object.fromEntries(
+	['category', 'type', 'target'].map(key => [
+		key,
+		Object.values(visibleLabels).reduce((total, entry) => total + (entry[key]?.length || 0), 0)
+	])
+);
+if (JSON.stringify(visibleLabelCounts) !== JSON.stringify({ category: 1169, type: 533, target: 609 })) {
+	throw new Error(`Official skill description labels are incomplete: ${JSON.stringify(visibleLabelCounts)}`);
+}
+for (const [id, labels] of Object.entries(visibleLabels)) {
+	const text = Object.values(labels).flat().join('\n');
+	if (/[^\s]/u.test(text) && /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/.test(text)) {
+		throw new Error(`Official skill description labels ${id} still contain Korean text`);
+	}
+}
 const detailedLevelRows = detailedDescriptionEntries.reduce(
 	(total, [, description]) => total + (description.match(/^\[等级 \d+\]：/gmu) || []).length,
 	0
@@ -141,6 +273,19 @@ const detailedLevelRows = detailedDescriptionEntries.reduce(
 // The official S.B.R.44 entry contains three empty level markers; only meaningful rows are retained.
 if (detailedLevelRows !== 6260) {
 	throw new Error(`Expected 6260 translated skill level rows, found ${detailedLevelRows}`);
+}
+const apCostEntries = detailedDescriptionEntries.filter(([, description]) =>
+	/^\u6d88\u8017 .+ AP[\uff1b\u3002]/mu.test(description)
+);
+if (apCostEntries.length !== 39) {
+	throw new Error(`Expected 39 translated AP costs, found ${apCostEntries.length}`);
+}
+const apRecoveryEntries = detailedDescriptionEntries.filter(
+	([id, description]) =>
+		id === '2549' || /^(?:\u6bcf\u7ea7|\u547d\u4e2d|Lv\.|\u6062\u590d).+AP\uff1b/mu.test(description)
+);
+if (apRecoveryEntries.length !== 110) {
+	throw new Error(`Expected 110 translated AP recoveries, found ${apRecoveryEntries.length}`);
 }
 for (const [id, description] of detailedDescriptionEntries) {
 	if (!description || /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/.test(description)) {
@@ -208,9 +353,7 @@ function summarizeValues(value) {
 
 function summarizeElements(value) {
 	if (!Array.isArray(value)) return elementLabels[value] || value;
-	return value
-		.map(entry => elementLabels[entry.Element] || entry.Element)
-		.join(' / ');
+	return value.map(entry => elementLabels[entry.Element] || entry.Element).join(' / ');
 }
 
 function describe(skill) {
@@ -218,7 +361,16 @@ function describe(skill) {
 	const prose = detailedDescriptions[skill.Id];
 	if (prose) lines.push(prose);
 	lines.push(`最高等级：${skill.MaxLevel}`);
-	lines.push(`类型：${typeLabels[skill.Type] || '辅助'}${skill.TargetType ? ` / ${targetLabels[skill.TargetType] || skill.TargetType}` : ''}`);
+	const requirement = describeSkillRequirement(skill.Id);
+	if (requirement) lines.push(`习得条件：${requirement}`);
+	const officialLabels = visibleLabels[skill.Id] || {};
+	if (officialLabels.category) lines.push(`类别：${officialLabels.category.join('；或')}`);
+	lines.push(`类型：${officialLabels.type?.join('；或') || typeLabels[skill.Type] || '辅助'}`);
+	if (officialLabels.target || skill.TargetType) {
+		lines.push(
+			`目标：${officialLabels.target?.join('；或') || targetLabels[skill.TargetType] || skill.TargetType}`
+		);
+	}
 	if (skill.Element) lines.push(`属性：${summarizeElements(skill.Element)}`);
 	if (skill.Range != null) {
 		const range = skill.Range === -1 ? '武器攻击距离' : summarizeValues(skill.Range);
@@ -227,6 +379,19 @@ function describe(skill) {
 	if (skill.SplashArea != null) lines.push(`作用范围：${summarizeValues(skill.SplashArea)}`);
 	const sp = summarizeValues(skill.Requires?.SpCost);
 	if (sp) lines.push(`SP 消耗：${sp}`);
+	return lines.join('\n');
+}
+
+function describeClientOnlySkill(id, name) {
+	const lines = [name, detailedDescriptions[id]];
+	const runtimeSkill = runtimeSource.data.skills[id];
+	if (runtimeSkill) lines.push(`最高等级：${runtimeSkill.maxLevel}`);
+	const requirement = describeSkillRequirement(id);
+	if (requirement) lines.push(`习得条件：${requirement}`);
+	const officialLabels = visibleLabels[id] || {};
+	if (officialLabels.category) lines.push(`类别：${officialLabels.category.join('；或')}`);
+	if (officialLabels.type) lines.push(`类型：${officialLabels.type.join('；或')}`);
+	if (officialLabels.target) lines.push(`目标：${officialLabels.target.join('；或')}`);
 	return lines.join('\n');
 }
 
@@ -246,22 +411,91 @@ for (const [id, description] of detailedDescriptionEntries) {
 		);
 	}
 }
-const legacyNames = new Map(yaml.load(fs.readFileSync(legacySkillDatabase, 'utf8')).Body.map(skill => [skill.Name, skill.Description]));
+const legacyNames = new Map(
+	yaml.load(fs.readFileSync(legacySkillDatabase, 'utf8')).Body.map(skill => [skill.Name, skill.Description])
+);
 const staticNames = new Map();
-for (const match of fs.readFileSync(clientSkillInfo, 'utf8').matchAll(/Name: '([^']+)',\s*\r?\n\s*SkillName: '([^']+)'/g)) {
+for (const match of fs
+	.readFileSync(clientSkillInfo, 'utf8')
+	.matchAll(/Name: '([^']+)',\s*\r?\n\s*SkillName: '([^']+)'/g)) {
 	if (/[\u3400-\u9fff]/.test(match[2])) staticNames.set(match[1], match[2]);
 }
-const skills = database.Body
-	.filter(skill => Number.isInteger(skill.Id) && skill.Name && skill.Description)
+const skills = database.Body.filter(skill => Number.isInteger(skill.Id) && skill.Name && skill.Description)
 	.map(skill => ({
 		...skill,
 		Description: (/[\u3400-\u9fff]/.test(skill.Description)
 			? skill.Description
 			: /[\u3400-\u9fff]/.test(legacyNames.get(skill.Name) || '')
 				? legacyNames.get(skill.Name)
-				: staticNames.get(skill.Name) || additionalNames[skill.Name] || skill.Description).trim()
+				: staticNames.get(skill.Name) || additionalNames[skill.Name] || skill.Description
+		).trim()
 	}))
 	.sort((left, right) => left.Id - right.Id);
+
+const localizedSkillNames = new Map(skills.map(skill => [String(skill.Id), skill.Description]));
+for (const [id, name] of Object.entries(clientOnlySkills)) localizedSkillNames.set(id, name);
+for (const [id, skill] of runtimeOnlyEntries) localizedSkillNames.set(id, skill.name);
+
+const additionalSkillRequirements = {};
+function registerRequirement(ids, requirement) {
+	for (const id of ids) additionalSkillRequirements[id] = requirement;
+}
+registerRequirement(
+	[
+		142, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 238, 1001, 1002, 1003, 1004, 1005,
+		1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016, 1017, 1018, 1019, 2544
+	],
+	'完成任务'
+);
+registerRequirement([143], '完成任务，且仅限初心者');
+registerRequirement([334, 335, 336], '已婚并装备结婚戒指');
+registerRequirement([359], '领主骑士职业等级达到 50');
+registerRequirement([441], '职业等级达到 50');
+registerRequirement([446], '处于灵魂状态');
+registerRequirement([2024], '十字切割者基础技能');
+registerRequirement([2208, 2230, 2231, 2232], '术士基础技能');
+registerRequirement([2235, 2240], '游侠基础技能');
+registerRequirement([2255, 2276, 2277], '机匠基础技能');
+registerRequirement([2289], '魅影追踪者基础技能');
+registerRequirement([2309, 2313], '皇家卫士基础技能');
+registerRequirement(
+	[2344, 2609, 5401, 5402, 5416, 5417, 5449, 5450, 5463, 5464, 5478, 5479, 5488, 5489, 5490, 5491, 5492],
+	'默认习得'
+);
+registerRequirement([2412], '宫廷乐师或漫游舞者基础技能');
+registerRequirement([2474, 2475, 2494, 2497], '基因学者基础技能');
+registerRequirement([5014], '三转职业');
+
+function describeSkillRequirement(id) {
+	const runtimeSkill = runtimeSource.data.skills[id];
+	const alternatives = [];
+	if (runtimeSkill?.needSkills?.length) alternatives.push(runtimeSkill.needSkills);
+	for (const requirements of Object.values(runtimeSkill?.jobNeedSkills || {})) {
+		if (requirements.length) alternatives.push(requirements);
+	}
+	const uniqueAlternatives = [
+		...new Map(alternatives.map(requirements => [JSON.stringify(requirements), requirements])).values()
+	];
+	if (uniqueAlternatives.length) {
+		return uniqueAlternatives
+			.map(requirements =>
+				requirements
+					.map(([skillId, level]) => {
+						const name = localizedSkillNames.get(String(skillId));
+						if (!name) throw new Error(`Skill ${id} requirement ${skillId} has no localized name`);
+						return `${name} Lv.${level}`;
+					})
+					.join('、')
+			)
+			.join('；或');
+	}
+	return additionalSkillRequirements[id] || '';
+}
+
+const describedRequirementCount = Object.keys(detailedDescriptions).filter(id => describeSkillRequirement(id)).length;
+if (describedRequirementCount !== 1004) {
+	throw new Error(`Expected 1004 translated skill requirements, found ${describedRequirementCount}`);
+}
 const staticTable = Object.fromEntries(
 	skills.map(skill => [
 		skill.Id,
@@ -276,7 +510,7 @@ for (const [id, name] of Object.entries(clientOnlySkills)) {
 	staticTable[id] = {
 		key: `CLIENT_SKILL_${id}`,
 		name,
-		description: `${name}\n${detailedDescriptions[id]}`
+		description: describeClientOnlySkill(id, name)
 	};
 }
 for (const [id, skill] of runtimeOnlyEntries) {
@@ -293,16 +527,33 @@ const missingDetailedIds = Object.keys(detailedDescriptions).filter(id => !stati
 if (missingDetailedIds.length) {
 	throw new Error(`Detailed descriptions reference missing skills: ${missingDetailedIds.join(', ')}`);
 }
-const localizedEntries = Object.entries(staticTable).sort(
-	([leftId], [rightId]) => Number(leftId) - Number(rightId)
-);
+for (const id of Object.keys(detailedDescriptions)) {
+	const description = staticTable[id].description;
+	const requirement = describeSkillRequirement(id);
+	if (requirement && !description.includes(`习得条件：${requirement}`)) {
+		throw new Error(`Generated skill ${id} is missing its translated requirement`);
+	}
+	for (const [key, prefix] of Object.entries({
+		category: '类别',
+		type: '类型',
+		target: '目标'
+	})) {
+		for (const label of visibleLabels[id][key] || []) {
+			if (!description.includes(`${prefix}：`) || !description.includes(label)) {
+				throw new Error(`Generated skill ${id} is missing its translated ${key} label: ${label}`);
+			}
+		}
+	}
+}
+const localizedEntries = Object.entries(staticTable).sort(([leftId], [rightId]) => Number(leftId) - Number(rightId));
 const names = localizedEntries.map(([, skill]) => `${skill.key}#${skill.name}#`).join('\n') + '\n';
-const descriptions = localizedEntries
-	.map(([, skill]) => `${skill.key}#${skill.description}#`)
-	.join('\n') + '\n';
+const descriptions = localizedEntries.map(([, skill]) => `${skill.key}#${skill.description}#`).join('\n') + '\n';
 const staticModule = await prettier.format(
 	`// Generated by scripts/resources/generate-skill-localization.mjs. Do not edit manually.\n\nexport default ${JSON.stringify(staticTable)};\n`,
-	{ ...(await prettier.resolveConfig(clientStaticTable)), filepath: clientStaticTable }
+	{
+		...(await prettier.resolveConfig(clientStaticTable)),
+		filepath: clientStaticTable
+	}
 );
 const runtimeSkillInfo = Object.fromEntries(
 	Object.entries(runtimeSource.data.skills)
@@ -328,11 +579,17 @@ const runtimeSkillInfo = Object.fromEntries(
 );
 const skillInfoModule = await prettier.format(
 	`// Generated by scripts/resources/generate-skill-localization.mjs. Do not edit manually.\n\nexport default ${JSON.stringify(runtimeSkillInfo)};\n`,
-	{ ...(await prettier.resolveConfig(clientSkillInfoTable)), filepath: clientSkillInfoTable }
+	{
+		...(await prettier.resolveConfig(clientSkillInfoTable)),
+		filepath: clientSkillInfoTable
+	}
 );
 const skillTreeModule = await prettier.format(
 	`// Generated by scripts/resources/generate-skill-localization.mjs. Do not edit manually.\n\nexport default ${JSON.stringify(runtimeSource.data.trees)};\n`,
-	{ ...(await prettier.resolveConfig(clientSkillTreeTable)), filepath: clientSkillTreeTable }
+	{
+		...(await prettier.resolveConfig(clientSkillTreeTable)),
+		filepath: clientSkillTreeTable
+	}
 );
 
 fs.mkdirSync(outputDirectory, { recursive: true });
