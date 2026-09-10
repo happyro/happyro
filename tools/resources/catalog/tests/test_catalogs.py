@@ -40,6 +40,17 @@ class ClientCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(CatalogError, "missing from Renewal"):
             build_client_catalog(client, server, monsters, "client.json", "server.json", "monsters.json")
 
+    def test_applies_reviewed_chinese_item_name(self) -> None:
+        client = {"data": {"909": {"identifiedDisplayName": "杰洛皮"}}}
+        server = {
+            "englishSource": {"revision": "abc123"},
+            "items": {"909": {"names": {"en-US": "Jellopy"}}},
+        }
+
+        catalog = build_client_catalog(client, server, {"monsters": {}}, "client.json", "server.json", "monsters.json")
+
+        self.assertEqual(catalog["items"]["909"]["names"]["zh-CN"], "杰勒比结晶")
+
     def test_service_uses_injected_storage_adapters(self) -> None:
         client = {"data": {"501": {"identifiedDisplayName": "红色药水", "identifiedResourceName": "红药", "identifiedDescriptionName": ["恢复 HP"]}}}
         server = {"englishSource": {"revision": "abc123"}, "items": {"501": {"names": {"en-US": "Red Potion"}}}}
