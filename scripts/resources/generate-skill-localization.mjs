@@ -252,12 +252,18 @@ if (
 	throw new Error('Official skill description labels do not match the 1279 translated descriptions');
 }
 const visibleLabelCounts = Object.fromEntries(
-	['category', 'type', 'target'].map(key => [
+	['maxLevel', 'category', 'type', 'target', 'range'].map(key => [
 		key,
-		Object.values(visibleLabels).reduce((total, entry) => total + (entry[key]?.length || 0), 0)
+		Object.values(visibleLabels).reduce(
+			(total, entry) => total + (Array.isArray(entry[key]) ? entry[key].length : Number(entry[key] != null)),
+			0
+		)
 	])
 );
-if (JSON.stringify(visibleLabelCounts) !== JSON.stringify({ category: 1169, type: 533, target: 609 })) {
+if (
+	JSON.stringify(visibleLabelCounts) !==
+	JSON.stringify({ maxLevel: 1117, category: 1169, type: 533, target: 609, range: 2 })
+) {
 	throw new Error(`Official skill description labels are incomplete: ${JSON.stringify(visibleLabelCounts)}`);
 }
 for (const [id, labels] of Object.entries(visibleLabels)) {
@@ -360,7 +366,7 @@ function describe(skill) {
 	const lines = [skill.Description];
 	const prose = detailedDescriptions[skill.Id];
 	if (prose) lines.push(prose);
-	lines.push(`最高等级：${skill.MaxLevel}`);
+	lines.push(`最高等级：${visibleLabels[skill.Id]?.maxLevel ?? skill.MaxLevel}`);
 	const requirement = describeSkillRequirement(skill.Id);
 	if (requirement) lines.push(`习得条件：${requirement}`);
 	const officialLabels = visibleLabels[skill.Id] || {};
@@ -371,6 +377,7 @@ function describe(skill) {
 			`目标：${officialLabels.target?.join('；或') || targetLabels[skill.TargetType] || skill.TargetType}`
 		);
 	}
+	if (officialLabels.range) lines.push(`范围：${officialLabels.range.join('；或')}`);
 	if (skill.Element) lines.push(`属性：${summarizeElements(skill.Element)}`);
 	if (skill.Range != null) {
 		const range = skill.Range === -1 ? '武器攻击距离' : summarizeValues(skill.Range);
@@ -385,13 +392,16 @@ function describe(skill) {
 function describeClientOnlySkill(id, name) {
 	const lines = [name, detailedDescriptions[id]];
 	const runtimeSkill = runtimeSource.data.skills[id];
-	if (runtimeSkill) lines.push(`最高等级：${runtimeSkill.maxLevel}`);
+	if (runtimeSkill || visibleLabels[id]?.maxLevel != null) {
+		lines.push(`最高等级：${visibleLabels[id]?.maxLevel ?? runtimeSkill.maxLevel}`);
+	}
 	const requirement = describeSkillRequirement(id);
 	if (requirement) lines.push(`习得条件：${requirement}`);
 	const officialLabels = visibleLabels[id] || {};
 	if (officialLabels.category) lines.push(`类别：${officialLabels.category.join('；或')}`);
 	if (officialLabels.type) lines.push(`类型：${officialLabels.type.join('；或')}`);
 	if (officialLabels.target) lines.push(`目标：${officialLabels.target.join('；或')}`);
+	if (officialLabels.range) lines.push(`范围：${officialLabels.range.join('；或')}`);
 	return lines.join('\n');
 }
 
@@ -466,7 +476,28 @@ registerRequirement([2412], '宫廷乐师或漫游舞者基础技能');
 registerRequirement([2474, 2475, 2494, 2497], '基因学者基础技能');
 registerRequirement([5014], '三转职业');
 
+// These official descriptions intentionally differ from the runtime skill tree or add a visible state requirement.
+const officialRequirementOverrides = {
+	88: '冰冻术 Lv.1、冰墙术 Lv.1',
+	259: '恶魔克星、天使之护 Lv.10',
+	355: '狂击 Lv.5、怒爆 Lv.5、双手剑修炼 Lv.5',
+	399: '矛术修炼 Lv.9、骑乘大嘴鸟 Lv.1、骑兵修炼 Lv.3、创伤重击 Lv.3',
+	444: '太阳、月亮与星星之知识 Lv.9，且处于灵魂状态',
+	459: '狂怒之枪 Lv.5，且处于灵魂状态',
+	495: '双手剑加速 Lv.10，且处于灵魂状态',
+	496: '制作药水 Lv.10，且处于灵魂状态',
+	497: '制作药水 Lv.10，且处于灵魂状态',
+	498: '制作药水 Lv.10，且处于灵魂状态',
+	499: '二连矢 Lv.10，且处于灵魂状态',
+	2338: '电气注入 Lv.1',
+	2347: '点穴·球 Lv.3',
+	2348: '点穴·球 Lv.3',
+	5493: '影闪 Lv.7',
+	5494: '苦无 - 扭曲 Lv.5、苦无 - 旋转 Lv.5、苦无 - 折射 Lv.5'
+};
+
 function describeSkillRequirement(id) {
+	if (officialRequirementOverrides[id]) return officialRequirementOverrides[id];
 	const runtimeSkill = runtimeSource.data.skills[id];
 	const alternatives = [];
 	if (runtimeSkill?.needSkills?.length) alternatives.push(runtimeSkill.needSkills);
@@ -483,7 +514,7 @@ function describeSkillRequirement(id) {
 					.map(([skillId, level]) => {
 						const name = localizedSkillNames.get(String(skillId));
 						if (!name) throw new Error(`Skill ${id} requirement ${skillId} has no localized name`);
-						return `${name} Lv.${level}`;
+						return level == null ? name : `${name} Lv.${level}`;
 					})
 					.join('、')
 			)
@@ -529,6 +560,9 @@ if (missingDetailedIds.length) {
 }
 for (const id of Object.keys(detailedDescriptions)) {
 	const description = staticTable[id].description;
+	if (visibleLabels[id].maxLevel != null && !description.includes(`最高等级：${visibleLabels[id].maxLevel}`)) {
+		throw new Error(`Generated skill ${id} is missing its official max level`);
+	}
 	const requirement = describeSkillRequirement(id);
 	if (requirement && !description.includes(`习得条件：${requirement}`)) {
 		throw new Error(`Generated skill ${id} is missing its translated requirement`);
@@ -536,13 +570,17 @@ for (const id of Object.keys(detailedDescriptions)) {
 	for (const [key, prefix] of Object.entries({
 		category: '类别',
 		type: '类型',
-		target: '目标'
+		target: '目标',
+		range: '范围'
 	})) {
 		for (const label of visibleLabels[id][key] || []) {
 			if (!description.includes(`${prefix}：`) || !description.includes(label)) {
 				throw new Error(`Generated skill ${id} is missing its translated ${key} label: ${label}`);
 			}
 		}
+	}
+	if (/\bundefined\b/.test(description)) {
+		throw new Error(`Generated skill ${id} contains an undefined visible value`);
 	}
 }
 const localizedEntries = Object.entries(staticTable).sort(([leftId], [rightId]) => Number(leftId) - Number(rightId));

@@ -14,8 +14,9 @@
 覆盖全部 1767 个技能的简体中文名称和机制信息。其中
 `data/skill-description-prose.zh-CN.json` 逐条收录官方 `skilldescript.lub` 的 1279 条
 玩家可见说明与 6260 行有效等级数据，并按效果逻辑分段。
-`data/skill-description-labels.zh-CN.json` 按同一技能 ID 收录官方类别、类型和目标标签；
-习得条件优先从已核验的运行时前置技能数据生成，其余任务和身份条件由生成器显式补充。运行
+`data/skill-description-labels.zh-CN.json` 按同一技能 ID 收录官方最高等级、类别、类型、目标和
+独立范围标签；习得条件优先从已核验的运行时前置技能数据生成，官方文本存在差异时使用显式
+覆盖，其余任务、身份和状态条件也由生成器补充。运行
 `node scripts/resources/generate-skill-localization.mjs --write` 可从当前服务端数据库重新生成
 两份资源。
 
