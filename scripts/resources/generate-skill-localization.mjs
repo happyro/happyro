@@ -277,14 +277,39 @@ if (bossTermCount !== 61 || detailedDescriptionEntries.some(([, description]) =>
 	throw new Error(`Expected 61 untranslated Boss terms, found ${bossTermCount}`);
 }
 const requiredDescriptionFragments = {
+	26: ['地面保护效果范围内不能使用'],
+	136: ['昏迷概率受目标异常状态抗性影响'],
+	225: ['不能超过被复制技能的最高等级'],
+	233: ['召唤气泡虫', '气泡虫 HP'],
+	364: ['取决于击败魔物前使用的技能'],
+	513: ['卸除武器的成功率越高'],
+	539: ['目标等级、MDEF 与 LUK'],
+	2027: ['麻痹：', '吸血末端：', '毒液出血：'],
+	2040: ['圣属性魔法伤害'],
+	2213: ['施加魔力中毒'],
 	2249: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
 	2250: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
 	2251: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
 	2252: ['周围 3×3 格时触发', '周围 5×5 格内所有魔物', '可设置在目标脚下'],
+	2253: ['周围 3×3 格时触发', '周围 5×5 格所有敌人', '可设置在目标脚下'],
+	2254: ['周围 3×3 格时触发', '周围 5×5 格所有敌人', '可设置在目标脚下'],
+	2287: ['可能被侦测技能解除'],
+	2333: ['随施法者职业等级提高'],
+	2419: ['随目标等级提高而缩短'],
+	2430: ['装备乐器或鞭子', '狂乱成功率随施法者课程等级提高'],
+	2581: ['并施加沉默'],
+	3031: ['解除着火、出血、深度睡眠和睡眠'],
+	3032: ['解除冰冻、冷冻和冻结'],
+	455: ['完美六线谱与专注芭蕾', '卢蒂之歌与吉普赛之吻'],
 	2465: ['按技能等级消耗 1 / 2 / 3 个火灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
 	2466: ['按技能等级消耗 1 / 2 / 3 个水灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
 	2467: ['按技能等级消耗 1 / 2 / 3 个风灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
-	2468: ['按技能等级消耗 1 / 2 / 3 个地灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP']
+	2468: ['按技能等级消耗 1 / 2 / 3 个地灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	5064: ['倒地成员为不死属性时不会生效'],
+	5253: ['伤害随施法者基础等级和 POW 提高'],
+	5463: ['朝阳、正午爆破、日落爆破、月升、午夜踢、破晓、闪耀银河、星辰爆发和星辰炮'],
+	5479: ['本体使用红焰、冷血、雷鸣、金龙或黑暗加农炮时，分身均施放黑暗加农炮'],
+	8025: ['伤害随生命体基础等级和 INT 提高']
 };
 for (const [id, fragments] of Object.entries(requiredDescriptionFragments)) {
 	for (const fragment of fragments) {
@@ -366,7 +391,11 @@ for (const [id, description] of detailedDescriptionEntries) {
 	if (/(官方技能效果数据已收录|尚未收录|相关技能效果)/.test(description)) {
 		throw new Error(`Official skill description ${id} still contains placeholder text`);
 	}
-	if (/(专用的[^。\n]+技能。|召唤或运用[^。\n]+之魂|发动[^。\n]+灵魂攻击)/.test(description)) {
+	if (
+		/(专用的[^。\n]+技能。|召唤或运用[^。\n]+之魂|发动[^。\n]+灵魂攻击|解除或抵抗特定状态异常的[^。\n]+消耗品技能)/.test(
+			description
+		)
+	) {
 		throw new Error(`Official skill description ${id} still contains a generic summary`);
 	}
 }
@@ -405,6 +434,10 @@ function summarizeValues(value) {
 	return [...new Set(list)].length === 1 ? String(list[0]) : list.join(' / ');
 }
 
+function summarizeRanges(value) {
+	return summarizeValues(values(value).map(entry => (typeof entry === 'number' ? Math.abs(entry) : entry)));
+}
+
 function summarizeElements(value) {
 	if (!Array.isArray(value)) return elementLabels[value] || value;
 	return value.map(entry => elementLabels[entry.Element] || entry.Element).join(' / ');
@@ -428,8 +461,7 @@ function describe(skill) {
 	if (officialLabels.range) lines.push(`范围：${officialLabels.range.join('；或')}`);
 	if (skill.Element) lines.push(`属性：${summarizeElements(skill.Element)}`);
 	if (skill.Range != null) {
-		const range = skill.Range === -1 ? '武器攻击距离' : summarizeValues(skill.Range);
-		lines.push(`施放范围：${range}`);
+		lines.push(`施放范围：${summarizeRanges(skill.Range)}`);
 	}
 	if (skill.SplashArea != null) lines.push(`作用范围：${summarizeValues(skill.SplashArea)}`);
 	const sp = summarizeValues(skill.Requires?.SpCost);
@@ -607,6 +639,11 @@ for (const [id, skill] of runtimeOnlyEntries) {
 const missingDetailedIds = Object.keys(detailedDescriptions).filter(id => !staticTable[id]);
 if (missingDetailedIds.length) {
 	throw new Error(`Detailed descriptions reference missing skills: ${missingDetailedIds.join(', ')}`);
+}
+for (const [id, skill] of Object.entries(staticTable)) {
+	if (/^施放范围：-/mu.test(skill.description)) {
+		throw new Error(`Generated skill ${id} exposes an internal signed cast range`);
+	}
 }
 for (const id of Object.keys(detailedDescriptions)) {
 	const description = staticTable[id].description;
