@@ -11,9 +11,11 @@
 `data/titletable.json` 包含 2021 客户端固定称号 ID 范围 1000 至 1046 的简体中文名称。
 
 `data/skillnametable.txt` 和 `data/skilldesctable.txt` 从固定版本服务端技能数据库生成，
-覆盖全部 1635 个技能的简体中文名称和机制信息。狂击、怒爆等常用技能还包含与服务端实现
-核对过的伤害、命中和范围说明。运行 `node scripts/resources/generate-skill-localization.mjs --write`
-可从当前服务端数据库重新生成两份资源。
+覆盖全部 1767 个技能的简体中文名称和机制信息。其中
+`data/skill-description-prose.zh-CN.json` 逐条收录官方 `skilldescript.lub` 的 1279 条
+玩家可见说明与 6260 行有效等级数据，并按效果逻辑分段。运行
+`node scripts/resources/generate-skill-localization.mjs --write` 可从当前服务端数据库重新生成
+两份资源。
 
 <!-- 已归档：data/itemlocalization.json 已由翻译后的 itemInfo_true.lub 取代，
 现保留在 archive/localization/client/data/ 中。 -->

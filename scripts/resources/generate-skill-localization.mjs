@@ -81,11 +81,6 @@ if (!options.action) {
 const targetLabels = { Attack: '敌方目标', Support: '友方目标', Self: '自身', Ground: '指定地面' };
 const typeLabels = { Weapon: '物理', Magic: '魔法', Misc: '特殊', None: '辅助' };
 const elementLabels = { Weapon: '武器属性', Neutral: '无属性', Fire: '火属性', Water: '水属性', Wind: '风属性', Earth: '地属性', Holy: '圣属性', Dark: '暗属性', Ghost: '念属性', Undead: '不死属性', Poison: '毒属性' };
-const curatedDescriptions = {
-	SM_BASH: '对单个敌人发动强力近战攻击。\n伤害：基础 100% + 每级 30% 武器物理伤害。\n命中：每级提高最终命中率 5%。\n等级 6 以上且习得“致命攻击”后，有概率使目标昏迷。',
-	SM_MAGNUM: '以自身为中心引发火属性爆炸并击退周围敌人。\n内圈 3×3：基础 100% + 每级 20% 武器物理伤害。\n外圈 5×5：基础 100% + 每级 10% 武器物理伤害。\n命中：每级提高最终命中率 10%。施放后短时间内，普通攻击会追加火属性伤害。',
-	KN_PIERCE: '枪类武器专用；根据目标体型发动 1 至 3 次突刺，小型 1 次、中型 2 次、大型 3 次，并获得命中修正。\n等级 1 至 10：单次攻击力为 110% / 120% / 130% / 140% / 150% / 160% / 170% / 180% / 190% / 200%，命中修正为 5% / 10% / 15% / 20% / 25% / 30% / 35% / 40% / 45% / 50%。'
-};
 const additionalNames = {
 	TF_POISON: '施毒', TF_DETOXIFY: '解毒', NPC_LEASH: '束缚', NPC_WIDELEASH: '广域束缚', NPC_WIDECRITICALWOUND: '广域致命伤口', NPC_ALL_STAT_DOWN: '全属性下降', NPC_GRADUAL_GRAVITY: '重力增强', NPC_DAMAGE_HEAL: '伤害转化治疗', NPC_IMMUNE_PROPERTY: '属性免疫', NPC_MOVE_COORDINATE: '位置转移', NPC_BLEEDING2: '出血', NPC_ICEBREATH2: '寒冰吐息', NPC_RAINOFMETEOR: '陨石雨', NPC_RELIEVE_ON: '解除状态开启', NPC_RELIEVE_OFF: '解除状态关闭',
 	WL_HELLINFERNO: '地狱炼狱', WL_CHAINLIGHTNING_ATK: '连锁闪电攻击', WL_EARTHSTRAIN: '地裂术', WL_TETRAVORTEX_FIRE: '元素漩涡·火', WL_TETRAVORTEX_WATER: '元素漩涡·水', WL_TETRAVORTEX_WIND: '元素漩涡·风', RA_WUGMASTERY: '狼群精通', RA_WUGBITE: '狼咬', RA_RESEARCHTRAP: '陷阱研究', SR_GENTLETOUCH_ENERGYGAIN: '点穴·球', WA_SWING_DANCE: '摇摆舞', SO_VACUUM_EXTREME: '极限真空', SO_VARETYR_SPEAR: '雷霆之枪', ALL_RAY_OF_PROTECTION: '守护之光',
@@ -96,7 +91,18 @@ const additionalNames = {
 	SS_TOKEDASU: '消融', SS_SHIMIRU: '渗透', SS_AKUMUKESU: '噩梦消除', SS_SHINKIROU: '蜃景', SS_KAGEGARI: '猎影', SS_KAGENOMAI: '影舞', SS_KAGEGISSEN: '影闪', SS_FUUMASHOUAKU: '风魔手里剑·掌握', BO_MYSTERY_POWDER: '神秘粉末', BO_DUST_EXPLOSION: '粉尘爆炸', ABC_HIT_AND_SLIDING: '滑步打击', ABC_CHASING_BREAK: '追击破坏', ABC_CHASING_SHOT: '追击射击', ABC_ABYSS_FLAME: '深渊烈焰', AG_ENERGY_CONVERSION: '能量转换', SHC_CROSS_SLASH: '交叉斩', EM_PSYCHIC_STREAM: '念力洪流', CD_DIVINUS_FLOS: '神圣之花', IQ_BLAZING_FLAME_BLAST: '炽焰爆破', WH_WILD_WALK: '荒野疾行',
 	HFLI_SBR44: '蜂鸟 S.B.R.44', MH_BLAST_FORGE: '爆裂熔炉', MH_TEMPERING: '淬炼', MH_CLASSY_FLUTTER: '优雅振翅', MH_TWISTER_CUTTER: '旋风切割', MH_ABSOLUTE_ZEPHYR: '绝对和风', MH_BRUSHUP_CLAW: '磨砺利爪', MH_BLAZING_AND_FURIOUS: '炽烈狂怒', MH_THE_ONE_FIGHTER_RISES: '唯一斗士崛起'
 };
-const detailedDescriptions = JSON.parse(fs.readFileSync(detailedDescriptionPath, 'utf8'));
+function formatProse(value) {
+	return value
+		.split(/\n+/)
+		.flatMap(line => line.split(/(?<=[。；！？])/u))
+		.map(line => line.trim())
+		.filter(Boolean)
+		.join('\n');
+}
+
+const detailedDescriptions = Object.fromEntries(
+	Object.entries(JSON.parse(fs.readFileSync(detailedDescriptionPath, 'utf8'))).map(([id, value]) => [id, formatProse(value)])
+);
 const runtimeOnlySkills = JSON.parse(fs.readFileSync(runtimeOnlySkillPath, 'utf8'));
 const runtimeSource = JSON.parse(fs.readFileSync(runtimeSourcePath, 'utf8'));
 
@@ -128,6 +134,22 @@ const detailedDescriptionEntries = Object.entries(detailedDescriptions);
 if (detailedDescriptionEntries.length !== 1279) {
 	throw new Error(`Expected 1279 official skill descriptions, found ${detailedDescriptionEntries.length}`);
 }
+const detailedLevelRows = detailedDescriptionEntries.reduce(
+	(total, [, description]) => total + (description.match(/^\[等级 \d+\]：/gmu) || []).length,
+	0
+);
+// The official S.B.R.44 entry contains three empty level markers; only meaningful rows are retained.
+if (detailedLevelRows !== 6260) {
+	throw new Error(`Expected 6260 translated skill level rows, found ${detailedLevelRows}`);
+}
+for (const [id, description] of detailedDescriptionEntries) {
+	if (!description || /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/.test(description)) {
+		throw new Error(`Skill description ${id} is empty or still contains Korean text`);
+	}
+	if (/^\[等级 \d+\]：\s*$/mu.test(description)) {
+		throw new Error(`Skill description ${id} contains an empty level row`);
+	}
+}
 const runtimeOnlyEntries = Object.entries(runtimeOnlySkills);
 if (runtimeOnlyEntries.length !== 115) {
 	throw new Error(`Expected 115 runtime-only skill entries, found ${runtimeOnlyEntries.length}`);
@@ -144,6 +166,9 @@ for (const [id, description] of detailedDescriptionEntries) {
 	}
 	if (/(官方技能效果数据已收录|尚未收录|相关技能效果)/.test(description)) {
 		throw new Error(`Official skill description ${id} still contains placeholder text`);
+	}
+	if (/(专用的[^。\n]+技能。|召唤或运用[^。\n]+之魂|发动[^。\n]+灵魂攻击)/.test(description)) {
+		throw new Error(`Official skill description ${id} still contains a generic summary`);
 	}
 }
 const clientOnlySkills = {
@@ -169,7 +194,10 @@ const clientOnlySkills = {
 function values(value) {
 	if (value == null) return [];
 	if (!Array.isArray(value)) return [value];
-	return value.map(entry => typeof entry === 'object' ? entry.Amount ?? entry.Area ?? entry.Value ?? entry.Level : entry);
+	return value.map(entry => {
+		if (typeof entry !== 'object') return entry;
+		return entry.Amount ?? entry.Area ?? entry.Value ?? entry.Size ?? entry.Range ?? entry.Level;
+	});
 }
 
 function summarizeValues(value) {
@@ -178,14 +206,24 @@ function summarizeValues(value) {
 	return [...new Set(list)].length === 1 ? String(list[0]) : list.join(' / ');
 }
 
+function summarizeElements(value) {
+	if (!Array.isArray(value)) return elementLabels[value] || value;
+	return value
+		.map(entry => elementLabels[entry.Element] || entry.Element)
+		.join(' / ');
+}
+
 function describe(skill) {
 	const lines = [skill.Description];
-	const prose = curatedDescriptions[skill.Name] || detailedDescriptions[skill.Id];
+	const prose = detailedDescriptions[skill.Id];
 	if (prose) lines.push(prose);
 	lines.push(`最高等级：${skill.MaxLevel}`);
 	lines.push(`类型：${typeLabels[skill.Type] || '辅助'}${skill.TargetType ? ` / ${targetLabels[skill.TargetType] || skill.TargetType}` : ''}`);
-	if (skill.Element) lines.push(`属性：${elementLabels[skill.Element] || skill.Element}`);
-	if (skill.Range != null) lines.push(`施放范围：${skill.Range === -1 ? '武器攻击距离' : skill.Range}`);
+	if (skill.Element) lines.push(`属性：${summarizeElements(skill.Element)}`);
+	if (skill.Range != null) {
+		const range = skill.Range === -1 ? '武器攻击距离' : summarizeValues(skill.Range);
+		lines.push(`施放范围：${range}`);
+	}
 	if (skill.SplashArea != null) lines.push(`作用范围：${summarizeValues(skill.SplashArea)}`);
 	const sp = summarizeValues(skill.Requires?.SpCost);
 	if (sp) lines.push(`SP 消耗：${sp}`);
@@ -193,6 +231,21 @@ function describe(skill) {
 }
 
 const database = yaml.load(fs.readFileSync(skillDatabase, 'utf8'));
+const databaseSkillsById = new Map(database.Body.map(skill => [String(skill.Id), skill]));
+for (const [id, description] of detailedDescriptionEntries) {
+	const skill = databaseSkillsById.get(id);
+	if (!skill || id === '8012') continue;
+	const actualLevels = [...description.matchAll(/^\[等级 (\d+)\]：/gmu)].map(match => Number(match[1]));
+	if (!actualLevels.length) continue;
+	const expectedLevels = Array.from({ length: skill.MaxLevel }, (_, index) => index + 1);
+	// Basic Skill has no official level 8 effect; its source proceeds directly from level 7 to 9.
+	if (id === '1') expectedLevels.splice(7, 1);
+	if (JSON.stringify(actualLevels) !== JSON.stringify(expectedLevels)) {
+		throw new Error(
+			`Skill description ${id} has level rows ${actualLevels.join(', ')}, expected ${expectedLevels.join(', ')}`
+		);
+	}
+}
 const legacyNames = new Map(yaml.load(fs.readFileSync(legacySkillDatabase, 'utf8')).Body.map(skill => [skill.Name, skill.Description]));
 const staticNames = new Map();
 for (const match of fs.readFileSync(clientSkillInfo, 'utf8').matchAll(/Name: '([^']+)',\s*\r?\n\s*SkillName: '([^']+)'/g)) {
