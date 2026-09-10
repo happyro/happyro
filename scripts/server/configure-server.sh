@@ -5,6 +5,7 @@ set -euo pipefail
 source "$(dirname "$0")/../_lib/lib.sh"
 
 secret_file="$MARIADB_RUNTIME/secrets.env"
+admin_env="$PROJECT_ROOT/repos/happyro-admin/backend/.env"
 [[ -f "$MARIADB_PROFILE" ]] || {
 	echo "missing MariaDB profile: $MARIADB_PROFILE" >&2
 	exit 1
@@ -17,6 +18,10 @@ secret_file="$MARIADB_RUNTIME/secrets.env"
 	echo "missing rAthena profile: $RATHENA_PROFILE" >&2
 	exit 1
 }
+[[ -f "$admin_env" ]] || {
+	echo "missing admin backend environment: $admin_env" >&2
+	exit 1
+}
 
 set -a
 # shellcheck disable=SC1090
@@ -26,6 +31,16 @@ source "$secret_file"
 # shellcheck disable=SC1090
 source "$RATHENA_PROFILE"
 set +a
+
+game_control_token="$(sed -n 's/^GAME_CONTROL_TOKEN=//p' "$admin_env" | tail -n 1)"
+game_control_token="${game_control_token%$'\r'}"
+game_control_token="${game_control_token#\"}"
+game_control_token="${game_control_token%\"}"
+game_control_socket="/run/happyro/map-control.sock"
+[[ ${#game_control_token} -ge 32 ]] || {
+	echo "GAME_CONTROL_TOKEN must contain at least 32 characters" >&2
+	exit 1
+}
 
 for name in SERVER_LAN_IP LOGIN_PORT CHAR_PORT MAP_PORT WEB_BIND_IP WEB_PORT WEB_ALLOWED_ORIGIN; do
 	[[ -n "${!name:-}" ]] || {
@@ -107,16 +122,20 @@ write_database_entry() {
 	printf 'bind_ip: %s\n' "$SERVER_LAN_IP"
 	printf 'map_ip: %s\n' "$SERVER_LAN_IP"
 	printf 'map_port: %s\n' "$MAP_PORT"
+	printf 'game_control_socket: %s\n' "$game_control_socket"
 } > "$import_dir/map_conf.txt"
 
 {
 	printf 'bind_ip: %s\n' "$WEB_BIND_IP"
 	printf 'web_port: %s\n' "$WEB_PORT"
 	printf 'allowed_origin_cors: %s\n' "$WEB_ALLOWED_ORIGIN"
+	printf 'game_control_enabled: yes\n'
+	printf 'game_control_secret: %s\n' "$game_control_token"
+	printf 'game_control_socket: %s\n' "$game_control_socket"
 } > "$import_dir/web_conf.txt"
 
-chmod 0600 "$import_dir/inter_conf.txt" "$import_dir/char_conf.txt" "$import_dir/map_conf.txt"
-chmod 0644 "$import_dir/login_conf.txt" "$import_dir/web_conf.txt"
+chmod 0600 "$import_dir/inter_conf.txt" "$import_dir/char_conf.txt" "$import_dir/map_conf.txt" "$import_dir/web_conf.txt"
+chmod 0644 "$import_dir/login_conf.txt"
 
 : > "$import_dir/packet_conf.txt"
 cat > "$import_dir/inter_server.yml" <<'EOF'
