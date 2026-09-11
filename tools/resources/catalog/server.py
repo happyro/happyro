@@ -47,6 +47,10 @@ def build_items(
         if not isinstance(english_name, str) or not english_name.strip():
             raise CatalogError(f"missing English name for item {item_id}")
         normalized = {key: value for key, value in current.items() if key not in {"Id", "Name"}}
+        if "Buy" in normalized and "Sell" not in normalized:
+            normalized["Sell"] = normalized["Buy"] // 2
+        elif "Sell" in normalized and "Buy" not in normalized:
+            normalized["Buy"] = normalized["Sell"] * 2
         normalized["names"] = {"zh-CN": chinese_name, "en-US": english_name}
         result[str(item_id)] = normalized
     return result
