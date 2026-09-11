@@ -16,7 +16,7 @@
 - 跨仓库集中 changelog 是“禁止创建只包含 changelog 的独立提交”规则的唯一例外，根仓库使用独立的 `docs(changelog)` 提交记录客户端和服务端变更。
 - main 是长期中文产品分支，也是默认维护分支。
 - demo 是中文演示环境分支；演示专属改动只提交到 demo，并持续同步 main。
-- 三个仓库只推送到各自的 origin，不推送到 upstream。
+- 四个应用仓库只推送到各自的 origin，不推送到 upstream。
 - 未经用户明确要求，不提交、不推送。
 
 ## 仓库边界
@@ -26,11 +26,11 @@
 - 生成文件放在 work/ 或 artifacts/。
 - repos/happyro-client 和 repos/happyro-server 是独立 Git 仓库。
 - repos/happyro-admin 是独立的 HappyRO GM 管理后台仓库；其代码实现规范和仓库 changelog 规则以 `repos/happyro-admin/AGENTS.md` 与 `repos/happyro-admin/changelog/` 为准。
-- docs/translation/zh-cn/ 中的旧翻译工作区仅作为历史记录，后续不得再作为发布源向客户端或服务端仓库回写；产品翻译直接修改对应仓库。
+- `archive/translation/zh-cn/` 中的旧翻译工作区仅作为历史记录，后续不得再作为发布源向客户端或服务端仓库回写；产品翻译直接修改对应仓库。kRO 回编译输入位于 `localization/sources/kro-20211105/`。
 
 ## Docker 镜像发布规则
 
-- 用户说“重建镜像”、“发布新版本”或“打包新版本”时，必须先读取并严格执行 `docs/deploy/docker/image-release.md`。
+- 用户说“重建镜像”、“发布新版本”或“打包新版本”时，必须先读取并严格执行 `docs/operations/docker-release.md`。
 - 每个版本都必须从四个仓库的最新代码完整、无缓存地重新构建 PWA、Gateway、Server 和 Database；不得根据 Git 变更跳过构建，不得复用旧 `dist`、旧镜像或旧 Docker 缓存。
 - 所有镜像必须使用同一版本号。当前已发布版本为 `v0.1.4`，下一个默认版本为 `v0.1.5`；发布成功后同步更新本节和规则文档中的版本记录。
 - 必须先确认全部构建成功，再 push 和部署；任一构建失败立即停止后续操作。
