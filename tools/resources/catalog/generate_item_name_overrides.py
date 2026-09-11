@@ -35,7 +35,7 @@ def main(arguments: list[str]) -> int:
         (root / "repos/happyro-admin/backend/resources/game-data/items/client-kro-20211105.json").read_text()
     )
     item_info = json.loads(
-        (root / "docs/translation/zh-cn/kro-20211105/merged/files/lub/itemInfo_true.json").read_text()
+        (root / "localization/sources/kro-20211105/merged/files/lub/itemInfo_true.json").read_text()
     )
     client_items = client_catalog["items"]
     overrides = {

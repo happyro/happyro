@@ -9,7 +9,7 @@ build/
 └── common.py       # JSON 序列化、工具链准备和公共校验
 ```
 
-工具不会修改 `inputs/` 中的官方文件，也不会写回翻译工作区。默认输入是正式合并目录 `docs/translation/zh-cn/kro-20211105/merged/files/lub/`，默认输出是 `artifacts/client/lub/`。正式合并结果尚未发布时，必须用 `--input` 明确指定已复核的临时合并目录。
+工具不会修改 `inputs/` 中的官方文件，也不会写回翻译工作区。默认输入是正式合并目录 `localization/sources/kro-20211105/merged/files/lub/`，默认输出是 `artifacts/client/lub/`。正式合并结果尚未发布时，必须用 `--input` 明确指定已复核的临时合并目录。
 
 ## 准备编译器
 

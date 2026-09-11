@@ -2,7 +2,7 @@
 
 本目录记录 2026-08-25 完成但尚未提交的简体中文修复，以及此前已提交但需要追溯源头的服务端数据修复。它是 `zh-cn` 专属归档：问题现象、译文、覆盖表和验收标准都针对简体中文；其中编码、资源路由和 UI 生命周期等实现方法可以复用于其他语言，但不能直接视为所有语言的共同产物。
 
-本批次在翻译端到端流程中的位置和源头回修要求见 [`../../../translation/zh-cn/WORKFLOW.md`](../../../translation/zh-cn/WORKFLOW.md)。本目录是缺陷记录，不取代翻译分片、目标源码或部署配置。
+本批次在翻译端到端流程中的位置和源头回修要求见 [`archive/translation/zh-cn/WORKFLOW.md`](../../../../../archive/translation/zh-cn/WORKFLOW.md)。本目录是缺陷记录，不取代翻译分片、目标源码或部署配置。
 
 `work/` 与 `artifacts/` 只保存中间结果和验证证据，不是维护源。官方输入 `inputs/official/`、`inputs/runtime/kro-20211105/` 保持只读。
 

@@ -18,7 +18,7 @@ from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INPUT = ROOT / "docs/translation/zh-cn/kro-20211105/merged/files/lub"
+DEFAULT_INPUT = ROOT / "localization/sources/kro-20211105/merged/files/lub"
 DEFAULT_OUTPUT = ROOT / "artifacts/client/lub"
 DEFAULT_TOOLCHAINS = ROOT / "work/lub-toolchains"
 
