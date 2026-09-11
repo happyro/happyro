@@ -1,6 +1,6 @@
 # scripts/server
 
-- `configure-server.sh`：按 `deploy/rathena/profile.env` 写入服务端导入配置。
+- `configure-server.sh apply`：按 `deploy/rathena/profile.env` 写入服务端导入配置。无参数只显示帮助。
 - `build-server.sh`：编译 login / char / map / web。
 - `server.sh`：启动、停止、校验四个 rAthena 服务。
 

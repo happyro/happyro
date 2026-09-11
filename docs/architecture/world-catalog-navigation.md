@@ -13,7 +13,7 @@ HappyRO 在游戏内提供两个面向世界资料的入口：
 
 ### NPC
 
-NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为完整来源。客户端脚本 `repos/happyro-client/scripts/generate-world-catalog-assets.mjs` 解析这些定义，并结合 `src/DB/NpcNameTranslations.zh-CN.json` 生成：
+NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为完整来源。根仓库 `tools/generate-npc-catalog.mjs generate` 解析这些定义，并结合 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json` 写出版本化目录。客户端脚本 `repos/happyro-client/scripts/generate-world-catalog-assets.mjs` 再根据该目录和预生成 PNG 生成：
 
 - `src/DB/Navigation/NpcInstanceNameTable.js`：服务器 NPC 的地图、坐标、中文名称及源名称索引；
 - `applications/pwa/data/world/npc-assets.json` 和 NPC 图集：客户端可用的外观资源。
@@ -35,7 +35,7 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为�
 三类图像均以官方客户端资源为只读源，由离线工具生成运行时产物；后台和游戏端不在请求或渲染期间转换 BMP。
 
 - 物品：根仓库 `tools/resources/catalog/main.py items images` 将资源映射中的官方 BMP 生成透明 PNG，输出到 `work/game-data/items/kro-20211105/icons/` 和 `illustrations/`。后台按物品 ID读取 PNG，游戏端按需请求列表图标和选中物品的详情图。
-- NPC：后台保留预生成的 NPC PNG；客户端构建脚本 `scripts/generate-world-catalog-assets.mjs` 将 NPC PNG 合成为 WebP 图集，并通过 `npc-assets.json` 的图集坐标显示。游戏端不逐个请求 NPC 图片。
+- NPC：已提交的 Admin PNG 在 `repos/happyro-admin/backend/resources/game-data/world/npcs/`。客户端构建脚本 `scripts/generate-world-catalog-assets.mjs` 将这些 PNG 合成为 WebP 图集，并通过 `npc-assets.json` 的图集坐标显示。游戏端不逐个请求 NPC 图片。物品大体积 PNG 仍写入不入库的 `work/game-data/`。
 - 地图：后台保留有效地图 PNG，客户端按需读取当前列表可见的地图图片；选中地图时另外读取对应 GAT，用于坐标换算、缩略预览和当前地图寻路。没有真实图片时只使用 GAT 预览。
 
 资源产物与客户端资源版本绑定。重新生成图片后，服务端图片 URL 携带生成版本，避免浏览器继续使用旧缓存；生成目录属于运行时产物，不提交到 Git。

@@ -4,13 +4,34 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(dirname "$0")/../_lib/lib.sh"
 
-action="${1:-}"
+action=""
+color=true
+for argument in "$@"; do
+	case "$argument" in
+		start|stop|status|verify) action="$argument" ;;
+		--no-color) color=false ;;
+		-h|--help) action="help" ;;
+		*) echo "unknown option: $argument" >&2; exit 2 ;;
+	esac
+done
 services=(login-server char-server map-server web-server)
+
+print_help() {
+	happyro_cli_style "$color"
+	printf '\n%sHappyRO 服务端%s\n\n' "$HAPPYRO_C_TITLE" "$HAPPYRO_C_RESET"
+	printf '%s用法%s\n  %s%s start|stop|status|verify%s [--no-color]\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_CMD" "$0" "$HAPPYRO_C_RESET"
+	printf '%s常用例子%s\n  %s%s start%s\n  %s%s status --no-color%s\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET"
+}
 
 fail() {
 	echo "server: $*" >&2
 	exit 1
 }
+
+if [[ -z "$action" || "$action" == "help" ]]; then
+	print_help
+	exit 0
+fi
 
 load_profile() {
 	[[ -f "$RATHENA_PROFILE" ]] || fail "missing profile: $RATHENA_PROFILE"
@@ -98,7 +119,7 @@ stop_servers() {
 start_servers() {
 	local service port unit log_file
 	bash "$PROJECT_ROOT/scripts/database/database.sh" verify
-	bash "$PROJECT_ROOT/scripts/server/configure-server.sh"
+	bash "$PROJECT_ROOT/scripts/server/configure-server.sh" apply
 	mkdir -p "$RATHENA_RUNTIME/logs"
 
 	for service in "${services[@]}"; do
@@ -159,5 +180,5 @@ case "$action" in
 	stop) stop_servers ;;
 	status) status_servers ;;
 	verify) verify_servers ;;
-	*) fail "usage: $0 start|stop|status|verify" ;;
+	*) print_help; exit 1 ;;
 esac

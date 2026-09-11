@@ -202,5 +202,33 @@ def main() -> None:
     print(f"files={len(file_rows)} candidates={len(unique_candidates)}")
 
 
+def print_help(no_color: bool = False) -> None:
+    if no_color:
+        title = section = command = example = reset = ""
+    else:
+        title, section, command, example, reset = "\033[1;36m", "\033[1;33m", "\033[1;32m", "\033[36m", "\033[0m"
+    print()
+    print(f"{title}HappyRO 本地化清单扫描{reset}")
+    print()
+    print(f"{section}Usage{reset}")
+    print(f"  {command}python3 scripts/localization/scan-localization-inventory.py scan{reset} [--no-color]")
+    print()
+    print(f"{section}Examples{reset}")
+    print(f"  {example}python3 scripts/localization/scan-localization-inventory.py scan{reset}")
+    print(f"  {example}python3 scripts/localization/scan-localization-inventory.py scan --no-color{reset}")
+    print()
+
+
 if __name__ == "__main__":
+    import sys
+
+    args = sys.argv[1:]
+    no_color = "--no-color" in args
+    command = next((argument for argument in args if not argument.startswith("-")), None)
+    if command in (None, "help") or "--help" in args or "-h" in args:
+        print_help(no_color)
+        raise SystemExit(0 if command in (None, "help") or "--help" in args or "-h" in args else 1)
+    if command != "scan":
+        print_help(no_color)
+        raise SystemExit(1)
     main()

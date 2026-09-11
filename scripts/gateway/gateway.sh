@@ -7,11 +7,33 @@ source "$(dirname "$0")/../_lib/lib.sh"
 unit=happyro-gateway.service
 port=3338
 log_file="$PROJECT_ROOT/work/runtime/gateway/gateway.log"
+action=""
+color=true
+for argument in "$@"; do
+	case "$argument" in
+		start|stop|status|verify) action="$argument" ;;
+		--no-color) color=false ;;
+		-h|--help) action="help" ;;
+		*) echo "unknown option: $argument" >&2; exit 2 ;;
+	esac
+done
+
+print_help() {
+	happyro_cli_style "$color"
+	printf '\n%sHappyRO Gateway%s\n\n' "$HAPPYRO_C_TITLE" "$HAPPYRO_C_RESET"
+	printf '%s用法%s\n  %s%s start|stop|status|verify%s [--no-color]\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_CMD" "$0" "$HAPPYRO_C_RESET"
+	printf '%s常用例子%s\n  %s%s start%s\n  %s%s verify --no-color%s\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET"
+}
 
 fail() {
 	echo "gateway: $*" >&2
 	exit 1
 }
+
+if [[ -z "$action" || "$action" == "help" ]]; then
+	print_help
+	exit 0
+fi
 
 is_running() {
 	systemctl is-active --quiet "$unit"
@@ -51,8 +73,8 @@ start_gateway() {
 	is_running && fail "service is already running"
 	ss -H -ltn "sport = :$port" | rg -q ":${port}[[:space:]]" && fail "port $port is already in use"
 	bash "$PROJECT_ROOT/scripts/server/server.sh" verify
-	bash "$PROJECT_ROOT/scripts/gateway/configure-gateway.sh"
-	bash "$PROJECT_ROOT/scripts/resources/configure-resources.sh"
+	bash "$PROJECT_ROOT/scripts/gateway/configure-gateway.sh" apply
+	bash "$PROJECT_ROOT/scripts/resources/configure-resources.sh" apply
 	[[ -d "$GATEWAY_REPO/node_modules" ]] || (cd "$GATEWAY_REPO" && npm install --ignore-scripts)
 	mkdir -p "$(dirname "$log_file")"
 	: > "$log_file"
@@ -89,12 +111,12 @@ stop_gateway() {
 	fi
 }
 
-case "${1:-}" in
+case "$action" in
 	start) start_gateway ;;
 	stop) stop_gateway ;;
 	status)
 		if is_running; then echo "gateway: running"; else echo "gateway: stopped"; fi
 		;;
 	verify) verify_gateway ;;
-	*) fail "usage: $0 start|stop|status|verify" ;;
+	*) print_help; exit 1 ;;
 esac

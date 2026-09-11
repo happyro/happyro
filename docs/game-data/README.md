@@ -13,7 +13,7 @@
 
 ```bash
 python3 tools/resources/catalog/main.py
-node tools/generate-npc-catalog.mjs
+node tools/generate-npc-catalog.mjs generate
 ```
 
 无参数运行只显示帮助。大体积图片写入 `work/game-data/`，不提交 Git。

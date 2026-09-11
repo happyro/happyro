@@ -4,14 +4,35 @@ set -euo pipefail
 # shellcheck disable=SC1091
 source "$(dirname "$0")/../_lib/lib.sh"
 
-action="${1:-}"
+action=""
+color=true
+for argument in "$@"; do
+	case "$argument" in
+		start|stop|status|verify) action="$argument" ;;
+		--no-color) color=false ;;
+		-h|--help) action="help" ;;
+		*) echo "unknown option: $argument" >&2; exit 2 ;;
+	esac
+done
 compose_env="$MARIADB_RUNTIME/compose.env"
 secret_file="$MARIADB_RUNTIME/secrets.env"
+
+print_help() {
+	happyro_cli_style "$color"
+	printf '\n%sHappyRO 数据库%s\n\n' "$HAPPYRO_C_TITLE" "$HAPPYRO_C_RESET"
+	printf '%s用法%s\n  %s%s start|stop|status|verify%s [--no-color]\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_CMD" "$0" "$HAPPYRO_C_RESET"
+	printf '%s常用例子%s\n  %s%s start%s\n  %s%s status --no-color%s\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET"
+}
 
 fail() {
 	echo "database: $*" >&2
 	exit 1
 }
+
+if [[ -z "$action" || "$action" == "help" ]]; then
+	print_help
+	exit 0
+fi
 
 load_profile() {
 	[[ -f "$MARIADB_PROFILE" ]] || fail "missing profile: $MARIADB_PROFILE"
@@ -136,6 +157,7 @@ case "$action" in
 		verify_database
 		;;
 	*)
-		fail "usage: $0 start|stop|status|verify"
+		print_help
+		exit 1
 		;;
 esac
