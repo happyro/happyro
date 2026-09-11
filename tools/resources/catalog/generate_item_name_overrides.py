@@ -1,4 +1,4 @@
-"""Generate client runtime item-name overrides from the canonical catalog."""
+"""Generate exceptional item names and the localized card-prefix table."""
 import json
 import sys
 from pathlib import Path
@@ -9,7 +9,7 @@ def usage(color: bool = True) -> None:
         return f"\033[{code}m{value}\033[0m" if color else value
 
     print(
-        f"\n{paint('1;36', 'HappyRO item name override generator')}\n\n"
+        f"\n{paint('1;36', 'HappyRO item localization generator')}\n\n"
         f"{paint('1;33', 'Usage')}\n"
         f"  {paint('1;32', 'python3 generate_item_name_overrides.py --write')} [--no-color]\n\n"
         f"{paint('1;33', 'Examples')}\n"
@@ -28,17 +28,20 @@ def main(arguments: list[str]) -> int:
         raise SystemExit(f"Unknown or incomplete arguments: {' '.join(arguments)}")
 
     root = Path(__file__).resolve().parents[3]
-    catalog = json.loads(
+    server_catalog = json.loads(
         (root / "repos/happyro-admin/backend/resources/game-data/items/renewal.json").read_text()
     )
-    items = dict(catalog["items"])
-    client_items = json.loads(
+    client_catalog = json.loads(
         (root / "repos/happyro-admin/backend/resources/game-data/items/client-kro-20211105.json").read_text()
-    )["items"]
-    items.update(client_items)
+    )
+    item_info = json.loads(
+        (root / "docs/translation/zh-cn/kro-20211105/merged/files/lub/itemInfo_true.json").read_text()
+    )
+    client_items = client_catalog["items"]
     overrides = {
         item_id: item["names"]["zh-CN"]
-        for item_id, item in items.items()
+        for item_id, item in client_items.items()
+        if item["names"]["zh-CN"] != item_info["data"][item_id]["identifiedDisplayName"]
     }
     output = root / "repos/happyro-client/src/DB/Items/ItemNameOverrides.generated.js"
     output.write_text(
@@ -46,7 +49,20 @@ def main(arguments: list[str]) -> int:
         f"export default {json.dumps(overrides, ensure_ascii=False, separators=(',', ':'))};\n",
         encoding="utf-8",
     )
+    source = root / "work/grf-extract/kro-20211105/data/data/cardprefixnametable.txt"
+    prefix_lines = []
+    for raw_line in source.read_text(encoding="cp949").splitlines():
+        if not raw_line.strip() or raw_line.startswith("//"):
+            continue
+        item_id, _source_name, remainder = raw_line.split("#", 2)
+        item = client_items.get(item_id) or server_catalog["items"].get(item_id)
+        if item is None:
+            raise ValueError(f"card prefix item is missing from catalogs: {item_id}")
+        prefix_lines.append(f'{item_id}#{item["names"]["zh-CN"]}#{remainder}')
+    prefix_output = root / "localization/client/data/cardprefixnametable.txt"
+    prefix_output.write_text("\n".join(prefix_lines) + "\n", encoding="utf-8")
     print(f"generated {len(overrides)} item name overrides")
+    print(f"generated {len(prefix_lines)} localized card prefixes")
     return 0
 
 

@@ -10,6 +10,7 @@ message_table="$PROJECT_ROOT/localization/client/data/msgstringtable.txt"
 title_table="$PROJECT_ROOT/localization/client/data/titletable.json"
 skill_description_table="$PROJECT_ROOT/localization/client/data/skilldesctable.txt"
 skill_name_table="$PROJECT_ROOT/localization/client/data/skillnametable.txt"
+card_prefix_table="$PROJECT_ROOT/localization/client/data/cardprefixnametable.txt"
 # Archived itemlocalization overlay; itemInfo_true.lub is the active source.
 # item_localization_table="$PROJECT_ROOT/localization/client/data/itemlocalization.json"
 
@@ -66,6 +67,18 @@ if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$skill_name_table" "$skill_description_table
 	echo "localized skill tables contain Korean text" >&2
 	exit 1
 fi
+[[ -f "$card_prefix_table" ]] || {
+	echo "missing localized card prefix table: $card_prefix_table" >&2
+	exit 1
+}
+[[ "$(rg -c '^[0-9]+#[^#]+#$' "$card_prefix_table")" -eq 1081 ]] || {
+	echo "localized card prefix table is incomplete: $card_prefix_table" >&2
+	exit 1
+}
+if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$card_prefix_table"; then
+	echo "localized card prefix table contains Korean text: $card_prefix_table" >&2
+	exit 1
+fi
 if false; then # Archived itemlocalization overlay validation.
 [[ -f "$item_localization_table" ]] || {
 	echo "missing item localization table: $item_localization_table" >&2
@@ -92,6 +105,7 @@ fi
 fi
 
 mkdir -p "$resources_dir"
+install -m 0600 "$card_prefix_table" "$GATEWAY_REPO/data/cardprefixnametable.txt"
 
 ensure_link() {
 	local link_path="$1"
@@ -129,4 +143,5 @@ echo "configured: $message_table"
 echo "configured: $title_table"
 echo "configured: $skill_description_table"
 echo "configured: $skill_name_table"
+echo "configured: $card_prefix_table"
 # Archived itemlocalization overlay is not configured.
