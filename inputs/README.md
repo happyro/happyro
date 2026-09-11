@@ -1,3 +1,7 @@
+# inputs
+
+不可修改的外部输入与运行基线。目录边界见 [docs/architecture/repository-boundaries.md](../docs/architecture/repository-boundaries.md)。
+
 # Client resources
 
 Runtime resources must be fully hosted on this NAS. Public roBrowser GRF services are not allowed.
