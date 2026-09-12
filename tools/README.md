@@ -1,9 +1,10 @@
 # tools
 
-构建器、解析器、生成器和底层工具。运维入口在 `scripts/`。
+构建器、解析器、生成器和部署维护工具。本机开发运维入口在 `scripts/`，无源码 Docker 部署工具集中在 `deployment/`。
 
 | 目录 | 用途 |
 | --- | --- |
+| [deployment/](deployment/README.md) | Docker 部署包、资源校验、密钥初始化、备份恢复和镜像发布 |
 | [client/](client/README.md) | LUB 提取与回编译 |
 | [resources/](resources/README.md) | 物品 / 魔物目录生成 |
 | [translation/](translation/README.md) | 历史翻译分片的合并、校验和回写 |

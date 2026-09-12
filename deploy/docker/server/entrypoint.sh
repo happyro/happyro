@@ -1,6 +1,19 @@
 #!/bin/sh
 set -eu
 
+if [ "$#" -eq 0 ] || [ "$1" = '--help' ] || [ "$1" = '--no-color' ]; then
+    if [ "${1:-}" = '--no-color' ]; then
+        printf '\nHappyRO Server\n\nCommands: login-server | char-server | map-server | web-server\nExample: happyro-server map-server\n\n'
+    else
+        printf '\n\033[1;36mHappyRO Server\033[0m\n\n\033[1;33mCommands\033[0m\n\033[1;32mlogin-server | char-server | map-server | web-server\033[0m\n\033[36mExample: happyro-server map-server\033[0m\nUse --no-color for plain help.\n\n'
+    fi
+    exit 0
+fi
+case "$1" in login-server|char-server|map-server|web-server) ;; *) exit 2 ;; esac
+printf '%s\n' "$1" > /run/happyro-service
+umask 007
+mkdir -p /run/happyro /run/happyro-settings
+
 : "${DB_HOST:=database}"
 : "${DB_PORT:=3306}"
 : "${DB_MAIN_DATABASE:=happyro}"
@@ -14,6 +27,9 @@ set -eu
 : "${CHAR_PORT:=6121}"
 : "${MAP_PORT:=5121}"
 : "${WEB_PORT:=8889}"
+: "${GAME_CONTROL_TOKEN:?GAME_CONTROL_TOKEN is required}"
+case "$GAME_CONTROL_TOKEN$DB_PASSWORD$INTERSERVER_PASSWORD" in *[!A-Za-z0-9_-]*) echo 'Use generated alphanumeric secrets' >&2; exit 2 ;; esac
+[ "${#INTERSERVER_PASSWORD}" -le 23 ] || { echo 'INTERSERVER_PASSWORD must be at most 23 characters' >&2; exit 2; }
 
 mkdir -p conf/import db/import
 cp -n conf/import-tmpl/*.txt conf/import/ 2>/dev/null || true
@@ -80,12 +96,23 @@ char_port: ${CHAR_PORT}
 bind_ip: 0.0.0.0
 map_ip: ${GAME_SERVER_IP}
 map_port: ${MAP_PORT}
+game_control_socket: /run/happyro/map-control.sock
 EOF
 
 cat > conf/import/web_conf.txt <<EOF
 bind_ip: 0.0.0.0
 web_port: ${WEB_PORT}
 allowed_origin_cors: ${WEB_ALLOWED_ORIGIN:-http://localhost:3338}
+game_control_enabled: yes
+game_control_secret: ${GAME_CONTROL_TOKEN}
+game_control_socket: /run/happyro/map-control.sock
 EOF
+
+# Admin replaces this file atomically, so share its directory rather than a file mount.
+if [ ! -f /run/happyro-settings/battle_conf.txt ]; then
+    cp conf/import-tmpl/battle_conf.txt /run/happyro-settings/battle_conf.txt
+fi
+printf 'import: /run/happyro-settings/battle_conf.txt\n' > conf/import/battle_conf.txt
+chown 33:33 /run/happyro-settings /run/happyro-settings/battle_conf.txt
 
 exec "/opt/rathena/$1"
