@@ -10,5 +10,6 @@
 | [translation/](translation/README.md) | 历史翻译分片的合并、校验和回写 |
 | `workspace/` | kRO 工作区清单校验 |
 | `generate-npc-catalog.mjs` | 版本化 NPC 目录 |
+| `generate-map-catalog.mjs` | 游戏与后台共用地图目录；generate 同步两仓库数据并导出地形预览 |
 
 生成物写入 `work/` 或产品仓库资源目录，不把工具输出当作文档。

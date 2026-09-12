@@ -28,7 +28,8 @@ happyro-deploy/
         ├── items/               # icons/、illustrations/
         ├── monsters/
         ├── npcs/
-        └── maps/
+        ├── maps/
+        └── terrain/             # 无地图图片时的地形预览
 ```
 
 资源只读挂载，所有可写数据和运行状态都使用部署包内 `data/` 下的宿主机目录挂载，不使用 Docker named volume。不能把整个 `work/`、官方素材、Windows EXE/DLL 或开发环境密钥装进资源包。中文覆盖文件在 Gateway 镜像 `/opt/overrides`，基础运行资源在宿主机 `resources/kro-20211105`；Gateway 优先使用已打包的覆盖目录。运行目录内已经编译、核验的 System 文件保留在资源包，不能从历史翻译工作区发布。

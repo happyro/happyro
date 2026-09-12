@@ -52,6 +52,7 @@ def prepare(args):
         'catalog/monsters': root / 'work/game-data/monsters/kro-20211105',
         'catalog/npcs': root / 'repos/happyro-admin/backend/resources/game-data/world/npcs',
         'catalog/maps': root / 'repos/happyro-admin/backend/resources/game-data/world/maps',
+        'catalog/terrain': root / 'repos/happyro-admin/backend/resources/game-data/world/terrain',
     }
     ini = (kro / 'DATA.INI').read_text()
     grfs = re.findall(r'^\s*\d+\s*=\s*([^\r\n]+\.grf)\s*$', ini, re.I | re.M)
