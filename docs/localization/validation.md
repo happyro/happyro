@@ -16,7 +16,7 @@ make gateway-verify
 - 技能名称和说明表至少 1600 条，且无韩文；
 - 卡片前缀表恰好 1081 条，且无韩文。
 
-Gateway 健康检查会再请求这些 `/data` 端点，确认线上内容与覆盖源一致。
+`make gateway-verify` 会请求部分 `/data` 端点并检查关键内容；`/api/health` 本身不是逐文件哈希校验。PWA 关键构建文件由 `refresh-client.sh verify` 校验 HTTP 哈希，资源完整性仍需按相应清单另行验证。
 
 ## 生成器
 
@@ -35,7 +35,7 @@ python3 tools/client/build/lua50/main.py build
 python3 tools/client/build/lua51/main.py build
 ```
 
-默认输入是 `localization/sources/kro-20211105/merged/files/lub/`。工具会按目标 ABI 编译，并用同版本 Lua 做语义回环。编译成功只证明 LUB 内字符串为 UTF-8，不代替客户端字体和渲染验收。
+默认输入是 `localization/sources/kro-20211105/merged/files/lub/`。先准备对应版本工具链（相同入口的 `prepare` 子命令），或传入已验证的 `--lua` / `--luac`。工具按目标 ABI 编译并执行结构/语义校验；成功不证明翻译正确，也不代替字体和渲染验收。输出放在 `artifacts/`，部署到运行目录后另核对目标哈希和来源。
 
 ## 客户端与浏览器
 

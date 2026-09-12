@@ -23,7 +23,7 @@
 | `tools/` | 构建器、解析器、生成器和底层工具 | 否 |
 | `deploy/` | 部署模板和环境样例，不承载业务逻辑 | 否 |
 | `configs/` | 客户端与导航等跨仓库配置源 | 否 |
-| `work/` | 可删除的中间结果和本机运行时状态 | 是 |
+| `work/` | 构建中间结果、缓存，以及数据库、密钥等持久运行状态 | 不可整体删除；先辨别子目录并备份 |
 | `artifacts/` | 可交付结果和验收证据 | 可重建，不作为运行输入 |
 | `archive/` | 不再参与当前发布的历史内容 | 否，但不是发布输入 |
 | `repos/` | 四个应用仓库的检出位置 | 否 |
@@ -35,6 +35,7 @@
 - `localization/client/data/`：UTF-8 散装中文覆盖，由 Gateway `DATA_OVERRIDE_PATH` 提供。
 - `localization/sources/kro-20211105/`：当前 LUB / 文本回编译仍读取的已审查 JSON 与文本源。
 - `work/`：GRF 解压、图片转换、翻译临时合并、本机 MariaDB 数据等，不提交。
+- `work/runtime/mariadb-10.11/` 包含数据库与凭据，不是可随意清理的缓存。Docker 数据卷也可能位于 `work/runtime/docker-mariadb/`；以实际挂载为准。恢复流程见[备份与恢复](../operations/backup-recovery.md)。
 - `artifacts/`：LUB 编译产物、浏览器验收截图等，不作为运行时数据源。
 
 ## 文档边界

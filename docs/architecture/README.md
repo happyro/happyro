@@ -7,6 +7,7 @@
 - [系统概览](system-overview.md)：四仓库职责，以及浏览器到 Gateway、Server、Admin 的调用关系。
 - [仓库边界](repository-boundaries.md)：官方输入、运行目录、本地化源、脚本、工具和产物目录的职责。
 - [运行时数据流](runtime-data-flow.md)：PWA、资源、封包、Web API 和 Game Control 的数据路径。
+- [游戏字节流](game-stream.md)：TCP 分帧、Gateway 背压、超时、连接生命周期和回归验证。
 - [游戏资料目录](game-data-catalogs.md)：物品、魔物、地图、NPC 的权威来源与消费者。
 - [本地化运行时](localization-runtime.md)：中文资源如何进入客户端，以及静态数据与服务器权威的边界。
 - [世界图鉴与导航](world-catalog-navigation.md)：NPC、魔物、地图的统一实体模型和双入口职责。

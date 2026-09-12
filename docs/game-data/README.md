@@ -8,6 +8,7 @@
 | 魔物 | [monsters.md](monsters.md) |
 | 地图 | [maps.md](maps.md) |
 | NPC | [npcs.md](npcs.md) |
+| 技能与状态 | [skills.md](skills.md) |
 
 生成器入口：
 

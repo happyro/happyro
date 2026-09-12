@@ -36,16 +36,16 @@ Gateway 收到 `/data/...` 请求后的查找顺序为：
 | --- | --- | --- | --- | --- |
 | `cardprefixnametable.txt` | `localization/client/data/`，由物品本地化生成器生成 | 校验后安装到 Gateway `data/` | `DBManager.loadTable` 以 UTF-8 读取 | 插卡装备的中文前缀 |
 | `msgstringtable.txt` | `localization/client/data/` | `DATA_OVERRIDE_PATH` | `DBManager.loadTable` 按客户端字符集读取 | 系统消息 |
-| `skillnametable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 作为技能目录和相关界面的发布输入 | 技能名称 |
-| `skilldesctable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 作为技能说明目录的发布输入 | 技能说明 |
+| `skillnametable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 可访问的散装输出；当前主要 UI 读取生成 JS | 技能名称 |
+| `skilldesctable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 可访问的散装输出；当前 `DB.getSkillDescription` 读取生成 JS | 技能说明 |
 | `titletable.json` | `localization/client/data/` | `DATA_OVERRIDE_PATH` | 官方称号表加载后由 `loadTitleTable` 合并 | 中文称号 |
 | `itemInfo_true.lub` | `inputs/runtime/kro-20211105/client/System/`，由翻译 JSON 编译 | 运行目录覆盖 | `loadItemInfo` 通过 Lua 运行时加载 | 物品名称、说明、资源名、洞数和 ClassNum |
 
-`data/msgstringtable.txt` 基于 OpenKore 在提交 `51de1ddfc4449ae5217f6886de702f87ca934030` 时的 cRO 消息表。该文件包含 0 至 4070 的消息 ID，其 SHA-256 为 `b0fa22e17ec01688828157b215c58d452dae389d4601a52087c1e1324be794ce`。
+`data/msgstringtable.txt` 基于 OpenKore 在提交 `51de1ddfc4449ae5217f6886de702f87ca934030` 时的 cRO 消息表，之后有 HappyRO 文案维护。原始来源提交不能作为当前覆盖文件的哈希；当前版本应从 Git 与 `sha256sum localization/client/data/msgstringtable.txt` 核验，不复制旧文档中的固定哈希作为部署依据。
 
 `data/titletable.json` 包含 2021 客户端固定称号 ID 范围 1000 至 1046 的简体中文名称。
 
-`data/skillnametable.txt` 和 `data/skilldesctable.txt` 从固定版本服务端技能数据库生成，覆盖全部 1767 个技能的简体中文名称和机制信息。其中 `data/skill-description-prose.zh-CN.json` 逐条收录官方 `skilldescript.lub` 的 1279 条玩家可见说明与 6260 行有效等级数据，并按效果逻辑分段。`data/skill-description-labels.zh-CN.json` 按同一技能 ID 收录官方最高等级、类别、类型、目标和独立范围标签；习得条件优先从已核验的运行时前置技能数据生成，官方文本存在差异时使用显式覆盖，其余任务、身份和状态条件也由生成器补充。生成器还会阻止已识别的可翻译英文标签、属性和技能名后缀重新进入玩家可见资源；正文、条件和等级公式中的技能交叉引用必须与技能目录使用同一中文名称。运行 `node scripts/resources/generate-skill-localization.mjs --write` 可从当前服务端数据库重新生成两份资源。
+技能生成器组合服务端数据库、中文正文/标签和固定 LUB 运行快照，同时写出 TXT 与 Client 生成 JS。当前覆盖计数与来源差异见[技能与状态](../game-data/skills.md)。只验证 `/data/skilldesctable.txt` 不能证明游戏技能窗已更新：必须重建 PWA 并验证生成 JS。原文忠实度与运行数值是不同问题，不能将生成的参数称为 LUB 原文翻译。
 
 `num2cardillustnametable.txt` 和 `cardpostfixnametable.txt` 仍来自官方 GRF：前者只关联卡片图片资源名，后者只标记装备名称采用前缀还是后缀，它们不承载需要翻译的卡片显示名称。
 

@@ -1,5 +1,7 @@
 # 可选 Lua 数据文件说明
 
+> 历史快照：仅记录该批次当时的实现、路径和操作。旧翻译分片回写、运行目录只读等规则已被后续仓库规则替代；当前维护以根仓库 AGENTS.md 和 docs/localization/ 为准，不直接执行本文旧命令。
+
 ## 结论
 
 `inputs/runtime/kro-20211105/client` 不包含以下 HatEffect 数据文件：

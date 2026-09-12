@@ -4,5 +4,6 @@
 
 - [概览](overview.md)：汉化方法、限制和当前维护边界。
 - [客户端资源](client-resources.md)：散装覆盖、ItemInfo、卡片前缀和 Gateway 生效链。
+- [技能与状态来源](../game-data/skills.md)：原文译文、服务器参数、状态 LUB 和实时冷却的区别。
 - [服务端内容](server-content.md)：NPC、数据库和 conf 中的玩家可见文本。
 - [校验](validation.md)：生成器、资源配置和运行时检查。

@@ -14,4 +14,4 @@ docs/history/bugfix/<locale>/<YYYYMMDD-NN>/
 
 当前 zh-cn 批次见 [`zh-cn/`](zh-cn/README.md)。
 
-旧路径 `docs/bugfix/` 重定向到这里。
+历史批次中的旧路径和维护规则按当时语境阅读，不适用于当前发布。新操作以[本地化维护](../../localization/overview.md)和[开发文档](../../development/README.md)为准。

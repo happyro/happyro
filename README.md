@@ -28,6 +28,8 @@ HappyRO 由一个编排仓库和四个独立的应用仓库组成：
 
 ## 依赖基线
 
+下表中的提交是 `versions/sources.lock` 记录的选定起点，不是应用仓库当前 HEAD。实际产品版本用各仓库 Git 提交或发布镜像 digest 记录。
+
 | 依赖 | 版本或基线 |
 | --- | --- |
 | [rAthena](https://github.com/rathena/rathena) | `master` @ [`2fe6ab3dc4d8`](https://github.com/rathena/rathena/commit/2fe6ab3dc4d830b11d93fb44c3b48436571890bd) |
@@ -39,10 +41,9 @@ HappyRO 由一个编排仓库和四个独立的应用仓库组成：
 
 ## 最短启动路径
 
-本机开发默认通过根仓库 `Makefile` 和 systemd transient units 启动，不使用完整 Docker Compose 作为当前运行方式。
+本机开发通过根仓库 `Makefile` 和 systemd 管理游戏进程，MariaDB 使用 Compose。已有主机可能同时包含长期和临时单元，先核对[服务状态](docs/operations/services.md)。
 
 ```bash
-make doctor
 make database-start
 make configure-server
 make build-server
@@ -50,10 +51,14 @@ make server-start
 make configure-client
 make configure-gateway
 make configure-resources
+(cd repos/happyro-client && npm install && npm run build:pwa)
+make doctor
 make gateway-start
 ```
 
 浏览器打开 <http://127.0.0.1:3338/applications/pwa/index.html>。完整步骤、依赖和常见命令见 [本地开发](docs/development/local-setup.md)。
+
+首次运行先检出四个应用仓库并准备 kRO 资源。`doctor` 包含旧版 Gateway 精确提交检查；维护分支触发时按[故障检查](docs/operations/troubleshooting.md)核对，不回退产品代码。
 
 ## 文档导航
 

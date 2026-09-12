@@ -2,7 +2,7 @@
 
 HappyRO 是浏览器可玩的中文 RO 栈。玩家只访问 Gateway；登录、角色、地图权威在 rAthena；GM 操作走独立的 Admin 后台。
 
-固定基线为 `PACKETVER=20211103`、Renewal、kRO 2021-11-05 客户端资源。四个应用仓库必须使用同一封包设置。
+固定基线为 `PACKETVER=20211103`、Renewal、kRO 2021-11-05 客户端资源。Client 与 Server 的包定义和混淆设置必须一致；Gateway 透明转发字节流，Admin 使用相应服务端接口。
 
 ## 仓库职责
 
@@ -16,7 +16,7 @@ HappyRO 是浏览器可玩的中文 RO 栈。玩家只访问 Gateway；登录、
 
 ## 运行时拓扑
 
-本机开发默认绑定回环地址。Gateway 统一对外端口为 `3338`。
+游戏 TCP 与数据库本机默认绑定回环地址。Gateway 对浏览器监听 `3338`，可经局域网访问；Admin 的绑定由其部署配置管理。
 
 ```text
 浏览器
@@ -44,7 +44,7 @@ MariaDB 本机端口为 `33062`，避免与系统默认 `3306` 冲突。数据�
 2. 客户端按 `Config.happyro.js` 连接当前页面的 `/ws/` 和 `/data/`。
 3. Gateway 把 WebSocket 转到 login / char / map 的 TCP 端口。
 4. 角色进入地图后，技能、导航等静态数据来自 PWA 构建产物；物品图标、地图、LUB 等按资源查找顺序由 Gateway 提供。
-5. 寻路、传送、召唤等可改变世界状态的操作由 map-server 裁决，客户端只提交请求并展示结构化结果。
+5. 客户端计算和展示导航路线；角色移动、传送、召唤的有效性由 map-server 裁决。
 
 ## Admin 与游戏世界
 
