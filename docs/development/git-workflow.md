@@ -30,9 +30,9 @@ HappyRO 自有提交使用 `type(scope): subject`。
 | Client | `repos/happyro-client/changelog/` |
 | Server | `repos/happyro-server/changelog/` |
 | Admin | `repos/happyro-admin/changelog/` |
-| Gateway | `repos/happyro-gateway/CHANGELOG.md` |
+| Gateway | `repos/happyro-gateway/changelog/`（HappyRO 新变更）；`CHANGELOG.md` 保留旧记录 |
 
-Client 和 Server 的产品变更还要同步记录到根仓库集中 changelog，并在同一次工作中完成提交。根仓库用独立的 `docs(changelog)` 提交记录这两个仓库的跨仓库汇总，这是“禁止只提交 changelog”的唯一例外。Admin 变更不写入根仓库 changelog。
+Client 和 Server 的产品变更还要同步记录到根仓库集中 changelog，并按根仓库规则在同一次工作中完成提交和推送。根仓库用独立的 `docs(changelog)` 提交记录这两个仓库的跨仓库汇总，这是“禁止只提交 changelog”的唯一例外。Admin 变更规则见其 `AGENTS.md` 和 `changelog/`，不写入根仓库集中记录。
 
 ## 文档与源码
 

@@ -1,6 +1,6 @@
 # 服务
 
-本机开发使用 systemd transient units。Admin 使用仓库内的长期 systemd 模板。
+本机进程由 systemd 管理，单元可能是长期安装或脚本创建的 transient unit。不要从 Makefile 的存在推断实际安装方式，也不要把停止后的临时单元当作仍可直接启动的长期单元。
 
 ## 进程与端口
 
@@ -11,7 +11,7 @@
 | char-server | 同上 | `127.0.0.1:6121` |
 | map-server | 同上 | `127.0.0.1:5121` |
 | web-server | 同上 | `127.0.0.1:8889` |
-| Gateway | `make gateway-start` | `127.0.0.1:3338` |
+| Gateway | `make gateway-start` / 已安装单元 | `:3338`，监听主机接口，客户端可从局域网访问 |
 | Admin 前端 | `happyro-admin-frontend.service` | `:8000` |
 | Admin 后端 | `happyro-admin-backend.service` | `:18081` |
 
@@ -38,7 +38,7 @@ Gateway 启动前会验证 Server 健康，并重新执行网关与资源配置�
 
 ## systemd 单元
 
-根仓库脚本创建的 transient units：
+根仓库脚本使用以下单元名创建 transient units；长期模板可能占用同名服务：
 
 - `happyro-login.service`
 - `happyro-char.service`
@@ -46,7 +46,28 @@ Gateway 启动前会验证 Server 健康，并重新执行网关与资源配置�
 - `happyro-web-api.service`
 - `happyro-gateway.service`
 
-MariaDB 容器名为 `happyro-mariadb`。Admin 模板位于 `repos/happyro-admin/deploy/systemd/`。Server 物理部署模板位于 `repos/happyro-server/deploy/systemd/`，用于长期安装，不是本机 `make server-start` 使用的 transient units。
+MariaDB 容器名为 `happyro-mariadb`。Admin 模板位于 `repos/happyro-admin/deploy/systemd/`；Server 长期模板位于 `repos/happyro-server/deploy/systemd/`。实际安装来源用以下只读命令核验：
+
+```bash
+systemctl show happyro-login happyro-char happyro-map happyro-web-api happyro-gateway -p Id -p FragmentPath -p Transient -p MainPID
+systemctl cat happyro-map.service
+```
+
+2026-09-13 检查时，主机上既有 `/etc/systemd/system/` 单元，也有 `/run/systemd/transient/` 单元；该观察不是新机器的安装要求。已有同名单元时使用其部署手册维护，勿再次运行 `systemd-run` 创建冲突单元。
+
+## 修改后的更新路径
+
+| 变更 | 生效动作 | 验证 |
+| --- | --- | --- |
+| Client JS / CSS / 静态生成表 / Config | Gateway 运行时执行 `./scripts/client/refresh-client.sh build --no-color` | manifest 与 HTTP 哈希一致，再浏览器刷新 |
+| Gateway 代码 / `.env` | 重启 `happyro-gateway.service`，等待 HTTP 就绪 | `make gateway-verify` |
+| 散装中文 / 运行 LUB | 配置、核对目标哈希，重启 Gateway 清文件缓存 | 资源端点和实际显示 |
+| Server C++ | `make build-server` 后重启受影响进程；common 修改影响所有程序 | 监听、服务互联、实际业务 |
+| Server db / NPC / conf | 根据对应设置采用受支持 reload 或重启 | 新实体、对话、权限和日志 |
+
+重启会断开游戏连接。安排维护窗口，先完成构建与备份。`systemctl is-active` 只说明进程存活；`server-verify` 会检查监听并搜索累计日志中的 ready 标记，旧日志可能命中，必须同时核对本次启动后的日志和真实连接。
+
+更改 login / char 时注意 `Requires=` 依赖可能连带停止后继服务；长期单元按 login → char → map 顺序启动，并单独检查 web-api 和 Gateway。临时单元停止后可能被回收，应通过创建它的脚本重新建立，不能假定 `systemctl start` 永远有效。
 
 ## 日志
 

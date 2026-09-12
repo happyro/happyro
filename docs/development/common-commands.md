@@ -37,6 +37,8 @@ make server-stop
 make configure-client
 make configure-gateway
 make configure-resources
+./scripts/client/refresh-client.sh build --no-color
+./scripts/client/refresh-client.sh verify --no-color
 make gateway-start
 make gateway-status
 make gateway-verify
@@ -69,13 +71,15 @@ node scripts/resources/generate-navigation-data.mjs --write
 
 无参数运行上述 CLI 只显示帮助，不写文件。
 
+`refresh-client.sh build` 要求 Gateway 已运行，因为构建后立即核对 HTTP 产物。首次启动前先在 Client 执行 `npm install` 和 `npm run build:pwa`，再启动 Gateway。
+
 ## 应用仓库内命令
 
 ```bash
-cd repos/happyro-client && npm test && npm run build:pwa
-cd repos/happyro-gateway && npm run test:runtime-config && npm run test:proxy
-cd repos/happyro-admin/backend && php artisan test
-cd repos/happyro-admin/frontend && npm run lint && npm run test && npm run build
+(cd repos/happyro-client && npm test && npm run build:pwa)
+(cd repos/happyro-gateway && node --test test/*.test.js)
+(cd repos/happyro-admin/backend && php artisan test)
+(cd repos/happyro-admin/frontend && npm run lint && npm run test && npm run build)
 ```
 
 服务端编译使用根仓库 `make build-server`，不要绕过 HappyRO 配置直接调用上游安装脚本作为本机默认路径。

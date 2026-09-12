@@ -7,7 +7,11 @@ make doctor
 make status
 ```
 
-`doctor` 失败时先处理缺失命令、上游基线、封包配置或环境文件，再启动服务。
+`doctor` 是配置检查，不是完整运行健康检查。它依赖已有应用检出和部分生成配置；缺失时先按[本地开发](../development/local-setup.md)准备。
+
+若报告 `HappyRO Gateway is not at locked commit`，当前脚本在 `scripts/maintenance/doctor.sh` 要求 Gateway HEAD 精确等于 `versions/sources.lock` 中的旧锁定值。维护分支有新提交也会失败。这不是回退源码的理由：检查锁定提交是否是当前 HEAD 祖先，再独立验证封包、配置、端口与服务。更新锁定策略需要单独修改脚本和基线，不在排障时执行 `git checkout` 丢弃新版本。
+
+`make status` 目前只汇总 Client / Server / Gateway 分支、数据库和五个游戏服务；不检查 Admin，也不访问浏览器。Admin 另用 `systemctl status happyro-admin-backend happyro-admin-frontend`。
 
 ## 端口占用
 
@@ -36,6 +40,18 @@ systemctl status happyro-admin-frontend.service
 - `make gateway-verify`：PWA、本地化资源和 Web API 代理。
 - 查看 `work/runtime/rathena-20211103/logs/` 与 `work/runtime/gateway/gateway.log`。
 - 确认浏览器访问的是 Gateway `3338`，而不是 Client Vite 开发页，除非正在单独调试 UI。
+
+## 游戏中断线
+
+先记录本地时间与角色、动作，再检查 `journalctl -u happyro-map --since ...`、地图日志和 Gateway 结构化连接日志。区分服务重启、TCP/WS 关闭、非法包、未完成帧超时及每 IP 建连频率保护。Gateway 日志包含 connectionId、时间、关闭原因和字节计数；同一个前端登录会先后建立 login、char、map 三条连接，其中旧阶段关闭是正常切换。
+
+日志出现“合法长度但当前字节不足”时应对照[字节流契约](../architecture/game-stream.md)，不能仅凭一次 recv 的长度判定客户端发错包。真实端口测试会产生预期拒绝日志，应与玩家故障区分。
+
+## 技能无法释放或说明窗口越界
+
+确认服务端下发技能类型、等级与 `SKILL_POSTDELAY`，再对照施放请求和 ACK。`cause=4` 是间隔未结束；不是所有失败都能通过清数据库解决，在线角色状态由地图服持有。说明中的时间是配置参考，实际倒计时由服务器下发。详见[技能与状态](../game-data/skills.md)。
+
+技能说明窗口应有标题栏、内部滚动，窄屏最高为视口 80%。仍不能拖动或看不到底部时先运行 `./scripts/client/refresh-client.sh verify --no-color` 并强制刷新，确认不是旧构建。
 
 ## 数据库
 
