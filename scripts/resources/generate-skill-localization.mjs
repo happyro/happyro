@@ -715,15 +715,15 @@ function describe(skill) {
 			if (value == null || durationTimes(value).every(time => Number(time) === 0)) return '无';
 			return summarizeDurations(value) || '资料未提供';
 		};
-		lines.push(`独立冷却（基础）：${timing(skill.Cooldown)}`);
-		lines.push(`施放后延迟（基础）：${timing(skill.AfterCastActDelay)}`);
+		lines.push(`独立冷却：${timing(skill.Cooldown)}`);
+		lines.push(`施放后延迟：${timing(skill.AfterCastActDelay)}`);
 		if (durationTimes(skill.FixedCastTime).some(time => Number(time) < 0)) {
-			lines.push(`吟唱时间（基础）：${timing(skill.CastTime)}（固定部分按服务器规则分配）`);
+			lines.push(`吟唱时间：${timing(skill.CastTime)}（固定部分按服务器规则分配）`);
 		} else {
-			lines.push(`可变吟唱（基础）：${timing(skill.CastTime)}`);
-			lines.push(`固定吟唱（基础）：${timing(skill.FixedCastTime)}`);
+			lines.push(`可变吟唱：${timing(skill.CastTime)}`);
+			lines.push(`固定吟唱：${timing(skill.FixedCastTime)}`);
 		}
-		if (skill.AfterCastWalkDelay != null) lines.push(`施放后移动延迟（基础）：${timing(skill.AfterCastWalkDelay)}`);
+		if (skill.AfterCastWalkDelay != null) lines.push(`施放后移动延迟：${timing(skill.AfterCastWalkDelay)}`);
 		lines.push('实际时间受角色属性、装备和状态影响，以服务器为准；无独立冷却不代表不受动作间隔限制。');
 	}
 	const sp = summarizeValues(skill.Requires?.SpCost);
