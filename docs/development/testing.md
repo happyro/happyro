@@ -31,6 +31,7 @@ npm run build:pwa
 cd repos/happyro-gateway
 npm run test:runtime-config
 npm run test:proxy
+npm run test:safe-path
 npm run doctor
 ```
 

@@ -9,7 +9,7 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器实例为完整
 ## 生成命令
 
 ```bash
-node tools/generate-npc-catalog.mjs
+node tools/generate-npc-catalog.mjs generate
 cd repos/happyro-client && npm run catalog:world
 ```
 

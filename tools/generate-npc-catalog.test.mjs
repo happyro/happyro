@@ -40,7 +40,8 @@ test('parses duplicate NPCs and preserves symbolic sprite keys', () => {
 	);
 
 	assert.equal(entry.type, 'script');
-	assert.equal(entry.dynamic, true);
+	assert.equal(entry.enabled, false);
+	assert.equal(entry.dynamic, false);
 	assert.equal(entry.sprite_id, null);
 	assert.equal(entry.sprite_key, '4_F_ESTLOVELOY');
 });

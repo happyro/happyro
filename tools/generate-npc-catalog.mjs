@@ -65,8 +65,8 @@ export function parseNpcDefinition(line, sourcePath, lineNumber, translations = 
 		display_name: translations[sourceName] || sourceName,
 		sprite_id: numericSpriteId,
 		sprite_key: spriteKey,
-		enabled: true,
-		dynamic: type === 'script' && String(typeMatch[2] || '').toLocaleUpperCase() === 'DISABLED',
+		enabled: String(typeMatch[2] || '').toLocaleUpperCase() !== 'DISABLED',
+		dynamic: false,
 		source: { path: sourcePath, line: lineNumber }
 	};
 }
@@ -215,7 +215,7 @@ async function buildCatalog() {
 		definitionHash.update(relativePath).update('\0').update(contents);
 		contents.split(/\r?\n/).forEach((line, index) => {
 			const entry = parseNpcDefinition(line, relativePath, index + 1, translations);
-			if (!entry) return;
+			if (!entry || entry.enabled === false) return;
 			const position = `${entry.map}:${entry.x}:${entry.y}`;
 			entry.navigation = matchNavigation(entry, navigation.get(position));
 			if (entry.sprite_id === null && entry.navigation) entry.sprite_id = entry.navigation.class;

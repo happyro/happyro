@@ -15,16 +15,16 @@ upstream-status:
 	@./scripts/maintenance/upstreams.sh status
 
 configure-client:
-	@./scripts/client/configure-client.sh
+	@./scripts/client/configure-client.sh apply
 
 configure-gateway:
-	@./scripts/gateway/configure-gateway.sh
+	@./scripts/gateway/configure-gateway.sh apply
 
 configure-resources:
-	@./scripts/resources/configure-resources.sh
+	@./scripts/resources/configure-resources.sh apply
 
 configure-server:
-	@./scripts/server/configure-server.sh
+	@./scripts/server/configure-server.sh apply
 
 database-start:
 	@./scripts/database/database.sh start

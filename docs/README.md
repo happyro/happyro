@@ -13,7 +13,7 @@
 | [运维](operations/README.md) | 部署维护 | systemd、端口、环境变量、数据库、Docker 发布、故障检查 |
 | [本地化](localization/README.md) | 中文资源维护 | 客户端资源链、服务端内容、校验 |
 | [游戏资料](game-data/README.md) | 目录生成与消费 | 物品、魔物、地图、NPC |
-| [历史记录](history/README.md) | 批次与缺陷追踪 | Bugfix 记录、已归档翻译工作区 |
+| [历史记录](history/README.md) | 批次与缺陷追踪 | Bugfix 记录（含 [2026-09-12 审查修复](history/bugfix/zh-cn/20260912-01/README.md)）、已归档翻译工作区 |
 
 变更日志独立维护，不并入普通文档：
 

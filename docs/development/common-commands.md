@@ -62,7 +62,7 @@ python3 tools/resources/catalog/main.py items server
 python3 tools/resources/catalog/main.py items images
 python3 tools/resources/catalog/main.py monsters
 python3 tools/resources/catalog/generate_item_name_overrides.py --write
-node tools/generate-npc-catalog.mjs
+node tools/generate-npc-catalog.mjs generate
 node scripts/resources/generate-skill-localization.mjs --write
 node scripts/resources/generate-navigation-data.mjs --write
 ```

@@ -14,6 +14,23 @@ RATHENA_RUNTIME="$PROJECT_ROOT/work/runtime/rathena-20211103"
 # shellcheck disable=SC1091
 source "$PROJECT_ROOT/versions/sources.lock"
 
+happyro_cli_style() {
+	local color="${1:-true}"
+	if [[ "$color" == true && -t 1 ]]; then
+		HAPPYRO_C_TITLE=$'\033[1;36m'
+		HAPPYRO_C_SECTION=$'\033[1;33m'
+		HAPPYRO_C_CMD=$'\033[1;32m'
+		HAPPYRO_C_EXAMPLE=$'\033[36m'
+		HAPPYRO_C_RESET=$'\033[0m'
+	else
+		HAPPYRO_C_TITLE=''
+		HAPPYRO_C_SECTION=''
+		HAPPYRO_C_CMD=''
+		HAPPYRO_C_EXAMPLE=''
+		HAPPYRO_C_RESET=''
+	fi
+}
+
 check_upstream_base() {
 	local label="$1"
 	local repo="$2"

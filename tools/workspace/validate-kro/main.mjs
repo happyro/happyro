@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const repo = path.resolve(new URL('../../../', import.meta.url).pathname);
+// Historical translation workspace only. Not a client/server publish source.
 const root = path.join(repo, 'archive/translation/zh-cn/kro-20211105');
 const columns = [
   'agent_id', 'repo', 'path', 'domain', 'text_scope', 'unit_type', 'chunk_id',
