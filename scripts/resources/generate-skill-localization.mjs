@@ -710,8 +710,22 @@ function describe(skill) {
 	if (skill.SplashArea != null) lines.push(`作用范围：${summarizeValues(skill.SplashArea)}`);
 	const duration = summarizeDurations(skill.Duration1);
 	if (duration) lines.push(`持续时间：${duration}`);
-	const cooldown = summarizeDurations(skill.Cooldown);
-	if (cooldown) lines.push(`冷却时间：${cooldown}`);
+	if (skill.TargetType) {
+		const timing = value => {
+			if (value == null || durationTimes(value).every(time => Number(time) === 0)) return '无';
+			return summarizeDurations(value) || '资料未提供';
+		};
+		lines.push(`独立冷却（基础）：${timing(skill.Cooldown)}`);
+		lines.push(`施放后延迟（基础）：${timing(skill.AfterCastActDelay)}`);
+		if (durationTimes(skill.FixedCastTime).some(time => Number(time) < 0)) {
+			lines.push(`吟唱时间（基础）：${timing(skill.CastTime)}（固定部分按服务器规则分配）`);
+		} else {
+			lines.push(`可变吟唱（基础）：${timing(skill.CastTime)}`);
+			lines.push(`固定吟唱（基础）：${timing(skill.FixedCastTime)}`);
+		}
+		if (skill.AfterCastWalkDelay != null) lines.push(`施放后移动延迟（基础）：${timing(skill.AfterCastWalkDelay)}`);
+		lines.push('实际时间受角色属性、装备和状态影响，以服务器为准；无独立冷却不代表不受动作间隔限制。');
+	}
 	const sp = summarizeValues(skill.Requires?.SpCost);
 	if (sp) lines.push(`SP 消耗：${sp}`);
 	return lines.join('\n');
@@ -730,6 +744,9 @@ function describeClientOnlySkill(id, name) {
 	if (officialLabels.type) lines.push(`类型：${officialLabels.type.join('；或')}`);
 	if (officialLabels.target) lines.push(`目标：${officialLabels.target.join('；或')}`);
 	if (officialLabels.range) lines.push(`范围：${officialLabels.range.join('；或')}`);
+	if (!officialLabels.category?.some(label => label.includes('被动'))) {
+		lines.push('施放时间资料：未提供，不能据此判断无冷却。');
+	}
 	return lines.join('\n');
 }
 
@@ -882,7 +899,7 @@ for (const [id, skill] of runtimeOnlyEntries) {
 	staticTable[id] = {
 		key: skill.key,
 		name: skill.name,
-		description: `${skill.name}\n${skill.description}\n最高等级：${skill.maxLevel}`
+		description: `${skill.name}\n${skill.description}\n最高等级：${skill.maxLevel}\n施放时间资料：未提供，不能据此判断无冷却。`
 	};
 }
 const missingDetailedIds = Object.keys(detailedDescriptions).filter(id => !staticTable[id]);
