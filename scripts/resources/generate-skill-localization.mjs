@@ -647,6 +647,46 @@ function summarizeElements(value) {
 	return value.map(entry => elementLabels[entry.Element] || entry.Element).join(' / ');
 }
 
+function formatDurationMs(ms) {
+	if (ms == null || Number.isNaN(Number(ms))) return '';
+	const total = Number(ms);
+	if (total < 0) return '';
+	if (total === 0) return '0 秒';
+	if (total % 60000 === 0) {
+		const minutes = total / 60000;
+		return `${minutes} 分钟`;
+	}
+	if (total % 1000 === 0) {
+		return `${total / 1000} 秒`;
+	}
+	return `${total} 毫秒`;
+}
+
+function durationTimes(value) {
+	if (value == null) return [];
+	const list = Array.isArray(value) ? value : [value];
+	return list.map(entry => (typeof entry === 'object' && entry != null ? entry.Time : entry));
+}
+
+function summarizeDurations(value) {
+	if (Array.isArray(value)) {
+		const entries = value.filter(entry => entry.Time != null && Number(entry.Time) >= 0);
+		if (!entries.length) return '';
+		if (new Set(entries.map(entry => Number(entry.Time))).size === 1) return formatDurationMs(entries[0].Time);
+		return entries.map(entry => `Lv.${entry.Level}：${formatDurationMs(entry.Time)}`).join(' / ');
+	}
+	const unique = [
+		...new Set(
+			durationTimes(value)
+				.filter(entry => entry != null && Number(entry) >= 0)
+				.map(formatDurationMs)
+				.filter(Boolean)
+		)
+	];
+	if (!unique.length) return '';
+	return unique.length === 1 ? unique[0] : unique.join(' / ');
+}
+
 function describe(skill) {
 	const lines = [skill.Description];
 	const prose = detailedDescriptions[skill.Id];
@@ -668,6 +708,10 @@ function describe(skill) {
 		lines.push(`施放范围：${summarizeRanges(skill.Range)}`);
 	}
 	if (skill.SplashArea != null) lines.push(`作用范围：${summarizeValues(skill.SplashArea)}`);
+	const duration = summarizeDurations(skill.Duration1);
+	if (duration) lines.push(`持续时间：${duration}`);
+	const cooldown = summarizeDurations(skill.Cooldown);
+	if (cooldown) lines.push(`冷却时间：${cooldown}`);
 	const sp = summarizeValues(skill.Requires?.SpCost);
 	if (sp) lines.push(`SP 消耗：${sp}`);
 	return lines.join('\n');
