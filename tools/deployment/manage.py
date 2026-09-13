@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
-"""Build source-free deployment bundles and manage offline runtime resources.
-
-No command builds, pushes, starts or stops containers implicitly.
-"""
+"""Prepare and operate offline bundles; only deploy explicitly starts services."""
 import argparse
 import base64
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,10 +11,8 @@ import shutil
 import subprocess
 import sys
 
-
-def digest(path):
-    with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+from offline import (NAMES, commits, version, checked_path, verify_images, digest,
+                     daemon_architecture, verify_loaded, reference)
 
 
 def files(root):
@@ -42,10 +36,10 @@ def copy_directory(source, target):
 
 def prepare(args):
     root, output = args.workspace.resolve(), args.output.resolve()
+    release_version = version(root)
+    source_commits = commits(root)
     if output.exists():
         raise ValueError('Output must be a new directory; existing deployments are never overwritten')
-    if not re.fullmatch(r'v\d+\.\d+\.\d+', args.version):
-        raise ValueError('Version must be vMAJOR.MINOR.PATCH')
     kro = root / 'inputs/runtime/kro-20211105/client'
     sources = {
         'catalog/items': root / 'work/game-data/items/kro-20211105',
@@ -63,12 +57,15 @@ def prepare(args):
             raise ValueError(f'Missing resource directory: {source}')
     output.mkdir(parents=True)
     shutil.copyfile(root / 'deploy/docker/compose.yml', output / 'compose.yaml')
-    env = (root / 'deploy/docker/.env.example').read_text().replace('v0.2.0', args.version)
+    env = (root / 'deploy/docker/.env.example').read_text().replace('@VERSION@', release_version)
     (output / '.env.example').write_text(env)
     shutil.copyfile(root / 'docs/operations/docker-deployment.md', output / 'README.md')
     tool = output / 'tools/deployment/manage.py'
     tool.parent.mkdir(parents=True)
     shutil.copyfile(Path(__file__), tool)
+    shutil.copyfile(Path(__file__).with_name('offline.py'), tool.with_name('offline.py'))
+    (output / 'VERSION').write_text(release_version + '\n')
+    (output / 'images').mkdir()
     resources = output / 'resources'
     for name in ['database', 'admin-storage', 'control-socket', 'server-settings', 'server-logs', 'gateway-logs']:
         (output / 'data' / name).mkdir(parents=True)
@@ -85,20 +82,30 @@ def prepare(args):
     for path in resources.rglob('*'):
         path.chmod(0o755 if path.is_dir() else 0o644)
     entries = [{'path': p.relative_to(resources).as_posix(), 'size': p.stat().st_size, 'sha256': digest(p)} for p in files(resources)]
-    write_json(resources / 'manifest.json', {'schema': 1, 'version': args.version, 'source': 'kro-20211105 runtime and generated catalog images', 'files': entries})
-    commits = {}
-    dirty = []
-    for name in ['.', 'repos/happyro-client', 'repos/happyro-gateway', 'repos/happyro-server', 'repos/happyro-admin']:
-        commits[name] = subprocess.check_output(['git', '-C', str(root / name), 'rev-parse', 'HEAD'], text=True).strip()
-        if subprocess.check_output(['git', '-C', str(root / name), 'status', '--porcelain']).strip():
-            dirty.append(name)
-    write_json(output / 'release-manifest.json', {'schema': 1, 'version': args.version, 'commits': commits, 'dirty_repositories': dirty, 'resource_manifest_sha256': digest(resources / 'manifest.json'), 'images': {}, 'status': 'prepared-not-built'})
+    write_json(resources / 'manifest.json', {'schema': 1, 'version': release_version, 'source': 'kro-20211105 runtime and generated catalog images', 'files': entries})
+    if commits(root) != source_commits:
+        raise ValueError('Source commits changed while preparing')
+    bundle_files = ['VERSION', 'compose.yaml', '.env.example', 'README.md',
+                    'tools/deployment/manage.py', 'tools/deployment/offline.py']
+    write_json(output / 'release-manifest.json', {'schema': 2, 'version': release_version,
+        'commits': source_commits, 'files': {name: digest(output / name) for name in bundle_files},
+        'resource_manifest_sha256': digest(resources / 'manifest.json'),
+        'images': {}, 'status': 'prepared-not-built'})
     print(f'Prepared {output}; {len(entries)} resource files. No images were built or pushed.')
 
 
 def verify(args):
     root = args.directory.resolve()
     release = json.loads((root / 'release-manifest.json').read_text())
+    if release['schema'] != 2 or (root / 'VERSION').read_text().strip() != release['version']:
+        raise ValueError('Bundle version/schema mismatch')
+    required = {'VERSION', 'compose.yaml', '.env.example', 'README.md',
+                'tools/deployment/manage.py', 'tools/deployment/offline.py'}
+    if set(release['files']) != required:
+        raise ValueError('Incomplete bundle file checksums')
+    for name, expected_hash in release['files'].items():
+        if digest(checked_path(root, name)) != expected_hash:
+            raise ValueError(f'Bundle file mismatch: {name}')
     resource_root = root / 'resources'
     if resource_root.is_symlink():
         raise ValueError('Resource root cannot be a symlink')
@@ -106,6 +113,8 @@ def verify(args):
     if digest(manifest_path) != release['resource_manifest_sha256']:
         raise ValueError('Resource manifest does not match this deployment release')
     manifest = json.loads(manifest_path.read_text())
+    if manifest['version'] != release['version']:
+        raise ValueError('Resource version must match the application version')
     expected = set()
     for entry in manifest['files']:
         relative = Path(entry['path'])
@@ -120,10 +129,14 @@ def verify(args):
     actual = {p.relative_to(resource_root).as_posix() for p in files(resource_root)}
     if actual != expected:
         raise ValueError('Unlisted or missing resource files')
+    if not getattr(args, 'prepared', False):
+        verify_images(root, release)
     print(f'Verified {len(expected)} resource files for {release["version"]}')
+    return release
 
 
 def initialize(args):
+    verify(args)
     target = args.directory.resolve() / '.env'
     template = target.with_name('.env.example').read_text()
     values = {key: secrets.token_hex(24) for key in ['DB_PASSWORD', 'ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'INTERSERVER_PASSWORD', 'GAME_CONTROL_TOKEN']}
@@ -136,6 +149,36 @@ def initialize(args):
     with os.fdopen(fd, 'w') as stream:
         stream.write(template)
     print('Created .env with unique secrets. Set public URLs before starting Compose.')
+
+
+def import_images(args):
+    release = verify(args)
+    arch = daemon_architecture()
+    for name in NAMES:
+        subprocess.run(['docker', 'load', '--input',
+                        str(args.directory.resolve() / 'images' / arch / f'{name}.tar')], check=True)
+    verify_loaded(release, arch)
+    print(f'Loaded and verified {release["version"]} linux/{arch} images')
+
+
+def deploy(args):
+    root = args.directory.resolve()
+    if not (root / '.env').is_file():
+        raise ValueError('Run initialize and edit .env public URLs before deploying')
+    release = verify(args)
+    config = json.loads(compose(root, 'config', '--format', 'json', capture_output=True, text=True).stdout)
+    services = {'gateway': 'gateway', 'admin': 'admin', 'admin-init': 'admin',
+                'database': 'database', 'login': 'server', 'char': 'server',
+                'map': 'server', 'web-api': 'server'}
+    if set(config['services']) != set(services):
+        raise ValueError('Unexpected Compose services')
+    for service, name in services.items():
+        entry = config['services'][service]
+        if entry['image'] != reference(name, release['version']) or entry.get('pull_policy') != 'never':
+            raise ValueError(f'Update .env image references for this release: {service}')
+    verify_loaded(release, daemon_architecture())
+    compose(root, 'up', '-d', '--pull', 'never', '--no-build')
+    compose(root, 'ps', '-a')
 
 
 def compose(root, *args, **kwargs):
@@ -188,9 +231,9 @@ def help_text(no_color):
         return text if no_color else f'\033[{code}m{text}\033[0m'
     print('\n' + color('1;36', 'HappyRO deployment tools') + '\n')
     print(color('1;33', 'Commands'))
-    print(color('1;32', '  prepare | verify | initialize | backup | restore'))
+    print(color('1;32', '  prepare | verify | initialize | import-images | deploy | backup | restore'))
     print('\n' + color('1;33', 'Examples'))
-    for line in ['prepare --workspace . --output artifacts/deployment/v0.2.0 --version v0.2.0', 'initialize --directory ./happyro-deploy', 'verify --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup-20260913', 'restore --directory ./happyro-deploy --backup ./backup-20260913 --confirm-replace']:
+    for line in ['prepare --workspace . --output artifacts/deployment/release', 'verify --directory ./happyro-deploy', 'import-images --directory ./happyro-deploy', 'initialize --directory ./happyro-deploy', 'deploy --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup', 'restore --directory ./happyro-deploy --backup ./backup --confirm-replace']:
         print(color('36', '  python3 tools/deployment/manage.py ' + line))
     print('\nUse --no-color for plain output; COMMAND --help lists arguments.\n')
 
@@ -204,11 +247,10 @@ def main():
         return
     parser = argparse.ArgumentParser(description='HappyRO deployment tools')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name in ['prepare', 'verify', 'initialize', 'backup', 'restore']:
+    for name in ['prepare', 'verify', 'initialize', 'import-images', 'deploy', 'backup', 'restore']:
         command = commands.add_parser(name)
         if name == 'prepare':
             command.add_argument('--workspace', type=Path, required=True)
-            command.add_argument('--version', required=True)
         else:
             command.add_argument('--directory', type=Path, required=True)
         if name in ['prepare', 'backup']:
@@ -216,8 +258,11 @@ def main():
         if name == 'restore':
             command.add_argument('--backup', type=Path, required=True)
             command.add_argument('--confirm-replace', action='store_true')
+        if name == 'verify':
+            command.add_argument('--prepared', action='store_true', help='Check a preparation bundle before images are packaged')
     args = parser.parse_args(argv)
-    {'prepare': prepare, 'verify': verify, 'initialize': initialize, 'backup': backup, 'restore': restore}[args.command](args)
+    {'prepare': prepare, 'verify': verify, 'initialize': initialize, 'import-images': import_images,
+     'deploy': deploy, 'backup': backup, 'restore': restore}[args.command](args)
 
 
 if __name__ == '__main__':

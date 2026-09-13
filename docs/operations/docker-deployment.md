@@ -1,123 +1,140 @@
-# HappyRO 无源码 Docker 部署
+# HappyRO 离线部署
 
-本手册面向拿到发布包的部署者，也作为部署包的 README。部署端只取得镜像、部署包及运行资源，不下载 Git 源码，不在目标机器编译。使用的版本以发布包的 `release-manifest.json` 为准。
+本手册随包作为 README.md 交付。目标机器无需 Git 源码、Node、PHP、Skopeo 或镜像仓库连接。需要已安装的 Docker Engine/Compose v2（macOS 使用 Docker Desktop）与 Python 3.11+。
 
-## 交付与目录
+应用、镜像、资源统一版本，以包内 VERSION 和 release-manifest.json 为准。一个完整包包含所有内容；不要替换为其它版本的资源或镜像。
 
-发布目录结构如下（开发仓库中的定义位于 `deploy/docker/`，所有维护工具位于 `tools/deployment/`）：
+## 目录与持久化
 
 ```text
-happyro-deploy/
+happyro-版本/
+├── README.md
+├── VERSION
 ├── compose.yaml
 ├── .env.example
-├── .env                         # 本机生成，保密
-├── release-manifest.json         # 源码提交、镜像 digest、资源清单哈希
-├── README.md
-├── data/                        # 所有宿主机持久化与运行目录
-│   ├── database/                # MariaDB 数据
-│   ├── admin-storage/           # Laravel storage
-│   ├── server-settings/         # 运营配置
-│   ├── server-logs/             # 游戏日志
-│   ├── gateway-logs/            # Gateway 日志
-│   └── control-socket/          # map 控制 socket（不备份）
-├── tools/deployment/manage.py
-└── resources/
-    ├── manifest.json
-    ├── kro-20211105/             # DATA.INI、引用的 GRF、AI、BGM、System、散装 data
-    └── catalog/
-        ├── items/               # icons/、illustrations/
-        ├── monsters/
-        ├── npcs/
-        ├── maps/
-        └── terrain/             # 无地图图片时的地形预览
+├── release-manifest.json
+├── images/
+│   ├── amd64/                 # gateway/server/admin/database.tar
+│   └── arm64/                 # gateway/server/admin/database.tar
+├── resources/
+│   ├── manifest.json
+│   ├── kro-20211105/          # DATA.INI、GRF、AI、BGM、System、data
+│   └── catalog/               # items、monsters、npcs、maps、terrain
+├── tools/deployment/
+│   ├── manage.py
+│   └── offline.py
+└── data/
+    ├── database/
+    ├── admin-storage/
+    ├── server-settings/
+    ├── server-logs/
+    ├── gateway-logs/
+    └── control-socket/
 ```
 
-资源只读挂载，所有可写数据和运行状态都使用部署包内 `data/` 下的宿主机目录挂载，不使用 Docker named volume。不能把整个 `work/`、官方素材、Windows EXE/DLL 或开发环境密钥装进资源包。中文覆盖文件在 Gateway 镜像 `/opt/overrides`，基础运行资源在宿主机 `resources/kro-20211105`；Gateway 优先使用已打包的覆盖目录。运行目录内已经编译、核验的 System 文件保留在资源包，不能从历史翻译工作区发布。
+首次初始化在本机生成保密的 .env。所有持久化使用宿主机目录 bind mount，不使用 named volume；resources/ 只读。data/control-socket 是运行状态，无需备份。升级不得删除 data/。
 
-PWA 专用 NPC atlas 随 Gateway 镜像发布，后台图片在外部资源目录。镜像和资源须使用同一发布包配套的清单；不要自行替换资源文件或修改 manifest 绕过校验。
+在 Mac 上将整个包放在 Docker Desktop 允许文件共享的本地目录。镜像归档导入后还会占用 Docker 虚拟磁盘空间，需同时容纳包、解压资源、导入镜像及数据库。不要直接把远程主机路径写作本机挂载路径；先复制完整包到本地。
 
-## 镜像与服务
+## 首次部署
 
-| 镜像 | 服务 | 内容 |
-| --- | --- | --- |
-| happyro-gateway | gateway | 全量 `--all` PWA、Gateway、中文覆盖文件 |
-| happyro-server | login、char、map、web-api | PACKETVER=20211103、Renewal，二进制、NPC、db、配置模板 |
-| happyro-admin | admin、admin-init | 前端产物、Laravel、PHP 8.4 FPM、Nginx、生产依赖 |
-| happyro-database | database | MariaDB 10.11、游戏初始化 SQL、后台数据库授权 |
-
-正常运行七个服务容器和一个完成后退出的初始化任务。当前后台命令同步执行，没有使用中的业务队列任务或定时调度，暂不添加空转 worker/scheduler。以后实际引入任务再使用 Admin 同镜像独立运行。
-
-Admin 以 Supervisor 运行 Nginx 与 PHP-FPM，任何服务进程退出将终止容器并由 Compose 重启。后台默认映射宿主机 8000 到容器 8080，FPM 不公开。游戏默认映射宿主机 3338 到容器 3338；其余端口在 Docker 网络内。浏览器使用 Gateway `/ws/`，游戏内 `/api/adventure-tools` 转发 Admin，Admin 经 web-api 访问 map 的控制 socket。
-
-map 和 web-api 共享 `data/control-socket` 目录。Admin 与 Server 共享 `data/server-settings` 目录，后台可原子更新 `battle_conf.txt`，map 通过 import 加载；此目录必须备份，不能用单文件挂载替代。首次初始化采用仓库默认游戏配置，不把开发机倍率、GM 测试账号、密码和当前存档烘焙入镜像。
-
-## 新机器首次启动
-
-安装 Docker Engine、Compose v2、Python 3.11+，下载部署包和资源包。无需安装 Node、PHP、Git 或编译器。
-
-以下命令均在解压后的 happyro-deploy/ 目录执行。确认 release-manifest.json 的状态为 published，四个镜像已有 digest；prepared-not-built 仅为准备包，不能用于正式部署。verify 只校验资源，不代替镜像发布状态检查。保留 data/ 下的空目录；自定义 DATA_DIR 时须事先创建对应目录。
+所有命令在解压后的包根目录执行。不运行 docker compose pull；Compose 已禁止拉取，镜像必须从包中导入。
 
 ```bash
 python3 tools/deployment/manage.py verify --directory .
+python3 tools/deployment/manage.py import-images --directory .
 python3 tools/deployment/manage.py initialize --directory .
 ```
 
-编辑 `.env` 的 GAME_PUBLIC_URL、ADMIN_PUBLIC_URL、ADMIN_STATEFUL_DOMAINS（后台主机名和端口，不含协议），确认端口与资源目录。使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理正确传递协议；本模板默认局域网 HTTP，与当前部署方式一致。生成的密钥为随机值，禁止使用示例密码；不要在升级时重新生成 APP_KEY。
+verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜像归档。缺失镜像的 prepared-not-built 准备包会被拒绝。import-images 根据 Docker daemon 的 Linux 架构导入对应四个镜像，并核对镜像 ID；Apple Silicon 通常为 arm64，Intel 为 amd64。它不会启动容器。
+
+编辑 .env：
+
+- GAME_PUBLIC_URL：例如 http://192.168.1.20:3338。
+- ADMIN_PUBLIC_URL：例如 http://192.168.1.20:8000。
+- ADMIN_STATEFUL_DOMAINS：例如 192.168.1.20:8000，不含协议。
+- GATEWAY_PORT、ADMIN_PORT：默认 3338、8000。修改端口时同步 URL。
+- RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
+- 本模板默认局域网 HTTP。使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
+
+默认 localhost 仅适用于本机浏览器，其他设备访问应填写 Mac 的局域网地址。initialize 生成随机密钥；保留 APP_KEY，已有 .env 不会被覆盖。镜像变量必须保持该包 .env.example 中的值。
 
 ```bash
-docker compose pull
-docker compose up -d
+python3 tools/deployment/manage.py deploy --directory .
 docker compose ps -a
-docker compose exec admin happyro-admin artisan gm:user:create administrator
+docker compose exec admin happyro-admin artisan gm:user:create admin
 ```
 
-最后一条交互式输入后台密码，默认 super_admin，不在命令行传密码。初始化不会创建演示用户。资源哈希验证在启动前执行；Compose 同时拒绝自动创建不存在的资源挂载路径。
+最后一条交互输入后台密码，默认 super_admin；用户名可自行更换，不会创建演示用户。deploy 校验整个包、Compose 镜像配置和已导入镜像后启动，不构建、不拉取、不覆盖 .env。首次后台初始化可能耗时，使用 docker compose logs admin-init 查看迁移及图鉴导入。
 
-administrator 是示例用户名，可替换为 admin。游戏资料版本固定在后台配置中：客户端 kro-20211105、服务端 2fe6ab3dc4d8，不通过后台页面修改；这与四类镜像统一使用的应用发布版本不同。
+游戏入口：GAME_PUBLIC_URL/applications/pwa/index.html，应先显示启动页。后台入口为 ADMIN_PUBLIC_URL。
 
-默认使用 `docker compose up -d` 启动全部服务，不设置 profile 或额外功能开关。启动依赖分为两条链：
+## 服务与后台维护
 
-- 游戏：database 健康 → login → char → map → web-api → gateway。
-- 后台：database 健康 → admin-init 完成后台迁移及图鉴导入；Admin 等待 admin-init 成功及 web-api 健康后启动。
+正常运行七个服务容器和一个完成后退出的 admin-init：
 
-游戏服务不等待 admin-init 或 Admin 健康状态。后台初始化失败、维护或停机时，游戏服务的依赖链仍独立成立；Compose 的整栈命令可能报告后台失败，应通过 `docker compose ps -a` 检查各服务，必要时运行 `docker compose up -d gateway` 单独启动游戏链。依赖后台 API 的冒险工具操作此时不可用，登录、战斗和游戏内 NPC 不依赖后台。
+| 镜像 | 服务 |
+| --- | --- |
+| Gateway（含全量 PWA 和中文覆盖） | gateway |
+| Server（PACKETVER=20211103、Renewal） | login、char、map、web-api |
+| Admin（前端、Laravel、Nginx、PHP-FPM） | admin、admin-init |
+| Database（MariaDB 10.11） | database |
 
-后台可独立维护：`docker compose stop admin`；恢复使用 `docker compose up -d admin`。共享数据库仍须保持运行。Server 的 TCP 健康检查说明监听端口就绪，不能代替登录/战斗验收；Admin `/up` 检查 PHP 应用启动，Gateway 检查 HTTP 服务。
+后台默认宿主机 8000 → 容器 8080；游戏 3338 → 3338，其余端口只在 Docker 网络内。后台资料版本固定在配置中（kro-20211105、2fe6ab3dc4d8），不是应用发布版本，不在页面修改。
 
-冒险工具按后台返回的可用能力显示标签；后台不可用时，依赖其能力的标签不会显示。恢复后台后重新打开冒险工具检查功能。
+游戏依赖链是 database → login → char → map → web-api → gateway。Admin 等待数据库、admin-init 完成和 web-api 健康。游戏不等待 Admin；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
 
-## 持久化、备份与恢复
+```bash
+docker compose stop admin
+docker compose up -d --pull never admin
+```
 
-升级先停写备份，更新 `.env` 中四个镜像 digest，确认配套资源校验通过；执行 `docker compose pull` 后，以 `docker compose run --rm --no-deps admin-init` 运行本版迁移和快照导入，成功后才 `docker compose up -d`。初始化 SQL 只在空 MariaDB 数据目录执行，不能用于已有存档升级。Server 的 SQL schema 变化需先审查本版升级 SQL，并在停写后显式执行；本工具不盲目运行全部历史升级脚本。
+后台初始化失败时，整栈启动可能报错；检查 ps -a 和 logs，必要时单独启动游戏链：docker compose up -d --pull never gateway。停止 Admin 不要停止共享数据库。Admin 和 Server 共享 data/server-settings，battle_conf.txt 的运营变更须备份；不能改成单文件挂载。
 
-`data/database` 保存 happyro、happyro_log、happyro_admin 三个数据库；`data/admin-storage` 保存 Laravel 可写文件；`data/server-settings` 保存运营修改；日志目录保存在 `data/server-logs` 和 `data/gateway-logs`。备份不需要 `data/control-socket` 和应用缓存。删除容器不会删除这些宿主机目录；升级不得删除 `data/`。
+## 升级
 
-备份前进入维护状态并停止所有写入；数据库含非事务表，不能仅依赖 single-transaction 在有写入时取得一致备份：
+1. 保留新版完整包并执行 verify；先在旧部署目录停止写入并备份（见下节）。同一存档只能有一套游戏服务运行。
+2. 在新版包根目录复制旧 .env，保留 APP_KEY、数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
+3. 将 DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 当成旧存档。
+4. 导入本版镜像，再启动 database，显式执行 Admin 迁移和快照导入，成功后启动整栈。
+
+```bash
+python3 tools/deployment/manage.py import-images --directory .
+docker compose up -d --pull never database
+docker compose run --rm --no-deps --pull never admin-init
+python3 tools/deployment/manage.py deploy --directory .
+```
+
+原有 Compose 项目名应保持一致。数据库初始化 SQL 只对空目录执行；Server schema 变化需先审查该版本升级 SQL，并在停写后显式执行。工具不盲目执行历史升级脚本。
+
+## 备份与恢复
+
+先停止所有写入，仅保留 database 运行。数据库含非事务表，不能在有写入时仅凭 single-transaction 获得一致备份。
 
 ```bash
 docker compose stop gateway admin web-api map char login
-python3 tools/deployment/manage.py backup --directory . --output ../backups/2026-09-13
-docker compose up -d
+python3 tools/deployment/manage.py backup --directory . --output ../backups/before-upgrade
 ```
 
-备份含数据库 SQL、Admin storage、游戏设置、部署清单和 `.env`，默认私有目录，需复制到异机。资源包另行保存。导出失败时保留部分目录用于排查，未生成 checksums.json 的备份不可恢复。
+普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、Admin storage、server-settings、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。完整离线包另行保存，备份不会重复复制镜像和资源。
 
-恢复先选择匹配版本的部署包和空环境，复制备份 `.env`（尤其 APP_KEY）并核对地址；只启动 database：
+恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对路径和地址，保留原 APP_KEY，不重新 initialize：
 
 ```bash
-docker compose up -d database
-python3 tools/deployment/manage.py restore --directory . --backup ../backups/2026-09-13 --confirm-replace
-docker compose up -d
+python3 tools/deployment/manage.py import-images --directory .
+docker compose up -d --pull never database
+python3 tools/deployment/manage.py restore --directory . --backup ../backups/before-upgrade --confirm-replace
+python3 tools/deployment/manage.py deploy --directory .
 ```
 
-restore 会验证备份哈希并拒绝其他服务仍运行的环境。它替换备份涉及的数据库表和文件，不自动改密钥、资源或镜像标签，不删除备份外文件。优先恢复到新的宿主机数据目录；覆盖已有数据目录前另做备份。跨数据库版本/不兼容 schema 的回退必须恢复配套备份，不能只回退镜像。
+restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换备份涉及的表和文件，不自动替换镜像、资源或密钥。覆盖已有数据前另做备份。跨数据库版本或不兼容 schema 回退，必须同时恢复配套备份。
 
-现有 systemd 环境迁移：安排停服窗口 → 停止 Gateway、Admin 和全部游戏写入进程 → 导出上述三个库与后台 storage、battle_conf.txt → 在 Compose 挂载的全新宿主机数据目录中导入并保留 APP_KEY → 验收成功后切入口。禁止旧服务和容器同时连接同一存档库。不会自动搬迁当前机器数据。
+从现有 systemd 环境迁移需单独安排停服，导出三个库、storage、battle_conf.txt 并保留 APP_KEY，再导入新的宿主机数据目录。工具不会自动搬迁旧主机存档。
 
-## 验收门槛与本次交付边界
+## 验收与当前边界
 
-本轮只准备定义、工具和文档，可校验 Compose 解析、脚本语法、资源哈希，不构建镜像、不启动或迁移服务。
+首次发布仍需验证 AMD64/ARM64 镜像构建、空库初始化、已有库升级、登录选角、地图和音效、后台会话、图鉴、冒险工具、运营设置重启持久化、故障重启及备份恢复。健康检查只表明服务启动，不代替游戏验收；offline-ready 表示归档组装校验完成，不表示已通过运行验收。
 
-首次实际发布必须验证 AMD64/ARM64 四类镜像均构建成功、空库初始化、已有库升级、登录选角、地图/音效资源、后台会话、图鉴、冒险工具控制接口、运营设置重启后保留、容器故障重启、备份及恢复。未通过这些验证前，不能宣称该方案已经完成运行验收。
+每次升级后强制刷新游戏与后台，核对游戏 build-info.json，检查启动页、资源、聊天、导航和冒险工具。验证独立停止及恢复后台时游戏仍运行。默认关闭雾效无需额外配置；已有浏览器偏好仍保留，可用 /fog 切换。
 
-每次部署或升级后，强制刷新游戏和后台页面，核对游戏 build-info.json 的构建信息。游戏入口 /applications/pwa/index.html 应显示启动页，再进入游戏检查资源、聊天、导航和冒险工具。后台检查登录、地图/物品/魔物详情及游戏设置；独立停止和恢复 Admin 后检查游戏仍可运行及相关功能恢复。最近的界面调整与默认关闭雾效无需新增部署配置；浏览器已保存的雾效偏好仍优先，可使用 /fog 手动切换。
+当前方案仅准备工具与定义；未在本次修改中构建镜像或完成 Docker 运行验收。

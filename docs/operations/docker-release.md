@@ -1,46 +1,75 @@
-# Docker 镜像构建与发布规则
+# Docker 离线镜像构建与交付
 
-本文件是 AGENTS.md 引用的发布入口。只修改 Docker 定义不等于执行镜像发布；用户明确要求不 build 时，不运行构建或推送。
+本文件是发布端与 Agent 的执行入口。部署机器只需要完成的离线包，不需要源码。用户明确要求不构建时，只维护工具和文档，不运行 build、package 或部署。
 
-## 版本与范围
+## 版本与交付规则
 
-- 当前已发布版本：`v0.1.4`；下一个默认版本：`v0.2.0`。本次方案改造未发布新版本。
-- 同一版本完整重建 Gateway（含完整 `--all` PWA）、Server、Admin（含后台前端）、Database 四类镜像。
-- 从根仓库、Client、Gateway、Server、Admin 五个仓库最新 `origin/main` 快进同步，确认干净并记录提交。
-- 四类镜像统一版本号，均包含 `linux/amd64`、`linux/arm64`。全部成功后更新 latest；部署固定 digest，不跟随 latest。
-- 游戏与图鉴图片以统一资源目录发布并只读挂载，不制作资源镜像。
+- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本仍为 v0.1.4，本次工具改造不代表新版本已发布。
+- 应用、资源、配置和镜像使用同一个版本，组成一个完整目录交付，不单独发布资源包。
+- 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；两台机器的五仓库提交必须完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
+- 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
+- 全部构建成功后才允许组装离线包；全部归档校验成功才标记 offline-ready。没有镜像的准备包不可部署。
+- 离线交付不需要推送镜像仓库，不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
+- 发布成功后更新已发布版本记录；下一次发版只修改 VERSION，环境模板、工具不再硬编码应用版本。
 
-## 强制执行顺序
+## 1. 在有资源的机器上准备
 
-1. 确认用户授权、五仓库状态、Docker/Buildx/Skopeo 与注册表认证。
-2. 从最终提交准备部署包，验证资源 SHA-256 清单。
-3. 全量 `--no-cache --pull` 构建四类镜像为本地 OCI 归档。不得根据 Git diff 跳过镜像，不复用旧 dist、vendor、旧镜像或 Docker 缓存。
-4. 校验全部归档平台，只有全部成功才生成 built.json；失败停止，不 push 或部署。
-5. 独立 push 阶段重新核对全部归档及部署包的提交/版本一致性，再推送同一批归档。禁止为了推送重新 build。
-6. 全部版本标签 digest 和架构校验成功后，再更新 latest 并校验；任一步失败停止，不部署。
-7. 完成部署验收后更新本文及根 AGENTS.md 版本记录。部分成功不算发布成功。
+此步骤需要 Python 3.11+ 和完整源码，不需要 Docker。当前资源主机可使用 10.24.1.1。
+
+资源来自 inputs/runtime/kro-20211105/client；物品和魔物图片来自 work/game-data/items/kro-20211105 与 work/game-data/monsters/kro-20211105；NPC、地图、地形图片来自 Admin 的 backend/resources/game-data/world 对应目录。经过核验的运行资源只读复制，不从历史翻译工作区发布，不重新生成图片或 GRF。
+
+在源码根目录执行：
 
 ```bash
-python3 tools/deployment/manage.py prepare --workspace . --output artifacts/deployment/v0.2.0 --version v0.2.0
-python3 tools/deployment/manage.py verify --directory artifacts/deployment/v0.2.0
-python3 tools/deployment/images.py build --workspace . --output artifacts/images/v0.2.0 --version v0.2.0
-python3 tools/deployment/images.py push --output artifacts/images/v0.2.0 --bundle artifacts/deployment/v0.2.0
+python3 tools/deployment/manage.py prepare --workspace . --output artifacts/deployment/release
+python3 tools/deployment/manage.py verify --directory artifacts/deployment/release --prepared
 ```
 
-工具不自动同步 Git、不修改版本记录、不部署。
+输出目录必须不存在。prepare 从 VERSION 生成包内版本、环境模板和资源清单，记录五仓库提交，并预留空 images/。资源与配置都计算 SHA-256。任何未跟踪文件也会触发脏仓库检查；截图等应放在已忽略的 work/ 或 artifacts/，不要提交无关文件。
 
-## 发布包准备与产物说明
+## 2. 在另一台机器构建
 
-正式准备前，五个仓库必须干净且包含要发布的最终提交。未跟踪的截图等文件也会触发构建工具的脏仓库检查，应先移到 work/ 或 artifacts/ 等生成目录。不要为了满足检查把无关文件提交进源码。
+构建机器需要完整源码、Python 3.11+、Docker Buildx、Skopeo，以及双架构构建能力。macOS 使用 Docker Desktop 的 Linux 容器。构建期间需要联网下载基础镜像和依赖；离线的是最终部署过程。
 
-运行资源来源为 inputs/runtime/kro-20211105/client；物品和魔物图片分别来自 work/game-data/items/kro-20211105、work/game-data/monsters/kro-20211105；NPC、地图和地形预览来自 Admin 的 backend/resources/game-data/world 对应目录。prepare 会校验目录并复制资源、计算 SHA-256，不启动服务、不构建镜像，也不修改源资源。输出目录必须不存在。
+将准备目录从资源机复制到构建机的 artifacts/deployment/release，保留空目录和完整结构。例如在 Mac 上执行（替换 SSH 用户与路径）：
 
-开发预览包标记为 prepared-not-built；正式发布需从最终干净提交重新准备。资源可单独压缩分发，但必须保留部署包中的目录结构及空的 data/ 子目录。资源变化后重新生成配套清单，不能手改 manifest 绕过校验。
+```bash
+rsync -a SSH_USER@10.24.1.1:/vol2/1000/kugarocks/happyro/artifacts/deployment/release/ artifacts/deployment/release/
+python3 tools/deployment/manage.py verify --directory artifacts/deployment/release --prepared
+python3 tools/deployment/images.py build --workspace . --output artifacts/images/release
+```
 
-build 全量导出双架构 OCI 归档，全部成功才写 built.json。push 使用同一批已验证归档，不重新构建。Skopeo 的 --authfile 默认使用 Docker 配置文件；使用 credential helper 时需提供 Skopeo 支持的认证文件。发布前检查工具安装与注册表认证。
+构建输出固定为 gateway.tar、server.tar、admin.tar、database.tar 四个双架构 OCI 归档，全部完成才写 built.json。输出目录必须不存在。构建期间不修改源码。Admin 使用已跟踪的 npm/composer 锁文件；Client/Gateway 没有跟踪 npm 锁文件，同一提交重建可能解析到更新依赖，回退须使用已保存的原始归档。
 
-Admin 使用已跟踪的 npm/composer 锁文件；Client 和 Gateway 当前未跟踪 npm 锁文件，同一源码重新构建可能解析到较新的依赖，回滚必须使用实际产物 digest。
+## 3. 将镜像放入统一离线包
 
-推送成功后，工具将 digest 写回部署包的 .env.example 和 release-manifest.json，不修改已有 .env。交付前确认四个镜像 digest 齐全。部署包 README 来自 docker-deployment.md，仅包含部署端步骤；本文件及 images.py 属于源码工作区的发布工具，不随部署包分发。
+```bash
+python3 tools/deployment/images.py package --output artifacts/images/release --bundle artifacts/deployment/release
+python3 tools/deployment/manage.py verify --directory artifacts/deployment/release
+```
 
-推送失败必须报告已成功标签；不得用旧镜像补齐，不自动删除已发布标签。全量运行验收要求及部署步骤见 [部署手册](docker-deployment.md)。
+package 校验 built.json、四个 OCI 哈希、双架构以及与准备包的版本和提交一致性。随后使用 Skopeo 把同一批 OCI 产物转为 Docker 可加载归档，不重新构建、不访问镜像仓库：
+
+```text
+images/
+├── amd64/
+│   ├── gateway.tar
+│   ├── server.tar
+│   ├── admin.tar
+│   └── database.tar
+└── arm64/
+    ├── gateway.tar
+    ├── server.tar
+    ├── admin.tar
+    └── database.tar
+```
+
+这些是最终指定位置，不能直接把双架构 OCI tar 放进去冒充 Docker-save 归档。组装失败会保留部分产物供检查，包仍不就绪；重试前将整个部分 images/ 内容移到包外保留，避免覆盖未知文件。
+
+将完整 release/ 目录重命名为 happyro-加上 VERSION 值后整体压缩交付，必须包含 images/、resources/、tools/、配置及空 data/ 目录。不要在交付目录初始化密钥或运行游戏，以免把 .env 和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
+
+## 验收
+
+包内 README 来自 docker-deployment.md，部署者无需引用源码文档。目标 Mac 根据 Docker daemon 架构选择镜像，而非根据运行 Python 的架构判断。使用 Rosetta 也不能改变目标 Docker 架构。
+
+首次发布必须实际验证两种架构的镜像构建、空库初始化、已有库升级、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替这些验收。当前工作仅修改定义与工具，不表示已经完成镜像或运行验收。
