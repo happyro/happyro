@@ -1,6 +1,7 @@
 FROM node:22-bookworm AS frontend
 WORKDIR /build
 COPY repos/happyro-admin/frontend/package*.json ./
+COPY repos/happyro-admin/frontend/.npmrc ./
 RUN npm ci --ignore-scripts
 COPY repos/happyro-admin/frontend/ ./
 RUN npx max setup && npm run build

@@ -2,6 +2,7 @@ FROM node:22-bookworm AS client-builder
 
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 WORKDIR /src/client
+RUN npm install --global npm@11.19.1
 COPY repos/happyro-client/package.json ./
 RUN npm install --ignore-scripts
 COPY repos/happyro-client/ ./
