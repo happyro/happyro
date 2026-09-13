@@ -63,7 +63,7 @@ def prepare(args):
             raise ValueError(f'Missing resource directory: {source}')
     output.mkdir(parents=True)
     shutil.copyfile(root / 'deploy/docker/compose.yml', output / 'compose.yaml')
-    env = (root / 'deploy/docker/.env.example').read_text().replace('v0.1.5', args.version)
+    env = (root / 'deploy/docker/.env.example').read_text().replace('v0.2.0', args.version)
     (output / '.env.example').write_text(env)
     shutil.copyfile(root / 'docs/operations/docker-deployment.md', output / 'README.md')
     tool = output / 'tools/deployment/manage.py'
@@ -190,7 +190,7 @@ def help_text(no_color):
     print(color('1;33', 'Commands'))
     print(color('1;32', '  prepare | verify | initialize | backup | restore'))
     print('\n' + color('1;33', 'Examples'))
-    for line in ['prepare --workspace . --output artifacts/deployment/v0.1.5 --version v0.1.5', 'initialize --directory ./happyro-deploy', 'verify --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup-20260913', 'restore --directory ./happyro-deploy --backup ./backup-20260913 --confirm-replace']:
+    for line in ['prepare --workspace . --output artifacts/deployment/v0.2.0 --version v0.2.0', 'initialize --directory ./happyro-deploy', 'verify --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup-20260913', 'restore --directory ./happyro-deploy --backup ./backup-20260913 --confirm-replace']:
         print(color('36', '  python3 tools/deployment/manage.py ' + line))
     print('\nUse --no-color for plain output; COMMAND --help lists arguments.\n')
 

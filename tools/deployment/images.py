@@ -33,8 +33,8 @@ def main():
         c = lambda code, s: s if '--no-color' in sys.argv else f'\033[{code}m{s}\033[0m'
         print('\n' + c('1;36', 'HappyRO image release') + '\n\n' + c('1;33', 'Commands'))
         print(c('1;32', '  build | push') + '\n\n' + c('1;33', 'Examples'))
-        print(c('36', '  python3 tools/deployment/images.py build --workspace . --output artifacts/images/v0.1.5 --version v0.1.5'))
-        print(c('36', '  python3 tools/deployment/images.py push --output artifacts/images/v0.1.5 --bundle artifacts/deployment/v0.1.5') + '\n')
+        print(c('36', '  python3 tools/deployment/images.py build --workspace . --output artifacts/images/v0.2.0 --version v0.2.0'))
+        print(c('36', '  python3 tools/deployment/images.py push --output artifacts/images/v0.2.0 --bundle artifacts/deployment/v0.2.0') + '\n')
         return
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['build', 'push'])

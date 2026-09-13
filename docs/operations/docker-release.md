@@ -4,7 +4,7 @@
 
 ## 版本与范围
 
-- 当前已发布版本：`v0.1.4`；下一个默认版本：`v0.1.5`。本次方案改造未发布新版本。
+- 当前已发布版本：`v0.1.4`；下一个默认版本：`v0.2.0`。本次方案改造未发布新版本。
 - 同一版本完整重建 Gateway（含完整 `--all` PWA）、Server、Admin（含后台前端）、Database 四类镜像。
 - 从根仓库、Client、Gateway、Server、Admin 五个仓库最新 `origin/main` 快进同步，确认干净并记录提交。
 - 四类镜像统一版本号，均包含 `linux/amd64`、`linux/arm64`。全部成功后更新 latest；部署固定 digest，不跟随 latest。
@@ -21,10 +21,10 @@
 7. 完成部署验收后更新本文及根 AGENTS.md 版本记录。部分成功不算发布成功。
 
 ```bash
-python3 tools/deployment/manage.py prepare --workspace . --output artifacts/deployment/v0.1.5 --version v0.1.5
-python3 tools/deployment/manage.py verify --directory artifacts/deployment/v0.1.5
-python3 tools/deployment/images.py build --workspace . --output artifacts/images/v0.1.5 --version v0.1.5
-python3 tools/deployment/images.py push --output artifacts/images/v0.1.5 --bundle artifacts/deployment/v0.1.5
+python3 tools/deployment/manage.py prepare --workspace . --output artifacts/deployment/v0.2.0 --version v0.2.0
+python3 tools/deployment/manage.py verify --directory artifacts/deployment/v0.2.0
+python3 tools/deployment/images.py build --workspace . --output artifacts/images/v0.2.0 --version v0.2.0
+python3 tools/deployment/images.py push --output artifacts/images/v0.2.0 --bundle artifacts/deployment/v0.2.0
 ```
 
 工具不自动同步 Git、不修改版本记录、不部署。
