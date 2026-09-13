@@ -70,6 +70,12 @@ class OfflineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'tagged'):
             archive_metadata(path, 'happyro/admin:v8.0.0', 'arm64')
 
+    def test_skopeo_normalized_reference(self):
+        path = self.root / 'skopeo.tar'
+        self.archive(path, 'docker.io/happyro/gateway:v9.0.0', 'arm64')
+        metadata = archive_metadata(path, reference('gateway', 'v9.0.0'), 'arm64')
+        self.assertEqual(metadata['tag'], 'docker.io/happyro/gateway:v9.0.0')
+
     def test_prepared_bundle_not_deployable(self):
         release = self.bundle()
         release.update(status='prepared-not-built', images={})
