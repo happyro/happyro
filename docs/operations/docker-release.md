@@ -9,7 +9,7 @@
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；两台机器的五仓库提交必须完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
 - 全部构建成功后才允许组装离线包；全部归档校验成功才标记 offline-ready。没有镜像的准备包不可部署。
-- 离线交付不需要推送镜像仓库，不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
+- 镜像发布目标为 docker.io/kugarocks/happyro-{gateway,server,admin,database}。用户要求推送时，全部构建及 OCI 校验成功后才从同一批归档推送双架构镜像，再组装离线包；不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
 - 发布成功后更新已发布版本记录；下一次发版只修改 VERSION，环境模板、工具不再硬编码应用版本。
 
 ## 1. 在有资源的机器上准备
@@ -73,3 +73,7 @@ images/
 包内 README 来自 docker-deployment.md，部署者无需引用源码文档。目标 Mac 根据 Docker daemon 架构选择镜像，而非根据运行 Python 的架构判断。使用 Rosetta 也不能改变目标 Docker 架构。
 
 首次发布必须实际验证两种架构的镜像构建、空库初始化、已有库升级、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替这些验收。v0.2.0 已完成双架构构建及 Mac arm64 离线部署验收；amd64 运行验收尚未执行。
+
+## Docker Hub 发布
+
+用户已登录 Docker Hub 且明确要求推送时，将全部已校验的 OCI 归档通过 Skopeo `copy --all` 推送到上述命名空间。使用 Docker 的凭据助手，不将凭据写入日志。推送后核对远程 manifest 的双架构及配置摘要。离线包使用同样的完整标签，部署仍使用 `--pull never`。
