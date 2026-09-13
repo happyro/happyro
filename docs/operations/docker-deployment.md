@@ -73,6 +73,8 @@ docker compose exec admin happyro-admin artisan gm:user:create admin
 
 正常运行七个服务容器和一个完成后退出的 admin-init：
 
+Compose 已为服务设置固定容器名（如 `happyro-admin`、`happyro-gateway`、`happyro-map`），不会再追加默认的 `-1` 序号。固定容器名意味着同一台主机不能同时运行两个相同部署包实例；如需并行实例，应修改 Compose 中的容器名前缀。
+
 | 镜像 | 服务 |
 | --- | --- |
 | Gateway（含全量 PWA 和中文覆盖） | gateway |
