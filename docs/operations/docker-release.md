@@ -29,4 +29,18 @@ python3 tools/deployment/images.py push --output artifacts/images/v0.1.5 --bundl
 
 工具不自动同步 Git、不修改版本记录、不部署。
 
+## 发布包准备与产物说明
+
+正式准备前，五个仓库必须干净且包含要发布的最终提交。未跟踪的截图等文件也会触发构建工具的脏仓库检查，应先移到 work/ 或 artifacts/ 等生成目录。不要为了满足检查把无关文件提交进源码。
+
+运行资源来源为 inputs/runtime/kro-20211105/client；物品和魔物图片分别来自 work/game-data/items/kro-20211105、work/game-data/monsters/kro-20211105；NPC、地图和地形预览来自 Admin 的 backend/resources/game-data/world 对应目录。prepare 会校验目录并复制资源、计算 SHA-256，不启动服务、不构建镜像，也不修改源资源。输出目录必须不存在。
+
+开发预览包标记为 prepared-not-built；正式发布需从最终干净提交重新准备。资源可单独压缩分发，但必须保留部署包中的目录结构及空的 data/ 子目录。资源变化后重新生成配套清单，不能手改 manifest 绕过校验。
+
+build 全量导出双架构 OCI 归档，全部成功才写 built.json。push 使用同一批已验证归档，不重新构建。Skopeo 的 --authfile 默认使用 Docker 配置文件；使用 credential helper 时需提供 Skopeo 支持的认证文件。发布前检查工具安装与注册表认证。
+
+Admin 使用已跟踪的 npm/composer 锁文件；Client 和 Gateway 当前未跟踪 npm 锁文件，同一源码重新构建可能解析到较新的依赖，回滚必须使用实际产物 digest。
+
+推送成功后，工具将 digest 写回部署包的 .env.example 和 release-manifest.json，不修改已有 .env。交付前确认四个镜像 digest 齐全。部署包 README 来自 docker-deployment.md，仅包含部署端步骤；本文件及 images.py 属于源码工作区的发布工具，不随部署包分发。
+
 推送失败必须报告已成功标签；不得用旧镜像补齐，不自动删除已发布标签。全量运行验收要求及部署步骤见 [部署手册](docker-deployment.md)。
