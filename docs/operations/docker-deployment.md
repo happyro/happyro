@@ -98,7 +98,14 @@ docker compose exec admin happyro-admin artisan gm:user:create administrator
 
 最后一条交互式输入后台密码，默认 super_admin，不在命令行传密码。初始化不会创建演示用户。资源哈希验证在启动前执行；Compose 同时拒绝自动创建不存在的资源挂载路径。
 
-依赖顺序：database 健康 → admin-init 完成数据库迁移及物品/魔物快照导入 → login → char → map → web-api → admin → gateway。Server 的 TCP 健康检查说明监听端口就绪，不能代替登录/战斗验收；Admin `/up` 检查 PHP 应用启动，Gateway 检查 HTTP 服务。
+默认使用 `docker compose up -d` 启动全部服务，不设置 profile 或额外功能开关。启动依赖分为两条链：
+
+- 游戏：database 健康 → login → char → map → web-api → gateway。
+- 后台：database 健康 → admin-init 完成后台迁移及图鉴导入；Admin 等待 admin-init 成功及 web-api 健康后启动。
+
+游戏服务不等待 admin-init 或 Admin 健康状态。后台初始化失败、维护或停机时，游戏服务的依赖链仍独立成立；Compose 的整栈命令可能报告后台失败，应通过 `docker compose ps -a` 检查各服务，必要时运行 `docker compose up -d gateway` 单独启动游戏链。依赖后台 API 的冒险工具操作此时不可用，登录、战斗和游戏内 NPC 不依赖后台。
+
+后台可独立维护：`docker compose stop admin`；恢复使用 `docker compose up -d admin`。共享数据库仍须保持运行。Server 的 TCP 健康检查说明监听端口就绪，不能代替登录/战斗验收；Admin `/up` 检查 PHP 应用启动，Gateway 检查 HTTP 服务。
 
 ## 持久化、备份与恢复
 
