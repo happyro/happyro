@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 import tarfile
+import tempfile
 
 NAMES = ('gateway', 'server', 'admin', 'database')
 ARCHES = ('amd64', 'arm64')
@@ -92,5 +93,19 @@ def daemon_architecture():
 def verify_loaded(release, arch):
     for expected in release['images'][arch].values():
         info = json.loads(subprocess.check_output(['docker', 'image', 'inspect', expected['tag']]))[0]
-        if info['Id'] != expected['id'] or info['Os'] != 'linux' or info['Architecture'] != arch:
+        if info['Os'] != 'linux' or info['Architecture'] != arch:
             raise ValueError(f'Local image does not match release: {expected["tag"]}')
+        # Docker's containerd store reports a manifest ID, not the config ID.
+        # Export the local image to verify the exact config (including layer IDs).
+        with tempfile.TemporaryDirectory(prefix='happyro-verify-') as temporary:
+            path = Path(temporary) / 'image.tar'
+            subprocess.run(['docker', 'image', 'save', '--output', str(path), expected['tag']], check=True)
+            with tarfile.open(path) as archive:
+                manifest = json.load(archive.extractfile('manifest.json'))
+                if len(manifest) != 1:
+                    raise ValueError(f'Expected one local image: {expected["tag"]}')
+                raw = archive.extractfile(manifest[0]['Config']).read()
+                config = json.loads(raw)
+            actual = 'sha256:' + hashlib.sha256(raw).hexdigest()
+            if actual != expected['id'] or config.get('os') != 'linux' or config.get('architecture') != arch:
+                raise ValueError(f'Local image does not match release: {expected["tag"]}')

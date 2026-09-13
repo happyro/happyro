@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import images
 import manage
-from offline import ARCHES, NAMES, archive_metadata, digest, reference, verify_images
+from offline import ARCHES, NAMES, archive_metadata, digest, reference, verify_images, verify_loaded
 
 
 class OfflineTests(unittest.TestCase):
@@ -75,6 +75,23 @@ class OfflineTests(unittest.TestCase):
         self.archive(path, 'docker.io/happyro/gateway:v9.0.0', 'arm64')
         metadata = archive_metadata(path, reference('gateway', 'v9.0.0'), 'arm64')
         self.assertEqual(metadata['tag'], 'docker.io/happyro/gateway:v9.0.0')
+
+    def test_loaded_config_verified_independently_of_manifest_id(self):
+        path = self.root / 'local.tar'
+        tag = reference('gateway', 'v9.0.0')
+        self.archive(path, tag, 'arm64')
+        metadata = archive_metadata(path, tag, 'arm64')
+        release = {'images': {'arm64': {'gateway': metadata}}}
+        info = json.dumps([{'Id': 'sha256:manifest-id', 'Os': 'linux', 'Architecture': 'arm64'}]).encode()
+
+        def save(command, **kwargs):
+            self.archive(Path(command[4]), tag, 'arm64')
+
+        with patch('offline.subprocess.check_output', return_value=info), patch('offline.subprocess.run', side_effect=save):
+            verify_loaded(release, 'arm64')
+            metadata['id'] = 'sha256:changed-config'
+            with self.assertRaisesRegex(ValueError, 'does not match'):
+                verify_loaded(release, 'arm64')
 
     def test_prepared_bundle_not_deployable(self):
         release = self.bundle()
