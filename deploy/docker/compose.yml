@@ -1,102 +1,175 @@
+name: ${COMPOSE_PROJECT_NAME:-happyro}
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+x-server: &server
+  image: ${SERVER_IMAGE:?Set SERVER_IMAGE}
+  restart: unless-stopped
+  logging: *logging
+  environment: &server-env
+    DB_HOST: database
+    DB_USER: happyro
+    DB_MAIN_DATABASE: happyro
+    DB_LOG_DATABASE: happyro_log
+    DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+    INTERSERVER_USER: happyro_interserver
+    INTERSERVER_PASSWORD: ${INTERSERVER_PASSWORD:?Set INTERSERVER_PASSWORD}
+    GAME_SERVER_IP: 127.0.0.1
+    WEB_ALLOWED_ORIGIN: ${GAME_PUBLIC_URL:?Set GAME_PUBLIC_URL}
+    GAME_CONTROL_TOKEN: ${GAME_CONTROL_TOKEN:?Set GAME_CONTROL_TOKEN}
+  volumes:
+    - type: bind
+      source: ${DATA_DIR:-./data}/control-socket
+      target: /run/happyro
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${DATA_DIR:-./data}/server-settings
+      target: /run/happyro-settings
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${DATA_DIR:-./data}/server-logs
+      target: /opt/rathena/log
+      bind: {create_host_path: false}
+x-admin: &admin
+  image: ${ADMIN_IMAGE:?Set ADMIN_IMAGE}
+  logging: *logging
+  environment:
+    APP_ENV: production
+    APP_DEBUG: "false"
+    APP_KEY: ${APP_KEY:?Set APP_KEY}
+    APP_URL: ${ADMIN_PUBLIC_URL:?Set ADMIN_PUBLIC_URL}
+    DB_CONNECTION: mariadb
+    DB_HOST: database
+    DB_PORT: 3306
+    DB_DATABASE: happyro_admin
+    DB_USERNAME: happyro_admin
+    DB_PASSWORD: ${ADMIN_DB_PASSWORD:?Set ADMIN_DB_PASSWORD}
+    GAME_DB_HOST: database
+    GAME_DB_PORT: 3306
+    GAME_DB_DATABASE: happyro
+    GAME_LOG_DB_DATABASE: happyro_log
+    GAME_DB_USERNAME: happyro_admin
+    GAME_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?Set ADMIN_DB_PASSWORD}
+    GAME_ITEM_IMAGE_ROOT: /resources/catalog/items
+    GAME_MONSTER_IMAGE_ROOT: /resources/catalog/monsters
+    GAME_MAP_INDEX_PATH: /opt/admin/resources/map_index.txt
+    GAME_CONTROL_BASE_URL: http://web-api:8889
+    GAME_CONTROL_TOKEN: ${GAME_CONTROL_TOKEN:?Set GAME_CONTROL_TOKEN}
+    GAME_SERVER_BATTLE_CONFIG_PATH: /run/happyro-settings/battle_conf.txt
+    SESSION_DRIVER: database
+    SESSION_ENCRYPT: "true"
+    SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-false}
+    SANCTUM_STATEFUL_DOMAINS: ${ADMIN_STATEFUL_DOMAINS:?Set ADMIN_STATEFUL_DOMAINS}
+    CACHE_STORE: database
+    QUEUE_CONNECTION: database
+    LOG_CHANNEL: stderr
+    MAIL_MAILER: log
+  volumes:
+    - type: bind
+      source: ${DATA_DIR:-./data}/admin-storage
+      target: /opt/admin/storage
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${DATA_DIR:-./data}/server-settings
+      target: /run/happyro-settings
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${RESOURCE_DIR:-./resources}/catalog
+      target: /resources/catalog
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${RESOURCE_DIR:-./resources}/catalog/npcs
+      target: /opt/admin/resources/game-data/world/npcs
+      read_only: true
+      bind: {create_host_path: false}
+    - type: bind
+      source: ${RESOURCE_DIR:-./resources}/catalog/maps
+      target: /opt/admin/resources/game-data/world/maps
+      read_only: true
+      bind: {create_host_path: false}
 services:
   database:
-    container_name: happyro-database
-    build: { context: ../.., dockerfile: deploy/docker/database/Dockerfile }
-    image: kugarocks/happyro-database:latest
+    image: ${DATABASE_IMAGE:?Set DATABASE_IMAGE}
+    restart: unless-stopped
+    logging: *logging
     environment:
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-happyro}
-      MARIADB_DATABASE: ${DB_MAIN_DATABASE:-happyro}
-      MARIADB_USER: ${DB_USER:-happyro}
-      MARIADB_PASSWORD: ${DB_PASSWORD:-happyro}
-      HAPPYRO_LOG_DATABASE: ${DB_LOG_DATABASE:-happyro_log}
-      HAPPYRO_INTERSERVER_USER: ${INTERSERVER_USER:-happyro_interserver}
-      HAPPYRO_INTERSERVER_PASSWORD: ${INTERSERVER_PASSWORD:-happyro}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?Set MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: happyro
+      MARIADB_USER: happyro
+      MARIADB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      HAPPYRO_LOG_DATABASE: happyro_log
+      HAPPYRO_ADMIN_PASSWORD: ${ADMIN_DB_PASSWORD:?Set ADMIN_DB_PASSWORD}
+      HAPPYRO_INTERSERVER_USER: happyro_interserver
+      HAPPYRO_INTERSERVER_PASSWORD: ${INTERSERVER_PASSWORD:?Set INTERSERVER_PASSWORD}
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--skip-name-resolve"]
     volumes:
-      - ${DB_DATA_DIR:-../../work/runtime/docker-mariadb}:/var/lib/mysql
+      - type: bind
+        source: ${DATA_DIR:-./data}/database
+        target: /var/lib/mysql
+        bind: {create_host_path: false}
     healthcheck:
-      test: ["CMD-SHELL", "mariadb-admin ping --host=127.0.0.1 --user=$$MARIADB_USER --password=$$MARIADB_PASSWORD --silent"]
-      interval: 3s
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 5s
       timeout: 5s
       retries: 60
-    restart: unless-stopped
-
   login:
-    container_name: happyro-login
-    build: { context: ../.., dockerfile: deploy/docker/server/Dockerfile }
-    image: kugarocks/happyro-server:latest
-    command: ["login-server"]
-    environment: &server-env
-      DB_HOST: database
-      DB_PORT: 3306
-      DB_MAIN_DATABASE: ${DB_MAIN_DATABASE:-happyro}
-      DB_LOG_DATABASE: ${DB_LOG_DATABASE:-happyro_log}
-      DB_USER: ${DB_USER:-happyro}
-      DB_PASSWORD: ${DB_PASSWORD:-happyro}
-      INTERSERVER_USER: ${INTERSERVER_USER:-happyro_interserver}
-      INTERSERVER_PASSWORD: ${INTERSERVER_PASSWORD:-happyro}
-      GAME_SERVER_IP: 127.0.0.1
-      WEB_ALLOWED_ORIGIN: ${WEB_ALLOWED_ORIGIN:-http://localhost:3338}
-    volumes:
-      - ${SERVER_LOG_DIR:-../../work/runtime/docker-rathena}:/opt/rathena/log
-    depends_on: { database: { condition: service_healthy } }
-
+    <<: *server
+    command: [login-server]
+    depends_on: {database: {condition: service_healthy}, admin-init: {condition: service_completed_successfully}}
   char:
-    container_name: happyro-char
-    image: kugarocks/happyro-server:latest
-    command: ["char-server"]
-    environment: *server-env
-    volumes:
-      - ${SERVER_LOG_DIR:-../../work/runtime/docker-rathena}:/opt/rathena/log
-    depends_on: { login: { condition: service_started } }
-
+    <<: *server
+    command: [char-server]
+    depends_on: {login: {condition: service_healthy}}
   map:
-    container_name: happyro-map
-    image: kugarocks/happyro-server:latest
-    command: ["map-server"]
-    environment: *server-env
-    volumes:
-      - ${SERVER_LOG_DIR:-../../work/runtime/docker-rathena}:/opt/rathena/log
-    depends_on: { char: { condition: service_started } }
-
+    <<: *server
+    command: [map-server]
+    depends_on: {char: {condition: service_healthy}}
   web-api:
-    container_name: happyro-web-api
-    image: kugarocks/happyro-server:latest
-    command: ["web-server"]
-    environment: *server-env
-    volumes:
-      - ${SERVER_LOG_DIR:-../../work/runtime/docker-rathena}:/opt/rathena/log
-    depends_on: { database: { condition: service_healthy } }
-    expose: ["8889"]
-
-  gateway:
-    container_name: happyro-gateway
-    build: { context: ../.., dockerfile: deploy/docker/gateway/Dockerfile }
-    image: kugarocks/happyro-gateway:latest
-    environment:
-      PORT: 3338
-      CLIENT_PUBLIC_URL: ${CLIENT_PUBLIC_URL:-http://localhost:3338}
-      REMOTE_CLIENT_URL: ${REMOTE_CLIENT_URL:-}
-      SOCKET_PROXY_URL: ${SOCKET_PROXY_URL:-}
-      RATHENA_WEB_API_URL: http://web-api:8889
-      WS_ALLOWED_TARGETS: 127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121
-      WS_TARGET_REDIRECTS: 127.0.0.1:6900=login:6900,127.0.0.1:6121=char:6121,127.0.0.1:5121=map:5121
-      ENABLE_WSPROXY: "true"
-      ENABLE_STATIC_SERVE: "true"
-      ROBROWSER_PATH: /opt/robrowser
-      ROBROWSER_PUBLIC_PATH: /applications/pwa
-      DATA_OVERRIDE_PATH: /opt/overrides
-    volumes:
-      - ${KRO_CLIENT_DIR:-./kro-client}:/opt/gateway/resources:ro
-      - ${KRO_CLIENT_DIR:-./kro-client}/AI:/opt/gateway/AI:ro
-      - ${KRO_CLIENT_DIR:-./kro-client}/BGM:/opt/gateway/BGM:ro
-      - ${KRO_CLIENT_DIR:-./kro-client}/System:/opt/gateway/System:ro
-      - ${GATEWAY_LOG_DIR:-../../work/runtime/docker-gateway}:/opt/gateway/logs
-    depends_on: { web-api: { condition: service_started }, login: { condition: service_started }, char: { condition: service_started }, map: { condition: service_started } }
-    ports: ["${GATEWAY_PORT:-3338}:3338"]
+    <<: *server
+    command: [web-server]
+    depends_on: {map: {condition: service_healthy}}
+  admin-init:
+    <<: *admin
+    command: [initialize]
+    restart: "no"
+    depends_on: {database: {condition: service_healthy}}
+  admin:
+    <<: *admin
+    restart: unless-stopped
+    depends_on: {admin-init: {condition: service_completed_successfully}, web-api: {condition: service_healthy}}
+    ports: ["${ADMIN_PORT:-8000}:8080"]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3338/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: [CMD, curl, --fail, --silent, http://127.0.0.1:8080/up]
       interval: 10s
       timeout: 5s
-      retries: 12
+      retries: 30
+  gateway:
+    image: ${GATEWAY_IMAGE:?Set GATEWAY_IMAGE}
     restart: unless-stopped
+    logging: *logging
+    environment:
+      PORT: 3338
+      CLIENT_PUBLIC_URL: ${GAME_PUBLIC_URL:?Set GAME_PUBLIC_URL}
+      RATHENA_WEB_API_URL: http://web-api:8889
+      ADMIN_API_URL: http://admin:8080
+      WS_ALLOWED_TARGETS: 127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121
+      WS_TARGET_REDIRECTS: 127.0.0.1:6900=login:6900,127.0.0.1:6121=char:6121,127.0.0.1:5121=map:5121
+      DATA_OVERRIDE_PATH: /opt/overrides:/resources/kro-20211105:/resources/kro-20211105/data
+    volumes:
+      - type: bind
+        source: ${RESOURCE_DIR:-./resources}
+        target: /resources
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${DATA_DIR:-./data}/gateway-logs
+        target: /opt/gateway/logs
+        bind: {create_host_path: false}
+    ports: ["${GATEWAY_PORT:-3338}:3338"]
+    depends_on: {admin: {condition: service_healthy}, web-api: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3338/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
