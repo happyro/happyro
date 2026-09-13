@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 from offline import ARCHES, NAMES, archive_metadata, commits, digest, reference, version
-from manage import verify, write_json
+from manage import create_zip, validate_zip_target, verify, write_json
 
 
 def run(*args):
@@ -45,11 +45,13 @@ def package(args):
     output, bundle = args.output.resolve(), args.bundle.resolve()
     state = json.loads((output / 'built.json').read_text())
     release = json.loads((bundle / 'release-manifest.json').read_text())
+    delivery = bundle.parent / f'happyro-{release["version"]}.zip'
     if release['status'] != 'prepared-not-built':
         raise ValueError('Use a prepared bundle; do not overwrite a completed release')
     if state['version'] != release['version'] or state['commits'] != release['commits']:
         raise ValueError('Images and bundle must have the same version and source commits')
     verify(argparse.Namespace(directory=bundle, prepared=True))
+    validate_zip_target(bundle, delivery)
     if set(state['images']) != set(NAMES):
         raise ValueError('Build must contain all four images')
     for name in NAMES:
@@ -72,7 +74,9 @@ def package(args):
             images[arch][name] = archive_metadata(archive, tag, arch)
     release.update(images=images, status='offline-ready')
     write_json(bundle / 'release-manifest.json', release)
-    print('Offline bundle complete: configuration, resources and both image architectures.')
+    verify(argparse.Namespace(directory=bundle, prepared=False))
+    create_zip(bundle, delivery, release)
+    print('Offline ZIP complete: configuration, resources and both image architectures.')
 
 
 def main():
