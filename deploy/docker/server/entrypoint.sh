@@ -104,6 +104,7 @@ bind_ip: 0.0.0.0
 web_port: ${WEB_PORT}
 allowed_origin_cors: ${WEB_ALLOWED_ORIGIN:-http://localhost:3338}
 game_control_enabled: yes
+game_control_allow_remote: yes
 game_control_secret: ${GAME_CONTROL_TOKEN}
 game_control_socket: /run/happyro/map-control.sock
 EOF
