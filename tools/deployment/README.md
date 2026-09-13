@@ -9,3 +9,5 @@
 两者不带参数仅显示帮助，支持 `--no-color`。生成文件放 `artifacts/`，不修改官方源材料。
 
 完整流程与限制见 [Docker 部署手册](../../docs/operations/docker-deployment.md)。Docker 定义位于 [deploy/docker](../../deploy/docker/)。
+
+首次 `initialize` 会由 Admin 初始化任务创建 `admin/admin` 超级管理员；Database 初始化会创建 `happyro/happyro` GM 账号。两项初始化均幂等，已有数据库不会重复插入账号。

@@ -72,9 +72,9 @@ class OfflineTests(unittest.TestCase):
 
     def test_skopeo_normalized_reference(self):
         path = self.root / 'skopeo.tar'
-        self.archive(path, 'docker.io/happyro/gateway:v9.0.0', 'arm64')
+        self.archive(path, 'docker.io/kugarocks/happyro-gateway:v9.0.0', 'arm64')
         metadata = archive_metadata(path, reference('gateway', 'v9.0.0'), 'arm64')
-        self.assertEqual(metadata['tag'], 'docker.io/happyro/gateway:v9.0.0')
+        self.assertEqual(metadata['tag'], 'docker.io/kugarocks/happyro-gateway:v9.0.0')
 
     def test_loaded_config_verified_independently_of_manifest_id(self):
         path = self.root / 'local.tar'

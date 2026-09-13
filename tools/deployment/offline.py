@@ -36,7 +36,7 @@ def commits(root):
 
 
 def reference(name, release_version):
-    return f'docker.io/happyro/{name}:{release_version}'
+    return f'docker.io/kugarocks/happyro-{name}:{release_version}'
 
 
 def archive_metadata(path, tag, arch):

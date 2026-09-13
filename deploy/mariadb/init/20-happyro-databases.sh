@@ -22,3 +22,12 @@ SET userid = '$HAPPYRO_INTERSERVER_USER',
     sex = 'S'
 WHERE account_id = 1;
 SQL
+
+# Seed the documented GM account while keeping the inter-server account separate.
+"${mariadb_root[@]}" "$MARIADB_DATABASE" <<SQL
+INSERT INTO login (userid, user_pass, sex, email, group_id)
+SELECT 'happyro', 'happyro', 'M', 'happyro@localhost', 99
+WHERE NOT EXISTS (SELECT 1 FROM login WHERE userid = 'happyro');
+UPDATE login SET user_pass = 'happyro', sex = 'M', group_id = 99
+WHERE userid = 'happyro';
+SQL
