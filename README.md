@@ -17,15 +17,15 @@
 
 ## 项目说明
 
-HappyRO 希望让大家轻松玩到中文《仙境传说 Online》：打开浏览器，登录、创建角色，就能进入熟悉的世界，无需安装桌面客户端。你可以探索地图、查阅图鉴，也可以在自己的体验环境中尝试不同职业、装备和游戏节奏。
+HappyRO 是一个可以在浏览器里玩的中文 RO 项目，打开网页就能登录游戏。除了日常冒险，还提供地图、魔物和物品图鉴，以及方便尝试不同职业与装备的工具。
 
-### 体验特色
+### 项目特色
 
-- 浏览器游玩：从登录、选择角色到进入地图，都在网页中完成，也可使用启动页中的资源查看器。
-- 中文本地化：客户端 UI、系统消息、物品、技能、魔物、地图和 NPC。
-- 中文图鉴：随时查询物品、魔物、地图和 NPC，寻找下一处冒险目的地。
-- 自由尝试：在具备相应权限的体验环境中调整角色、获取装备、召唤魔物或传送，探索不同玩法。
-- 自己动手体验：提供 `linux/amd64` 与 `linux/arm64` 离线包，方便在自己的设备上安装和游玩。
+- 浏览器游玩：无需安装桌面客户端，登录、选择角色和进入游戏都在网页中完成。
+- 中文支持：游戏界面、系统消息，以及物品、技能、魔物、地图和 NPC 资料。
+- 游戏图鉴：查询物品属性、魔物掉落、地图和 NPC 位置。
+- 冒险工具：提供角色调整、物品获取、魔物召唤和地图传送等功能，按账号权限开放。
+- 本地安装：提供 `linux/amd64` 与 `linux/arm64` 离线包，可以在自己的设备上运行游戏。
 
 ## 游戏画面
 
@@ -33,11 +33,11 @@ HappyRO 希望让大家轻松玩到中文《仙境传说 Online》：打开浏�
 
 ![HappyRO 游戏登录界面](docs/assets/readme/happyro-game-login.png)
 
-在浏览器中登录并创建角色，即可探索地图、与 NPC 对话、挑战魔物，体验技能、聊天和熟悉的游戏音效。自己安装离线包后，可使用初始体验账号 `happyro / happyro` 进入游戏；该账号具有 GM 权限，方便尝试冒险工具。
+登录并创建角色后，就可以探索地图、与 NPC 对话、挑战魔物。自行安装离线包后，可使用初始游戏账号 `happyro / happyro` 登录；该账号具有 GM 权限，可使用角色调整、召唤等冒险工具。
 
 ### 冒险工具
 
-游戏内的冒险工具把图鉴查询和玩法体验放在同一个窗口中。查地图、找 NPC、看装备时无需离开游戏；角色调整、召唤和传送等功能按账号权限开放。
+冒险工具将图鉴和常用操作集中在一个窗口中，查地图、找 NPC、看装备时无需离开游戏。角色调整、召唤和传送等操作需要相应的 GM 权限。
 
 #### 地图图鉴
 
@@ -49,13 +49,13 @@ HappyRO 希望让大家轻松玩到中文《仙境传说 Online》：打开浏�
 
 ![HappyRO 游戏内魔物图鉴](docs/assets/readme/happyro-game-monsters.png)
 
-魔物图鉴展示等级、HP、种族、属性、经验、掉落物品和出现地图。可以用它寻找练级地点、了解掉落，也可在具备权限时召唤魔物或传送到对应地图进行体验。
+魔物图鉴展示等级、HP、种族、属性、经验、掉落物品和出现地图。可以用它寻找练级地点、了解掉落，有权限的账号还可以召唤魔物或传送到对应地图。
 
 #### NPC 图鉴
 
 ![HappyRO 游戏内 NPC 图鉴](docs/assets/readme/happyro-game-npc.png)
 
-NPC 图鉴展示游戏中 NPC 的中文名称、形象、所在地图和精确坐标，帮助你找到想拜访的角色。可筛选当前地图并在地图上定位；具备权限时可以传送至 NPC 附近。
+NPC 图鉴展示游戏中 NPC 的中文名称、形象、所在地图和精确坐标，支持按当前地图筛选和地图定位；有权限的账号还可以传送至 NPC 附近。
 
 #### 物品图鉴
 
@@ -73,21 +73,21 @@ NPC 图鉴展示游戏中 NPC 的中文名称、形象、所在地图和精确�
 
 ![HappyRO 游戏内游戏设置](docs/assets/readme/happyro-game-settings.png)
 
-在自己的体验环境中，可以通过游戏设置调整经验与分类掉落倍率，以及地图传送、地图分流和魔物召唤等选项，选择适合自己的探索节奏。设置修改需要相应权限。
+游戏设置支持调整经验和各类物品的掉落倍率，也可设置地图传送、地图分流和魔物召唤等功能。自行安装后，可以按自己的喜好调整游戏节奏；修改设置需要相应权限。
 
-## 网页辅助工具
+## 游戏后台
 
-HappyRO Admin 提供独立的网页界面，方便在游戏之外查阅资料、调整角色和体验设置。自己安装后，可以用它准备想尝试的装备、魔物和游戏参数。
+HappyRO Admin 是独立的游戏后台，可以查阅游戏资料、调整角色和修改游戏设置。想试一套装备、召唤某只魔物，或调整升级速度，都可以在这里操作。
 
-自行安装离线包后，可使用初始账号 `admin / admin` 登录辅助工具。该账号与游戏账号独立。
+自行安装离线包后，可使用初始账号 `admin / admin` 登录游戏后台。该账号与游戏账号独立。
 
-![HappyRO 管理后台魔物图鉴](docs/assets/readme/happyro-admin-monsters.png)
+![HappyRO 游戏后台魔物图鉴](docs/assets/readme/happyro-admin-monsters.png)
 
-魔物图鉴支持按名称、种族、属性、体型和首领类型组合查询，帮助你了解魔物特点、寻找想挑战的对手，也可通过召唤入口进行体验。
+后台魔物图鉴支持按名称、种族、属性、体型和首领类型筛选，查看魔物形象、属性和详情，也提供直接召唤的入口。
 
-![HappyRO 管理后台掉落倍率设置](docs/assets/readme/happyro-admin-drops.png)
+![HappyRO 游戏后台掉落倍率设置](docs/assets/readme/happyro-admin-drops.png)
 
-经验、掉落、地图传送、魔物召唤和冒险工具的设置按类别展示，方便按自己的喜好调整体验。
+后台按类别展示游戏设置，可以分别调整经验和各类物品的掉落倍率。
 
 ## 项目组成
 
@@ -99,7 +99,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 | [happyro-client](https://github.com/happyro/happyro-client) | 浏览器客户端、PWA 与游戏内冒险工具 |
 | [happyro-server](https://github.com/happyro/happyro-server) | rAthena 登录、角色、地图和 Web API 服务 |
 | [happyro-gateway](https://github.com/happyro/happyro-gateway) | Node.js 网关、静态资源、HTTP 与 WebSocket 代理 |
-| [happyro-admin](https://github.com/happyro/happyro-admin) | 网页辅助工具、Laravel API 与 Ant Design Pro 前端 |
+| [happyro-admin](https://github.com/happyro/happyro-admin) | 游戏后台、Laravel API 与 Ant Design Pro 前端 |
 
 详细调用关系见[系统概览](docs/architecture/system-overview.md)，代码和资源归属见[仓库边界](docs/architecture/repository-boundaries.md)。
 
