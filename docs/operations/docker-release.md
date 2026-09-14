@@ -65,7 +65,7 @@ images/
 
 这些是最终指定位置，不能直接把双架构 OCI tar 放进去冒充 Docker-save 归档。组装失败会保留部分产物供检查，包仍不就绪；重试前将整个部分 images/ 内容移到包外保留，避免覆盖未知文件。
 
-全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-v0.2.0.zip` 及 `happyro-v0.2.0.zip.sha256`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz`。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、配置及空 data/ 目录。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
+全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-v0.2.0.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、配置及空 data/ 目录。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
 
 ## 验收
 

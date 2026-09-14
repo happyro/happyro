@@ -164,8 +164,7 @@ class OfflineTests(unittest.TestCase):
         self.assertEqual(final['status'], 'offline-ready')
         verify_images(bundle, final)
         self.assertTrue(archive.is_file())
-        checksum = Path(str(archive) + '.sha256').read_text()
-        self.assertEqual(checksum, f'{digest(archive)}  {archive.name}\n')
+        self.assertFalse(Path(str(archive) + '.sha256').exists())
         with zipfile.ZipFile(archive) as packaged:
             self.assertIsNone(packaged.testzip())
             self.assertIn('happyro-v9.0.0/release-manifest.json', packaged.namelist())

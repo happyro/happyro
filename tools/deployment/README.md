@@ -1,7 +1,7 @@
 # Deployment tools
 
 - `manage.py`：准备统一版本离线包、校验全包、导入本机架构镜像、生成密钥、部署、备份/恢复。
-- `images.py`：在构建机器全量无缓存构建双架构 OCI；package 转为 Docker-save 归档，放入包内 images/amd64 和 images/arm64，并生成 `.zip` 离线交付包及 SHA-256 文件，不重新构建、不推送。
+- `images.py`：在构建机器全量无缓存构建双架构 OCI；package 转为 Docker-save 归档，放入包内 images/amd64 和 images/arm64，并生成 `.zip` 离线交付包，不重新构建、不推送。
 - `offline.py`：包内共享校验模块，不直接执行。
 
 版本唯一来源：deploy/docker/VERSION。prepare 和 build 读取同一版本；package 要求五仓库提交也完全一致。最终交付必须包含镜像与资源，不拆包。无镜像时使用 verify --prepared 检查准备包；正常 verify、initialize 和 deploy 均拒绝缺失镜像的包。

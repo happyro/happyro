@@ -139,13 +139,12 @@ def verify(args):
 
 def validate_zip_target(root, output):
     root, output = root.resolve(), output.resolve()
-    checksum = Path(str(output) + '.sha256')
     if output.suffix.lower() != '.zip':
         raise ValueError('Offline bundle output must use the .zip extension')
     if output.is_relative_to(root):
         raise ValueError('Offline bundle archive must be outside the source directory')
-    if output.exists() or checksum.exists():
-        raise ValueError('Offline bundle archive and checksum must not already exist')
+    if output.exists():
+        raise ValueError('Offline bundle archive must not already exist')
     if (root / '.env').exists():
         raise ValueError('Remove .env before creating an offline bundle archive')
     data = root / 'data'
@@ -154,12 +153,12 @@ def validate_zip_target(root, output):
     paths = sorted(root.rglob('*'))
     if any(path.is_symlink() for path in paths):
         raise ValueError('Symlinks are not allowed in an offline bundle archive')
-    return paths, checksum
+    return paths
 
 
 def create_zip(root, output, release):
     root, output = root.resolve(), output.resolve()
-    paths, checksum = validate_zip_target(root, output)
+    paths = validate_zip_target(root, output)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     archive_root = f'happyro-{release["version"]}'
@@ -180,7 +179,6 @@ def create_zip(root, output, release):
         temporary_path.replace(output)
     finally:
         temporary_path.unlink(missing_ok=True)
-    checksum.write_text(f'{digest(output)}  {output.name}\n')
     print(f'Offline bundle archive: {output}')
 
 
