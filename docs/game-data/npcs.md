@@ -4,7 +4,7 @@
 
 NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器实例为完整来源。官方 `navi_npc_krpri.lub` 只补充导航 ID、Class、官方名称、别名和路线位置。
 
-中文显示名来自 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json`。审查过的近坐标导航关联覆盖在 `configs/npc-navigation-overrides.json`。
+中文显示名来自 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json`。符号 Sprite 名称通过客户端 `MonsterTable.js` 解析为数值 Class。审查过的近坐标导航关联，以及没有官方导航记录但可由服务端按地图、坐标和 Class 实时校验的 NPC 身份，维护在 `configs/npc-navigation-overrides.json`。
 
 ## 生成命令
 
