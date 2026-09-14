@@ -19,6 +19,7 @@ case "$1" in
     serve) exec supervisord -c /etc/supervisor/supervisord.conf ;;
     initialize)
         php artisan migrate --force
+        php artisan gm:user:create admin --name=admin --password=admin --role=super_admin --ensure --no-color
         php -d memory_limit=512M artisan game-data:import-items --all --no-color
         php -d memory_limit=512M artisan game-data:import-monsters --renewal --no-color
         ;;
