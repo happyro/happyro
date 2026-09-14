@@ -102,7 +102,7 @@ EOF
 cat > conf/import/web_conf.txt <<EOF
 bind_ip: 0.0.0.0
 web_port: ${WEB_PORT}
-allowed_origin_cors: ${WEB_ALLOWED_ORIGIN:-http://localhost:3338}
+allowed_origin_cors: ${WEB_ALLOWED_ORIGIN:-http://127.0.0.1:3338}
 game_control_enabled: yes
 game_control_allow_remote: yes
 game_control_secret: ${GAME_CONTROL_TOKEN}
