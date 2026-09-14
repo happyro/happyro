@@ -62,7 +62,6 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 ```bash
 python3 tools/deployment/manage.py deploy --directory .
 docker compose ps -a
-docker compose exec admin happyro-admin artisan gm:user:create admin
 ```
 
 部署初始化会幂等创建后台 `admin/admin` 超级管理员和游戏 `happyro/happyro` GM 账号；重复运行不会新增重复账号。deploy 校验整个包、Compose 镜像配置和已导入镜像后启动，不构建、不拉取、不覆盖 .env。首次后台初始化可能耗时，使用 docker compose logs admin-init 查看迁移、默认账号和图鉴导入。
