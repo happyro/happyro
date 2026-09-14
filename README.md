@@ -12,7 +12,7 @@
   <a href="https://happyro.kugarocks.com/installation/docker">Docker 安装</a>
 </p>
 
-<p><img src="docs/assets/readme/happyro-game-southgate.png" alt="HappyRO 普隆德拉南门游戏画面" width="720"></p>
+<p><img src="docs/assets/readme/happyro-game-southgate.png" alt="HappyRO 普隆德拉南门游戏画面" width="100%"></p>
 
 </div>
 
@@ -30,7 +30,7 @@ HappyRO 是一个可以在浏览器里玩的中文 RO 项目，打开网页就�
 
 ## 游戏画面
 
-### 登录与游戏世界
+### 登录界面
 
 ![HappyRO 游戏登录界面](docs/assets/readme/happyro-game-login.png)
 
