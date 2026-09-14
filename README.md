@@ -5,7 +5,8 @@
 <p>基于 roBrowserLegacy 与 rAthena 的开源中文《仙境传说 Online》Web 项目</p>
 
 <p>
-  <a href="https://happyro-demo.kugarocks.com/applications/pwa/index.html">在线体验</a> ·
+  <a href="https://happyro-demo.kugarocks.com/applications/pwa/index.html">游戏演示</a> ·
+  <a href="https://happyro-admin.kugarocks.com">后台演示</a> ·
   <a href="https://happyro.kugarocks.com/downloads">资源下载</a> ·
   <a href="docs/README.md">项目文档</a> ·
   <a href="https://happyro.kugarocks.com/installation/docker">Docker 安装</a>
@@ -79,7 +80,7 @@ NPC 图鉴展示游戏中 NPC 的中文名称、形象、所在地图和精确�
 
 HappyRO Admin 是独立的游戏后台，可以查阅游戏资料、调整角色和修改游戏设置。想试一套装备、召唤某只魔物，或调整升级速度，都可以在这里操作。
 
-自行安装离线包后，可使用初始账号 `admin / admin` 登录游戏后台。该账号与游戏账号独立。
+在线体验后台：[happyro-admin.kugarocks.com](https://happyro-admin.kugarocks.com)。自行安装离线包后，可使用初始账号 `admin / admin` 登录游戏后台。该账号与游戏账号独立。
 
 ![HappyRO 游戏后台魔物图鉴](docs/assets/readme/happyro-admin-monsters.png)
 
@@ -118,9 +119,9 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 
 上游提交是 `versions/sources.lock` 记录的选定起点，不代表各应用仓库当前 HEAD。实际产品版本以 Git tag、离线包发布清单和镜像 digest 为准。
 
-## 本地体验与开发
+## 安装与开发
 
-想在自己的设备上游玩，可以使用完整离线包，其中包含双架构镜像、kRO 运行资源、配置模板和配套工具。设备需安装 Docker Engine、Compose v2 和 Python 3.11+；安装过程不需要源码、Node.js、PHP、Skopeo 或镜像仓库连接。具体步骤见[离线安装手册](docs/operations/docker-deployment.md)。
+想在自己的设备上运行游戏，可以使用完整离线包，其中包含双架构镜像、kRO 运行资源、配置模板和配套工具。设备需安装 Docker Engine、Compose v2 和 Python 3.9+；安装过程不需要源码、Node.js、PHP、Skopeo 或镜像仓库连接。具体步骤见[离线安装手册](docs/operations/docker-deployment.md)。
 
 本机源码开发通过根仓库 `Makefile` 和 systemd 管理游戏进程，MariaDB 使用 Compose：
 
@@ -137,7 +138,14 @@ make doctor
 make gateway-start
 ```
 
-游戏入口：<http://127.0.0.1:3338/applications/pwa/index.html>；游戏后台：<http://127.0.0.1:8000>。默认仅允许部署机器本机访问；依赖安装、资源准备和常用命令见[本地开发](docs/development/local-setup.md)。
+默认仅允许部署机器本机访问。
+
+访问入口：
+
+- 游戏：<http://127.0.0.1:3338/applications/pwa/index.html>
+- 游戏后台：<http://127.0.0.1:8000>
+
+依赖安装、资源准备和常用命令见[本地开发](docs/development/local-setup.md)。
 
 ## 文档导航
 
