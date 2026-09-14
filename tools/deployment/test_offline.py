@@ -7,6 +7,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 import images
 import manage
@@ -17,7 +18,7 @@ class OfflineTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
 
     def archive(self, path, tag, arch):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,6 +46,7 @@ class OfflineTests(unittest.TestCase):
         resources.mkdir()
         (resources / 'manifest.json').write_text(json.dumps({'version': 'v9.0.0', 'files': []}))
         release['resource_manifest_sha256'] = digest(resources / 'manifest.json')
+        (self.root / 'data/database').mkdir(parents=True)
         for arch in ARCHES:
             release['images'][arch] = {}
             for name in NAMES:
@@ -135,8 +137,10 @@ class OfflineTests(unittest.TestCase):
 
     def test_package_completes_only_after_all_archives(self):
         output = self.root / 'build'
+        bundle = self.root / 'bundle'
         output.mkdir()
-        (self.root / 'images').mkdir()
+        (bundle / 'images').mkdir(parents=True)
+        (bundle / 'data/database').mkdir(parents=True)
         state = {'version': 'v9.0.0', 'commits': {'root': 'a'}, 'images': {}}
         for name in NAMES:
             path = output / f'{name}.tar'
@@ -144,7 +148,7 @@ class OfflineTests(unittest.TestCase):
             state['images'][name] = digest(path)
         (output / 'built.json').write_text(json.dumps(state))
         release = {**state, 'status': 'prepared-not-built', 'images': {}}
-        manifest = self.root / 'release-manifest.json'
+        manifest = bundle / 'release-manifest.json'
         manifest.write_text(json.dumps(release))
 
         def convert(*command):
@@ -154,10 +158,32 @@ class OfflineTests(unittest.TestCase):
             self.assertEqual(json.loads(manifest.read_text())['status'], 'prepared-not-built')
 
         with patch('images.verify'), patch('images.inspect'), patch('images.run', side_effect=convert):
-            images.package(argparse.Namespace(output=output, bundle=self.root))
+            archive = self.root / 'happyro-v9.0.0.zip'
+            images.package(argparse.Namespace(output=output, bundle=bundle))
         final = json.loads(manifest.read_text())
         self.assertEqual(final['status'], 'offline-ready')
-        verify_images(self.root, final)
+        verify_images(bundle, final)
+        self.assertTrue(archive.is_file())
+        checksum = Path(str(archive) + '.sha256').read_text()
+        self.assertEqual(checksum, f'{digest(archive)}  {archive.name}\n')
+        with zipfile.ZipFile(archive) as packaged:
+            self.assertIsNone(packaged.testzip())
+            self.assertIn('happyro-v9.0.0/release-manifest.json', packaged.namelist())
+            self.assertIn('happyro-v9.0.0/images/arm64/admin.tar', packaged.namelist())
+            self.assertIn('happyro-v9.0.0/data/database/', packaged.namelist())
+
+    def test_zip_rejects_secrets_and_non_zip_output(self):
+        release = self.bundle()
+        (self.root / 'release-manifest.json').write_text(json.dumps(release))
+        with self.assertRaisesRegex(ValueError, '\\.zip extension'):
+            manage.create_zip(self.root, self.root.parent / 'bundle.tar.gz', release)
+        (self.root / '.env').write_text('secret')
+        with self.assertRaisesRegex(ValueError, 'Remove .env'):
+            manage.create_zip(self.root, self.root.parent / 'bundle.zip', release)
+        (self.root / '.env').unlink()
+        (self.root / 'data/database/runtime-file').write_text('state')
+        with self.assertRaisesRegex(ValueError, 'must not contain runtime files'):
+            manage.create_zip(self.root, self.root.parent / 'bundle.zip', release)
 
 
 if __name__ == '__main__':

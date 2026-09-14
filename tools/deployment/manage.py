@@ -10,6 +10,8 @@ import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
+import zipfile
 
 from offline import (NAMES, commits, version, checked_path, verify_images, digest,
                      daemon_architecture, verify_loaded, reference)
@@ -133,6 +135,53 @@ def verify(args):
         verify_images(root, release)
     print(f'Verified {len(expected)} resource files for {release["version"]}')
     return release
+
+
+def validate_zip_target(root, output):
+    root, output = root.resolve(), output.resolve()
+    checksum = Path(str(output) + '.sha256')
+    if output.suffix.lower() != '.zip':
+        raise ValueError('Offline bundle output must use the .zip extension')
+    if output.is_relative_to(root):
+        raise ValueError('Offline bundle archive must be outside the source directory')
+    if output.exists() or checksum.exists():
+        raise ValueError('Offline bundle archive and checksum must not already exist')
+    if (root / '.env').exists():
+        raise ValueError('Remove .env before creating an offline bundle archive')
+    data = root / 'data'
+    if data.is_dir() and any(path.is_file() for path in data.rglob('*')):
+        raise ValueError('Offline bundle data/ must not contain runtime files')
+    paths = sorted(root.rglob('*'))
+    if any(path.is_symlink() for path in paths):
+        raise ValueError('Symlinks are not allowed in an offline bundle archive')
+    return paths, checksum
+
+
+def create_zip(root, output, release):
+    root, output = root.resolve(), output.resolve()
+    paths, checksum = validate_zip_target(root, output)
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    archive_root = f'happyro-{release["version"]}'
+    with tempfile.NamedTemporaryFile(prefix=f'.{output.name}.', suffix='.tmp',
+                                     dir=output.parent, delete=False) as temporary:
+        temporary_path = Path(temporary.name)
+    try:
+        with zipfile.ZipFile(temporary_path, 'w', compression=zipfile.ZIP_DEFLATED,
+                             compresslevel=6, allowZip64=True) as archive:
+            archive.writestr(f'{archive_root}/', b'')
+            for path in paths:
+                relative = path.relative_to(root).as_posix()
+                archive.write(path, f'{archive_root}/{relative}')
+        with zipfile.ZipFile(temporary_path) as archive:
+            broken = archive.testzip()
+            if broken is not None:
+                raise ValueError(f'ZIP integrity check failed: {broken}')
+        temporary_path.replace(output)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    checksum.write_text(f'{digest(output)}  {output.name}\n')
+    print(f'Offline bundle archive: {output}')
 
 
 def initialize(args):
