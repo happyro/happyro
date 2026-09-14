@@ -150,10 +150,6 @@ make gateway-start
 - 安装教程：[Docker](https://happyro.kugarocks.com/installation/docker) / [Linux](https://happyro.kugarocks.com/installation/linux) / [macOS](https://happyro.kugarocks.com/installation/macos) / [Windows](https://happyro.kugarocks.com/installation/windows)
 - QQ 群：`662191549`（HappyRO）
 
-## kRO 客户端
-
-[kro-20211105.zip](https://pan.baidu.com/s/1dHzJ2RGMt4zZkA-MXF_BxQ?pwd=jy3k) 仅供个人学习与研究，任何商业用途均须自行承担相应责任。
-
 ## 开源协议
 
 [GNU General Public License v3.0](LICENSE)
