@@ -8,7 +8,7 @@
   <a href="https://happyro-demo.kugarocks.com/applications/pwa/index.html">游戏演示</a> ·
   <a href="https://happyro-admin.kugarocks.com">后台演示</a> ·
   <a href="https://happyro.kugarocks.com/downloads">资源下载</a> ·
-  <a href="docs/README.md">项目文档</a> ·
+  <a href="https://happyro.kugarocks.com/intro">项目文档</a> ·
   <a href="https://happyro.kugarocks.com/installation/docker">Docker 安装</a>
 </p>
 
@@ -102,7 +102,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 | [happyro-gateway](https://github.com/happyro/happyro-gateway) | Node.js 网关、静态资源、HTTP 与 WebSocket 代理 |
 | [happyro-admin](https://github.com/happyro/happyro-admin) | 游戏后台、Laravel API 与 Ant Design Pro 前端 |
 
-详细调用关系见[系统概览](docs/architecture/system-overview.md)，代码和资源归属见[仓库边界](docs/architecture/repository-boundaries.md)。
+详细调用关系见[系统概览](https://happyro.kugarocks.com/intro#运行关系)，各仓库职责见[项目组成](https://happyro.kugarocks.com/intro#项目组成)。
 
 ## 技术基线
 
@@ -121,7 +121,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 
 ## 安装与开发
 
-想在自己的设备上运行游戏，可以使用完整离线包，其中包含双架构镜像、kRO 运行资源、配置模板和配套工具。设备需安装 Docker Engine、Compose v2 和 Python 3.9+；安装过程不需要源码、Node.js、PHP、Skopeo 或镜像仓库连接。具体步骤见[离线安装手册](docs/operations/docker-deployment.md)。
+推荐使用[离线包](https://happyro.kugarocks.com/downloads)部署 HappyRO。包内已包含双架构镜像、kRO 运行资源、配置模板和配套工具，只需提前安装 Docker Engine、Compose v2 和 Python 3.9+，即可按照[离线安装手册](https://happyro.kugarocks.com/installation/docker)完成部署。
 
 本机源码开发通过根仓库 `Makefile` 和 systemd 管理游戏进程，MariaDB 使用 Compose：
 
@@ -145,19 +145,19 @@ make gateway-start
 - 游戏：<http://127.0.0.1:3338/applications/pwa/index.html>
 - 游戏后台：<http://127.0.0.1:8000>
 
-依赖安装、资源准备和常用命令见[本地开发](docs/development/local-setup.md)。
+依赖安装、资源准备和常用命令见[本地开发](https://happyro.kugarocks.com/installation/linux)。
 
 ## 文档导航
 
 | 入口 | 内容 |
 | --- | --- |
-| [文档总览](docs/README.md) | 安装、开发、架构、本地化和游戏资料入口 |
-| [系统概览](docs/architecture/system-overview.md) | 浏览器、Gateway、Server 与 Admin 的运行关系 |
-| [本地开发](docs/development/local-setup.md) | 环境准备、构建、启动和检查 |
-| [运行与排查](docs/operations/services.md) | 服务、端口、启停和日志 |
-| [离线安装](docs/operations/docker-deployment.md) | 完整离线包的初始化、升级、备份和恢复 |
-| [本地化](docs/localization/overview.md) | 中文资源、覆盖链和校验 |
-| [游戏资料](docs/game-data/README.md) | 物品、魔物、地图、NPC 和技能目录 |
+| [项目简介](https://happyro.kugarocks.com/intro) | 核心能力、项目组成、运行关系和技术基线 |
+| [系统概览](https://happyro.kugarocks.com/intro#运行关系) | 浏览器、Gateway、Server 与 Admin 的运行关系 |
+| [本地开发](https://happyro.kugarocks.com/installation/linux) | 环境准备、构建、启动和检查 |
+| [日常维护](https://happyro.kugarocks.com/installation/docker#日常维护) | 服务状态、日志、重启和停止 |
+| [离线安装](https://happyro.kugarocks.com/installation/docker) | 完整离线包的获取、校验、初始化和启动 |
+| [关于汉化](https://happyro.kugarocks.com/translation) | 汉化流程、资源处理和已知局限 |
+| [游戏图鉴与工具](https://happyro.kugarocks.com/features/game) | 地图、魔物、NPC、物品图鉴和角色维护 |
 
 ## 站点与社区
 
