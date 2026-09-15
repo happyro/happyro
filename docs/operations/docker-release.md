@@ -6,15 +6,24 @@
 
 - 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.2.0（2026-09-15 全量重建，Mac 本机从 ZIP 离线部署，等待用户画面与操作验收）。
 - 应用、资源、配置和镜像使用同一个版本，组成一个完整目录交付，不单独发布资源包。
-- 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；两台机器的五仓库提交必须完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
+- 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
 - 全部构建成功后才允许组装离线包；全部归档校验成功才标记 offline-ready。没有镜像的准备包不可部署。
 - 镜像发布目标为 docker.io/kugarocks/happyro-{gateway,server,admin,database}。用户要求推送时，全部构建及 OCI 校验成功后才从同一批归档推送双架构镜像，再组装离线包；不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
 - 发布成功后更新已发布版本记录；下一次发版只修改 VERSION，环境模板、工具不再硬编码应用版本。
 
-## 1. 在有资源的机器上准备
+## 1. 优先在本机检查并准备资源
 
-此步骤需要 Python 3.11+ 和完整源码，不需要 Docker。当前资源主机可使用 10.24.1.1。
+此步骤需要 Python 3.11+ 和完整源码，不需要 Docker。准备资源和构建镜像可以在同一台机器完成。当前 Mac 工作区已有完整资源，默认在本机完成准备、校验、构建和打包。
+
+每次发布先检查本地以下输入，不得因为本文列出远端资源机就直接执行 SSH 准备或 rsync 下载：
+
+- `inputs/runtime/kro-20211105/client/DATA.INI` 及其引用的全部 GRF 文件。
+- 同一客户端目录中的 `AI/`、`BGM/`、`System/`、`data/`。
+- `work/game-data/items/kro-20211105/` 和 `work/game-data/monsters/kro-20211105/`。
+- `repos/happyro-admin/backend/resources/game-data/world/` 下的 `npcs/`、`maps/`、`terrain/`。
+
+本地输入齐全时，直接运行下面的 prepare 和 verify，不从 fnrocks 重复下载。目录存在只是初步检查，准备产物必须通过 verify。只有确认本地输入缺失后，才使用资源机 `fnrocks`（`10.24.1.1`），明确缺失项并决定补齐本地输入或在资源机准备完整目录；校验失败时先查明原因，不自动用远端资源覆盖本地输入。
 
 资源来自 inputs/runtime/kro-20211105/client；物品和魔物图片来自 work/game-data/items/kro-20211105 与 work/game-data/monsters/kro-20211105；NPC、地图、地形图片来自 Admin 的 backend/resources/game-data/world 对应目录。经过核验的运行资源只读复制，不从历史翻译工作区发布，不重新生成图片或 GRF。
 
@@ -27,11 +36,17 @@ python3 tools/deployment/manage.py verify --directory artifacts/deployment/relea
 
 输出目录必须不存在。prepare 从 VERSION 生成包内版本、环境模板和资源清单，记录五仓库提交，并预留空 images/。资源与配置都计算 SHA-256。任何未跟踪文件也会触发脏仓库检查；截图等应放在已忽略的 work/ 或 artifacts/，不要提交无关文件。
 
-## 2. 在另一台机器构建
+## 2. 在本机构建镜像
 
 构建机器需要完整源码、Python 3.11+、Docker Buildx、Skopeo，以及双架构构建能力。macOS 使用 Docker Desktop 的 Linux 容器。构建期间需要联网下载基础镜像和依赖；离线的是最终部署过程。
 
-将准备目录从资源机复制到构建机的 artifacts/deployment/release，保留空目录和完整结构。例如在 Mac 上执行（替换 SSH 用户与路径）：
+本机已完成第 1 步时，直接构建，无需复制准备目录：
+
+```bash
+python3 tools/deployment/images.py build --workspace . --output artifacts/images/release
+```
+
+仅当第 1 步因本地输入缺失而选择在资源机准备时，才将准备目录复制到构建机的 artifacts/deployment/release，保留空目录和完整结构。先确认两台机器的五仓库提交一致，再在 Mac 上执行（替换 SSH 用户与路径）：
 
 ```bash
 rsync -a SSH_USER@10.24.1.1:/vol2/1000/kugarocks/happyro/artifacts/deployment/release/ artifacts/deployment/release/
