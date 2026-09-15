@@ -65,3 +65,7 @@ docker inspect --format '{{.State.Health.Status}}' happyro-mariadb
 ## Admin 前端改动未生效
 
 核对该端口监听进程是否属于 systemd 服务，而不是只看编译日志。发现孤立进程时，只终止已核实的进程，然后 `systemctl restart happyro-admin-frontend.service`。不要使用宽泛的 `pkill node`。
+
+## Docker 部署下 Admin 后端改动未生效
+
+本机 systemd 部署没有这个问题；只发生在 Docker 离线包部署（见[离线部署](docker-deployment.md)）。Admin 镜像开启了 OPcache 且 `validate_timestamps=0`，只信任构建镜像时打包的文件快照，容器内改代码或重启容器都不会生效。必须重新构建 Admin 镜像并 `docker compose up -d --pull never admin`。

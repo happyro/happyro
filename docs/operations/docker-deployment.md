@@ -67,6 +67,8 @@ docker compose ps -a
 
 部署初始化会幂等创建后台 `admin/admin` 超级管理员和游戏 `happyro/happyro` GM 账号；重复运行不会新增重复账号。deploy 校验整个包、Compose 镜像配置和已导入镜像后启动，不构建、不拉取、不覆盖 .env。首次后台初始化可能耗时，使用 docker compose logs admin-init 查看迁移、默认账号和图鉴导入。
 
+admin-init 依次执行：数据库迁移（`migrate --force`）→ 创建默认管理员 → 导入物品（`game-data:import-items --all`）→ 导入魔物（`game-data:import-monsters --renewal`）→ 导入 NPC（`game-data:import-npcs --renewal`）。三条导入命令都以 `-d memory_limit=512M` 运行，避免大目录导入时触发内存限制。
+
 游戏入口：GAME_PUBLIC_URL/applications/pwa/index.html，应先显示启动页。后台入口为 ADMIN_PUBLIC_URL。
 
 ## 服务与后台维护
@@ -83,6 +85,8 @@ Compose 已为服务设置固定容器名（如 `happyro-admin`、`happyro-gatew
 | Database（MariaDB 10.11） | database |
 
 后台默认宿主机 8000 → 容器 8080；游戏 3338 → 3338，其余端口只在 Docker 网络内。后台资料版本固定在配置中（kro-20211105、2fe6ab3dc4d8），不是应用发布版本，不在页面修改。
+
+Admin 容器的 PHP 运行时限制为 `memory_limit=256M` 并开启 OPcache（`deploy/docker/admin/php.ini`），nginx 对 JSON、JS、CSS 等文本响应开启 gzip；Gateway 对反代到 Admin 的 `/api/adventure-tools/*` 响应同样启用压缩。这两项都只在镜像里生效，修改配置文件后必须重新构建镜像，重启容器不够——OPcache 默认 `validate_timestamps=0`，只信任构建时的文件快照。
 
 游戏依赖链是 database → login → char → map → web-api → gateway。Admin 等待数据库、admin-init 完成和 web-api 健康。游戏不等待 Admin；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
 
@@ -108,6 +112,8 @@ python3 tools/deployment/manage.py deploy --directory .
 ```
 
 原有 Compose 项目名应保持一致。数据库初始化 SQL 只对空目录执行；Server schema 变化需先审查该版本升级 SQL，并在停写后显式执行。工具不盲目执行历史升级脚本。
+
+`admin-init` 每次都会完整重跑迁移和三条导入命令，所以正常升级流程已经覆盖新增的导入步骤。只有跳过 `admin-init`、只对已有数据库单独执行 `migrate` 的场景才需要注意：新迁移建出的表（例如 `game_npcs`）不会自动有数据，必须单独补跑对应的 `artisan game-data:import-*` 命令，否则查询接口会一直返回空结果。
 
 ## 备份与恢复
 

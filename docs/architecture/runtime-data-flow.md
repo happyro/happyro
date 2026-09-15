@@ -31,7 +31,7 @@ Gateway 处理 `/data/...` 的顺序为：
 
 - 技能名称、说明、技能树：Client 生成模块，进入游戏不再执行对应 LUB。
 - 导航目录与寻路图：PWA `data/navigation/*.json`，按需加载。
-- NPC / 魔物 / 地图图鉴：Client 与 Admin 消费同一套生成目录。
+- NPC / 魔物 / 地图图鉴：生成目录本身构建期产出、运行期只读，但冒险工具消费方式不统一——NPC 和地图经 Admin 服务端分页查询，魔物由客户端直接静态读取（见下方“Admin 数据流”）。
 - 物品显示名和说明：运行目录中的 `System/itemInfo_true.lub`。
 - 系统消息、称号、技能 TXT、卡片前缀：`localization/client/data/`。
 
@@ -56,8 +56,19 @@ Admin 前端 :8000
   → Laravel :18081
        ├── happyro_admin     管理员、角色、权限、审计
        ├── happyro           玩家账号与角色查询（游戏库）
-       ├── 静态资料 JSON     物品 / 魔物 / 地图 / NPC 目录
+       ├── happyro_admin     物品 / 魔物 / NPC 目录（数据库表，服务端分页）
+       ├── 内存合并 + 缓存   地图目录（合并服务端地图索引与共享目录，服务端分页，无数据库表）
        └── Game Control      在线角色与地图实体变更
 ```
 
-游戏内冒险工具需要调用 Admin 能力时，由 Gateway 做同源反向代理，避免把服务密钥下发到浏览器。
+游戏内冒险工具需要调用 Admin 能力时，由 Gateway 做同源反向代理（`/api/adventure-tools/*`），避免把服务密钥下发到浏览器。四类资料在 Admin 内部的具体查询模式并不统一，完整对比见 [资料目录·运行时查询模式](game-data-catalogs.md#运行时查询模式)；以冒险工具 NPC 图鉴为例，一次请求的完整链路是：
+
+```text
+GameTools（客户端）
+  → Gateway /api/adventure-tools/npcs（同源反代）
+       → Admin AdventureWorldController::npcs
+            → NpcCatalogService::search
+                 → DatabaseNpcRepository（分页查询 game_npcs 表）
+```
+
+魔物图鉴不经过这条链路：`GameTools` 直接向 Gateway 请求客户端 PWA 内的静态文件（`applications/pwa/data/monsters/catalog.json`），不经 Admin，也没有分页——原因见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。

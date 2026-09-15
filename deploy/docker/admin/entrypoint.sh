@@ -22,6 +22,7 @@ case "$1" in
         php artisan gm:user:create admin --name=admin --password=admin --role=super_admin --ensure --no-color
         php -d memory_limit=512M artisan game-data:import-items --all --no-color
         php -d memory_limit=512M artisan game-data:import-monsters --renewal --no-color
+        php -d memory_limit=512M artisan game-data:import-npcs --renewal --no-color
         ;;
     artisan) shift; exec php artisan "$@" ;;
     *) printf 'Unknown command: %s\n' "$1" >&2; exit 2 ;;

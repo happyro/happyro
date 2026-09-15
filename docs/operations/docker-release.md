@@ -4,7 +4,7 @@
 
 ## 版本与交付规则
 
-- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.2.0（2026-09-16 全量重建，Mac 本机从 ZIP 离线部署并完成自动验收）。
+- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本：无（尚未正式发布，等待重新构建并记录）。
 - 应用、资源、配置和镜像使用同一个版本，组成一个完整目录交付，不单独发布资源包。
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
@@ -80,19 +80,15 @@ images/
 
 这些是最终指定位置，不能直接把双架构 OCI tar 放进去冒充 Docker-save 归档。组装失败会保留部分产物供检查，包仍不就绪；重试前将整个部分 images/ 内容移到包外保留，避免覆盖未知文件。
 
-全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-v0.2.0.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、配置及空 data/ 目录。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
+全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-v<VERSION>.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、配置及空 data/ 目录。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
 
 ## 验收
 
 包内 README 来自 docker-deployment.md，部署者无需引用源码文档。目标 Mac 根据 Docker daemon 架构选择镜像，而非根据运行 Python 的架构判断。使用 Rosetta 也不能改变目标 Docker 架构。
 
-首次发布必须实际验证两种架构的镜像构建、空库初始化、已有库升级、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替这些验收。v0.2.0 已完成双架构构建及 Mac arm64 离线部署验收；amd64 运行验收尚未执行。
+首次发布必须实际验证两种架构的镜像构建、空库初始化、已有库升级、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替这些验收。
 
-2026-09-16 00:14（Asia/Shanghai）从最新五个构建仓库提交全量无缓存重建 Gateway（PWA --all）、Server、Admin 和 Database 的 amd64/arm64 镜像；构建前删除旧容器、版本镜像、构建产物、离线包和安装数据，没有复用旧产物。镜像源码为根仓库 `c6ef0ebe`、Client `567c7ae5`、Gateway `e391325f`、Server `84fe177a`、Admin `23420841`，完整提交和镜像摘要见 `artifacts/deployment/verification.json`。统一离线包为 `artifacts/deployment/happyro-v0.2.0.zip`（4,597,610,896 字节，SHA-256：`0806342866a2bf7142ce8e66810d104d032ca4ee9d7acbc21556a3094cc26daa`），本次未推送 Docker Hub。
-
-Mac arm64 从新 ZIP 解压到 `work/deployment/installed/happyro-v0.2.0`，使用包内工具完成 CRC 与资源校验、离线镜像导入、空库初始化和部署。七个常驻服务全部健康，admin-init 正常退出；验证启动页与构建产物哈希、地图和 BGM 资源、后台会话/图鉴/运营接口、创建角色、选角、进入地图与接收世界数据。独立停止后台期间游戏链路正常；整栈容器删除并重建后，角色 ID、设置文件哈希、PWA 构建信息和召唤默认值保持一致。
-
-此前四个可选导入文件缺失和 162 条名称超长提示均已修复：首次启动与整栈重建后的对应日志计数均为 0，重建后所有服务未发现其他错误级别日志。协议级进图已验证；未验证浏览器画面和实际音频播放，未执行 amd64 运行验收。发布记录提交晚于构建，镜像源码以包内清单为准。
+本次发布尚未构建，暂无验收记录；构建并完成验收后在此处按上一次的格式记录构建时间、五仓库提交、镜像摘要位置、离线包文件名与 SHA-256、验收覆盖范围和已知未验证项。
 
 ## Docker Hub 发布
 

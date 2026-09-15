@@ -13,10 +13,12 @@ HappyRO 在游戏内提供两个面向世界资料的入口：
 
 ### NPC
 
-NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为完整来源。根仓库 `tools/generate-npc-catalog.mjs generate` 解析这些定义，并结合 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json` 写出版本化目录。客户端脚本 `repos/happyro-client/scripts/generate-world-catalog-assets.mjs` 再根据该目录和预生成 PNG 生成：
+NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为完整来源。根仓库 `tools/generate-npc-catalog.mjs generate` 解析这些定义，并结合 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json` 写出版本化目录（Admin 副本和规范目录）。客户端脚本 `repos/happyro-client/scripts/generate-world-catalog-assets.mjs` 再根据该目录和预生成 PNG 生成：
 
-- `src/DB/Navigation/NpcInstanceNameTable.js`：服务器 NPC 的地图、坐标、中文名称及源名称索引；
+- `applications/pwa/data/navigation/npc-instances.json`（懒加载 JSON）：服务器 NPC 的地图、坐标、中文名称及源名称索引，供右上角导航搜索使用；
 - `applications/pwa/data/world/npc-assets.json` 和 NPC 图集：客户端可用的外观资源。
+
+Admin 后端另外通过 `php artisan game-data:import-npcs --renewal` 把目录导入 `game_npcs` 表（MySQL）。冒险工具 NPC 图鉴不再持有完整目录，而是运行时调用 `GET /api/adventure-tools/npcs`（服务端分页）和 `GET /api/adventure-tools/maps/{map}/npcs`（单张地图整图查询，不分页，供地图预览标记使用），两个接口都直接查这张表。这与魔物图鉴“客户端全量拉取 + 内存分页”是两种不同的运行时模式，原因见 [魔物](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
 
 官方 `navi_npc_krpri.lub` 不是 NPC 存在性的权威来源。它用于补充导航 ID、NPC Class、官方名称、别名、路线位置等导航身份。未匹配官方导航的实例仍保留在完整目录中，是否出现在游戏图鉴另受 `gameVisible` 过滤；没有可验证身份时不开放“传送到 NPC 附近”。
 
@@ -25,6 +27,8 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为�
 魔物图鉴的属性、掉落和常驻刷新地图来自服务器数据库与刷新配置，客户端官方魔物资料用于补充名称和导航信息，客户端资源用于展示图片。
 
 导航里的魔物记录只说明客户端已知的导航分布，不代表某只魔物当前存在。召唤权限、Boss/MVP 限制、地图规则和实际生成结果始终由 map-server 判断。当前地图传送只定位到所选刷新地图，不承诺定位到某个实时魔物实体。
+
+与 NPC 不同，魔物的出没地图和图集坐标目前不在 Admin 数据库里，冒险工具魔物图鉴仍是客户端全量拉取，不是服务端分页；具体依据见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
 
 ### 地图
 

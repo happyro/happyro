@@ -11,25 +11,29 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器实例为完整
 ```bash
 node tools/generate-npc-catalog.mjs generate
 cd repos/happyro-client && npm run catalog:world
+cd repos/happyro-admin/backend && php artisan game-data:import-npcs --renewal
 ```
 
-根仓库生成器写出版本化目录；Client 构建脚本再生成名称索引和 WebP 图集。
+根仓库生成器写出版本化目录；Client 构建脚本再生成导航名称索引和 WebP 图集；Admin 导入命令把目录写入 `game_npcs` 表，供查询接口使用。目录内容变化后必须重新执行导入，否则查询接口返回旧数据。
 
 ## 输出位置
 
 | 产物 | 路径 |
 | --- | --- |
 | 规范目录 | `artifacts/game-data/world/npc-catalog.json` |
-| Client 目录 | `repos/happyro-client/src/DB/Navigation/NpcCatalog.json` |
 | Admin 目录 | `repos/happyro-admin/backend/resources/game-data/world/npc-catalog.json` |
+| Admin 数据库 | `game_npcs` 表（MySQL），由上面的 `import-npcs` 命令从 Admin 目录导入 |
 | NPC 图集 | `repos/happyro-client/applications/pwa/data/world/` |
 | Admin PNG | `repos/happyro-admin/backend/resources/game-data/world/npcs/` |
+| 导航名称索引 | `repos/happyro-client/applications/pwa/data/navigation/npc-instances.json`（仅地图、坐标和中文名，供右上角导航搜索按需加载，不是完整目录） |
+
+客户端不再把完整 NPC 目录打进主包；冒险工具图鉴改为运行时向 Admin 分页接口取数。
 
 ## 消费者
 
-- 冒险工具 NPC 图鉴：当前只展示有形象且可发起 NPC 传送的条目。
+- 冒险工具 NPC 图鉴：`GET /api/adventure-tools/npcs`（服务端分页）和 `GET /api/adventure-tools/maps/{map}/npcs`（单张地图整图查询，不分页，用于地图预览标记），数据来自 `game_npcs` 表，只展示有形象且可发起 NPC 传送的条目。
 - 右上角导航：范围更广，可包含服务节点；纯 Warp 不进入 NPC 图鉴。
-- Admin NPC 查询：默认与游戏内可见范围一致，可切换全部目录。
+- Admin NPC 查询：`GET /api/game-data/npcs`，服务端分页，默认与游戏内可见范围一致，可切换全部目录。
 
 没有匹配官方导航记录的服务器实例仍保留在完整目录中，显示为静态资料，在取得可验证的实时身份前不开放“传送到 NPC 附近”。
 
