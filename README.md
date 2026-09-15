@@ -118,9 +118,9 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 
 上游提交是 `versions/sources.lock` 记录的选定起点，不代表各应用仓库当前 HEAD。实际产品版本以 Git tag、离线包发布清单和镜像 digest 为准。
 
-## 本地体验与开发
+## 安装与开发
 
-想在自己的设备上游玩，可以使用完整离线包，其中包含双架构镜像、kRO 运行资源、配置模板和配套工具。设备需安装 Docker Engine、Compose v2 和 Python 3.11+；安装过程不需要源码、Node.js、PHP、Skopeo 或镜像仓库连接。具体步骤见[离线安装手册](docs/operations/docker-deployment.md)。
+想在自己的设备上运行游戏，可以使用完整离线包，其中包含双架构镜像、kRO 运行资源、配置模板和配套工具。设备需安装 Docker Engine、Compose v2 和 Python 3.9+；安装过程不需要源码、Node.js、PHP、Skopeo 或镜像仓库连接。具体步骤见[离线安装手册](docs/operations/docker-deployment.md)。
 
 本机源码开发通过根仓库 `Makefile` 和 systemd 管理游戏进程，MariaDB 使用 Compose：
 
