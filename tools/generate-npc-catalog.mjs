@@ -21,7 +21,6 @@ const paths = {
 	navigationOverrides: path.join(workspaceRoot, 'configs/npc-navigation-overrides.json'),
 	images: path.join(adminRoot, 'resources/game-data/world/npcs'),
 	canonical: path.join(workspaceRoot, 'artifacts/game-data/world/npc-catalog.json'),
-	client: path.join(clientRoot, 'src/DB/Navigation/NpcCatalog.json'),
 	admin: path.join(adminRoot, 'resources/game-data/world/npc-catalog.json')
 };
 
@@ -204,24 +203,6 @@ export function assignUniqueInstanceIds(entries) {
 	if (ids.size !== entries.length) throw new Error('NPC catalog contains duplicate instance IDs');
 }
 
-function compactEntry(entry) {
-	return {
-		id: entry.id,
-		map: entry.map,
-		x: entry.x,
-		y: entry.y,
-		type: entry.type,
-		name: entry.display_name,
-		source_name: entry.source_name,
-		sprite_id: entry.sprite_id,
-		display_sprite_id: entry.display_sprite_id,
-		navigation_id: entry.navigation?.id ?? null,
-		navigation_class: entry.navigation?.class ?? null,
-		game_visible: entry.game_visible,
-		catalog_order: entry.catalog_order
-	};
-}
-
 async function buildCatalog() {
 	const [translationContents, spriteTableContents, mapNameContents, navigationContents, overrideContents, enabled] = await Promise.all([
 		fs.readFile(paths.translations, 'utf8'),
@@ -319,13 +300,7 @@ async function writeJson(target, value) {
 
 async function generate() {
 	const catalog = await buildCatalog();
-	const compact = {
-		schema: catalog.schema,
-		version: catalog.version,
-		content_sha256: catalog.content_sha256,
-		entries: catalog.entries.map(compactEntry)
-	};
-	await Promise.all([writeJson(paths.canonical, catalog), writeJson(paths.admin, catalog), writeJson(paths.client, compact)]);
+	await Promise.all([writeJson(paths.canonical, catalog), writeJson(paths.admin, catalog)]);
 	process.stdout.write(
 		`Generated ${catalog.stats.entries} enabled NPC instances (${catalog.stats.with_navigation} navigable, ${catalog.stats.with_image} with images) as ${catalog.version}.\n`
 	);
@@ -333,13 +308,11 @@ async function generate() {
 
 async function check() {
 	const catalog = await buildCatalog();
-	const [admin, client] = await Promise.all([fs.readFile(paths.admin, 'utf8'), fs.readFile(paths.client, 'utf8')]);
-	const adminCatalog = JSON.parse(admin);
-	const clientCatalog = JSON.parse(client);
-	if (adminCatalog.content_sha256 !== catalog.content_sha256 || clientCatalog.content_sha256 !== catalog.content_sha256) {
-		throw new Error('Generated NPC catalog copies are stale; run generate.');
+	const adminCatalog = JSON.parse(await fs.readFile(paths.admin, 'utf8'));
+	if (adminCatalog.content_sha256 !== catalog.content_sha256) {
+		throw new Error('Generated NPC catalog is stale; run generate.');
 	}
-	process.stdout.write(`NPC catalog ${catalog.version} is current in both consumers.\n`);
+	process.stdout.write(`NPC catalog ${catalog.version} is current.\n`);
 }
 
 function help(noColor) {
