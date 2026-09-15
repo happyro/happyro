@@ -53,6 +53,7 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 - GAME_PUBLIC_URL：默认 `http://127.0.0.1:3338`，局域网访问时改为主机 IP。
 - ADMIN_PUBLIC_URL：默认 `http://127.0.0.1:8000`，局域网访问时改为主机 IP。
 - ADMIN_STATEFUL_DOMAINS：默认 `127.0.0.1:8000`，不含协议；局域网访问时同步改为主机 IP。
+- SOCKET_PROXY_URL：默认留空并使用当前页面同源的 `/ws/`；WebSocket 使用独立域名时填写完整前缀，例如 `wss://happyro-ws.example.com/ws/`。
 - GATEWAY_PORT、ADMIN_PORT：默认 3338、8000。修改端口时同步 URL。
 - RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
 - 本模板默认局域网 HTTP。使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
