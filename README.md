@@ -5,7 +5,8 @@
 <p>基于 roBrowserLegacy 与 rAthena 的开源中文《仙境传说 Online》Web 项目</p>
 
 <p>
-  <a href="https://happyro-demo.kugarocks.com/applications/pwa/index.html">在线体验</a> ·
+  <a href="https://happyro-demo.kugarocks.com/applications/pwa/index.html">游戏演示</a> ·
+  <a href="https://happyro-admin.kugarocks.com">后台演示</a> ·
   <a href="https://happyro.kugarocks.com/downloads">资源下载</a> ·
   <a href="docs/README.md">项目文档</a> ·
   <a href="https://happyro.kugarocks.com/installation/docker">Docker 安装</a>
@@ -79,7 +80,7 @@ NPC 图鉴展示游戏中 NPC 的中文名称、形象、所在地图和精确�
 
 HappyRO Admin 是独立的游戏后台，可以查阅游戏资料、调整角色和修改游戏设置。想试一套装备、召唤某只魔物，或调整升级速度，都可以在这里操作。
 
-自行安装离线包后，可使用初始账号 `admin / admin` 登录游戏后台。该账号与游戏账号独立。
+在线体验后台：[happyro-admin.kugarocks.com](https://happyro-admin.kugarocks.com)。自行安装离线包后，可使用初始账号 `admin / admin` 登录游戏后台。该账号与游戏账号独立。
 
 ![HappyRO 游戏后台魔物图鉴](docs/assets/readme/happyro-admin-monsters.png)
 
