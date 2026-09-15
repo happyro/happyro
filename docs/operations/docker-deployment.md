@@ -50,14 +50,14 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 
 编辑 .env：
 
-- GAME_PUBLIC_URL：例如 http://192.168.1.20:3338。
-- ADMIN_PUBLIC_URL：例如 http://192.168.1.20:8000。
-- ADMIN_STATEFUL_DOMAINS：例如 192.168.1.20:8000，不含协议。
+- GAME_PUBLIC_URL：默认 `http://127.0.0.1:3338`，局域网访问时改为主机 IP。
+- ADMIN_PUBLIC_URL：默认 `http://127.0.0.1:8000`，局域网访问时改为主机 IP。
+- ADMIN_STATEFUL_DOMAINS：默认 `127.0.0.1:8000`，不含协议；局域网访问时同步改为主机 IP。
 - GATEWAY_PORT、ADMIN_PORT：默认 3338、8000。修改端口时同步 URL。
 - RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
 - 本模板默认局域网 HTTP。使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
 
-默认 localhost 仅适用于本机浏览器，其他设备访问应填写 Mac 的局域网地址。initialize 生成随机密钥；保留 APP_KEY，已有 .env 不会被覆盖。镜像变量必须保持该包 .env.example 中的值。
+默认 `127.0.0.1` 仅适用于部署机器本机浏览器，其他设备访问应填写部署机器的局域网地址。initialize 生成随机密钥；保留 APP_KEY，已有 .env 不会被覆盖。镜像变量必须保持该包 .env.example 中的值。
 
 ```bash
 python3 tools/deployment/manage.py deploy --directory .

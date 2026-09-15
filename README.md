@@ -137,7 +137,7 @@ make doctor
 make gateway-start
 ```
 
-浏览器打开 <http://127.0.0.1:3338/applications/pwa/index.html>。依赖安装、资源准备和常用命令见[本地开发](docs/development/local-setup.md)。
+游戏入口：<http://127.0.0.1:3338/applications/pwa/index.html>；游戏后台：<http://127.0.0.1:8000>。默认仅允许部署机器本机访问；依赖安装、资源准备和常用命令见[本地开发](docs/development/local-setup.md)。
 
 ## 文档导航
 
