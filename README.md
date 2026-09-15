@@ -12,7 +12,7 @@
   <a href="https://happyro.kugarocks.com/installation/docker">Docker 安装</a>
 </p>
 
-<p><img src="docs/assets/readme/happyro-game-southgate.png" alt="HappyRO 普隆德拉南门游戏画面" width="720"></p>
+<p><img src="docs/assets/readme/happyro-game-southgate.png" alt="HappyRO 普隆德拉南门游戏画面" width="100%"></p>
 
 </div>
 
