@@ -30,7 +30,7 @@ HappyRO 是一个可以在浏览器里玩的中文 RO 项目，打开网页就�
 
 ## 游戏画面
 
-### 登录与游戏世界
+### 登录
 
 ![HappyRO 游戏登录界面](docs/assets/readme/happyro-game-login.png)
 
