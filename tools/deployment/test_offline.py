@@ -31,6 +31,13 @@ class OfflineTests(unittest.TestCase):
                 entry.size = len(data)
                 archive.addfile(entry, io.BytesIO(data))
 
+    def test_gateway_socket_proxy_is_configurable_in_release_templates(self):
+        repository = Path(__file__).resolve().parents[2]
+        environment = (repository / 'deploy/docker/.env.example').read_text()
+        compose = (repository / 'deploy/docker/compose.yml').read_text()
+        self.assertIn('\nSOCKET_PROXY_URL=\n', environment)
+        self.assertIn('SOCKET_PROXY_URL: ${SOCKET_PROXY_URL:-}', compose)
+
     def bundle(self):
         release = {'schema': 2, 'version': 'v9.0.0', 'status': 'offline-ready', 'images': {}, 'files': {}}
         (self.root / 'VERSION').write_text('v9.0.0\n')
