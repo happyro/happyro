@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import MonsterTable from '../repos/happyro-client/src/DB/Monsters/MonsterTable.js';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverRoot = path.join(workspaceRoot, 'repos/happyro-server');
@@ -14,6 +15,7 @@ const entrypoints = ['npc/re/scripts_main.conf', 'conf/script_athena.conf'];
 
 const paths = {
 	translations: path.join(clientRoot, 'src/DB/NpcNameTranslations.zh-CN.json'),
+	spriteTable: path.join(clientRoot, 'src/DB/Monsters/MonsterTable.js'),
 	mapNames: path.join(adminRoot, 'resources/game-data/world/map-names.zh-CN.json'),
 	navigation: path.join(clientRoot, 'applications/pwa/data/navigation/catalog.json'),
 	navigationOverrides: path.join(workspaceRoot, 'configs/npc-navigation-overrides.json'),
@@ -34,7 +36,17 @@ function normalizeName(name) {
 		.trim();
 }
 
-export function parseNpcDefinition(line, sourcePath, lineNumber, translations = {}) {
+export function buildUniqueSpriteIds(spriteTable) {
+	const idsByName = new Map();
+	for (const [id, name] of Object.entries(spriteTable)) {
+		const key = String(name).toLocaleUpperCase();
+		if (!idsByName.has(key)) idsByName.set(key, []);
+		idsByName.get(key).push(Number(id));
+	}
+	return new Map([...idsByName].filter(([, ids]) => ids.length === 1).map(([name, ids]) => [name, ids[0]]));
+}
+
+export function parseNpcDefinition(line, sourcePath, lineNumber, translations = {}, spriteIds = new Map()) {
 	const columns = line.trim().split(/\t+/);
 	if (columns.length < 4 || line.trim().startsWith('//')) return null;
 	const location = columns[0].match(/^([a-z0-9_@-]+),(-?\d+),(-?\d+),(\d+)$/i);
@@ -46,7 +58,9 @@ export function parseNpcDefinition(line, sourcePath, lineNumber, translations = 
 	const spriteKey = columns[3].split(',', 1)[0].trim();
 	if (!sourceName || sourceName.startsWith('#') || spriteKey === '-1') return null;
 
-	const numericSpriteId = /^\d+$/.test(spriteKey) ? Number(spriteKey) : null;
+	const numericSpriteId = /^\d+$/.test(spriteKey)
+		? Number(spriteKey)
+		: (spriteIds.get(spriteKey.toLocaleUpperCase()) ?? null);
 	const type = typeMatch[1].toLocaleLowerCase();
 	const map = location[1].toLocaleLowerCase();
 	const x = Number(location[2]);
@@ -135,7 +149,7 @@ function matchNavigation(entry, candidates) {
 }
 
 export function applyNavigationOverrides(entries, navigationCatalog, overrides) {
-	if (overrides.schema !== 'happyro-npc-navigation-overrides/v1' || !Array.isArray(overrides.entries)) {
+	if (overrides.schema !== 'happyro-npc-navigation-overrides/v2' || !Array.isArray(overrides.entries)) {
 		throw new Error('NPC navigation overrides have an unsupported schema');
 	}
 	const entriesById = new Map(entries.map(entry => [entry.id, entry]));
@@ -143,8 +157,23 @@ export function applyNavigationOverrides(entries, navigationCatalog, overrides) 
 	const claimedNavigationIds = new Set(entries.map(entry => entry.navigation?.id).filter(Number.isFinite));
 	for (const override of overrides.entries) {
 		const entry = entriesById.get(override.npc_id);
-		const candidate = navigation.get(override.navigation_id);
-		if (!entry || entry.navigation || !candidate || claimedNavigationIds.has(candidate.id)) {
+		const hasNavigationId = Number.isInteger(override.navigation_id);
+		const hasNpcClass = Number.isInteger(override.npc_class);
+		if (hasNavigationId === hasNpcClass) {
+			throw new Error(`Invalid NPC navigation override target: ${override.npc_id}`);
+		}
+		const candidate = hasNavigationId
+			? navigation.get(override.navigation_id)
+			: entry && {
+					id: null,
+					category: null,
+					class: override.npc_class,
+					name: entry.source_name,
+					map: entry.map,
+					x: entry.x,
+					y: entry.y
+				};
+		if (!entry || entry.navigation || !candidate || (Number.isFinite(candidate.id) && claimedNavigationIds.has(candidate.id))) {
 			throw new Error(`Invalid or conflicting NPC navigation override: ${override.npc_id}`);
 		}
 		const distance = Math.hypot(entry.x - candidate.x, entry.y - candidate.y);
@@ -152,7 +181,7 @@ export function applyNavigationOverrides(entries, navigationCatalog, overrides) 
 			throw new Error(`Unsafe NPC navigation override: ${override.npc_id}`);
 		}
 		entry.navigation = candidate;
-		claimedNavigationIds.add(candidate.id);
+		if (Number.isFinite(candidate.id)) claimedNavigationIds.add(candidate.id);
 	}
 }
 
@@ -194,14 +223,16 @@ function compactEntry(entry) {
 }
 
 async function buildCatalog() {
-	const [translationContents, mapNameContents, navigationContents, overrideContents, enabled] = await Promise.all([
+	const [translationContents, spriteTableContents, mapNameContents, navigationContents, overrideContents, enabled] = await Promise.all([
 		fs.readFile(paths.translations, 'utf8'),
+		fs.readFile(paths.spriteTable, 'utf8'),
 		fs.readFile(paths.mapNames, 'utf8'),
 		fs.readFile(paths.navigation, 'utf8'),
 		fs.readFile(paths.navigationOverrides, 'utf8'),
 		collectEnabledNpcFiles()
 	]);
 	const translations = JSON.parse(translationContents);
+	const spriteIds = buildUniqueSpriteIds(MonsterTable);
 	const mapNames = JSON.parse(mapNameContents);
 	const navigationCatalog = JSON.parse(navigationContents);
 	const navigationOverrides = JSON.parse(overrideContents);
@@ -214,7 +245,7 @@ async function buildCatalog() {
 		const contents = await fs.readFile(path.join(serverRoot, relativePath), 'utf8');
 		definitionHash.update(relativePath).update('\0').update(contents);
 		contents.split(/\r?\n/).forEach((line, index) => {
-			const entry = parseNpcDefinition(line, relativePath, index + 1, translations);
+			const entry = parseNpcDefinition(line, relativePath, index + 1, translations, spriteIds);
 			if (!entry || entry.enabled === false) return;
 			const position = `${entry.map}:${entry.x}:${entry.y}`;
 			entry.navigation = matchNavigation(entry, navigation.get(position));
@@ -258,6 +289,7 @@ async function buildCatalog() {
 		config_sha256: configHash.digest('hex'),
 		npc_definitions_sha256: definitionHash.digest('hex'),
 		translations_sha256: sha256(translationContents),
+		sprite_table_sha256: sha256(spriteTableContents),
 		navigation_sha256: sha256(navigationContents),
 		navigation_overrides_sha256: sha256(overrideContents)
 	};

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
 	applyNavigationOverrides,
 	assignUniqueInstanceIds,
+	buildUniqueSpriteIds,
 	parseNpcDefinition
 } from './generate-npc-catalog.mjs';
 
@@ -33,10 +34,13 @@ test('parses script metadata and localized instance identity', () => {
 });
 
 test('parses duplicate NPCs and preserves symbolic sprite keys', () => {
+	const spriteIds = buildUniqueSpriteIds({ 687: '4_TOWER_01', 700: 'DUPLICATE', 701: 'duplicate' });
 	const entry = parseNpcDefinition(
 		'1@bamn,96,318,5\tscript(DISABLED)\tEst#est01\t4_F_ESTLOVELOY,{',
 		'npc/re/instances/test.txt',
-		51
+		51,
+		{},
+		spriteIds
 	);
 
 	assert.equal(entry.type, 'script');
@@ -44,6 +48,8 @@ test('parses duplicate NPCs and preserves symbolic sprite keys', () => {
 	assert.equal(entry.dynamic, false);
 	assert.equal(entry.sprite_id, null);
 	assert.equal(entry.sprite_key, '4_F_ESTLOVELOY');
+	assert.equal(spriteIds.get('4_TOWER_01'), 687);
+	assert.equal(spriteIds.has('DUPLICATE'), false);
 });
 
 test('rejects hidden and non-interactive definitions', () => {
@@ -75,7 +81,7 @@ test('applies reviewed nearby navigation overrides', () => {
 	const navigation = { npcs: [['map', 42, 101, 100, 'Guide', 'guide', 11, 10]] };
 
 	applyNavigationOverrides(entries, navigation, {
-		schema: 'happyro-npc-navigation-overrides/v1',
+		schema: 'happyro-npc-navigation-overrides/v2',
 		entries: [{ npc_id: 'map:10:10:Guide', navigation_id: 42 }]
 	});
 
@@ -97,9 +103,38 @@ test('rejects unsafe nearby navigation overrides', () => {
 	assert.throws(
 		() =>
 			applyNavigationOverrides(entries, navigation, {
-				schema: 'happyro-npc-navigation-overrides/v1',
+				schema: 'happyro-npc-navigation-overrides/v2',
 				entries: [{ npc_id: 'map:10:10:Guide', navigation_id: 42 }]
 			}),
 		/Unsafe NPC navigation override/
 	);
+});
+
+test('applies a reviewed server NPC class without an official navigation row', () => {
+	const entries = [
+		{
+			id: 'int_land:78:103:Captain Carocc#intro_npc03',
+			map: 'int_land',
+			x: 78,
+			y: 103,
+			source_name: 'Captain Carocc',
+			sprite_id: 873,
+			navigation: null
+		}
+	];
+
+	applyNavigationOverrides(entries, { npcs: [] }, {
+		schema: 'happyro-npc-navigation-overrides/v2',
+		entries: [{ npc_id: entries[0].id, npc_class: 873 }]
+	});
+
+	assert.deepEqual(entries[0].navigation, {
+		id: null,
+		category: null,
+		class: 873,
+		name: 'Captain Carocc',
+		map: 'int_land',
+		x: 78,
+		y: 103
+	});
 });
