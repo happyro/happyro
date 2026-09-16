@@ -46,6 +46,6 @@ if (command !== 'generate') {
   entries.push({id,map,name:names.get(map)||map,supported:supported.has(map),channel:channel?.channel||null,canonical_map:channel?.canonicalMapName||map,image_map:imageMap,image_kind:imageKind});
  }
  const content=JSON.stringify(entries);const catalog={schema:'happyro-map-catalog/v1',version:crypto.createHash('sha256').update(content).digest('hex').slice(0,16),sources:['happyro-server/db/map_index.txt','happyro-client/src/DB/Map/{SupportedMapTable,WorldMap,MapTable,MiniMapTable,MapChannels}.js'],entries};
- for(const dest of [path.join(admin,'map-catalog.json'),path.join(client,'src/DB/Navigation/MapCatalog.json')]) await fs.writeFile(dest,JSON.stringify(catalog)+'\n');
+ for(const dest of [path.join(admin,'map-catalog.json'),path.join(client,'applications/pwa/data/navigation/map-catalog.json')]) await fs.writeFile(dest,JSON.stringify(catalog)+'\n');
  console.log(`Generated ${entries.length} maps, ${entries.filter(e=>e.supported).length} supported, ${entries.filter(e=>e.image_kind==='terrain').length} terrain previews`);
 }
