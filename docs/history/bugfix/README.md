@@ -12,6 +12,6 @@ docs/history/bugfix/<locale>/<YYYYMMDD-NN>/
 
 不依赖语言的缺陷可以使用 `docs/history/bugfix/common/<YYYYMMDD-NN>/`。同一批次可以涵盖多个仓库，但提交仍按仓库和逻辑变更拆分。
 
-当前 zh-cn 批次见 [`zh-cn/`](zh-cn/README.md)。
+当前 zh-cn 批次见 [`zh-cn/`](zh-cn/README.md)；不依赖语言的批次见 [`common/`](common/README.md)。
 
 历史批次中的旧路径和维护规则按当时语境阅读，不适用于当前发布。新操作以[本地化维护](../../localization/overview.md)和[开发文档](../../development/README.md)为准。

@@ -16,16 +16,20 @@
 cd repos/happyro-client
 npm run catalog:world
 node ../../scripts/resources/generate-navigation-data.mjs --write
+node ../../tools/generate-map-catalog.mjs generate
 ```
 
-Admin 地图名 JSON 位于 `repos/happyro-admin/backend/resources/game-data/world/map-names.zh-CN.json`。
+Admin 地图名 JSON 位于 `repos/happyro-admin/backend/resources/game-data/world/map-names.zh-CN.json`。`generate-map-catalog.mjs` 同时写出 Admin 副本（`resources/game-data/world/map-catalog.json`）和客户端懒加载副本（见下），两处不同步会导致地图预览或分页结果不一致。
 
 ## 输出位置
 
 | 产物 | 路径 |
 | --- | --- |
 | 导航目录 / 寻路图 | `repos/happyro-client/applications/pwa/data/navigation/` |
+| 地图目录（懒加载） | `repos/happyro-client/applications/pwa/data/navigation/map-catalog.json` |
 | Admin 世界资源 | `repos/happyro-admin/backend/resources/game-data/world/` |
+
+客户端不再把地图目录打进主包，冒险工具地图图鉴和右上角导航改为运行时按需请求 `map-catalog.json`。
 
 ## 消费者
 
