@@ -76,7 +76,7 @@ NPC 图鉴展示游戏中 NPC 的中文名称、图片、所在地图和精确�
 
 HappyRO Admin 是独立的游戏管理后台，支持查询游戏资料、调整角色和修改游戏设置。[在线演示](https://happyro-admin.kugarocks.com)，默认账号为 `admin / admin`。
 
-后台魔物图鉴支持按名称、种族、属性、体型和首领类型筛选，查看魔物图片、属性和详情。
+后台魔物图鉴支持按名称、种族、属性、体型筛选，并可查看魔物图片、属性和详情。
 
 ![HappyRO 游戏后台魔物图鉴](docs/assets/readme/happyro-admin-monsters.png)
 
