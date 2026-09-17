@@ -33,7 +33,7 @@ cd repos/happyro-client && npm run catalog:monsters
 
 ## 消费者
 
-- Admin 魔物查询与召唤表单。
+- Admin 魔物查询与召唤表单；详情接口用当前物品目录把 `Drops` / `MvpDrops` 的 Aegis 名解析为中英文物品名。
 - 冒险工具魔物图鉴。
 - 右上角导航的魔物搜索（导航目录，不是实时刷新表）。
 
