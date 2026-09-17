@@ -4,7 +4,7 @@
 
 ## 版本与交付规则
 
-- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.2.0（2026-09-17 全量重建，Mac 本机从 ZIP 离线部署并完成自动验收）。
+- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.2.1（2026-09-18 全量重建，Mac 本机从 ZIP 离线部署并完成自动验收）。
 - 应用、资源、配置和镜像使用同一个版本，组成一个完整目录交付，不单独发布资源包。
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
@@ -86,11 +86,11 @@ images/
 
 包内 README 来自 docker-deployment.md，部署者无需引用源码文档。目标 Mac 根据 Docker daemon 架构选择镜像，而非根据运行 Python 的架构判断。使用 Rosetta 也不能改变目标 Docker 架构。
 
-首次发布必须实际验证两种架构的镜像构建、空库初始化、已有库升级、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替这些验收。v0.2.0 已完成双架构构建及 Mac arm64 离线部署验收；amd64 运行验收尚未执行。
+首次发布必须实际验证两种架构的镜像构建、空库初始化、已有库升级、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替这些验收。v0.2.1 已完成双架构构建及 Mac arm64 离线部署验收；amd64 运行验收尚未执行。
 
-2026-09-17 14:54（Asia/Shanghai，UTC 06:54–07:07）从最新五个构建仓库提交全量无缓存重建 Gateway（PWA --all）、Server、Admin 和 Database 的 amd64/arm64 镜像；构建输出目录原先不存在，没有复用旧 dist、vendor 或旧 `artifacts/images/release`。镜像源码为根仓库 `075eeefe68e8a230ded0a01a871c45d79fb7df45`、Client `5d96fffde536d3bbe6060ae1393181b2ad2ae221`、Gateway `f1bd96ce4fe1a6bf4f26b721add872f02f35c814`、Server `d8bb71f35559e06040a557f1bec55d956ff6f437`、Admin `f6c4b7d14ce7e63266f380a40e6dbd5de39f6a47`。双架构 OCI 摘要见 `artifacts/images/release/built.json`（gateway `1fe440e55e529dfbb595d80f9944695cb5c9a3cf5c617e604c5bfe67179e0c06`、server `33eed06957f95494f8bc01ff61ec1021c4c23de989fec2a89a43976649b3585d`、admin `563734d6b2185a0191a9972674ec706546958991e0c88452ede2b8cbc49934e1`、database `74b0a88c3d54e05f049fa41374d815358125653167cb4ae5ade94f34d1c1fe22`）；各架构 Docker-save 归档 SHA-256、镜像 ID 见包内 `release-manifest.json`。统一离线包为 `artifacts/deployment/happyro-v0.2.0.zip`（4,581,306,655 字节，SHA-256：`74f255c730832d14196fb37253a0b7a83f0a1dd2793f446ad278400c15ce69a3`）。已用同一批 OCI 归档通过 Skopeo `copy --all` 推送到 Docker Hub：`docker.io/kugarocks/happyro-{gateway,server,admin,database}:v0.2.0` 与同内容的 `:latest`。远程 index 与本机 `artifacts/images/release/{gateway,server,admin,database}.tar` 的 linux/amd64、linux/arm64 清单摘要一致（gateway `sha256:72c69978e788cd2767359fc3f539a1f276bb1b0fea85009abbcea2111d362eae`、server `sha256:f7b230f32e8dfbba032ea4c2fc6fd721a3c888b41db540ccc8858916ad5fd95f`、admin `sha256:c0cea5cdefdcaef56bce44a7bf9e1f9707640de7b9e8ed09923ecc6b47f9d197`、database `sha256:1155d4cb51769d293115bc0612deecf7b96cc52b4a056a0e2c9eecc0e6478324`）。离线部署仍使用包内版本标签和 `--pull never`。
+2026-09-18 14:49（Asia/Shanghai）删除旧的 v0.2.1 镜像归档、ZIP 和安装目录后，从最新五个构建仓库提交全量无缓存重建 Gateway（PWA --all）、Server、Admin 和 Database 的 amd64/arm64 镜像；构建输出目录原先不存在，没有复用旧 dist、vendor 或旧 `artifacts/images/release`。镜像源码为根仓库 `1780c5e5aeb663324bbfd4506c28cb789eeafe02`、Client `9cb1377765786846d2a457ea709bc6d4168e3c82`、Gateway `f1bd96ce4fe1a6bf4f26b721add872f02f35c814`、Server `d8bb71f35559e06040a557f1bec55d956ff6f437`、Admin `f6c4b7d14ce7e63266f380a40e6dbd5de39f6a47`。双架构 OCI 摘要见 `artifacts/images/release/built.json`（gateway `bcc8afc6b338cd11976136d9f597b604ba07bf5cc4fbcb19973d1c0c6d9fd3de`、server `ed5707083f0c2e646b16dbcd5475425647ca6d298c11ec37106bd21b0c523d19`、admin `0aa6bf034a00aaded2a37bd5321640dfa412fc429df80beaad83e85d5dadf5d7`、database `5ee7169ab6797e9b37339696b194d6f31ad55f94cd882a4eb284fac22ac29a7c`）；各架构 Docker-save 归档 SHA-256、镜像 ID 见包内 `release-manifest.json`。统一离线包为 `artifacts/deployment/happyro-v0.2.1.zip`（4,580,237,688 字节，SHA-256：`ac9fab1f153705c7a7bd6a3d1a2f668df0c5cf7daed41621143d2e6fb63262b2`）。本次未推送 Docker Hub。离线部署使用包内版本标签和 `--pull never`。
 
-Mac arm64（OrbStack linux/arm64）从该 ZIP 解压到 `artifacts/deployment/install/happyro-v0.2.0`（不是构建工作目录），使用包内工具完成 `verify`、daemon 架构镜像导入（`verify_loaded` 成功）、空目录 `initialize` 生成 `.env`，以及 `deploy`（Compose `--pull never --no-build`，镜像标签 `docker.io/kugarocks/happyro-{gateway,server,admin,database}:v0.2.0`）。两次 `docker compose ps -a` 均显示七个常驻服务健康且 `admin-init` 以 0 退出。两次获取 `http://127.0.0.1:3338/applications/pwa/index.html` 均为 HTTP 200，页面含「进入游戏」和查看器入口，不是直接启动游戏的 `index.html`。两次获取 `http://127.0.0.1:8000/` 均为 HTTP 200。本机无无头浏览器，未截启动页画面。
+Mac arm64（OrbStack linux/arm64）从该 ZIP 解压到 `artifacts/deployment/install/happyro-v0.2.1`（不是构建工作目录），使用包内工具完成 `verify`、daemon 架构镜像导入（`verify_loaded` 成功）、空目录 `initialize` 生成 `.env`，以及 `deploy`（Compose `--pull never`，镜像标签 `docker.io/kugarocks/happyro-{gateway,server,admin,database}:v0.2.1`）。`docker compose ps -a` 显示七个常驻服务健康且 `admin-init` 以 0 退出。两次获取 `http://127.0.0.1:3338/applications/pwa/index.html` 均为 HTTP 200，页面含「进入游戏」和查看器入口，不是直接启动游戏的 `index.html`。两次获取 `http://127.0.0.1:8000/` 均为 HTTP 200。本机无无头浏览器，未截启动页画面。
 
 未在本机运行 amd64 容器；未执行游戏内登录/选角、地图与 BGM 播放、冒险工具交互、重启持久化、已有库升级或备份恢复。这些项仍为已知未验证。
 
