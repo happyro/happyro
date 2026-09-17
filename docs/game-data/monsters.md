@@ -25,11 +25,11 @@ cd repos/happyro-client && npm run catalog:monsters
 | --- | --- |
 | Admin 快照 | `repos/happyro-admin/backend/resources/game-data/monsters/` |
 | PNG | `work/game-data/monsters/kro-20211105/` |
-| Client 图鉴列表 | `repos/happyro-client/applications/pwa/data/monsters/catalog.json`（schema `happyro-monster-catalog/v3`） |
+| Client 图鉴列表 | `repos/happyro-client/applications/pwa/data/monsters/catalog.json`（schema `happyro-monster-catalog/v4`） |
 | Client 掉落详情 | `repos/happyro-client/applications/pwa/data/monsters/drops.json`（schema `happyro-monster-drops/v1`，按魔物 ID 索引，图鉴打开详情时才请求） |
 | Client 图集 | `repos/happyro-client/applications/pwa/data/monsters/atlas-*.webp`（20×20 网格打包，每张最多 400 只） |
 
-掉落数据（`drops`/`mvpDrops`）占列表体积的大头，v3 起从 `catalog.json` 拆分到 `drops.json`；列表本身请求一次即可。图集按翻到的当前页整页触发下载（页内没有按可视区域的懒加载），已下载过的图集文件会被浏览器缓存，不重复请求。
+掉落数据（`drops`/`mvpDrops`）占列表体积的大头，v3 起从 `catalog.json` 拆分到 `drops.json`；列表本身请求一次即可。v4 起列表用 `kind` 表示普通、Mini 和 MVP，不再同时携带 `boss` / `mvp` 布尔。图集按翻到的当前页整页触发下载（页内没有按可视区域的懒加载），已下载过的图集文件会被浏览器缓存，不重复请求。
 
 ## 消费者
 
@@ -42,6 +42,7 @@ cd repos/happyro-client && npm run catalog:monsters
 - 服务端魔物 ID 与客户端名称表必须能合并出完整中文名。
 - 无图片的魔物仍保留在目录中，使用占位。
 - 客户端不得把图鉴记录当作召唤许可。
+- 普通 / Mini / MVP 以 `kind` 存储：有 `MvpDrops` 为 `mvp`，`Class` 为 `Boss` 且无 MVP 掉落为 `mini`，其余为 `normal`。后台查询参数与客户端筛选值均为 `all` / `normal` / `mini` / `mvp`。
 
 ## 架构决策：冒险工具魔物图鉴为什么不做服务端分页
 
