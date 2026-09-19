@@ -7,3 +7,4 @@
 - [测试与构建](testing.md)：doctor、客户端、网关和服务端检查。
 - [Git 工作流](git-workflow.md)：提交格式、changelog 和推送边界。
 - [文档维护](documentation.md)：分类、权威来源、链接和验证规则。
+- [四转功能方案与交付](fourth-jobs/README.md)：当前实现、核心交付进度、抽样证据、使用说明与后续清单。
