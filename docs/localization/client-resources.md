@@ -40,6 +40,7 @@ Gateway 收到 `/data/...` 请求后的查找顺序为：
 | `skilldesctable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 可访问的散装输出；当前 `DB.getSkillDescription` 读取生成 JS | 技能说明 |
 | `titletable.json` | `localization/client/data/` | `DATA_OVERRIDE_PATH` | 官方称号表加载后由 `loadTitleTable` 合并 | 中文称号 |
 | `itemInfo_true.lub` | `inputs/runtime/kro-20211105/client/System/`，由翻译 JSON 编译 | 运行目录覆盖 | `loadItemInfo` 通过 Lua 运行时加载 | 物品名称、说明、资源名、洞数和 ClassNum |
+| `OngoingQuestInfoList_True.lub` | `inputs/runtime/kro-20211105/client/System/`，由翻译 JSON 编译 | 运行目录覆盖 | `loadQuestInfo` 通过 Lua 运行时加载 | 完整任务标题、摘要、说明、导航与奖励；含后续 EP |
 
 `data/msgstringtable.txt` 基于 OpenKore 在提交 `51de1ddfc4449ae5217f6886de702f87ca934030` 时的 cRO 消息表，之后有 HappyRO 文案维护。原始来源提交不能作为当前覆盖文件的哈希；当前版本应从 Git 与 `sha256sum localization/client/data/msgstringtable.txt` 核验，不复制旧文档中的固定哈希作为部署依据。
 
@@ -57,10 +58,20 @@ Gateway 收到 `/data/...` 请求后的查找顺序为：
 
 `questid2display.txt` 和 `mapnametable.txt` 虽然存在于 GRF 且含有韩文，但当前不是主要的中文显示来源：
 
-- 当前 PWA 配置启用 `loadLua=true`，任务标题、摘要和说明由 `System/OngoingQuestInfoList.lub` 加载；`questid2display.txt` 只在旧的非 Lua 分支使用，因此目前不翻译。
+- 当前 PWA 配置启用 `loadLua=true`，任务标题、摘要和说明优先由 `System/OngoingQuestInfoList_True.lub` 加载，缺失该文件时才回退基础表；`questid2display.txt` 只在旧的非 Lua 分支使用，因此目前不翻译。
 - `mapnametable.txt` 会被读取，但 `MapTable.js`、`MapNameTranslations.js`、世界地图和导航中文目录优先提供地图名称；它只作为少量未覆盖地图的兜底，因此目前不整表翻译。
 
 后续只有在运行时审计确认某个任务或地图实际回退到韩文时，才针对缺失项补充对应的当前运行时资源。不要因为 GRF TXT 含有韩文，就直接覆盖整张表。
+
+### EP 任务资料抽样
+
+2026-09-20 对服务端 10 个 `quests_<episode>.txt` 章节脚本做了两层审计：先覆盖 755 个直接 `setquest`／`changequest` ID，再检查数组、随机范围和“基准 ID + NPC 序号”等动态引用；扩大后的候选集合为 930 个任务 ID。完整任务表缺失 0 条，空标题或空说明 0 条，残留韩文 0 条，`Unknown Quest` 与既有中文占位模板命中 0 条。此次只校正实际会发放的异常记录，其中 EP17 为 48 条、EP18 为 14 条，共 62 条；正常记录未做整表重译。
+
+随后将范围扩展到 Renewal 配置实际启用的 837 个 NPC 脚本。静态审计覆盖 3,470 个可识别任务引用，补齐 53 条真实会发放但完整任务表原先缺失的资料，修复 15 条空说明和 1 条韩文乱码；最终缺失记录、空正文、韩文残留和占位模板均为 0。数字碰撞和动态表达式只在服务端任务 API 语义成立时计入，未把道具、魔物编号误当任务补入资料表。
+
+同型审计还发现并修正两处服务端任务 ID 笔误：洛阳“毒药王”现从 `11081` 正确进入 `11082`，EP18“收集民间故事”会正确检查 `16555` 后汇总三段故事；封印神殿已停用的 `3045` 残留清理引用也已移除。服务端以 `map-server --run-once` 完整加载 1,265 张地图和 24,179 个 NPC 后正常退出，无脚本解析错误。回编译后的 `System/OngoingQuestInfoList_True.lub` 已通过 Lua 5.1 逐键语义回环校验，构建产物、运行目录和 Gateway 实际响应的 SHA-256 均为 `bec09ae850f310b08fbdb5281c3ffb027041eead3a7d5707ad2cb921030066f7`。
+
+浏览器登录抽样覆盖 EP16、EP17、EP18、时间庭园、旧支线、副本完成标记、洛克里奇、朱诺怪物学会和动态任务 ID，共 10 条代表记录；标题、摘要和说明均可读取，无 `Unknown Quest`、占位模板或韩文残留。按同类问题抽样原则，未逐条运行全部 3,470 个任务引用；全量覆盖由静态审计和 Lua 语义回环承担。
 
 ## 卡片前缀链路
 
