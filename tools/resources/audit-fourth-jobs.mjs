@@ -78,7 +78,8 @@ for (const name of new Set(report.jobs.flatMap(job => job.skills.map(skill => sk
 report.effectResources = [];
 const checkedTextures = new Map();
 const effectEntries = Object.entries(fourthJobEffectResources).flatMap(([skill, stages]) =>
-	Object.entries(stages).map(([stage, resource]) => ({skill, stage, resource, source: 'client-explicit'})));
+	Object.entries(stages).flatMap(([stage, resources]) => [resources].flat()
+		.map(resource => ({skill, stage, resource, source: 'client-explicit'}))));
 effectEntries.push(...Object.entries(fourthJobGroundResources).flatMap(([unit, layers]) =>
 	layers.map(([resource], index) => ({skill: null, stage: `${unit}:${index}`, resource, source: 'client-ground'}))));
 const bsonResponse = await fetch(`${report.gateway}/data/contentdata/effectdata/ez2streffect.bson`);
