@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from '../../repos/happyro-client/node_modules/js-yaml/index.js';
 import prettier from '../../repos/happyro-client/node_modules/prettier/index.mjs';
+import JobIds from '../../repos/happyro-client/src/DB/Jobs/JobConst.js';
+import { applyFourthJobSkills } from './fourth-job-skills.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const skillDatabase = path.join(projectRoot, 'repos/happyro-server/db/re/skill_db.yml');
@@ -752,6 +754,8 @@ function describeClientOnlySkill(id, name) {
 
 const database = yaml.load(fs.readFileSync(skillDatabase, 'utf8'));
 const databaseSkillsById = new Map(database.Body.map(skill => [String(skill.Id), skill]));
+applyFourthJobSkills(runtimeSource.data, database.Body,
+	yaml.load(fs.readFileSync(path.join(projectRoot, 'repos/happyro-server/db/re/skill_tree.yml'), 'utf8')).Body, JobIds);
 for (const [id, description] of detailedDescriptionEntries) {
 	const skill = databaseSkillsById.get(id);
 	if (!skill || id === '8012') continue;
