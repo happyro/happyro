@@ -4,7 +4,7 @@
 
 ## 版本与交付规则
 
-- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.2.1（2026-09-18 全量重建，Mac 本机从 ZIP 离线部署并完成自动验收）。
+- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.3.0（2026-09-22 全量重建，Mac 本机从 ZIP 离线部署并完成自动验收）。
 - 应用、资源、配置和镜像使用同一个版本，组成一个完整目录交付，不单独发布资源包。
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
