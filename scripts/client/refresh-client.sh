@@ -23,7 +23,7 @@ if [[ -z "$command_name" || "$command_name" == "help" ]]; then
 	fi
 	printf '\n%sHappyRO 客户端验收刷新%s\n\n' "$bold_cyan" "$reset"
 	printf '%s用法%s\n  %s%s build%s [--no-color]\n  %s%s verify%s [--no-color]\n\n' "$bold_yellow" "$reset" "$bold_green" "$0" "$reset" "$bold_green" "$0" "$reset"
-	printf '%s命令%s\n  %sbuild%s    构建 PWA，并核对 3338 提供的全部关键产物\n  %sverify%s   不构建，仅核对本地产物、构建标识与远程哈希\n\n' "$bold_yellow" "$reset" "$bold_green" "$reset" "$bold_green" "$reset"
+	printf '%s命令%s\n  %sbuild%s    同步 NPC 图鉴、构建 PWA，并核对 3338 提供的全部关键产物\n  %sverify%s   不构建，仅核对本地产物、构建标识与远程哈希\n\n' "$bold_yellow" "$reset" "$bold_green" "$reset" "$bold_green" "$reset"
 	printf '%s常用例子%s\n  %s%s build%s\n  %s%s verify --no-color%s\n\n' "$bold_yellow" "$reset" "$cyan" "$0" "$reset" "$cyan" "$0" "$reset"
 	exit 0
 fi
@@ -60,9 +60,29 @@ verify_client() {
 	echo "client refresh: 3338 is serving verified build $build_id"
 }
 
+sync_npc_catalog() {
+	local admin_backend="$PROJECT_ROOT/repos/happyro-admin/backend"
+	local admin_user
+	admin_user="$(systemctl show happyro-admin-backend.service --property=User --value)"
+	[[ -n "$admin_user" ]] || fail "cannot determine the Admin service user"
+	[[ "$EUID" -eq 0 || "$(id -un)" == "$admin_user" ]] || fail "run build as root or $admin_user to synchronize the NPC database"
+
+	node "$PROJECT_ROOT/tools/generate-npc-catalog.mjs" generate --no-color
+	npm --prefix "$CLIENT_REPO" run catalog:world
+	(
+		cd "$admin_backend"
+		if [[ "$EUID" -eq 0 ]]; then
+			runuser -u "$admin_user" -- php -d memory_limit=512M artisan game-data:import-npcs --renewal --no-color
+		else
+			php -d memory_limit=512M artisan game-data:import-npcs --renewal --no-color
+		fi
+	)
+}
+
 if [[ "$command_name" == "build" ]]; then
 	cd "$CLIENT_REPO"
 	[[ -d node_modules ]] || npm install
+	sync_npc_catalog
 	npm run build:pwa
 fi
 
