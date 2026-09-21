@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import JobNames from '../../repos/happyro-client/src/DB/Jobs/JobNameTable.js';
 import Skills from '../../repos/happyro-client/src/DB/Skills/SkillInfo.generated.js';
 import Trees from '../../repos/happyro-client/src/DB/Skills/SkillTreeView.generated.js';
-import { fourthJobEffectResources } from '../../repos/happyro-client/src/DB/Skills/FourthJobEffects.js';
+import { fourthJobEffectResources, fourthJobStatusEffectResources } from '../../repos/happyro-client/src/DB/Skills/FourthJobEffects.js';
 import { fourthJobGroundResources } from '../../repos/happyro-client/src/DB/Skills/FourthJobGroundEffects.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -78,16 +78,22 @@ for (const name of new Set(report.jobs.flatMap(job => job.skills.map(skill => sk
 report.effectResources = [];
 const checkedTextures = new Map();
 const effectEntries = Object.entries(fourthJobEffectResources).flatMap(([skill, stages]) =>
-	Object.entries(stages).flatMap(([stage, resources]) => [resources].flat()
+	Object.entries(stages).flatMap(([stage, resources]) => [resources?.files ?? resources].flat()
 		.map(resource => ({skill, stage, resource, source: 'client-explicit'}))));
+effectEntries.push(...Object.entries(fourthJobStatusEffectResources).flatMap(([status, resources]) =>
+	[resources.files].flat().map(resource => ({skill: null, stage: `status:${status}`, resource, source: 'client-status'}))));
 effectEntries.push(...Object.entries(fourthJobGroundResources).flatMap(([unit, layers]) =>
 	layers.map(([resource], index) => ({skill: null, stage: `${unit}:${index}`, resource, source: 'client-ground'}))));
 const bsonResponse = await fetch(`${report.gateway}/data/contentdata/effectdata/ez2streffect.bson`);
 if (!bsonResponse.ok) throw new Error('Missing canonical effect BSON');
 const bson = require('bson').deserialize(Buffer.from(await bsonResponse.arrayBuffer())).EZ2STREffect;
+report.sharedEffectResources = [];
 for (const [name, entry] of Object.entries(bson)) {
 	const resource = entry.FilePath.replaceAll('\\', '/').replace(/\.str$/i, '').toLowerCase();
-	if (effectEntries.some(effect => effect.source === 'client-explicit' && effect.resource.toLowerCase() === resource)) throw new Error(`Duplicate explicit/canonical effect: ${resource}`);
+	// A resource can legitimately be reused by different skills. Runtime stage checks
+	// determine whether the same skill plays it twice after BSON mappings are merged.
+	const shared = effectEntries.filter(effect => effect.source === 'client-explicit' && effect.resource.toLowerCase() === resource);
+	if (shared.length) report.sharedEffectResources.push({resource, canonicalEffect: name, explicitSkills: [...new Set(shared.map(effect => effect.skill))]});
 	effectEntries.push({skill: null, stage: name, resource, source: 'canonical-bson'});
 }
 for (const {skill, stage, resource, source} of effectEntries) {
