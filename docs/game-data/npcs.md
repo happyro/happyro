@@ -8,6 +8,10 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器实例为完整
 
 ## 生成命令
 
+本机更新 NPC 后，使用根目录的 `./scripts/client/refresh-client.sh build`。它会依次生成完整 NPC 目录、更新客户端名称索引与图集、以 Admin 服务用户导入数据库、完整构建 PWA 并校验 3338 产物。任一步失败即停止；以 root 或 Admin 服务用户运行。只执行 `npm run build:pwa` 不会更新数据库，不能替代这一步。
+
+分步操作如下：
+
 ```bash
 node tools/generate-npc-catalog.mjs generate
 cd repos/happyro-client && npm run catalog:world
