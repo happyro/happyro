@@ -107,7 +107,7 @@ MobileUI 的攻击按钮
 | 聊天 | MapEngine 绑定 ChatBox.onRequestTalk，各引擎直接 ChatBox.addText | 提供共享消息流与发送入口，不另建不一致的日志列表 |
 | 面板生命周期 | UIManager、GUIComponent、地图初始化及退出清理 | 统一移动 UI 装配／移除与输入取消；桌面生命周期不变 |
 
-后续建议新增移动游戏入口、首屏组件和输入控制器，位置在 `UI/Mobile/game/`。这是拟定边界，尚未创建这些产品文件。
+后续建议新增移动游戏入口、首屏组件和输入控制器，位置在 `UI/Mobile/game/`。这是盘点时拟定的边界；后续阶段 1 已创建产品文件，当前实现范围见[实施进度](progress.md)。
 
 ## 5. 下一阶段可执行清单
 
