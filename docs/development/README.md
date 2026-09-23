@@ -8,3 +8,4 @@
 - [Git 工作流](git-workflow.md)：提交格式、changelog 和推送边界。
 - [文档维护](documentation.md)：分类、权威来源、链接和验证规则。
 - [四转功能方案与交付](fourth-jobs/README.md)：当前实现、核心交付进度、抽样证据、使用说明与后续清单。
+- [移动端游戏 UI 重构](mobile-ui/README.md)：横屏主界面、摇杆与攻击交互、桌面隔离方案和实施进度。
