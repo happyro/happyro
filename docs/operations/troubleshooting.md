@@ -47,6 +47,12 @@ systemctl status happyro-admin-frontend.service
 
 日志出现“合法长度但当前字节不足”时应对照[字节流契约](../architecture/game-stream.md)，不能仅凭一次 recv 的长度判定客户端发错包。真实端口测试会产生预期拒绝日志，应与玩家故障区分。
 
+## iOS 攻击时整个画面停顿
+
+先按[移动端性能日志回传](../development/mobile-diagnostics.md)采集同一设备、同一浏览器下开启和关闭音效的战斗对照。对比实际帧间隔与音效调用耗时，区分 `.play()` 返回前的延迟和播放 Promise 完成的等待时间。
+
+[2026-09-24 调查记录](../history/validation/2026-09-24-ios-audio-stutter.md)观察到缓存音效 `.play()` 调用最高耗时 242ms，关闭音效后明显改善。短音效迁移 Web Audio 仍是待实施建议；关闭音效仅用于临时缓解和对照，不是已完成的修复。
+
 ## 技能无法释放或说明窗口越界
 
 确认服务端下发技能类型、等级与 `SKILL_POSTDELAY`，再对照施放请求和 ACK。`cause=4` 是间隔未结束；不是所有失败都能通过清数据库解决，在线角色状态由地图服持有。说明中的时间是配置参考，实际倒计时由服务器下发。详见[技能与状态](../game-data/skills.md)。
