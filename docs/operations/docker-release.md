@@ -27,6 +27,14 @@
 
 资源来自 inputs/runtime/kro-20211105/client；物品和魔物图片来自 work/game-data/items/kro-20211105 与 work/game-data/monsters/kro-20211105；NPC、地图、地形图片来自 Admin 的 backend/resources/game-data/world 对应目录。经过核验的运行资源只读复制，不从历史翻译工作区发布，不重新生成图片或 GRF。
 
+如果需要把本机资源送到另一台构建电脑，可在工作区根目录生成传输归档：
+
+```bash
+bash scripts/resources/package-offline-resources.sh create --output artifacts/happyro-resources-20260924.tar.gz
+```
+
+脚本同时生成 `happyro-resources-20260924.tar.gz.sha256`。将两个文件传到目标电脑，先在文件所在目录运行 `sha256sum -c happyro-resources-20260924.tar.gz.sha256`（macOS 使用 `shasum -a 256 -c`），再在该电脑的 HappyRO 工作区根目录解压：`tar -xzf happyro-resources-20260924.tar.gz`。目标电脑还需有对应的五个代码仓库；Admin 的 NPC、地图和地形图片由 Admin 仓库提供。解压后在目标电脑运行下面的 `prepare` 和 `verify --prepared`。此归档只是资源传输文件，不替代最终包含双架构镜像的离线 ZIP。
+
 在源码根目录执行：
 
 ```bash
