@@ -37,6 +37,8 @@ bash scripts/local/macos-services.sh start --no-color
 
 数据库使用独立目录 `work/runtime/native/database/`，仅监听 `127.0.0.1:13306`；游戏服务器仅监听回环地址，通过 Gateway 的 WebSocket 代理供手机访问。Gateway 监听 3338。数据库、内部服务密码和测试账号保存在权限为 0600 的 `work/runtime/native/credentials.json`，不要提交或放入诊断日志。
 
+本机 `repos/happyro-server/conf/import/packet_conf.txt` 配置 `allow: 127.0.0.1`，用于上述仅监听回环地址的原生环境。Gateway 转发的玩家连接和服务间连接都来自该地址；2026-09-25 曾被角色服务的连接频率检查标记为 DDoS，表现为登录成功后连接角色服务立即断开、地图服务反复重连。增加本机地址允许规则并重启 login／char／map 后恢复。运行配置位于 Git 忽略目录，其他机器部署时需按自身入口配置；进程显示 running 不代表服务间连接已恢复，应继续确认 char 收到地图注册并实际登录游戏。
+
 测试账号 `happytest` 有一个 `MobileDebug` 角色及本地 GM 权限，可用于生成战斗测试场景。进程日志在 `work/runtime/native/logs/`。`stop` 保留数据库和诊断日志；不要删除整个 `work/runtime/`。
 
 Admin 前端入口为 `http://<Mac局域网IP>:8000`，Laravel 仅监听 `127.0.0.1:18081`，由前端代理 API 和认证请求。Mac 使用 `local.happyro.admin-frontend` 和 `local.happyro.admin-backend` 两个 launchd 服务管理，对应仓库 Linux 部署中的 systemd 单元。后台使用独立的 `happyro_native_admin` 数据库，初始化账号为 `admin/admin`；它与游戏账号分开存储。数据库凭据、后台账号和 Game Control 密钥仍保存在上述本机凭据文件中。
@@ -59,6 +61,26 @@ tail -f work/diagnostics/client/YYYY-MM-DD/<会话UUID>.jsonl
 `perf.summary` 每约 5 秒记录一次：实际执行游戏渲染的帧间隔、渲染回调 CPU 耗时的 P50/P95/P99/最大值、超过 50ms 的次数、伤害数字纹理生成、音效播放和 HUD 更新的累计/最大耗时，以及分辨率、DPR、帧率上限和音效开关。只统计进入游戏后的渲染，切后台清空间隔基线，避免把切后台时间当作卡顿。
 
 `damage.texture` 包含 Canvas 拼图和 WebGL 上传的 JavaScript 调用耗时；WebGL 异步执行，因此这不是 GPU 执行时间。新构建的 `audio.start` 测量缓冲音源节点的创建、连接和启动；`audio.load.wait`、`audio.decode.wait` 是异步等待时间，不是主线程阻塞时长。旧构建的 `audio.play.ready` 同样只是播放 Promise 等待时间。若整帧间隔很长但各项 CPU 耗时很短，需要进一步检查 GPU、浏览器合成或系统调度，不能仅凭日志认定根因。
+
+## 第二轮：定位剩余战斗长帧
+
+音效修复通过实机验收后，新增 `profileVersion: 2` 的分段采样。此次先固定原画质并保持音效开启，进入游戏后静止约 5 秒，再连续攻击 30–60 秒，尽量包含暴击。采样期间收起日志面板。除非需要进一步对照，不同时调整音效、画质或方向。
+
+- `combat.attack`／`combat.skill` 的 `combatId` 用于关联附近的战斗事件；`frameId` 非空时表示事件发生在被计时的渲染循环内。
+- `perf.frame` 记录同步渲染循环达到 32ms 的帧，包含帧编号、总耗时、最耗时的 8 个阶段、计数及最近的战斗事件。阶段上下文可包含实体部件、动作类型或特效类名。
+- `perf.frame-gap` 仍表示实际帧间隔达到 50ms，新增 `previousFrame` 和 `betweenFrames`，分别记录上一帧及两帧之间已测量的同步工作。`outsideRenderMs` 是帧间隔减去上一帧同步经过时间，包含正常等帧、浏览器调度及未测工作，不能直接解释为阻塞或 GPU 耗时。
+- `perf.summary` 保留全部窗口统计，并汇总阶段耗时和资源计数。阶段最多 40 种、计数最多 20 种；详细慢事件合计每窗口最多 20 条，被省略的数量记入 `omittedSlowEvents`。
+
+| 阶段 | 覆盖范围 |
+| --- | --- |
+| `render.events`／`render.callbacks`／`render.cursor` | 帧内延时事件、全部渲染回调、光标绘制 |
+| `map.*` | 地面与准备、环境更新、模型、实体、前后两次特效、特效实体、水面、伤害显示、覆盖层、拾取、清理及后处理 |
+| `entity.animation` | 实体部件的动画帧计算及其中触发的动作切换 |
+| `effect.classInit`／`effect.init`／`effect.render` | 特效类初始化、实例初始化、实例绘制 |
+| `texture.spriteUpload`／`texture.paletteUpload`／`texture.imageUpload` | 精灵帧、调色板及图片纹理准备与上传的同步调用；计时从异步资源返回之后开始 |
+| `memory.scan`／`memory.release` | 构造清理键列表、逐项释放；计数记录扫描、检查、成功释放的条目，以及精灵上传帧数 |
+
+上述计时存在父子包含关系，例如 `render.callbacks` 包含 `map.entities`，不能把所有阶段相加。异步 `.wait` 指标仅进入窗口汇总，不进入某一帧或两帧之间的同步工作归因。浏览器仍可能在任何计时区间暂停执行，因此测量值是经过时间，不是纯 CPU 时间。资源解析中在 Worker 内执行的部分，以及 GPU、布局和合成工作，不在这轮分段计时范围内。
 
 ## 开销、断线与限制
 
