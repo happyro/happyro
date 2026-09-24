@@ -7,9 +7,9 @@
 <p>
   <a href="https://happyro-demo.kugarocks.com/applications/pwa/index.html">游戏演示</a> ·
   <a href="https://happyro-admin.kugarocks.com">后台演示</a> ·
-  <a href="https://happyro.kugarocks.com/downloads">资源下载</a> ·
-  <a href="https://happyro.kugarocks.com/intro">项目文档</a> ·
-  <a href="https://happyro.kugarocks.com/installation/docker">Docker 安装</a>
+  <a href="https://happyro.kugarocks.com/guide/downloads">资源下载</a> ·
+  <a href="https://happyro.kugarocks.com/guide/introduction">项目文档</a> ·
+  <a href="https://happyro.kugarocks.com/container/docker">Docker 安装</a>
 </p>
 
 <p><img src="docs/assets/readme/happyro-game-southgate.png" alt="HappyRO 普隆德拉南门游戏画面" width="100%"></p>
@@ -23,12 +23,13 @@ HappyRO 是一个中文友好的网页端 RO 项目，除了提供基础游戏�
 ### 项目特色
 
 - 浏览器：无需安装繁杂的桌面客户端。
+- 手机平板：支持触屏移动、六格快捷栏、自动战斗及 PWA 桌面启动。
 - 中文支持：游戏界面、系统消息，以及物品、技能、魔物、地图和 NPC 资料。
 - 游戏图鉴：查询物品属性、魔物掉落、地图和 NPC 位置。
 - 冒险工具：提供角色调整、物品获取、魔物召唤和地图传送等功能。
 - 本地安装：提供 `linux/amd64` 与 `linux/arm64` 离线包。
 
-## 游戏画面
+## 电脑桌面
 
 ### 登录界面
 
@@ -72,6 +73,22 @@ NPC 图鉴展示游戏中 NPC 的中文名称、图片、所在地图和精确�
 
 ![HappyRO 游戏内游戏设置](docs/assets/readme/happyro-game-settings.png)
 
+## 手机平板
+
+### 游戏主界面
+
+左侧拖动控制移动，点击 NPC 直接交谈、点击地面物品直接拾取；右下角六格快捷栏用于施放技能和使用道具。
+
+![HappyRO 手机平板南门游戏画面](docs/assets/readme/happyro-mobile-southgate.jpg)
+
+### 自动战斗
+
+支持多选魔物种类、配置攻击技能和战斗范围；手动移动时暂停攻击，停止移动后继续，配置按角色保存在本机。
+
+![HappyRO 手机平板自动战斗设置](docs/assets/readme/happyro-mobile-auto-fight.jpg)
+
+可将 HTTPS 游戏启动页添加到桌面，以 PWA 方式隐藏浏览器工具栏、横屏游玩。详细操作及添加步骤见[手机平板文档](https://happyro.kugarocks.com/game/mobile)。
+
 ## 游戏后台
 
 HappyRO Admin 是独立的游戏管理后台，支持查询游戏资料、调整角色和修改游戏设置。[在线演示](https://happyro-admin.kugarocks.com)，默认账号为 `admin / admin`。
@@ -96,7 +113,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 | [happyro-gateway](https://github.com/happyro/happyro-gateway) | Node.js 网关、静态资源、HTTP 与 WebSocket 代理 |
 | [happyro-admin](https://github.com/happyro/happyro-admin) | 游戏后台、Laravel API 与 Ant Design Pro 前端 |
 
-详细调用关系见[系统概览](https://happyro.kugarocks.com/intro#运行关系)，各仓库职责见[项目组成](https://happyro.kugarocks.com/intro#项目组成)。
+详细调用关系见[系统概览](https://happyro.kugarocks.com/guide/introduction#运行关系)，各仓库职责见[项目组成](https://happyro.kugarocks.com/guide/introduction#项目组成)。
 
 ## 技术基线
 
@@ -113,7 +130,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 
 ## 安装与开发
 
-推荐使用[离线包](https://happyro.kugarocks.com/downloads)部署 HappyRO。包内已包含双架构镜像、kRO 运行资源、配置模板和配套工具，只需提前安装 Docker Engine、Compose v2 和 Python 3.9+，即可按照[离线安装手册](https://happyro.kugarocks.com/installation/docker)完成部署。
+推荐使用[离线包](https://happyro.kugarocks.com/guide/downloads)部署 HappyRO。包内已包含双架构镜像、kRO 运行资源、配置模板和配套工具，只需提前安装 Docker Engine、Compose v2 和 Python 3.9+，即可按照[离线安装手册](https://happyro.kugarocks.com/container/docker)完成部署。
 
 本机源码开发通过根仓库 `Makefile` 和 systemd 管理游戏进程，MariaDB 使用 Compose：
 
@@ -137,25 +154,26 @@ make gateway-start
 - 游戏：<http://127.0.0.1:3338/applications/pwa/index.html>
 - 游戏后台：<http://127.0.0.1:8000>
 
-依赖安装、资源准备和常用命令见[本地开发](https://happyro.kugarocks.com/installation/linux)。
+依赖安装、资源准备和常用命令见[本地开发](https://happyro.kugarocks.com/native/linux)。
 
 ## 文档导航
 
 | 入口 | 内容 |
 | --- | --- |
-| [项目简介](https://happyro.kugarocks.com/intro) | 核心能力、项目组成、运行关系和技术基线 |
-| [系统概览](https://happyro.kugarocks.com/intro#运行关系) | 浏览器、Gateway、Server 与 Admin 的运行关系 |
-| [本地开发](https://happyro.kugarocks.com/installation/linux) | 环境准备、构建、启动和检查 |
-| [日常维护](https://happyro.kugarocks.com/installation/docker#日常维护) | 服务状态、日志、重启和停止 |
-| [离线安装](https://happyro.kugarocks.com/installation/docker) | 完整离线包的获取、校验、初始化和启动 |
-| [关于汉化](https://happyro.kugarocks.com/translation) | 汉化流程、资源处理和已知局限 |
-| [游戏图鉴与工具](https://happyro.kugarocks.com/features/game) | 地图、魔物、NPC、物品图鉴和角色维护 |
+| [项目简介](https://happyro.kugarocks.com/guide/introduction) | 核心能力、项目组成、运行关系和技术基线 |
+| [系统概览](https://happyro.kugarocks.com/guide/introduction#运行关系) | 浏览器、Gateway、Server 与 Admin 的运行关系 |
+| [本地开发](https://happyro.kugarocks.com/native/linux) | 环境准备、构建、启动和检查 |
+| [日常维护](https://happyro.kugarocks.com/container/docker#日常维护) | 服务状态、日志、重启和停止 |
+| [离线安装](https://happyro.kugarocks.com/container/docker) | 完整离线包的获取、校验、初始化和启动 |
+| [关于汉化](https://happyro.kugarocks.com/guide/localization) | 汉化流程、资源处理和已知局限 |
+| [游戏图鉴与工具](https://happyro.kugarocks.com/game/desktop) | 地图、魔物、NPC、物品图鉴和角色维护 |
+| [手机平板](https://happyro.kugarocks.com/game/mobile) | 触屏操作、快捷栏、自动战斗及 PWA 添加到桌面 |
 
 ## 站点与社区
 
 - 项目站点：[happyro.kugarocks.com](https://happyro.kugarocks.com)
 - GitHub Pages：[happyro.org](https://happyro.org)
-- 安装教程：[Docker](https://happyro.kugarocks.com/installation/docker) / [Linux](https://happyro.kugarocks.com/installation/linux) / [macOS](https://happyro.kugarocks.com/installation/macos) / [Windows](https://happyro.kugarocks.com/installation/windows)
+- 安装教程：[Docker](https://happyro.kugarocks.com/container/docker) / [Linux](https://happyro.kugarocks.com/native/linux) / [macOS](https://happyro.kugarocks.com/native/macos) / [Windows](https://happyro.kugarocks.com/native/windows)
 - QQ 群：`662191549`（HappyRO）
 
 ## 开源协议
