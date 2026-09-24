@@ -4,8 +4,8 @@
 
 ## 版本与交付规则
 
-- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.3.0（2026-09-24 全量重建，Mac 本机从 ZIP 离线部署并完成自动验收）。
-- 应用、资源、配置和镜像使用同一个版本，组成一个完整目录交付，不单独发布资源包。
+- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.3.1（2026-09-25 全量重建，完成 Mac arm64 离线安装及现网 amd64 保留数据升级验收）。
+- 应用、资源、配置和镜像使用同一个版本，默认组成一个完整目录交付。用户明确要求拆分时，可从同一个已校验 ZIP 生成互补的资源包与镜像／部署文件包，提供合并说明，并验证合并后的全部文件与完整包一致；拆分包不能单独部署。
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
 - 全部构建成功后才允许组装离线包；全部归档校验成功才标记 offline-ready。没有镜像的准备包不可部署。
@@ -111,3 +111,47 @@ Mac arm64（OrbStack linux/arm64）从该 ZIP 解压到 `artifacts/deployment/in
 ## Docker Hub 发布
 
 用户已登录 Docker Hub 且明确要求推送时，将全部已校验的 OCI 归档通过 Skopeo `copy --all` 推送到上述命名空间。使用 Docker 的凭据助手，不将凭据写入日志。推送后核对远程 manifest 的双架构及配置摘要。离线包使用同样的完整标签，部署仍使用 `--pull never`。
+
+## v0.3.1（2026-09-25）
+
+从最终干净提交全量无缓存构建 Gateway（PWA `--all`）、Server、Admin 和 Database 的 `linux/amd64`、`linux/arm64` 镜像。验收发现并修复后台子路由跳转内部 8080 端口的问题后，废弃首轮候选包，再次全量重建四类镜像；最终包只使用第二轮产物。
+
+构建来源：
+
+- `.`：`38cc26fc86dad0d1d57dd3a1ba7a90f88e578188`
+- `repos/happyro-client`：`b1cc816e90149603138cd44a1755c5aa75beee3b`
+- `repos/happyro-gateway`：`ebfdc5ea1dacfd6b07b4aa5b7b0a19359d4b14e4`
+- `repos/happyro-server`：`760930014598fedcdf5f258f594bfb438a7eca89`
+- `repos/happyro-admin`：`f92cfe4a9831c2f3e57e8258b142fe5fe0ad9bd8`
+
+完整包：`artifacts/deployment/happyro-v0.3.1.zip`，4,604,184,227 字节，SHA-256 `251acbf7dceece481193d3d454f6c394bc103f6c22b408b84301962fd2df6c12`。39,149 个资源文件、双架构归档与 ZIP CRC 全部通过校验。未向 Docker Hub 推送本次镜像。
+
+| 架构 | 镜像 | 配置 ID | 归档 SHA-256 |
+| --- | --- | --- | --- |
+| amd64 | gateway | `sha256:1d67c50fcd2e9ccb3cb42f95471cb3ee8fe1ff531d3a7afa1b64f90ae331e9bd` | `654f27f0fd14ad563e222d5754f2363268b26a1ea685e17cab2af36db089b280` |
+| amd64 | server | `sha256:9230d4e80341463f303bb02a736c9af6bc2b9db825a80207f5a13145adaa490c` | `a53f6d9bb6b59ccf2c026ebf538b5238167d46d8cd15ae484b63cb5e3dbd0dcb` |
+| amd64 | admin | `sha256:6ace8d328f4534313fa12910893bc6298f8b9abde74a281315b521a7c8586335` | `428cd9a3898f1e9860a7ace98c9ee22d400de0ba20f12922d3b26309aff8684e` |
+| amd64 | database | `sha256:d178e837ec466980b7dcd235a43facff42ce416ffa277ea7f34a7e9b4095ed20` | `c66fc73a1a51352531b904495acc6850e5f9516ceaa8057a17a7a64529c8ff5c` |
+| arm64 | gateway | `sha256:e598009da6820b7618fe820b9e1ea61b28cfe8f214de5b21a8998d43f88c3a40` | `761009d6f3de38704f415b0d4ddc4dafd0ed27c070115b0cb3809c8977e5dee3` |
+| arm64 | server | `sha256:ac32cd652e25ddd090517513fe707a1f5381cc1c28eb72ebdb315ce54d905231` | `b3ee972cf470806740875dd616ecdd764d532f8ff53557f886d12e4f39a9aaa6` |
+| arm64 | admin | `sha256:ad2c754e1200324d46f3c4884b4fe14c50e0c7ce11acc6289bef2ecdde747dd8` | `325ab398b9e0f7cb5594210a09293e8e5bb45a192b06a91b68e5e7f485faa7ac` |
+| arm64 | database | `sha256:67078b0ace2ea2917fdc99460e5bfbdeebca7473d589b93a82fc4b38ec742ae8` | `9098aae4a3c43b8214cd9b2a504fe645aef53e500b872ea186618b8a5222220b` |
+
+本机从最终 ZIP 解压到 `artifacts/deployment/install/happyro-v0.3.1`，按 OrbStack `linux/arm64` 架构导入镜像并核对配置 ID，使用全新数据库与独立端口 `4338` / `48000` 部署。七个常驻服务健康，`admin-init` 退出码为 0。浏览器完成启动页、登录、创建角色、选角进地图、移动端设置、后台登录、魔物中文地图与位置操作、NPC 图鉴及游戏设置保存验收；后台子路由直接访问和带尾斜杠访问均返回 200。
+
+本机实际验证备份恢复：停写后备份，再修改测试角色 Zeny，恢复备份后账号、角色、背包和仓库摘要恢复一致；完整停止并重启后摘要仍一致，保存的 `base_exp_rate=123` 文件与后台 API 值保持不变。音频自动验收确认 BGM 资源返回 200、Web Audio 上下文处于 running / 48kHz；该检查不代替实机听音。
+
+完整 ZIP 经 fnrocks 中转到 Backend，三处 SHA-256 一致。在 Backend 上先校验并导入最终 amd64 镜像，再停止写入并备份，将备份复制到 fnrocks 后逐项核对其中 5 个文件的摘要。升级保留原 `.env` 密钥、公开 URL、端口、数据库及持久化目录，旧 v0.3.0 目录留作回退。备份压缩包为 7,509,073 字节，SHA-256 `b24b10770643166cdee1ae0e88d42ad6e2c01a79be580e1a52257580e72aa2e8`；备份含密钥，仅保存在受限目录，不作为交付物公开。
+
+现网 `/root/happyro` 已运行最终 v0.3.1 amd64 镜像，七个常驻服务健康，`admin-init` 退出码为 0。升级前后 4 个账号、3 个角色、11 条背包记录和仓库摘要一致，运营设置文件 SHA-256 一致；升级前的后台会话仍返回 200。公网浏览器完成原账号登录、选角进地图、音频上下文、移动设置、后台登录、中文魔物地图、位置操作、NPC 图鉴及运营设置读取验收，没有页面脚本异常。公网与容器内 PWA build-info 一致（amd64 `mufvndrz`，本机 arm64 `mufvmuyo`）。
+
+公网健康检查、启动页、后台子路由直接访问与 WebSocket 配置均通过；WebSocket 握手为 OpenResty `101`，未经过 ESA。文档样式、后台脚本、BGM 的第二次请求均为 ESA `HIT`。
+
+按用户要求从同一个完整 ZIP 生成以下两个互补包：
+
+- `happyro-v0.3.1-runtimes.zip`：3,552,218,355 字节，SHA-256 `1079a2be07353d94d09d3c586ea86973855d427df5dbb44bef22c6aa2c43da48`。
+- `happyro-v0.3.1-images.zip`：1,052,749,362 字节，SHA-256 `55877b6b978a59fe662ddbc037b5c015c010b5d8a806aee5656c59f24056443e`。
+
+资源包保存 `resources/`；镜像包保存双架构镜像、部署工具、配置、版本清单及空数据目录。两者解压到同一父目录后还原 `happyro-v0.3.1/`。逐文件核对合并后的 39,165 个文件 SHA-256、205 个目录与完整包一致，未遗漏任何部署文件。使用说明位于 `artifacts/deployment/happyro-v0.3.1-split-README.txt`。
+
+文档站同步根仓库 changelog，并更新当前版本、离线安装和拆分包说明。v0.3.1 未上传公开网盘或 Docker Hub，文档保留原 v0.3.0 公开下载链接并明确标注版本；不将旧链接冒充新版。
