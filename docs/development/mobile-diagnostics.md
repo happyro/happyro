@@ -9,7 +9,7 @@ work/diagnostics/client/YYYY-MM-DD/<会话UUID>.jsonl
 
 日期目录使用 UTC。每次重新进入游戏页面建立一个独立会话，首条 `debug.enabled` 包含构建标识、浏览器和 DPR。接收时间 `receivedAt` 来自服务器，事件时间和 `elapsedMs` 来自手机，分析事件先后应使用同一会话的 `elapsedMs`。
 
-已采集的问题记录见 [2026-09-24 iOS 攻击音效卡顿调查](../history/validation/2026-09-24-ios-audio-stutter.md)，包含实机数据、结论边界和尚未实施的 Web Audio 方案。
+已采集的问题记录见 [2026-09-24 iOS 攻击音效卡顿调查](../history/validation/2026-09-24-ios-audio-stutter.md)，包含实机数据、结论边界、Web Audio 修复实现与实机验收状态。
 
 ## 开启接收
 
@@ -58,7 +58,7 @@ tail -f work/diagnostics/client/YYYY-MM-DD/<会话UUID>.jsonl
 
 `perf.summary` 每约 5 秒记录一次：实际执行游戏渲染的帧间隔、渲染回调 CPU 耗时的 P50/P95/P99/最大值、超过 50ms 的次数、伤害数字纹理生成、音效播放和 HUD 更新的累计/最大耗时，以及分辨率、DPR、帧率上限和音效开关。只统计进入游戏后的渲染，切后台清空间隔基线，避免把切后台时间当作卡顿。
 
-`damage.texture` 包含 Canvas 拼图和 WebGL 上传的 JavaScript 调用耗时；WebGL 异步执行，因此这不是 GPU 执行时间。`audio.play.ready` 是调用到播放 Promise 完成的等待时间，也不是主线程阻塞时长。若整帧间隔很长但各项 CPU 耗时很短，需要进一步检查 GPU、浏览器合成或系统调度，不能仅凭日志认定根因。
+`damage.texture` 包含 Canvas 拼图和 WebGL 上传的 JavaScript 调用耗时；WebGL 异步执行，因此这不是 GPU 执行时间。新构建的 `audio.start` 测量缓冲音源节点的创建、连接和启动；`audio.load.wait`、`audio.decode.wait` 是异步等待时间，不是主线程阻塞时长。旧构建的 `audio.play.ready` 同样只是播放 Promise 等待时间。若整帧间隔很长但各项 CPU 耗时很短，需要进一步检查 GPU、浏览器合成或系统调度，不能仅凭日志认定根因。
 
 ## 开销、断线与限制
 
