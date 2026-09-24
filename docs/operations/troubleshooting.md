@@ -49,9 +49,9 @@ systemctl status happyro-admin-frontend.service
 
 ## iOS 攻击时整个画面停顿
 
-先按[移动端性能日志回传](../development/mobile-diagnostics.md)采集同一设备、同一浏览器下开启和关闭音效的战斗对照。对比实际帧间隔与音效调用耗时，区分 `.play()` 返回前的延迟和播放 Promise 完成的等待时间。
+先按[移动端性能日志回传](../development/mobile-diagnostics.md)采集同一设备、同一浏览器下开启和关闭音效的战斗对照。对比实际帧间隔与 `audio.start` 同步耗时，区分资源加载／解码的异步等待时间；旧构建使用 `audio.play.*` 指标。
 
-[2026-09-24 调查记录](../history/validation/2026-09-24-ios-audio-stutter.md)观察到缓存音效 `.play()` 调用最高耗时 242ms，关闭音效后明显改善。短音效迁移 Web Audio 仍是待实施建议；关闭音效仅用于临时缓解和对照，不是已完成的修复。
+[2026-09-24 调查记录](../history/validation/2026-09-24-ios-audio-stutter.md)观察到缓存音效 `.play()` 调用最高耗时 242ms，关闭音效后明显改善。短音效现已统一迁移到 Web Audio，并完成本机浏览器及 iPhone Chrome 实机验证：新构建 `mufpt8su` 的 35 秒音效开启样本中，124 次音效启动的同步耗时最高 1ms，用户确认流畅且音效正常。iPad 与 Safari 的修复后实机样本尚未单独采集；关闭音效只用于对照。
 
 ## 技能无法释放或说明窗口越界
 
