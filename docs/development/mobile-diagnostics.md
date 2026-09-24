@@ -78,7 +78,10 @@ tail -f work/diagnostics/client/YYYY-MM-DD/<会话UUID>.jsonl
 | `entity.animation` | 实体部件的动画帧计算及其中触发的动作切换 |
 | `effect.classInit`／`effect.init`／`effect.render` | 特效类初始化、实例初始化、实例绘制 |
 | `texture.spriteUpload`／`texture.paletteUpload`／`texture.imageUpload` | 精灵帧、调色板及图片纹理准备与上传的同步调用；计时从异步资源返回之后开始 |
+| `texture.effectDecode`／`texture.effectDecode.wait` | 共享特效纹理的 TGA 同步解码／普通图片异步加载等待；后者不参与同步长帧归因 |
 | `memory.scan`／`memory.release` | 构造清理键列表、逐项释放；计数记录扫描、检查、成功释放的条目，以及精灵上传帧数 |
+
+纹理复用验证还记录 `texture.effectHit`、`texture.effectMiss`、`texture.effectUpload`、`texture.effectEvict` 计数。命中包含共享正在加载的同一资源；上传表示新建完成的共享 GPU 纹理。进图预热会产生少量 miss／upload，持续攻击应主要增加 hit；其他特效种类及地图仍会产生独立的 `texture.imageUpload`，不能要求该指标在游戏全程归零。
 
 上述计时存在父子包含关系，例如 `render.callbacks` 包含 `map.entities`，不能把所有阶段相加。异步 `.wait` 指标仅进入窗口汇总，不进入某一帧或两帧之间的同步工作归因。浏览器仍可能在任何计时区间暂停执行，因此测量值是经过时间，不是纯 CPU 时间。资源解析中在 Worker 内执行的部分，以及 GPU、布局和合成工作，不在这轮分段计时范围内。
 
