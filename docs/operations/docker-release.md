@@ -4,7 +4,7 @@
 
 ## 版本与交付规则
 
-- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.3.1（2026-09-25 全量重建，完成 Mac arm64 离线安装及现网 amd64 保留数据升级验收）。
+- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.3.2（2026-09-26 全量重建，完成 Mac arm64 完整离线包验收、现网 amd64 仅替换镜像升级及 Docker Hub 双架构标签核验）。
 - 应用、资源、配置和镜像使用同一个版本，默认组成一个完整目录交付。用户明确要求拆分时，可从同一个已校验 ZIP 生成互补的资源包与镜像／部署文件包，提供合并说明，并验证合并后的全部文件与完整包一致；拆分包不能单独部署。
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
@@ -253,3 +253,48 @@ PYTHON
 资源包保存 `resources/`；镜像包保存双架构镜像、部署工具、配置、版本清单及空数据目录。两者解压到同一父目录后还原 `happyro-v0.3.1/`。逐文件核对合并后的 39,165 个文件 SHA-256、205 个目录与完整包一致，未遗漏任何部署文件。使用说明位于 `artifacts/deployment/happyro-v0.3.1-split-README.txt`。
 
 文档站同步根仓库 changelog，并更新当前版本、离线安装和拆分包说明。v0.3.1 未上传公开网盘，文档保留原 v0.3.0 公开下载链接并明确标注版本；不将旧链接冒充新版。Docker Hub 镜像后续已推送，四个仓库的 v0.3.1 与 latest 一致，见上文核验记录。
+
+## v0.3.2（2026-09-26）
+
+正式构建前已 fetch 并核对五仓库最新 origin/main。提交统一版本变更后，从干净提交全量执行 `--no-cache --pull` 构建 Gateway（PWA `--all`）、Server、Admin 和 Database 的 amd64 / arm64 镜像；未复用旧 dist、vendor 或应用镜像。四类 OCI 全部完成并核验后，从同一批归档推送 Docker Hub 并组装离线包。
+
+构建来源：
+
+- 根仓库：`4c396536e1b06086241f730a1bda11c981819b43`
+- Client：`efcd7e808dfb7b0ffe15205a083c922bee0a63b0`
+- Gateway：`ebfdc5ea1dacfd6b07b4aa5b7b0a19359d4b14e4`
+- Server：`eb05d9b4ddbb950d9286cf79408e4e93c8c55639`
+- Admin：`f92cfe4a9831c2f3e57e8258b142fe5fe0ad9bd8`
+
+交付物位于 `artifacts/deployment/`：
+
+| 文件 | 字节数 | SHA-256 |
+| --- | ---: | --- |
+| `happyro-v0.3.2.zip` | 4604397479 | `72a757c07c8fa0a9c092c5e12186f1adca98b302ffed2f0a5bec4524ac549669` |
+| `happyro-v0.3.2-runtimes.zip` | 3552218355 | `3d1a56fcccad536b6f05fda153c21ba07df2e0834d1a0610ba6af7dbad397c9d` |
+| `happyro-v0.3.2-images.zip` | 1052962614 | `db279ec56708fee89f73e0818329fb6e8fa548ed4a3e61e660e8d0aae3b1dc0e` |
+
+完整包包含 39,149 个资源文件和八个 Docker-save 镜像归档，资源、镜像 SHA-256 与 ZIP CRC 均通过校验。两个拆分包来自同一完整 ZIP；逐文件比较合并结果的 39,165 个文件 SHA-256 和 205 个目录，全部一致。合并说明为 `happyro-v0.3.2-split-README.txt`。OCI 源归档及 `built.json` 保存在 `artifacts/images/v0.3.2/`。
+
+Docker Hub 四个仓库的 `v0.3.2` 与 `latest` 均已从远程读取并核验完整 index、所有子 manifest 和平台，包含 amd64 / arm64，且与本地 OCI 一致：
+
+| 仓库（`docker.io/kugarocks/`） | 两个标签共同的 index 摘要 |
+| --- | --- |
+| happyro-gateway | `sha256:70a1079885f3e267a7ed3e3c32f773b93f90e767f892a61cee87137c388522d9` |
+| happyro-server | `sha256:5b96d2b078373dec60c3766f27e3bf15b9e85f92b8a39ae6d352e58f4f084a55` |
+| happyro-admin | `sha256:c913b20634634603a5924bc5f9371025232c0f15210681bd5d8f8150ebf0d3bb` |
+| happyro-database | `sha256:79080d545f9ea0fa35993febc4ded1c28c7cb6be4e70a50ea4109a5d915341ce` |
+
+本机从完整 ZIP 解压到 `artifacts/deployment/install/happyro-v0.3.2`，按 OrbStack arm64 导入镜像、初始化全新数据库并离线部署。为让 3338 / 8000 指向 Docker，停止了占用端口的 HappyRO 原生 launchd 服务；原生配置及旧安装数据保留。七个常驻容器健康，admin-init 退出码为 0。Docker containerd 存储的 image ID 与配置 ID 不同，验收通过导出实际加载镜像核对配置摘要，未直接把两种 ID 混为一谈。
+
+本机浏览器完成启动页、登录、创建角色、进地图、素质与技能菜单、导航搜索、镜头控制、后台登录、中文魔物地图、位置操作、NPC 图鉴及运营设置保存。实际备份后修改测试角色 Zeny，再恢复备份，账号、角色、背包和仓库摘要恢复一致；完整停止重启后摘要仍一致，保存的 `base_exp_rate=123` 文件和后台值保持不变。重启后的浏览器验收再次通过。
+
+镜像包经 `root@fnrocks` 转送 Backend（10.24.42.2），两处 SHA-256 均与本机一致。升级前确认 Compose、部署工具及资源清单中的全部资源文件与新包一致，只替换镜像和对应版本校验文件，保留 `/root/happyro/data/`、资源文件、公开 URL、端口和密钥。`.env` 仅更新 RELEASE_VERSION 及四个镜像引用。旧镜像归档保存在 `/root/happyro-images-v0.3.1-before-v0.3.2`。
+
+现网停写后备份到 `/root/happyro-backups/before-v0.3.2`，受限备份归档同时保存到 fnrocks 的 `/vol2/1000/kugarocks/happyro/backups/v0.3.2/before-v0.3.2.tar.gz`，两处 SHA-256 为 `fc2fd9f42609b670ff400da351f97dfcd287730f7ee76ba5a05a08a82ec78b4a`。备份含密钥，不属于公开交付物。Backend 临时镜像 ZIP 已删除以释放空间，原包保留在本机及 fnrocks。
+
+升级前后 6 个账号、5 个角色、21 条背包记录及仓库摘要完全一致，运营设置文件哈希一致，原后台会话仍返回 200。现网七个常驻服务健康，admin-init 退出码为 0，实际 amd64 配置摘要与离线包一致。公网浏览器完成原账号登录、选角进地图、素质与技能菜单、导航搜索、声音上下文、镜头设置、后台登录、图鉴及运营设置读取，页面脚本错误为零。公网 PWA 与容器构建信息一致（amd64 `muh8bfcn`，本机 arm64 `muh8bf50`）；WebSocket 握手为 OpenResty 101。
+
+音频验收确认 BGM 返回 200、Web Audio 上下文 running / 48kHz，未进行人工听音。Gateway 自动检查仍报告可选 data/ 目录和 GRF 非 UTF-8 文件名提示；资源完整校验、游戏加载及浏览器功能检查通过。本轮未发布文档站或公开网盘下载。
+
+详细证据保存在 `work/releases/v0.3.2/`，包含构建与发布日志、拆分校验、两端容器配置核验、浏览器截图、备份恢复及数据摘要；Docker Hub 原始响应位于 `work/dockerhub/v0.3.2/`。

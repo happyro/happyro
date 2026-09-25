@@ -4,6 +4,7 @@
 
 | 目录 | 用途 |
 | --- | --- |
+| [operations/](operations/README.md) | 本机 Docker 日常运维：预览、备份并清空账号角色 |
 | [deployment/](deployment/README.md) | Docker 部署包、资源校验、密钥初始化、备份恢复和镜像发布 |
 | [client/](client/README.md) | LUB 提取与回编译 |
 | [resources/](resources/README.md) | 物品 / 魔物目录生成 |
