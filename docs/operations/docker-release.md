@@ -9,7 +9,7 @@
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
 - 全部构建成功后才允许组装离线包；全部归档校验成功才标记 offline-ready。没有镜像的准备包不可部署。
-- 镜像发布目标为 docker.io/kugarocks/happyro-{gateway,server,admin,database}。用户要求推送时，全部构建及 OCI 校验成功后才从同一批归档推送双架构镜像，再组装离线包；不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
+- 镜像发布目标为 docker.io/kugarocks/happyro-{gateway,server,admin,database}。用户要求推送时，全部构建及 OCI 校验成功后才从同一批归档推送双架构镜像，再组装离线包；Docker Hub 的 latest 指向同一版本，离线部署不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
 - 发布成功后更新已发布版本记录；下一次发版只修改 VERSION，环境模板、工具不再硬编码应用版本。
 
 ## 1. 优先在本机检查并准备资源
@@ -110,7 +110,105 @@ Mac arm64（OrbStack linux/arm64）从该 ZIP 解压到 `artifacts/deployment/in
 
 ## Docker Hub 发布
 
-用户已登录 Docker Hub 且明确要求推送时，将全部已校验的 OCI 归档通过 Skopeo `copy --all` 推送到上述命名空间。使用 Docker 的凭据助手，不将凭据写入日志。推送后核对远程 manifest 的双架构及配置摘要。离线包使用同样的完整标签，部署仍使用 `--pull never`。
+用户已登录 Docker Hub 且明确要求推送时才执行本节。使用 Docker 的凭据助手，不将凭据写入日志。以下命令均在根仓库运行，版本只读取 `deploy/docker/VERSION`；需要 Skopeo 和 Python 3。离线包使用完整版本标签，部署仍使用 `--pull never`。
+
+### zsh 的 `atest` 仓库名问题
+
+2026-09-25 更新 latest 时，命令中的 `happyro-$name:latest` 被 zsh 解析为 `$name:l`（将变量值转小写）加上字面量 `atest`，实际目标变成 `happyro-gatewayatest` 等错误仓库。双引号和外层子 shell `( ... )` 都不能阻止这种展开；代码块标注 bash 也不会改变粘贴命令时使用的 shell。参见 [zsh 参数修饰符文档](https://zsh.sourceforge.io/Doc/Release/Expansion.html#Modifiers)。
+
+**拼接镜像引用时，变量一律使用 `${name}`、`${release_version}` 等花括号形式，尤其是冒号前的变量。** 正确形式是 `happyro-${name}:latest`。推送前打印完整源地址和目标地址，检查仓库名与标签；不能仅凭 copy 返回成功判断发布成功。
+
+### 1. 从已校验的双架构 OCI 归档推送版本标签
+
+先确认全部构建完成、`built.json` 的版本与 VERSION 一致、四个 OCI 归档 SHA-256 与 built.json 一致，并且每个归档同时包含 `linux/amd64` 和 `linux/arm64`。使用同一批最终产物；不得用 Docker 本地单架构镜像替代。下列命令保存本地和远程原始 index，并逐字节比较，任意失败立即停止，不能继续更新 latest。
+
+```sh
+(
+  set -eu
+  release_version=$(cat deploy/docker/VERSION)
+  check_dir="work/dockerhub/${release_version}"
+  mkdir -p "${check_dir}"
+  for name in gateway server admin database; do
+    source_ref="oci-archive:artifacts/images/release/${name}.tar"
+    target_ref="docker://docker.io/kugarocks/happyro-${name}:${release_version}"
+    printf '%s -> %s\n' "${source_ref}" "${target_ref}"
+    skopeo copy --all --preserve-digests \
+      --retry-times 5 --retry-delay 5s \
+      "${source_ref}" "${target_ref}"
+    skopeo inspect --raw "${source_ref}" > "${check_dir}/${name}-local.json"
+    skopeo inspect --raw "${target_ref}" > "${check_dir}/${name}-version.json"
+    cmp "${check_dir}/${name}-local.json" "${check_dir}/${name}-version.json"
+  done
+)
+```
+
+### 2. 将全部已核验的版本标签复制为 latest
+
+四个版本标签全部通过上一步核验后执行。版本标签已经正确上传、只需要修复 latest 时，从本步开始，无需重建或重新上传 OCI 归档。`--all` 保留所有架构，`--preserve-digests` 要求保留摘要；失败时查明原因，不通过去掉这些选项绕过。
+
+```sh
+(
+  set -eu
+  release_version=$(cat deploy/docker/VERSION)
+  for name in gateway server admin database; do
+    source_ref="docker://docker.io/kugarocks/happyro-${name}:${release_version}"
+    target_ref="docker://docker.io/kugarocks/happyro-${name}:latest"
+    printf '%s -> %s\n' "${source_ref}" "${target_ref}"
+    skopeo copy --all --preserve-digests \
+      --retry-times 5 --retry-delay 5s \
+      "${source_ref}" "${target_ref}"
+  done
+)
+```
+
+### 3. 从 Docker Hub 重新读取并核验两个标签
+
+以下命令只读远程仓库。它比较完整 index 的 SHA-256，确认两个标签指向同一份多架构内容，并逐项比较子 manifest 摘要及平台，同时要求存在 amd64 和 arm64。不能仅比较默认架构、镜像大小或标签显示时间。原始响应保存在 `work/dockerhub/版本/`，供复核。
+
+```sh
+python3 - <<'PYTHON'
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+
+version = Path("deploy/docker/VERSION").read_text().strip()
+output = Path("work/dockerhub") / version
+output.mkdir(parents=True, exist_ok=True)
+for name in ("gateway", "server", "admin", "database"):
+    results = []
+    for tag in (version, "latest"):
+        reference = f"docker://docker.io/kugarocks/happyro-{name}:{tag}"
+        raw = subprocess.check_output([
+            "skopeo", "inspect", "--raw", "--retry-times", "5", reference,
+        ])
+        (output / f"{name}-{tag}.json").write_bytes(raw)
+        manifests = json.loads(raw).get("manifests", [])
+        platforms = {
+            (m.get("platform", {}).get("os"), m.get("platform", {}).get("architecture"))
+            for m in manifests
+        }
+        if not {("linux", "amd64"), ("linux", "arm64")} <= platforms:
+            raise SystemExit(f"FAIL: {reference} 缺少双架构")
+        results.append(("sha256:" + hashlib.sha256(raw).hexdigest(), manifests))
+    if results[0] != results[1]:
+        raise SystemExit(f"FAIL: happyro-{name} 的 {version} 与 latest 不一致")
+    print(f"OK happyro-{name}: {version} == latest  {results[0][0]}")
+PYTHON
+```
+
+四个仓库全部输出 OK 后才记录 Docker Hub 发布成功。修复错误仓库名后，`happyro-gatewayatest`、`happyro-serveratest`、`happyro-adminatest`、`happyro-databaseatest` 不会自动消失；核实没有使用者后可单独删除，删除不属于上述推送流程。
+
+### v0.3.1 标签修复核验记录（2026-09-25）
+
+已通过 Skopeo 从 Docker Hub 实时读取四个仓库的 `v0.3.1` 和 `latest`：每对标签的完整 index 摘要、所有子 manifest 摘要与平台均一致，包含 `linux/amd64` 和 `linux/arm64`。本次核验确认远程两个标签一致，未重新比较本地 OCI 归档，也未检查或删除错误的 `atest` 仓库。
+
+| 仓库（`docker.io/kugarocks/`） | v0.3.1 与 latest 的共同 index 摘要 |
+| --- | --- |
+| happyro-gateway | `sha256:440425bd24111cb3e3249f1c2496305b914f00dfccec62fdb99a6ca9c7cd326b` |
+| happyro-server | `sha256:90c3b982b98816666f65bd7b31b47151bbbe8f4ceb48ca331c51f9f02d8186f4` |
+| happyro-admin | `sha256:c6f74965a404127ee72253f93cd5c967ba9fce4e0314da4aff42fc327393c6fd` |
+| happyro-database | `sha256:b8d927e9dc5cce4ff48dba45a6bc480337cbc718bcdf997b230624530113fd62` |
 
 ## v0.3.1（2026-09-25）
 
@@ -124,7 +222,7 @@ Mac arm64（OrbStack linux/arm64）从该 ZIP 解压到 `artifacts/deployment/in
 - `repos/happyro-server`：`760930014598fedcdf5f258f594bfb438a7eca89`
 - `repos/happyro-admin`：`f92cfe4a9831c2f3e57e8258b142fe5fe0ad9bd8`
 
-完整包：`artifacts/deployment/happyro-v0.3.1.zip`，4,604,184,227 字节，SHA-256 `251acbf7dceece481193d3d454f6c394bc103f6c22b408b84301962fd2df6c12`。39,149 个资源文件、双架构归档与 ZIP CRC 全部通过校验。未向 Docker Hub 推送本次镜像。
+完整包：`artifacts/deployment/happyro-v0.3.1.zip`，4,604,184,227 字节，SHA-256 `251acbf7dceece481193d3d454f6c394bc103f6c22b408b84301962fd2df6c12`。39,149 个资源文件、双架构归档与 ZIP CRC 全部通过校验。离线包完成时尚未推送 Docker Hub；后续已完成推送及标签修复，核验记录见上文。
 
 | 架构 | 镜像 | 配置 ID | 归档 SHA-256 |
 | --- | --- | --- | --- |
@@ -154,4 +252,4 @@ Mac arm64（OrbStack linux/arm64）从该 ZIP 解压到 `artifacts/deployment/in
 
 资源包保存 `resources/`；镜像包保存双架构镜像、部署工具、配置、版本清单及空数据目录。两者解压到同一父目录后还原 `happyro-v0.3.1/`。逐文件核对合并后的 39,165 个文件 SHA-256、205 个目录与完整包一致，未遗漏任何部署文件。使用说明位于 `artifacts/deployment/happyro-v0.3.1-split-README.txt`。
 
-文档站同步根仓库 changelog，并更新当前版本、离线安装和拆分包说明。v0.3.1 未上传公开网盘或 Docker Hub，文档保留原 v0.3.0 公开下载链接并明确标注版本；不将旧链接冒充新版。
+文档站同步根仓库 changelog，并更新当前版本、离线安装和拆分包说明。v0.3.1 未上传公开网盘，文档保留原 v0.3.0 公开下载链接并明确标注版本；不将旧链接冒充新版。Docker Hub 镜像后续已推送，四个仓库的 v0.3.1 与 latest 一致，见上文核验记录。
