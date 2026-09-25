@@ -25,7 +25,7 @@ CLIENT_DIAGNOSTICS_DIR=../../work/diagnostics/client
 
 ## 当前 Mac 的物理运行环境
 
-本次初始化的游戏调试环境由用户级 launchd 管理，配置在 `work/runtime/native/launchd/`，仅加载到当前登录会话，不注册开机启动：
+当前采用 Docker 数据库与 macOS 原生应用的混合部署。应用由用户级 launchd 管理，配置在 `work/runtime/native/launchd/`，仅加载到当前登录会话，不注册开机启动：
 
 ```bash
 bash scripts/local/macos-services.sh status --no-color
@@ -33,15 +33,17 @@ bash scripts/local/macos-services.sh stop --no-color
 bash scripts/local/macos-services.sh start --no-color
 ```
 
-该命令只管理已经配置的进程，不负责首次安装。运行组件是本机 MariaDB 10.11、login/char/map/web、Node Gateway，以及 Admin 的 Laravel 后端和 Umi 前端。客户端构建固定 Renewal / PACKETVER=20211103 / 不混淆封包，保留启动页和全部查看器。
+该命令只管理已经配置的容器与进程，不负责首次安装。数据库使用 `happyro-database` Docker 容器；login/char/map/web、Node Gateway、Admin 的 Laravel 后端和 Umi 前端均在 macOS 原生运行。启动时先等待 Docker 数据库健康，停止时先退出应用再停止数据库，不删除数据。客户端构建固定 Renewal / PACKETVER=20211103 / 不混淆封包，保留启动页和全部查看器。
 
-数据库使用独立目录 `work/runtime/native/database/`，仅监听 `127.0.0.1:13306`；游戏服务器仅监听回环地址，通过 Gateway 的 WebSocket 代理供手机访问。Gateway 监听 3338。数据库、内部服务密码和测试账号保存在权限为 0600 的 `work/runtime/native/credentials.json`，不要提交或放入诊断日志。
+2026-09-25 切换后沿用原 Docker 数据库的 `happyro`、`happyro_log` 和 `happyro_admin`，数据仍在 `artifacts/deployment/install/happyro-v0.3.1/data/database/`。`work/runtime/native/database-port.yml` 为安装目录的 Compose 增加 `127.0.0.1:13306:3306` 映射；仅重建数据库容器配置，不初始化或覆盖数据。其他 Docker 应用容器保持停止，不同时启动两套应用。游戏服务器仅监听回环地址，通过 Gateway 的 WebSocket 代理供手机访问。Gateway 监听 3338。数据库、内部服务密码和本地验收账号保存在权限为 0600 的 `work/runtime/native/credentials.json`，不要提交或放入诊断日志。
+
+原生 MariaDB 已停止，其 launchd 配置已移入切换备份；旧数据目录 `work/runtime/native/database/` 保留。两套数据库的 SQL 备份及切换前配置保存在 `work/runtime/native/backups/`，本次备份路径记录于 `work/runtime/native/hybrid-backup-path.txt`。不要删除数据库数据目录、切换备份或整个 `work/runtime/`。
 
 本机 `repos/happyro-server/conf/import/packet_conf.txt` 配置 `allow: 127.0.0.1`，用于上述仅监听回环地址的原生环境。Gateway 转发的玩家连接和服务间连接都来自该地址；2026-09-25 曾被角色服务的连接频率检查标记为 DDoS，表现为登录成功后连接角色服务立即断开、地图服务反复重连。增加本机地址允许规则并重启 login／char／map 后恢复。运行配置位于 Git 忽略目录，其他机器部署时需按自身入口配置；进程显示 running 不代表服务间连接已恢复，应继续确认 char 收到地图注册并实际登录游戏。
 
-测试账号 `happytest` 有一个 `MobileDebug` 角色及本地 GM 权限，可用于生成战斗测试场景。进程日志在 `work/runtime/native/logs/`。`stop` 保留数据库和诊断日志；不要删除整个 `work/runtime/`。
+账号和角色沿用 Docker 库，当前本地验收使用已有 `happyro` 账号；旧原生库的 `happytest` / `MobileDebug` 仅保留在旧数据和备份中，未合并到当前库。进程日志在 `work/runtime/native/logs/`。
 
-Admin 前端入口为 `http://<Mac局域网IP>:8000`，Laravel 仅监听 `127.0.0.1:18081`，由前端代理 API 和认证请求。Mac 使用 `local.happyro.admin-frontend` 和 `local.happyro.admin-backend` 两个 launchd 服务管理，对应仓库 Linux 部署中的 systemd 单元。后台使用独立的 `happyro_native_admin` 数据库，初始化账号为 `admin/admin`；它与游戏账号分开存储。数据库凭据、后台账号和 Game Control 密钥仍保存在上述本机凭据文件中。
+Admin 前端入口为 `http://<Mac局域网IP>:8000`，Laravel 仅监听 `127.0.0.1:18081`，由前端代理 API 和认证请求。Mac 使用 `local.happyro.admin-frontend` 和 `local.happyro.admin-backend` 两个 launchd 服务管理，对应仓库 Linux 部署中的 systemd 单元。后台沿用 Docker 中的 `happyro_admin` 数据库和原有管理员账号，并同步原 Docker 应用的加密密钥；它与游戏账号分开存储。数据库凭据、后台账号和 Game Control 密钥仍保存在上述本机凭据文件中。
 
 Admin 已导入物品、魔物和 NPC 图鉴，图片指向本次替换的运行资源。Game Control 经回环地址上的 web-server 访问 map-server Socket，并使用独立密钥认证。后台日志为 `admin-backend.log`、`admin-frontend.log`。游戏内冒险工具也通过 Gateway 的默认 `127.0.0.1:18081` 代理接入该后台。
 

@@ -1,6 +1,8 @@
 # 本地开发
 
-本机游戏开发栈使用 systemd 管理应用进程、Compose 管理 MariaDB。根仓库启动脚本可创建临时单元，已部署主机也可能装有长期单元；先按[服务手册](../operations/services.md)识别实际单元，不同时运行两套启动方式。完整 Docker 拓扑见[Docker 部署](../operations/docker-deployment.md)。
+Linux 本机游戏开发栈使用 systemd 管理应用进程、Compose 管理 MariaDB。根仓库启动脚本可创建临时单元，已部署主机也可能装有长期单元；先按[服务手册](../operations/services.md)识别实际单元，不同时运行两套启动方式。完整 Docker 拓扑见[Docker 部署](../operations/docker-deployment.md)。
+
+macOS 当前使用 Docker 数据库加 launchd 原生应用，使用 `bash scripts/local/macos-services.sh start|stop|status --no-color` 管理已配置环境。数据库仅监听 `127.0.0.1:13306`，游戏入口为 `http://<Mac局域网IP>:3338/applications/pwa/index.html`，Admin 为 `http://<Mac局域网IP>:8000`。数据来源、配置与备份见[移动端调试环境](mobile-diagnostics.md#当前-mac-的物理运行环境)；下文 systemd 命令适用于 Linux。
 
 ## 依赖
 
