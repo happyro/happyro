@@ -33,9 +33,9 @@ bash scripts/local/macos-services.sh stop --no-color
 bash scripts/local/macos-services.sh start --no-color
 ```
 
-该命令只管理已经配置的容器与进程，不负责首次安装。数据库使用 `happyro-database` Docker 容器；login/char/map/web、Node Gateway、Admin 的 Laravel 后端和 Umi 前端均在 macOS 原生运行。启动时先等待 Docker 数据库健康，停止时先退出应用再停止数据库，不删除数据。客户端构建固定 Renewal / PACKETVER=20211103 / 不混淆封包，保留启动页和全部查看器。
+该命令只管理已经配置的容器与进程，不负责首次安装。数据库使用独立的 `happyro-native-database` Docker 容器（Compose 项目为 `happyro-native`）；login/char/map/web、Node Gateway、Admin 的 Laravel 后端和 Umi 前端均在 macOS 原生运行。启动时先等待 Docker 数据库健康，停止时先退出应用再停止数据库，不删除数据。客户端构建固定 Renewal / PACKETVER=20211103 / 不混淆封包，保留启动页和全部查看器。
 
-2026-09-25 切换后沿用原 Docker 数据库的 `happyro`、`happyro_log` 和 `happyro_admin`，数据仍在 `artifacts/deployment/install/happyro-v0.3.1/data/database/`。`work/runtime/native/database-port.yml` 为安装目录的 Compose 增加 `127.0.0.1:13306:3306` 映射；仅重建数据库容器配置，不初始化或覆盖数据。其他 Docker 应用容器保持停止，不同时启动两套应用。游戏服务器仅监听回环地址，通过 Gateway 的 WebSocket 代理供手机访问。Gateway 监听 3338。数据库、内部服务密码和本地验收账号保存在权限为 0600 的 `work/runtime/native/credentials.json`，不要提交或放入诊断日志。
+本机独立数据库包含 `happyro`、`happyro_log` 和 `happyro_admin`，数据位于 `artifacts/deployment/install/happyro-v0.3.1/data/database/`；完整 Docker 游戏栈的数据库使用 `artifacts/deployment/install/happyro-v0.3.2/data/database/`，二者不共享数据目录。独立数据库由 `work/runtime/native/database-compose.json` 定义，固定映射 `127.0.0.1:13306:3306`，应用通过主机端口连接，不依赖容器 IP。该配置含凭据，不提交；不得使用完整游戏栈的 Compose 管理本机独立数据库。其他 Docker 应用容器保持停止，不同时启动两套应用。游戏服务器仅监听回环地址，通过 Gateway 的 WebSocket 代理供手机访问。Gateway 监听 3338。数据库、内部服务密码和本地验收账号保存在权限为 0600 的 `work/runtime/native/credentials.json`，不要提交或放入诊断日志。
 
 原生 MariaDB 已停止，其 launchd 配置已移入切换备份；旧数据目录 `work/runtime/native/database/` 保留。两套数据库的 SQL 备份及切换前配置保存在 `work/runtime/native/backups/`，本次备份路径记录于 `work/runtime/native/hybrid-backup-path.txt`。不要删除数据库数据目录、切换备份或整个 `work/runtime/`。
 
