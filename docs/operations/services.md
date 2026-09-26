@@ -1,6 +1,22 @@
 # 服务
 
-本机进程由 systemd 管理，单元可能是长期安装或脚本创建的 transient unit。不要从 Makefile 的存在推断实际安装方式，也不要把停止后的临时单元当作仍可直接启动的长期单元。
+Linux 本机进程由 systemd 管理，单元可能是长期安装或脚本创建的 transient unit。不要从 Makefile 的存在推断实际安装方式，也不要把停止后的临时单元当作仍可直接启动的长期单元。
+
+## macOS 原生应用与独立数据库
+
+macOS 应用由 launchd 管理，使用独立 Docker 容器 `happyro-native-database`，数据库仅发布到 `127.0.0.1:13306`。它与完整 Docker 游戏栈的 `happyro-database` 使用不同的数据目录、容器名和 Compose 项目，禁止互换数据或直接用完整游戏栈数据库替代。
+
+```bash
+bash scripts/local/macos-services.sh start --no-color
+bash scripts/local/macos-services.sh status --no-color
+bash scripts/local/macos-services.sh stop --no-color
+```
+
+启动前先停止占用 3338／8000 端口的 Docker 游戏应用。脚本只启停已准备的独立数据库容器和 launchd 服务，不初始化数据、不构建程序。数据库 Compose 配置在 `work/runtime/native/database-compose.json`，含凭据，不提交；数据目录与部署信息以 `work/runtime/native/hybrid-deployment.json` 为准。
+
+原生服务配置与日志在 `work/runtime/native/launchd/`、`work/runtime/native/logs/`。游戏入口为 `http://127.0.0.1:3338/applications/pwa/index.html`，后台为 `http://127.0.0.1:8000`，后台内部端口为 `127.0.0.1:18081`。服务端可执行文件位于 `work/runtime/native/bin/`；编译后须在对应进程停止时更新这些文件，再启动并核对服务互联。
+
+下文 Makefile 和 systemd 命令适用于 Linux。
 
 ## 进程与端口
 
