@@ -33,7 +33,7 @@
 - 用户说“重建镜像”、“发布新版本”或“打包新版本”时，必须先读取并严格执行 `docs/operations/docker-release.md`。
 - 用户要求推送 Docker Hub 或更新 latest 时，也必须先读取该文档的“Docker Hub 发布”流程。Shell 拼接镜像引用必须使用 `${name}` 等花括号形式，禁止使用会被 zsh 将 `:l` 解释为修饰符的 `$name:latest`。推送后必须从远程核对版本标签与 latest 的完整 index 摘要及 amd64/arm64 子 manifest，全部一致才可报告成功。
 - 每个版本都必须从根仓库及四个应用仓库的最新代码完整、无缓存地重新构建 PWA、Gateway、Server、Admin 和 Database；不得根据 Git 变更跳过构建，不得复用旧 `dist`、旧镜像或旧 Docker 缓存。运行图片资源以统一目录只读挂载，不制作资源镜像。
-- 应用、资源及镜像统一使用 `deploy/docker/VERSION` 中的版本，禁止在工具和环境模板重复硬编码。当前已发布版本为 `v0.3.1`；发布成功后更新已发布记录，下一次版本只修改 VERSION。
+- 应用、资源及镜像统一使用 `deploy/docker/VERSION` 中的版本，禁止在工具和环境模板重复硬编码。当前已发布版本为 `v0.3.2`；发布成功后更新已发布记录，下一次版本只修改 VERSION。
 - 必须先确认全部双架构镜像构建成功，再组装统一离线包和部署；任一构建失败立即停止后续操作。镜像在指定构建机器生成，使用 images.py package 放入包内 images/，无需推送镜像仓库。
 
 ## 客户端 PWA 构建规则
