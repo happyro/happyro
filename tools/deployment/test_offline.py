@@ -42,13 +42,13 @@ class OfflineTests(unittest.TestCase):
         release = {'schema': 2, 'version': 'v9.0.0', 'status': 'offline-ready', 'images': {}, 'files': {}}
         (self.root / 'VERSION').write_text('v9.0.0\n')
         for name in ['compose.yaml', '.env.example', 'README.md',
-                     'tools/deployment/manage.py', 'tools/deployment/offline.py']:
+                     'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py', 'examples/custom/npc/scripts.conf']:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture')
         release['files'] = {name: digest(self.root / name) for name in [
             'VERSION', 'compose.yaml', '.env.example', 'README.md',
-            'tools/deployment/manage.py', 'tools/deployment/offline.py']}
+            'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py', 'examples/custom/npc/scripts.conf']}
         resources = self.root / 'resources'
         resources.mkdir()
         (resources / 'manifest.json').write_text(json.dumps({'version': 'v9.0.0', 'files': []}))

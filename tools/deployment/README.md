@@ -11,3 +11,8 @@
 完整流程与限制见 [Docker 部署手册](../../docs/operations/docker-deployment.md)。Docker 定义位于 [deploy/docker](../../deploy/docker/)。
 
 首次 `initialize` 会由 Admin 初始化任务创建 `admin/admin` 超级管理员；Database 初始化会创建 `happyro/happyro` GM 账号。两项初始化均幂等，已有数据库不会重复插入账号。
+
+
+自定义内容采用 `CUSTOM_DIR`，默认 `./custom`。`initialize-custom` 只创建缺失文件，`refresh-custom-catalogs` 使用 Admin 镜像刷新查询资料；二者不会构建镜像。`custom.py` 管理初始化与归档恢复；`catalogs.py` 在 Admin 镜像内生成声明资料快照。发行包仅复制 templates，`prepare` 不读取用户 custom，ZIP 拒绝实际 custom/。备份含 custom-files.tar，恢复精确替换对应内容。
+
+源码级测试（不构建镜像）：`python3 -m unittest discover -s tools/deployment -p 'test_*.py'`。测试中的镜像归档是临时构造的小型夹具，不是发布镜像。

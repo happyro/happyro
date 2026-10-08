@@ -31,7 +31,7 @@ mkdir -p /run/happyro /run/happyro-settings
 case "$GAME_CONTROL_TOKEN$DB_PASSWORD$INTERSERVER_PASSWORD" in *[!A-Za-z0-9_-]*) echo 'Use generated alphanumeric secrets' >&2; exit 2 ;; esac
 [ "${#INTERSERVER_PASSWORD}" -le 23 ] || { echo 'INTERSERVER_PASSWORD must be at most 23 characters' >&2; exit 2; }
 
-for directory in conf/import conf/msg_conf/import db/import; do
+for directory in conf/import conf/msg_conf/import; do
     mkdir -p "$directory"
     for template in "$directory-tmpl"/*; do
         target="$directory/${template##*/}"
