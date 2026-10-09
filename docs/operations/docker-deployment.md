@@ -2,6 +2,8 @@
 
 本手册随 `.zip` 离线包作为 README.md 交付。目标机器无需 Git 源码、Node、PHP、Skopeo 或镜像仓库连接。需要已安装的 Docker Engine/Compose v2（macOS 使用 Docker Desktop）与 Python 3.11+。
 
+下文自定义流程适用于包含 `initialize-custom`、`refresh-custom-catalogs` 的 v0.4.0 及后续部署包。旧包不会因新增宿主机目录而自动获得该功能，须先升级配套镜像、工具及 Compose 配置。v0.4.0 已完成本机 arm64 核心验收；双架构构建不代表 amd64 运行、真机交互及真实跨版本升级均已验收。
+
 应用、镜像、资源统一版本，以包内 VERSION 和 release-manifest.json 为准。一个完整包包含所有内容；不要替换为其它版本的资源或镜像。
 
 ## 目录与持久化
@@ -62,6 +64,7 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 - SOCKET_PROXY_URL：默认留空并使用当前页面同源的 `/ws/`；WebSocket 使用独立域名时填写完整前缀，例如 `wss://happyro-ws.example.com/ws/`。
 - GATEWAY_PORT、ADMIN_PORT：默认 3338、8000。修改端口时同步 URL。
 - RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
+- CUSTOM_DIR：默认 ./custom，建议改为版本目录外的专用绝对路径，例如 `/srv/happyro/custom`；修改后运行 `python3 tools/deployment/manage.py initialize-custom --directory .`。只填宿主机路径，不填容器内 `/opt/happyro/custom`。
 - 本模板默认局域网 HTTP。使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
 
 默认 `127.0.0.1` 仅适用于部署机器本机浏览器，其他设备访问应填写部署机器的局域网地址。initialize 生成随机密钥；保留 APP_KEY，已有 .env 不会被覆盖。镜像变量必须保持该包 .env.example 中的值。
@@ -105,13 +108,22 @@ docker compose up -d --pull never admin
 
 ## 升级
 
+新增 custom 支持的升级应使用完整新版包，不能沿用旧 Compose/工具而只替换镜像。运行前先完成以下准备：
+
+- 用旧版配套工具停写备份，保留旧完整包及旧 `.env`。新旧包不得同时连接同一份存档。
+- 记录 DATA_DIR、CUSTOM_DIR 的实际绝对路径及 custom 文件哈希；旧版无 custom 时使用新的专用目录。
+- 新目录复制旧 `.env`，保留 `APP_KEY`、数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与四个镜像引用等明确需要变更的值。
+- `DATA_DIR=./data` 等相对路径会随包目录改变，须改成原数据的绝对路径；`RESOURCE_DIR` 指向新包资源。若搬迁数据，需在停写状态复制完整结构，而非只复制数据库目录。
+- 固定容器名会冲突。备份完成后在旧包目录执行 `docker compose down`，再启动新版；bind mount 数据会保留。
+
 1. 保留新版完整包并执行 verify；先在旧部署目录停止写入并备份（见下节）。同一存档只能有一套游戏服务运行。
 2. 在新版包根目录复制旧 .env，保留 APP_KEY、数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
 3. 将 DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），CUSTOM_DIR 指向旧的自定义目录（同样建议绝对路径），RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 或 custom/ 当成旧内容。
 4. 执行 `python3 tools/deployment/manage.py initialize-custom --directory .`：首次引入自定义功能时建立目录；后续仅补齐新版新增的模板文件，已有文件不覆盖，不合并。旧版本备份需使用旧版本配套工具恢复，不能直接交给新工具。
-5. 导入本版镜像，再启动 database，显式执行 Admin 迁移和快照导入，成功后启动整栈。
+5. 导入本版镜像，再启动 database；如涉及 Server schema，先按发布说明审查并执行对应 SQL，再显式执行 Admin 迁移和快照导入，成功后启动整栈。
 
 ```bash
+python3 tools/deployment/manage.py initialize-custom --directory .
 python3 tools/deployment/manage.py import-images --directory .
 docker compose up -d --pull never database
 docker compose run --rm --no-deps --pull never admin-init
@@ -120,22 +132,25 @@ python3 tools/deployment/manage.py deploy --directory .
 
 原有 Compose 项目名应保持一致。数据库初始化 SQL 只对空目录执行；Server schema 变化需先审查该版本升级 SQL，并在停写后显式执行。工具不盲目执行历史升级脚本。
 
+已有环境不要重新运行 `initialize`，只运行 `initialize-custom` 补齐模板。升级后核对七服务健康、admin-init 退出 0、角色/仓库数据、后台设置及 custom 哈希，再分别检查未覆盖 NPC 随镜像更新、覆盖文件仍优先、删除覆盖后恢复新版内置文件。只重部署同一版本应记录为流程演练。
+
 `admin-init` 每次都会完整重跑迁移和三条导入命令，所以正常升级流程已经覆盖新增的导入步骤。只有跳过 `admin-init`、只对已有数据库单独执行 `migrate` 的场景才需要注意：新迁移建出的表（例如 `game_npcs`）不会自动有数据，必须单独补跑对应的 `artisan game-data:import-*` 命令，否则查询接口会一直返回空结果。
 
 ## 备份与恢复
 
-先停止所有写入，仅保留 database 运行。数据库含非事务表，不能在有写入时仅凭 single-transaction 获得一致备份。
+先确认 admin-init 已完成，再停止游戏及后台写入，并暂停宿主机 custom 文件编辑，仅保留 database 运行。数据库含非事务表，不能在有写入时仅凭 single-transaction 获得一致备份。
 
 ```bash
 docker compose stop gateway admin web-api map char login
 python3 tools/deployment/manage.py backup --directory . --output ../backups/before-upgrade
 ```
 
-普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、Admin storage、server-settings、整个 CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。完整离线包另行保存，备份不会重复复制镜像和资源。
+普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、Admin storage、server-settings、整个 CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。备份输出目录必须不存在，示例路径用过后须换新目录。完整离线包另行保存，备份不会重复复制镜像和资源。
 
 恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 DATA_DIR、CUSTOM_DIR、资源路径和地址，保留原 APP_KEY，不重新 initialize。先执行 initialize-custom 建立容器需要的挂载目录，再恢复：
 
 ```bash
+python3 tools/deployment/manage.py initialize-custom --directory .
 python3 tools/deployment/manage.py import-images --directory .
 docker compose up -d --pull never database
 python3 tools/deployment/manage.py restore --directory . --backup ../backups/before-upgrade --confirm-replace
@@ -152,7 +167,7 @@ restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换
 
 每次升级后强制刷新游戏与后台，核对游戏 build-info.json，检查启动页、资源、聊天、导航和冒险工具。验证独立停止及恢复后台时游戏仍运行。默认关闭雾效无需额外配置；已有浏览器偏好仍保留，可用 /fog 切换。
 
-当前方案仅准备工具与定义；未在本次修改中构建镜像或完成 Docker 运行验收。
+v0.4.0 已完成全量双架构构建及 Mac arm64 空库部署、游戏登录、后台目录、部分 NPC/数据库/资源定制、备份恢复和同版本重部署验收。amd64 实际运行、真实跨版本升级、真机操作及完整负向边界仍待验证，不能据此宣称全部验收通过。
 
 
 ## 服务端与资源自定义
@@ -170,6 +185,18 @@ restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换
 
 ### 新增及覆盖 NPC
 
+以下 `custom/` 指 `.env` 的实际 CUSTOM_DIR。例如在 `npc/additions/review.txt` 写入测试脚本（声明行各字段之间必须使用 Tab）：
+
+```text
+prontera,150,180,4	script	ReviewCustom	100,{
+    mes "自定义 NPC 已生效。";
+    close;
+}
+```
+
+该地图、坐标及外观在本轮隔离环境验证可用；正式使用前确认位置没有冲突，NPC 名称不得与其他脚本重复。
+
+
 新增 `custom/npc/additions/example.txt`，然后在 `custom/npc/scripts.conf` 中登记：
 
 ```text
@@ -178,13 +205,42 @@ npc: additions/example.txt
 // import: additions/events.conf
 ```
 
-只加载显式登记的 additions/*.txt，清单支持 import additions/*.conf，拒绝循环、父目录路径和符号链接。内置文件 `npc/custom/healer.txt` 对应覆盖文件 `custom/npc/overrides/custom/healer.txt`。覆盖保留原加载顺序、原逻辑文件名，启动、@reloadscript、@loadnpc 均使用同一读取规则；@unloadnpc 仍使用原内置路径。自定义新增脚本手动加载时使用容器内完整路径。仅 .txt 支持覆盖，内置 .conf 清单不支持覆盖。注释文件可停用该文件内所有定义。移除覆盖并重载即可恢复当前镜像的内置文件。
+只加载显式登记的 additions/*.txt，清单支持 import additions/*.conf，拒绝循环、父目录路径和符号链接。内置文件 `npc/custom/healer.txt` 对应覆盖文件 `custom/npc/overrides/custom/healer.txt`。覆盖保留原加载顺序、原逻辑文件名，启动、@reloadscript、@loadnpc 均使用同一读取规则；@unloadnpcfile 按原内置路径卸载文件内定义，@unloadnpc 则按 NPC 名称卸载。自定义新增脚本手动加载时使用容器内完整路径。仅 .txt 支持覆盖，内置 .conf 清单不支持覆盖。注释文件可停用该文件内所有定义。移除覆盖并重载即可恢复当前镜像的内置文件。
+
+在有权限的游戏账号中执行：
+
+```text
+@reloadscript
+@unloadnpcfile npc/cities/prontera.txt
+@loadnpc npc/cities/prontera.txt
+```
+
+后两条演示按原路径卸载、重载整个内置文件，会影响该文件中的全部 NPC；仅在维护或隔离验收环境操作。覆盖测试须选取当前确实启用的脚本，不能假设 `npc/custom/healer.txt` 默认被加载。
 
 不会将覆盖文件再额外加载一遍，不自动加载已被新版取消引用的旧覆盖。目录刷新会提示未使用覆盖文件。加载错误写入 map-server 日志，不静默退回内置脚本；重载中断对话并重新初始化脚本，不是事务发布，不保证失败时保持先前 NPC 状态。
 
 ### 数据库扩展
 
 custom/db 初始化为与当前服务端版本对应的 import-tmpl 文件。常见入口为 item_db.yml 和 mob_db.yml，可用 Footer.Imports 拆分文件，引用写作 `db/import/文件.yml`。遵循各数据库原生合并规则，不能把所有字段都视为整记录替换。物品脚本直接编辑 Script、EquipScript、UnEquipScript。
+
+例如保留初始化得到的 `item_db.yml` Header，在已有 Body 中增加或修改已知物品（不要重复写第二个 Body）：
+
+```yaml
+Body:
+  - Id: 501
+    Buy: 42
+```
+
+该示例只修改服务端红色药水购买价格。客户端名称、说明和外观不由这段 YAML 改变；Header 版本以当前包模板为准。若需拆分，在主文件 Footer 中引用同一 custom/db 下的子文件：
+
+```yaml
+Footer:
+  Imports:
+    - Path: db/import/review-items.yml
+      Mode: Renewal
+```
+
+子文件也必须有相应 Header 和 Body。修改魔物时使用 `mob_db.yml` 及当前包 Header；`Script`、`EquipScript`、`UnEquipScript` 和掉落字段仍遵循服务端原生语义，逐项在测试角色上验证。
 
 NPC 和数据库保存后仍需按类型执行 GM 重载命令，或维护时重启相关服务。无保存后自动重载；大批量修改应在停服后应用。
 
@@ -209,3 +265,26 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 未覆盖内容自动随镜像更新；用户覆盖始终优先，不要求文本合并，也不会自动获得该文件的新修复。脚本指令、数据库结构变化仍可能需要手动适配。回退文件不会撤销脚本已经发出的奖励或更改过的任务状态。
 
 在另一台机器按 docker-release.md 全量构建后，至少验收：空目录部署；旧存档首次引入 custom；修改原 NPC、移除覆盖恢复内置；新增脚本及重载；物品和魔物扩展及目录刷新；资源替换和删除恢复；保留用户文件升级；完整备份恢复。源码级测试不替代这组容器和游戏验收。
+
+
+### 修改后的生效顺序与撤销
+
+| 修改内容 | 游戏侧生效 | 后台/冒险工具资料 |
+| --- | --- | --- |
+| NPC additions / overrides | GM `@reloadscript` 或维护重启 map | `refresh-custom-catalogs` |
+| item_db / mob_db | 相应原生数据库重载或维护重启 map | `refresh-custom-catalogs` |
+| resources | 后续 HTTP 请求读取新文件；游戏内已解码图片需重新进入游戏 | 不自动生成缩略图或外观映射 |
+| 后台战斗设置 | 通过后台保存与现有应用流程 | 唯一持久来源为 DATA_DIR/server-settings |
+
+重启 map 的命令是 `docker compose restart map`，会中断地图连接，应安排维护时间。`refresh-custom-catalogs` 不重载游戏，也不执行 NPC 动态脚本。先确保自定义文件合法，再分别完成游戏重载和目录刷新，最后核对结果。
+
+撤销新增 NPC：删除清单登记；撤销内置 NPC 覆盖：删除对应 overrides 文件；撤销数据库修改：恢复原模板或移除相应 Body/Imports 条目。之后分别重载游戏、刷新目录。删除资源覆盖后恢复内置资源。撤销文件不会自动收回脚本已发放的奖励或恢复已修改的任务状态，需要匹配备份或另外处理游戏数据。
+
+### 常见问题
+
+- NPC 不出现：确认 additions 已登记、子清单路径相对于 custom/npc、地图/坐标合法，并检查 `docker compose logs --tail=100 map`。
+- 覆盖无效：确认原脚本当前被加载，路径为去掉开头 npc/ 后的相对路径；内置 `.conf` 不支持覆盖。
+- 游戏已更新但后台还是旧值：执行目录刷新；反之后台已更新不代表游戏已重载。
+- 资源无效：确认没有额外一层 data/、路径大小写和编码一致、格式受客户端支持；查看 Gateway 日志并重新进入游戏。
+- admin-init 提示缺少 `server-base/conf/import/script_conf.txt`：这是 v0.4.0 首轮候选镜像的缺陷，正式验收包已修复；使用完整修复包，不手工修改容器补文件。
+- `verify` 失败：先检查是否混用了不同包的配置、镜像或工具，不改清单哈希来掩盖损坏。用户只应编辑 `.env`、custom 和持久化数据，不编辑受清单校验的发行文件。

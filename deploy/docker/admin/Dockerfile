@@ -23,6 +23,7 @@ COPY repos/happyro-admin/backend/resources/game-data/monsters/renewal.json /opt/
 COPY repos/happyro-admin/backend/resources/game-data/world/npc-catalog.json /opt/happyro/catalog-base/world/npc-catalog.json
 COPY repos/happyro-server/npc/ /opt/happyro/server-base/npc/
 COPY repos/happyro-server/conf/ /opt/happyro/server-base/conf/
+COPY repos/happyro-server/conf/import-tmpl/ /opt/happyro/server-base/conf/import/
 COPY tools/deployment/catalogs.py /opt/happyro/catalogs.py
 COPY deploy/docker/admin/php.ini /usr/local/etc/php/conf.d/happyro.ini
 COPY deploy/docker/admin/nginx.conf /etc/nginx/nginx.conf
