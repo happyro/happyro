@@ -82,6 +82,7 @@ sync_npc_catalog() {
 if [[ "$command_name" == "build" ]]; then
 	cd "$CLIENT_REPO"
 	[[ -d node_modules ]] || npm install
+	python3 "$PROJECT_ROOT/tools/generate-item-services.py" generate --no-color
 	sync_npc_catalog
 	npm run build:pwa
 fi
