@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import custom
 
 from offline import (NAMES, commits, version, checked_path, verify_images, digest,
                      daemon_architecture, verify_loaded, reference)
@@ -66,6 +67,9 @@ def prepare(args):
     tool.parent.mkdir(parents=True)
     shutil.copyfile(Path(__file__), tool)
     shutil.copyfile(Path(__file__).with_name('offline.py'), tool.with_name('offline.py'))
+    shutil.copyfile(Path(__file__).with_name('custom.py'), tool.with_name('custom.py'))
+    copy_directory(root / 'deploy/docker/custom-templates', output / 'examples/custom')
+    copy_directory(root / 'repos/happyro-server/db/import-tmpl', output / 'examples/custom/db')
     (output / 'VERSION').write_text(release_version + '\n')
     (output / 'images').mkdir()
     resources = output / 'resources'
@@ -88,7 +92,8 @@ def prepare(args):
     if commits(root) != source_commits:
         raise ValueError('Source commits changed while preparing')
     bundle_files = ['VERSION', 'compose.yaml', '.env.example', 'README.md',
-                    'tools/deployment/manage.py', 'tools/deployment/offline.py']
+                    'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py']
+    bundle_files += [p.relative_to(output).as_posix() for p in files(output / 'examples/custom')]
     write_json(output / 'release-manifest.json', {'schema': 2, 'version': release_version,
         'commits': source_commits, 'files': {name: digest(output / name) for name in bundle_files},
         'resource_manifest_sha256': digest(resources / 'manifest.json'),
@@ -102,7 +107,10 @@ def verify(args):
     if release['schema'] != 2 or (root / 'VERSION').read_text().strip() != release['version']:
         raise ValueError('Bundle version/schema mismatch')
     required = {'VERSION', 'compose.yaml', '.env.example', 'README.md',
-                'tools/deployment/manage.py', 'tools/deployment/offline.py'}
+                'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py'}
+    required.update(p.relative_to(root).as_posix() for p in files(root / 'examples/custom'))
+    if not (root / 'examples/custom/npc/scripts.conf').is_file():
+        raise ValueError('Missing customization templates')
     if set(release['files']) != required:
         raise ValueError('Incomplete bundle file checksums')
     for name, expected_hash in release['files'].items():
@@ -147,6 +155,8 @@ def validate_zip_target(root, output):
         raise ValueError('Offline bundle archive must not already exist')
     if (root / '.env').exists():
         raise ValueError('Remove .env before creating an offline bundle archive')
+    if (root / 'custom').exists():
+        raise ValueError('Do not package user custom/; distribute examples/custom only')
     data = root / 'data'
     if data.is_dir() and any(path.is_file() for path in data.rglob('*')):
         raise ValueError('Offline bundle data/ must not contain runtime files')
@@ -195,6 +205,7 @@ def initialize(args):
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'w') as stream:
         stream.write(template)
+    initialize_custom_directory(args.directory.resolve())
     print('Created .env with unique secrets. Set public URLs before starting Compose.')
 
 
@@ -223,6 +234,7 @@ def deploy(args):
         entry = config['services'][service]
         if entry['image'] != reference(name, release['version']) or entry.get('pull_policy') != 'never':
             raise ValueError(f'Update .env image references for this release: {service}')
+    custom.validate(custom.custom_root(config))
     verify_loaded(release, daemon_architecture())
     compose(root, 'up', '-d', '--pull', 'never', '--no-build')
     compose(root, 'ps', '-a')
@@ -230,6 +242,28 @@ def deploy(args):
 
 def compose(root, *args, **kwargs):
     return subprocess.run(['docker', 'compose', '--project-directory', str(root), '-f', str(root / 'compose.yaml'), *args], check=True, **kwargs)
+
+
+def custom_config(root):
+    return json.loads(compose(root, 'config', '--format', 'json', capture_output=True, text=True).stdout)
+
+
+def initialize_custom_directory(root):
+    destination = custom.custom_root(custom_config(root))
+    custom.initialize(destination, root / 'examples/custom')
+    print(f'Initialized custom directories at {destination}; existing files preserved')
+
+
+def initialize_custom(args):
+    verify(args)
+    initialize_custom_directory(args.directory.resolve())
+
+
+def refresh_custom_catalogs(args):
+    root = args.directory.resolve()
+    verify(args)
+    custom.validate(custom.custom_root(custom_config(root)))
+    compose(root, 'run', '--rm', '--no-deps', '-T', 'admin', 'refresh-custom-catalogs')
 
 
 def backup(args):
@@ -240,7 +274,10 @@ def backup(args):
     if set(running) != {'database'}:
         raise ValueError('Keep only database running for a consistent backup')
     # Callers quiesce writes explicitly; the tool never stops a deployment.
+    custom_directory = custom.custom_root(custom_config(root))
+    custom.validate(custom_directory)
     output.mkdir(parents=True, mode=0o700)
+    custom.backup(custom_directory, output / 'custom-files.tar')
     command = 'exec mariadb-dump --user=root --password="$MARIADB_ROOT_PASSWORD" --single-transaction --routines --events --triggers --databases happyro happyro_log happyro_admin'
     with (output / 'databases.sql').open('wb') as stream:
         compose(root, 'exec', '-T', 'database', 'sh', '-c', command, stdout=stream)
@@ -258,6 +295,9 @@ def restore(args):
         raise ValueError('Restore replaces existing data; use --confirm-replace after stopping all writers')
     root, source = args.directory.resolve(), args.backup.resolve()
     checksums = json.loads((source / 'checksums.json').read_text())
+    required = {'databases.sql', 'admin-files.tar', 'custom-files.tar', '.env', 'compose.yaml', 'release-manifest.json'}
+    if set(checksums) != required:
+        raise ValueError('Incomplete backup; restore older backups with their matching release tools')
     for name, value in checksums.items():
         if Path(name).name != name or digest(source / name) != value:
             raise ValueError('Backup checksum mismatch')
@@ -266,11 +306,14 @@ def restore(args):
         raise ValueError('Stop every service except database before restoring')
     if 'database' not in running:
         raise ValueError('Start database before restoring')
+    custom.validate_backup(source / 'custom-files.tar')
+    custom_directory = custom.custom_root(custom_config(root))
     with (source / 'databases.sql').open('rb') as stream:
         compose(root, 'exec', '-T', 'database', 'sh', '-c', 'exec mariadb --user=root --password="$MARIADB_ROOT_PASSWORD"', stdin=stream)
     with (source / 'admin-files.tar').open('rb') as stream:
         compose(root, 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'tar', 'admin', '-xf', '-', '-C', '/', stdin=stream)
-    print('Restored databases and admin files. Use the backed-up APP_KEY and matching image release before starting.')
+    custom.restore(source / 'custom-files.tar', custom_directory)
+    print('Restored databases, custom content and admin files. Use the backed-up APP_KEY and matching image release before starting.')
 
 
 def help_text(no_color):
@@ -278,9 +321,9 @@ def help_text(no_color):
         return text if no_color else f'\033[{code}m{text}\033[0m'
     print('\n' + color('1;36', 'HappyRO deployment tools') + '\n')
     print(color('1;33', 'Commands'))
-    print(color('1;32', '  prepare | verify | initialize | import-images | deploy | backup | restore'))
+    print(color('1;32', '  prepare | verify | initialize | initialize-custom | refresh-custom-catalogs | import-images | deploy | backup | restore'))
     print('\n' + color('1;33', 'Examples'))
-    for line in ['prepare --workspace . --output artifacts/deployment/release', 'verify --directory ./happyro-deploy', 'import-images --directory ./happyro-deploy', 'initialize --directory ./happyro-deploy', 'deploy --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup', 'restore --directory ./happyro-deploy --backup ./backup --confirm-replace']:
+    for line in ['prepare --workspace . --output artifacts/deployment/release', 'verify --directory ./happyro-deploy', 'import-images --directory ./happyro-deploy', 'initialize --directory ./happyro-deploy', 'initialize-custom --directory ./happyro-deploy', 'refresh-custom-catalogs --directory ./happyro-deploy', 'deploy --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup', 'restore --directory ./happyro-deploy --backup ./backup --confirm-replace']:
         print(color('36', '  python3 tools/deployment/manage.py ' + line))
     print('\nUse --no-color for plain output; COMMAND --help lists arguments.\n')
 
@@ -294,7 +337,7 @@ def main():
         return
     parser = argparse.ArgumentParser(description='HappyRO deployment tools')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name in ['prepare', 'verify', 'initialize', 'import-images', 'deploy', 'backup', 'restore']:
+    for name in ['prepare', 'verify', 'initialize', 'initialize-custom', 'refresh-custom-catalogs', 'import-images', 'deploy', 'backup', 'restore']:
         command = commands.add_parser(name)
         if name == 'prepare':
             command.add_argument('--workspace', type=Path, required=True)
@@ -309,7 +352,7 @@ def main():
             command.add_argument('--prepared', action='store_true', help='Check a preparation bundle before images are packaged')
     args = parser.parse_args(argv)
     {'prepare': prepare, 'verify': verify, 'initialize': initialize, 'import-images': import_images,
-     'deploy': deploy, 'backup': backup, 'restore': restore}[args.command](args)
+     'deploy': deploy, 'backup': backup, 'restore': restore, 'initialize-custom': initialize_custom, 'refresh-custom-catalogs': refresh_custom_catalogs}[args.command](args)
 
 
 if __name__ == '__main__':
