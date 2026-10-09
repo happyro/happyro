@@ -130,7 +130,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 
 ## 安装与开发
 
-推荐使用[离线包](https://happyro.kugarocks.com/guide/downloads)部署 HappyRO。包内已包含双架构镜像、kRO 运行资源、配置模板和配套工具，只需提前安装 Docker Engine、Compose v2 和 Python 3.9+，即可按照[离线安装手册](https://happyro.kugarocks.com/container/docker)完成部署。
+推荐使用[离线包](https://happyro.kugarocks.com/guide/downloads)部署 HappyRO。包内已包含双架构镜像、kRO 运行资源、配置模板和配套工具，只需提前安装 Docker Engine、Compose v2 和 Python 3.11+，即可按照[离线安装手册](https://happyro.kugarocks.com/container/docker)完成部署。
 
 本机源码开发通过根仓库 `Makefile` 和 systemd 管理游戏进程，MariaDB 使用 Compose：
 
@@ -157,6 +157,10 @@ make gateway-start
 依赖安装、资源准备和常用命令见[本地开发](https://happyro.kugarocks.com/native/linux)。
 
 ## 文档导航
+
+- [自定义功能实现](docs/architecture/customization.md)：本次如何接入 NPC、数据库、资源及目录刷新。
+- [Docker 部署与升级](docs/operations/docker-deployment.md)：定制操作、持久目录、备份恢复。
+- [镜像构建与交付](docs/operations/docker-release.md)：完整打包流程与发布边界。
 
 | 入口 | 内容 |
 | --- | --- |
