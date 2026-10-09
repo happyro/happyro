@@ -2,6 +2,10 @@
 
 本文件是发布端与 Agent 的执行入口。部署机器只需要完成的离线包，不需要源码。用户明确要求不构建时，只维护工具和文档，不运行 build、package 或部署。
 
+当前 VERSION 为 v0.4.0，已生成本机验收离线包；公开已发布记录仍为 v0.3.2。v0.4.0 的源码、ZIP 摘要、初始化修复及未完成项见[验收记录](acceptance-v0.4.0.md)。本机包完成不代表 Docker Hub、公开下载或生产环境已经发布。
+
+自定义功能见[实现与维护说明](../architecture/customization.md)，用户操作见[部署手册](docker-deployment.md#服务端与资源自定义)。
+
 ## 版本与交付规则
 
 - 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.3.2（2026-09-26 全量重建，完成 Mac arm64 完整离线包验收、现网 amd64 仅替换镜像升级及 Docker Hub 双架构标签核验）。
@@ -88,9 +92,22 @@ images/
 
 这些是最终指定位置，不能直接把双架构 OCI tar 放进去冒充 Docker-save 归档。组装失败会保留部分产物供检查，包仍不就绪；重试前将整个部分 images/ 内容移到包外保留，避免覆盖未知文件。
 
-全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-v<VERSION>.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、examples/custom/ 模板、配置及空 data/ 目录。禁止包含实际用户 custom/；自定义目录由部署端初始化，升级保留 CUSTOM_DIR。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
+全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-<VERSION>.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、examples/custom/ 模板、配置及空 data/ 目录。禁止包含实际用户 custom/；自定义目录由部署端初始化，升级保留 CUSTOM_DIR。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
 
 ## 验收
+
+### 包含自定义功能的版本
+
+1. 确认 Admin 镜像带 Server npc/conf 基线及 import-tmpl 初始化出的 import 快照；否则空库迁移成功后目录刷新仍可能失败。v0.4.0 首轮已实际发现并修复该问题。
+2. prepare/build 前保持五个构建仓库干净，使用不存在的输出路径。失败即停止后续 package/deploy，保留日志；修复源码并提交后重新准备，四类镜像再次全量无缓存构建，不只重建失败组件。
+3. 核对 ZIP 的 examples/custom/npc/scripts.conf、Server 当前 db 模板和包内 custom.py。catalogs.py 在 Admin 镜像内，部署端不需要安装 PyYAML。
+4. ZIP 不含用户 custom、密钥和存档。独立解压后才 initialize；定制测试文件不混入发行模板。
+5. 空库验收检查七服务健康、admin-init 退出 0、三类导入；再检查 NPC、数据库目录、资源更新/删除、重复初始化及精确备份恢复。
+6. 升级使用新版整包、旧持久目录及原密钥。涉及新挂载或工具时不能沿用仅换镜像的旧方式；真实跨版本验收须保留旧完整包及旧工具生成的备份。
+
+文档修改不会回写已生成 ZIP，包内 README、模板和工具受清单校验。不要直接改包内文件或手工更新哈希冒充原包。下一次完整发布自动携带新源文档；已交付包的勘误单独说明，保留原 ZIP 摘要。
+
+### 运行验收与历史记录
 
 包内 README 来自 docker-deployment.md，部署者无需引用源码文档。目标 Mac 根据 Docker daemon 架构选择镜像，而非根据运行 Python 的架构判断。使用 Rosetta 也不能改变目标 Docker 架构。
 
