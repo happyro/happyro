@@ -4,6 +4,7 @@ import {
 	applyNavigationOverrides,
 	assignUniqueInstanceIds,
 	buildUniqueSpriteIds,
+	localizedMapNames,
 	parseNpcDefinition
 } from './generate-npc-catalog.mjs';
 
@@ -137,4 +138,12 @@ test('applies a reviewed server NPC class without an official navigation row', (
 		x: 78,
 		y: 103
 	});
+});
+
+test('uses translated map labels for NPC locations, including previously missing maps', () => {
+ const names = localizedMapNames();
+ assert.equal(names.prt_in, '普隆德拉内部');
+ assert.equal(names.airplane, '飞空艇');
+ assert.equal(names.odin_tem01, '奥丁神殿西区');
+ assert.ok(!Object.keys(names).some(name => name.endsWith('.rsw')));
 });

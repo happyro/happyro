@@ -18,6 +18,8 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为�
 - `applications/pwa/data/navigation/npc-instances.json`（懒加载 JSON）：服务器 NPC 的地图、坐标、中文名称及源名称索引，供右上角导航搜索使用；
 - `applications/pwa/data/world/npc-assets.json` 和 NPC 图集：客户端可用的外观资源。
 
+NPC 目录生成时还会从客户端 `src/DB/Map/MapTable.js` 导出的已汉化地图名称同步生成 Admin 的 `map-names.zh-CN.json`，并将名称哈希记录到目录来源中。NPC 位置使用这份映射，避免独立副本继续保留英文；修改 NPC 脚本、名称翻译或地图名称后，执行 `scripts/client/refresh-client.sh build` 同步目录、数据库和客户端资源。
+
 Admin 后端另外通过 `php artisan game-data:import-npcs --renewal` 把目录导入 `game_npcs` 表（MySQL）。冒险工具 NPC 图鉴不再持有完整目录，而是运行时调用 `GET /api/adventure-tools/npcs`（服务端分页）和 `GET /api/adventure-tools/maps/{map}/npcs`（单张地图整图查询，不分页，供地图预览标记使用），两个接口都直接查这张表。这与魔物图鉴“客户端全量拉取 + 内存分页”是两种不同的运行时模式，原因见 [魔物](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
 
 官方 `navi_npc_krpri.lub` 不是 NPC 存在性的权威来源。它用于补充导航 ID、NPC Class、官方名称、别名、路线位置等导航身份。未匹配官方导航的实例仍保留在完整目录中，是否出现在游戏图鉴另受 `gameVisible` 过滤；没有可验证身份时不开放“传送到 NPC 附近”。

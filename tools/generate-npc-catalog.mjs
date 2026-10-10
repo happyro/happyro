@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import MapInfo from '../repos/happyro-client/src/DB/Map/MapTable.js';
 import MonsterTable from '../repos/happyro-client/src/DB/Monsters/MonsterTable.js';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,6 +24,10 @@ const paths = {
 	canonical: path.join(workspaceRoot, 'artifacts/game-data/world/npc-catalog.json'),
 	admin: path.join(adminRoot, 'resources/game-data/world/npc-catalog.json')
 };
+
+export function localizedMapNames() {
+	return Object.fromEntries(Object.entries(MapInfo).map(([file, info]) => [file.replace(/\.rsw$/i, ''), info.displayName]));
+}
 
 function sha256(contents) {
 	return crypto.createHash('sha256').update(contents).digest('hex');
@@ -204,17 +209,16 @@ export function assignUniqueInstanceIds(entries) {
 }
 
 async function buildCatalog() {
-	const [translationContents, spriteTableContents, mapNameContents, navigationContents, overrideContents, enabled] = await Promise.all([
+	const [translationContents, spriteTableContents, navigationContents, overrideContents, enabled] = await Promise.all([
 		fs.readFile(paths.translations, 'utf8'),
 		fs.readFile(paths.spriteTable, 'utf8'),
-		fs.readFile(paths.mapNames, 'utf8'),
 		fs.readFile(paths.navigation, 'utf8'),
 		fs.readFile(paths.navigationOverrides, 'utf8'),
 		collectEnabledNpcFiles()
 	]);
 	const translations = JSON.parse(translationContents);
 	const spriteIds = buildUniqueSpriteIds(MonsterTable);
-	const mapNames = JSON.parse(mapNameContents);
+	const mapNames = localizedMapNames();
 	const navigationCatalog = JSON.parse(navigationContents);
 	const navigationOverrides = JSON.parse(overrideContents);
 	const navigation = navigationByPosition(navigationCatalog);
@@ -270,6 +274,8 @@ async function buildCatalog() {
 		config_sha256: configHash.digest('hex'),
 		npc_definitions_sha256: definitionHash.digest('hex'),
 		translations_sha256: sha256(translationContents),
+		map_names_source: 'happyro-client/src/DB/Map/MapTable.js',
+		map_names_sha256: sha256(JSON.stringify(mapNames)),
 		sprite_table_sha256: sha256(spriteTableContents),
 		navigation_sha256: sha256(navigationContents),
 		navigation_overrides_sha256: sha256(overrideContents)
@@ -300,7 +306,11 @@ async function writeJson(target, value) {
 
 async function generate() {
 	const catalog = await buildCatalog();
-	await Promise.all([writeJson(paths.canonical, catalog), writeJson(paths.admin, catalog)]);
+	await Promise.all([
+		writeJson(paths.canonical, catalog),
+		writeJson(paths.admin, catalog),
+		fs.writeFile(paths.mapNames, `${JSON.stringify(localizedMapNames(), null, 2)}\n`)
+	]);
 	process.stdout.write(
 		`Generated ${catalog.stats.entries} enabled NPC instances (${catalog.stats.with_navigation} navigable, ${catalog.stats.with_image} with images) as ${catalog.version}.\n`
 	);
@@ -309,6 +319,10 @@ async function generate() {
 async function check() {
 	const catalog = await buildCatalog();
 	const adminCatalog = JSON.parse(await fs.readFile(paths.admin, 'utf8'));
+	const mapNames = JSON.parse(await fs.readFile(paths.mapNames, 'utf8'));
+	if (JSON.stringify(mapNames) !== JSON.stringify(localizedMapNames())) {
+		throw new Error('Generated map names are stale; run generate.');
+	}
 	if (adminCatalog.content_sha256 !== catalog.content_sha256) {
 		throw new Error('Generated NPC catalog is stale; run generate.');
 	}
