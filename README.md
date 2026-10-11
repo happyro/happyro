@@ -20,10 +20,13 @@
 
 HappyRO 是一个中文友好的网页端 RO 项目，除了提供基础游戏功能，还提供地图、魔物和物品图鉴，并配备账号与角色管理后台。
 
+当前源码面向待发布的 [v0.4.0](changelog/releases/v0.4.0.md)，公开已发布版本为 [v0.3.2](changelog/releases/v0.3.2.md)。以下介绍包含尚未发布的新功能，离线交付以对应版本说明为准。
+
 ### 项目特色
 
 - 浏览器：无需安装繁杂的桌面客户端。
-- 手机平板：支持触屏移动、六格快捷栏、自动战斗及 PWA 桌面启动。
+- 手机平板：支持横竖屏切换、按可用空间自适应布局、触屏移动、六格快捷栏、自动战斗及 PWA 桌面启动。
+- 保持登录：HTTP／HTTPS 均支持；勾选后重新打开进入选角，页面内意外断线可恢复原角色。
 - 中文支持：游戏界面、系统消息，以及物品、技能、魔物、地图和 NPC 资料。
 - 游戏图鉴：查询物品属性、魔物掉落、地图和 NPC 位置。
 - 冒险工具：提供角色调整、物品获取、魔物召唤和地图传送等功能。
@@ -87,7 +90,7 @@ NPC 图鉴展示游戏中 NPC 的中文名称、图片、所在地图和精确�
 
 ![HappyRO 手机平板自动战斗设置](docs/assets/readme/happyro-mobile-auto-fight.jpg)
 
-可将 HTTPS 游戏启动页添加到桌面，以 PWA 方式隐藏浏览器工具栏、横屏游玩。详细操作及添加步骤见[手机平板文档](https://happyro.kugarocks.com/game/mobile)。
+支持游戏中切换横竖屏，手机、平板及分屏按实际可用空间调整布局。可将 HTTPS 游戏启动页添加到桌面，以 PWA 方式隐藏浏览器工具栏。详细操作及添加步骤见[手机平板文档](https://happyro.kugarocks.com/game/mobile)。
 
 ## 游戏后台
 
@@ -132,22 +135,9 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 
 推荐使用[离线包](https://happyro.kugarocks.com/guide/downloads)部署 HappyRO。包内已包含双架构镜像、kRO 运行资源、配置模板和配套工具，只需提前安装 Docker Engine、Compose v2 和 Python 3.11+，即可按照[离线安装手册](https://happyro.kugarocks.com/container/docker)完成部署。
 
-本机源码开发通过根仓库 `Makefile` 和 systemd 管理游戏进程，MariaDB 使用 Compose：
+源码开发的依赖、资源准备、构建与服务启动见[本地开发手册](docs/development/local-setup.md)；Linux 使用 systemd，macOS 原生服务使用 launchd，具体入口见[服务管理](docs/operations/services.md)。不要将原生开发环境与 Docker 离线包的数据目录和端口混用。
 
-```bash
-make database-start
-make configure-server
-make build-server
-make server-start
-make configure-client
-make configure-gateway
-make configure-resources
-(cd repos/happyro-client && npm install && npm run build:pwa)
-make doctor
-make gateway-start
-```
-
-默认仅允许部署机器本机访问。
+离线包的默认公开地址适用于部署机器本机浏览器；局域网访问需按部署手册配置主机地址、端口和代理。本机开发 Gateway 的监听与访问范围以实际配置为准。
 
 访问入口：
 
@@ -158,11 +148,12 @@ make gateway-start
 
 ## 文档导航
 
-- [NPC 审计收口](docs/localization/npc-audit-20261011.md)：四包覆盖、验证边界及暂缓事项。
-
-- [自定义功能实现](docs/architecture/customization.md)：本次如何接入 NPC、数据库、资源及目录刷新。
+- [开发与维护总览](docs/README.md)：当前架构、开发、运维和本地化说明。
+- [NPC 审读与验收边界](docs/localization/npc-audit-20261011.md)：审读覆盖及仍需核验的玩法范围。
+- [自定义功能实现](docs/architecture/customization.md)：NPC、数据库、资源及目录刷新机制。
 - [Docker 部署与升级](docs/operations/docker-deployment.md)：定制操作、持久目录、备份恢复。
 - [镜像构建与交付](docs/operations/docker-release.md)：完整打包流程与发布边界。
+- [最终包验收清单](docs/operations/release-checklist.md)：双架构、升级回退、保持登录及跨端验收。
 
 | 入口 | 内容 |
 | --- | --- |
