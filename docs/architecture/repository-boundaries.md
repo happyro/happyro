@@ -42,5 +42,5 @@
 
 - 长期说明放在 `docs/` 对应分类下。
 - 历史翻译批次、Agent 分片和验证日志放在 `archive/translation/`。
-- Bugfix 批次放在 `docs/history/bugfix/`。
+- 缺陷的现行约束写入对应维护文档，产品变化写 changelog；已完成批次通过 Git 追溯。
 - 产品翻译直接修改对应应用仓库；旧翻译工作区不得再作为发布源向 Client 或 Server 回写。

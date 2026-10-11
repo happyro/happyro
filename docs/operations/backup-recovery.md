@@ -19,7 +19,7 @@ docker inspect happyro-mariadb --format '{{json .Mounts}}'
 systemctl show happyro-map happyro-gateway -p FragmentPath -p ExecStart
 ```
 
-未部署的容器不存在是正常情况，不能因此新建空库“修复”。根仓库目前没有自动备份、恢复命令，也没有定期备份保证。
+未部署的容器不存在是正常情况，不能因此新建空库“修复”。Docker 离线包提供 `tools/deployment/manage.py backup/restore`，命令及版本限制见[部署手册](docker-deployment.md#备份与恢复)。这些工具要求配套包、Compose 和目录结构，不能直接用于原生环境；本页后续说明原生环境备份原则，不保证已经配置定时备份。
 
 ## 一致性备份流程
 

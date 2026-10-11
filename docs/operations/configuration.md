@@ -1,4 +1,6 @@
-# 配置
+# 原生开发环境配置
+
+本页的 profile 和端口主要适用于 Linux 本机开发栈；macOS 独立数据库见[服务管理](services.md)。Docker 离线包使用包内 `.env.example` 和[部署手册](docker-deployment.md)，不能照搬本页端口。
 
 ## 本机配置源
 

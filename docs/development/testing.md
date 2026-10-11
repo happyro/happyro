@@ -69,6 +69,6 @@ node --test tools/generate-npc-catalog.test.mjs
 
 ## 结果记录
 
-记录命令、工作目录、代码提交或 dirty 状态、构建标识及失败项。历史测试数不作为当前通过标准；已知失败也要复核归因，不能直接跳过或把测试全绿等同于玩家流程正确。截图、JSON 和日志写入 `artifacts/` 或 `work/`，摘要保存到[历史验收](../history/validation/README.md)。
+记录命令、工作目录、代码提交或 dirty 状态、构建标识及失败项。历史测试数不作为当前通过标准；已知失败也要复核归因，不能直接跳过或把测试全绿等同于玩家流程正确。截图、JSON 和日志写入 `artifacts/` 或 `work/`，产品变更的验证范围写入对应 changelog；正式交付按[发布清单](../operations/release-checklist.md)记录。不要复制已完成阶段的测试报告到 docs。
 
 纯文档更新使用[文档维护检查](documentation.md)，无需重建游戏或重启服务。

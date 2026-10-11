@@ -9,7 +9,6 @@ work/diagnostics/client/YYYY-MM-DD/<会话UUID>.jsonl
 
 日期目录使用 UTC。每次重新进入游戏页面建立一个独立会话，首条 `debug.enabled` 包含构建标识、浏览器和 DPR。接收时间 `receivedAt` 来自服务器，事件时间和 `elapsedMs` 来自手机，分析事件先后应使用同一会话的 `elapsedMs`。
 
-已采集的问题记录见 [2026-09-24 iOS 攻击音效卡顿调查](../history/validation/2026-09-24-ios-audio-stutter.md)，包含实机数据、结论边界、Web Audio 修复实现与实机验收状态。
 
 ## 开启接收
 

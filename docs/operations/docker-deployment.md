@@ -2,7 +2,7 @@
 
 本手册随 `.zip` 离线包作为 README.md 交付。目标机器无需 Git 源码、Node、PHP、Skopeo 或镜像仓库连接。需要已安装的 Docker Engine/Compose v2（macOS 使用 Docker Desktop）与 Python 3.11+。
 
-下文自定义流程适用于包含 `initialize-custom`、`refresh-custom-catalogs` 的 v0.4.0 及后续部署包。旧包不会因新增宿主机目录而自动获得该功能，须先升级配套镜像、工具及 Compose 配置。v0.4.0 已完成本机 arm64 核心验收；双架构构建不代表 amd64 运行、真机交互及真实跨版本升级均已验收。
+下文自定义流程适用于包含 `initialize-custom`、`refresh-custom-catalogs` 的 v0.4.0 及后续部署包。旧包不会因新增宿主机目录而自动获得该功能，须先升级配套镜像、工具及 Compose 配置。当前 v0.4.0 最终包仍待构建与验收，正式交付状态以版本说明为准。
 
 应用、镜像、资源统一版本，以包内 VERSION 和 release-manifest.json 为准。一个完整包包含所有内容；不要替换为其它版本的资源或镜像。
 
@@ -65,7 +65,11 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 - GATEWAY_PORT、ADMIN_PORT：默认 3338、8000。修改端口时同步 URL。
 - RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
 - CUSTOM_DIR：默认 ./custom，建议改为版本目录外的专用绝对路径，例如 `/srv/happyro/custom`；修改后运行 `python3 tools/deployment/manage.py initialize-custom --directory .`。只填宿主机路径，不填容器内 `/opt/happyro/custom`。
-- 本模板默认局域网 HTTP。使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
+- 本模板默认局域网 HTTP。Admin 后台使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
+
+游戏的“保持登录”在 HTTP 与 HTTPS 均可使用，不由 `SESSION_SECURE_COOKIE` 控制。该变量仅用于 Admin 后台；游戏由 Gateway 根据请求 Origin 的协议选择 Cookie，HTTPS 设置 Secure，HTTP 使用独立名称且不设置 Secure。HTTP 与 HTTPS、不同主机入口需要分别首次登录。
+
+反向代理须将 `/api/game-session/*` 原路径转发到 Gateway，保留浏览器的 Host（包括非默认端口）、Origin、Cookie 和 Set-Cookie，不缓存该接口响应；Gateway 会返回 `Cache-Control: no-store`。Nginx 可用 `proxy_set_header Host $http_host;` 保留 Host，并传递原始协议供后台使用。仅设置 X-Forwarded-Host、把 Host 改成内部容器名，会使游戏会话接口因 Origin/Host 不匹配返回 403。独立 WebSocket 域名只影响 `/ws/`，游戏会话 API 仍走页面同源入口。
 
 默认 `127.0.0.1` 仅适用于部署机器本机浏览器，其他设备访问应填写部署机器的局域网地址。initialize 生成随机密钥；保留 APP_KEY，已有 .env 不会被覆盖。镜像变量必须保持该包 .env.example 中的值。
 
@@ -74,7 +78,7 @@ python3 tools/deployment/manage.py deploy --directory .
 docker compose ps -a
 ```
 
-部署初始化会幂等创建后台 `admin/admin` 超级管理员和游戏 `happyro/happyro` GM 账号；重复运行不会新增重复账号。deploy 校验整个包、Compose 镜像配置和已导入镜像后启动，不构建、不拉取、不覆盖 .env。首次后台初始化可能耗时，使用 docker compose logs admin-init 查看迁移、默认账号和图鉴导入。
+部署初始化会幂等创建后台 `admin/admin` 超级管理员和游戏 `happyro/happyro` GM 账号；重复运行不会新增重复账号。deploy 校验整个包、Compose 镜像配置和已导入镜像后，先等待数据库健康，执行登录会话 SQL，再启动整栈；SQL 失败停止后续启动。它不构建、不拉取、不覆盖 .env，具体升级行为见下文“升级”。首次后台初始化可能耗时，使用 docker compose logs admin-init 查看迁移、默认账号和图鉴导入。
 
 admin-init 依次执行：数据库迁移（`migrate --force`）→ 创建默认管理员 → 导入物品（`game-data:import-items --all`）→ 导入魔物（`game-data:import-monsters --renewal`）→ 导入 NPC（`game-data:import-npcs --renewal`）。三条导入命令都以 `-d memory_limit=512M` 运行，避免大目录导入时触发内存限制。
 
@@ -104,11 +108,11 @@ docker compose stop admin
 docker compose up -d --pull never admin
 ```
 
-后台初始化失败时，整栈启动可能报错；检查 ps -a 和 logs，必要时单独启动游戏链：docker compose up -d --pull never gateway。停止 Admin 不要停止共享数据库。Admin 和 Server 共享 data/server-settings，battle_conf.txt 的运营变更须备份；不能改成单文件挂载。
+后台初始化失败时，整栈启动可能报错；检查 ps -a 和 logs，只有确认本轮 deploy 已成功执行会话 SQL 后，才可单独启动游戏链：docker compose up -d --pull never --no-build gateway；会话 SQL 失败时先修复并重新运行 deploy。停止 Admin 不要停止共享数据库。Admin 和 Server 共享 data/server-settings，battle_conf.txt 的运营变更须备份；不能改成单文件挂载。
 
 ## 升级
 
-新增 custom 支持的升级应使用完整新版包，不能沿用旧 Compose/工具而只替换镜像。运行前先完成以下准备：
+包含 custom 和登录会话升级的版本应使用完整新版包，不能沿用旧 Compose/工具而只替换镜像。运行前先完成以下准备：
 
 - 用旧版配套工具停写备份，保留旧完整包及旧 `.env`。新旧包不得同时连接同一份存档。
 - 记录 DATA_DIR、CUSTOM_DIR 的实际绝对路径及 custom 文件哈希；旧版无 custom 时使用新的专用目录。
@@ -120,21 +124,23 @@ docker compose up -d --pull never admin
 2. 在新版包根目录复制旧 .env，保留 APP_KEY、数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
 3. 将 DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），CUSTOM_DIR 指向旧的自定义目录（同样建议绝对路径），RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 或 custom/ 当成旧内容。
 4. 执行 `python3 tools/deployment/manage.py initialize-custom --directory .`：首次引入自定义功能时建立目录；后续仅补齐新版新增的模板文件，已有文件不覆盖，不合并。旧版本备份需使用旧版本配套工具恢复，不能直接交给新工具。
-5. 导入本版镜像，再启动 database；如涉及 Server schema，先按发布说明审查并执行对应 SQL，再显式执行 Admin 迁移和快照导入，成功后启动整栈。
+5. 导入本版四类镜像，等待 database 健康，再显式执行 Admin 迁移和目录导入；成功后运行 `deploy`，由工具升级游戏会话结构并启动整栈。以下命令逐条执行，任一步失败即停止。
 
 ```bash
 python3 tools/deployment/manage.py initialize-custom --directory .
 python3 tools/deployment/manage.py import-images --directory .
-docker compose up -d --pull never database
+docker compose up -d --wait --pull never --no-build database
 docker compose run --rm --no-deps --pull never admin-init
 python3 tools/deployment/manage.py deploy --directory .
 ```
 
-原有 Compose 项目名应保持一致。数据库初始化 SQL 只对空目录执行；Server schema 变化需先审查该版本升级 SQL，并在停写后显式执行。工具不盲目执行历史升级脚本。
+原有 Compose 项目名应保持一致。空库初始化会执行 `upgrade_20261012_sessions.sql`；保留旧数据库时，`deploy` 也会先启动并等待 database 健康，再从新版 Database 镜像内执行 `/opt/rathena/sql/upgrades/upgrade_20261012_sessions.sql`，成功后才执行整栈启动。SQL 可重复执行，建立登录会话表和密码、账号状态、封禁及有效期变更的撤销触发器；不会批量执行历史升级脚本。执行失败时命令停止，先检查错误并修复，再重试 `deploy`，不要绕过它直接启动新版游戏服务。
+
+保持登录需要客户端、Gateway、login-server、web-server 与会话数据库结构配套更新，`PACKETVER` 保持 `20211103`。必须导入本版 Database 镜像，不能仅替换 Server/Gateway 镜像。升级前按上文停止旧服务；`deploy` 的失败停止机制不会替你关闭此前已运行的旧服务。
 
 已有环境不要重新运行 `initialize`，只运行 `initialize-custom` 补齐模板。升级后核对七服务健康、admin-init 退出 0、角色/仓库数据、后台设置及 custom 哈希，再分别检查未覆盖 NPC 随镜像更新、覆盖文件仍优先、删除覆盖后恢复新版内置文件。只重部署同一版本应记录为流程演练。
 
-`admin-init` 每次都会完整重跑迁移和三条导入命令，所以正常升级流程已经覆盖新增的导入步骤。只有跳过 `admin-init`、只对已有数据库单独执行 `migrate` 的场景才需要注意：新迁移建出的表（例如 `game_npcs`）不会自动有数据，必须单独补跑对应的 `artisan game-data:import-*` 命令，否则查询接口会一直返回空结果。
+上述升级流程显式运行 `admin-init`，每次执行都会重跑迁移和三条导入命令；不要只凭已存在的退出容器判断本轮导入已完成。只有跳过 `admin-init`、只对已有数据库单独执行 `migrate` 的场景才需要注意：新迁移建出的表（例如 `game_npcs`）不会自动有数据，必须单独补跑对应的 `artisan game-data:import-*` 命令，否则查询接口会一直返回空结果。
 
 ## 备份与恢复
 
@@ -152,7 +158,7 @@ python3 tools/deployment/manage.py backup --directory . --output ../backups/befo
 ```bash
 python3 tools/deployment/manage.py initialize-custom --directory .
 python3 tools/deployment/manage.py import-images --directory .
-docker compose up -d --pull never database
+docker compose up -d --wait --pull never --no-build database
 python3 tools/deployment/manage.py restore --directory . --backup ../backups/before-upgrade --confirm-replace
 python3 tools/deployment/manage.py deploy --directory .
 ```
@@ -167,7 +173,9 @@ restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换
 
 每次升级后强制刷新游戏与后台，核对游戏 build-info.json，检查启动页、资源、聊天、导航和冒险工具。验证独立停止及恢复后台时游戏仍运行。默认关闭雾效无需额外配置；已有浏览器偏好仍保留，可用 /fog 切换。
 
-v0.4.0 已完成全量双架构构建及 Mac arm64 空库部署、游戏登录、后台目录、部分 NPC/数据库/资源定制、备份恢复和同版本重部署验收。amd64 实际运行、真实跨版本升级、真机操作及完整负向边界仍待验证，不能据此宣称全部验收通过。
+当前最终包须重新验收两种架构的实际运行、空库部署、从 v0.3.2 保留数据升级与回退，以及三端交互；源码联调和旧包同版本重部署不能替代这些结果。
+
+保持登录验收应分别覆盖 HTTP/HTTPS、手机/平板/桌面：勾选后重新打开进入选角；不勾选时刷新需要重新登录；页面内断线恢复原角色及同地图镜头；主动退出、修改密码、封禁与到期使会话失效。检查空库和旧库均具备会话表及撤销触发器，在隔离环境验证 SQL 失败时不会继续启动新服务。另用 iOS/Android 真机分别验证后台冻结和页面回收；页面回收后按重新打开处理，不能承诺直接恢复原游戏画面。
 
 
 ## 服务端与资源自定义
@@ -286,5 +294,5 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 - 覆盖无效：确认原脚本当前被加载，路径为去掉开头 npc/ 后的相对路径；内置 `.conf` 不支持覆盖。
 - 游戏已更新但后台还是旧值：执行目录刷新；反之后台已更新不代表游戏已重载。
 - 资源无效：确认没有额外一层 data/、路径大小写和编码一致、格式受客户端支持；查看 Gateway 日志并重新进入游戏。
-- admin-init 提示缺少 `server-base/conf/import/script_conf.txt`：这是 v0.4.0 首轮候选镜像的缺陷，正式验收包已修复；使用完整修复包，不手工修改容器补文件。
+- admin-init 提示缺少 `server-base/conf/import/script_conf.txt`：确认 Admin 镜像已包含 Server import 模板快照；使用完整新版包，不手工修改容器补文件。
 - `verify` 失败：先检查是否混用了不同包的配置、镜像或工具，不改清单哈希来掩盖损坏。用户只应编辑 `.env`、custom 和持久化数据，不编辑受清单校验的发行文件。

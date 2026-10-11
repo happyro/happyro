@@ -1,6 +1,6 @@
 # 自定义功能的实现与维护
 
-v0.4.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使修改可独立于镜像升级保存。使用方式见[部署手册](../operations/docker-deployment.md#服务端与资源自定义)，实际结果见[验收记录](../operations/acceptance-v0.4.0.md)。固定 PACKETVER=20211103、Renewal，不修改官方输入，也不从历史翻译目录发布。
+v0.4.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使修改可独立于镜像升级保存。使用方式见[部署手册](../operations/docker-deployment.md#服务端与资源自定义)，最终包检查见[验收清单](../operations/release-checklist.md)。固定 PACKETVER=20211103、Renewal，不修改官方输入，也不从历史翻译目录发布。
 
 ## 本次增加了什么
 
@@ -69,4 +69,4 @@ Admin 镜像保留物品/魔物/NPC 基线和 Server 的 npc/conf 快照。catal
 
 产品逻辑继续改对应独立仓库，部署编排和解析器改根仓库。不要通过改容器内脚本、生成服务端 runtime 树或复制用户 custom 到发行包实现新需求。
 
-修改模板、挂载、NPC 解析或 Gateway 优先级时，同步检查初始化幂等、删除回退、路径拒绝、重复导入及备份精确恢复。源码测试可运行 `python3 -m unittest discover -s tools/deployment -p 'test_*.py'`；还须按[验收清单](../../todo.md)完成容器和游戏检查。构建流程见[镜像构建与交付](../operations/docker-release.md)。
+修改模板、挂载、NPC 解析或 Gateway 优先级时，同步检查初始化幂等、删除回退、路径拒绝、重复导入及备份精确恢复。源码测试可运行 `python3 -m unittest discover -s tools/deployment -p 'test_*.py'`；还须按[验收清单](../operations/release-checklist.md)完成容器和游戏检查。构建流程见[镜像构建与交付](../operations/docker-release.md)。

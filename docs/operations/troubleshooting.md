@@ -1,5 +1,7 @@
 # 故障检查
 
+make、systemctl 和本机日志路径适用于 Linux 原生开发环境；macOS 服务入口见[服务管理](services.md)，Docker 部署使用包内 Compose 与[部署手册](docker-deployment.md)。
+
 ## 先跑 doctor
 
 ```bash
@@ -51,7 +53,7 @@ systemctl status happyro-admin-frontend.service
 
 先按[移动端性能日志回传](../development/mobile-diagnostics.md)采集同一设备、同一浏览器下开启和关闭音效的战斗对照。对比实际帧间隔与 `audio.start` 同步耗时，区分资源加载／解码的异步等待时间；旧构建使用 `audio.play.*` 指标。
 
-[2026-09-24 调查记录](../history/validation/2026-09-24-ios-audio-stutter.md)观察到缓存音效 `.play()` 调用最高耗时 242ms，关闭音效后明显改善。短音效现已统一迁移到 Web Audio，并完成本机浏览器及 iPhone Chrome 实机验证：新构建 `mufpt8su` 的 35 秒音效开启样本中，124 次音效启动的同步耗时最高 1ms，用户确认流畅且音效正常。iPad 与 Safari 的修复后实机样本尚未单独采集；关闭音效只用于对照。
+短音效使用 Web Audio。排查时检查实际资源加载、解码与主线程启动耗时，保留同设备对照；旧版本 `.play()` 同步阻塞的历史结果不能证明当前构建正常。iPhone、iPad、Chrome 与 Safari 分别记录，关闭音效只用于对照。
 
 ## 技能无法释放或说明窗口越界
 
@@ -74,4 +76,8 @@ docker inspect --format '{{.State.Health.Status}}' happyro-mariadb
 
 ## Docker 部署下 Admin 后端改动未生效
 
-本机 systemd 部署没有这个问题；只发生在 Docker 离线包部署（见[离线部署](docker-deployment.md)）。Admin 镜像开启了 OPcache 且 `validate_timestamps=0`，只信任构建镜像时打包的文件快照，容器内改代码或重启容器都不会生效。必须重新构建 Admin 镜像并 `docker compose up -d --pull never admin`。
+Docker 离线包的配置见[离线部署](docker-deployment.md)。Admin 镜像开启了 OPcache 且 `validate_timestamps=0`，只信任构建镜像时打包的文件快照，容器内改代码或重启容器都不会生效。正式交付必须按[发布流程](docker-release.md)全量无缓存重建四类双架构镜像，部署完整新版包；开发调试也应核对实际 PHP/OPcache 配置，不把重启当作代码更新。
+
+## 保持登录或恢复失败
+
+检查 `/api/game-session/*` 的响应：403 时核对 Origin 与代理保留的外部 Host（含端口），503 时核对 Gateway 到 Web API 的连接及会话 SQL。HTTP/HTTPS 使用独立游戏 Cookie，Admin 的 SESSION_SECURE_COOKIE 不控制游戏会话。先确认客户端、Gateway、Login、Web 和会话表/撤销触发器来自配套版本；部署步骤见[升级](docker-deployment.md#升级)。刷新或系统回收页面后，持久登录进入选角，未勾选时需密码；页面内意外断线才尝试恢复原角色。

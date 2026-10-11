@@ -68,7 +68,6 @@ NavigationGraph 只在开始计算路线时加载并缓存。跨地图 Dijkstra 
 
 因此普通角色为 1 个 VM；只出现一种 AI 实体时为 3 个；生命体和佣兵同时使用时最多恢复到 5 个。
 
-历史性能/验收快照见[2026-09-09-static-runtime](../history/validation/2026-09-09-static-runtime.md)，其中的测试数量和产物大小不是当前门槛。
 
 ## 修改约束
 

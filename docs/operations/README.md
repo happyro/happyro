@@ -1,13 +1,14 @@
 # 运维文档
 
-- [无源码 Docker 部署](docker-deployment.md)：四类镜像、统一资源目录、部署包工具和备份恢复。
+先选择实际部署方式，不混用原生开发库与 Docker 离线包的数据目录、端口和工具。
 
-本目录面向本机和发布环境的部署维护。开发主机使用 systemd 游戏进程和 MariaDB 容器，完整 Docker Compose 是另外一套部署拓扑。
+| 场景 | 入口 |
+| --- | --- |
+| 拿到离线包后安装、配置、升级、备份恢复 | [Docker 部署手册](docker-deployment.md)，同时是包内 README 来源 |
+| 从源码构建与交付镜像 | [发布流程](docker-release.md) |
+| 最终包逐项验收 | [发布验收清单](release-checklist.md) |
+| Linux systemd / macOS launchd 原生开发环境 | [服务管理](services.md)、[配置](configuration.md) |
+| 原生环境备份与通用数据一致性原则 | [备份与恢复](backup-recovery.md) |
+| 运行故障 | [排障](troubleshooting.md)，按章节注明的部署方式使用 |
 
-- [服务](services.md)：进程、端口和启停入口。
-- [配置](configuration.md)：环境变量、数据库和资源覆盖。
-- [故障检查](troubleshooting.md)：doctor、日志和常见失败。
-- [备份与恢复](backup-recovery.md)：数据库一致性、持久数据、恢复演练与应用回滚。
-- [Docker 镜像发布](docker-release.md)：完整重建、统一版本、禁止缓存。
-
-[Docker 部署](docker-deployment.md) 说明部署包、镜像与资源的完整流程。开发主机与独立容器部署使用各自的数据和端口。
+产品变化与正式版本交付结果见[更新日志](../../changelog/README.md)。一次性日志、截图和候选包报告放在 work/ 或 artifacts/，不再维护历史操作手册副本。

@@ -41,3 +41,7 @@ python3 tools/resources/catalog/generate_item_name_overrides.py --write
 - 卡片前缀表保持 `ID#文本#`，当前恰好 1081 条，无韩文。
 - 名称补丁只保留目录与 ItemInfo 不同的审查项。
 - 图片缺失不删除物品，但要记录资源状态；多个文件命中同一规范化路径时生成失败。
+
+## 附魔交互约束
+
+提交前按当前装备身份重新校验费用和材料；请求等待期间锁定装备、方式、重复提交和关闭操作，结果处理后解除锁定。服务端可能静默拒绝无效请求，不能依赖必有失败回包。客户端回归见 `tests/ui/DesktopEnchant.test.js`、`MobileEnchant.test.js`、`EquipmentSockets.test.js`。目录生成只同步规范数据，不修改服务端费用、成功率或支持装备范围。

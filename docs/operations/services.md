@@ -69,7 +69,7 @@ systemctl show happyro-login happyro-char happyro-map happyro-web-api happyro-ga
 systemctl cat happyro-map.service
 ```
 
-2026-09-13 检查时，主机上既有 `/etc/systemd/system/` 单元，也有 `/run/systemd/transient/` 单元；该观察不是新机器的安装要求。已有同名单元时使用其部署手册维护，勿再次运行 `systemd-run` 创建冲突单元。
+已有同名单元时使用其部署手册维护，勿再次运行 `systemd-run` 创建冲突单元。
 
 ## 修改后的更新路径
 

@@ -43,4 +43,4 @@ node scripts/resources/generate-skill-localization.mjs --check --no-color
 ./scripts/client/refresh-client.sh build --no-color
 ```
 
-最后一个命令要求 Gateway 运行，构建全部 PWA 应用并比较 HTTP 哈希。检查技能窗口、F 键、重登后的冷却、效果状态图标和长说明滚动。验证施放时先保留角色状态证据；不为解释冷却而直接清空玩家数据库。历史案例见[2026-09-13 验收](../history/validation/2026-09-13-skill-cooldown.md)。
+最后一个命令要求 Gateway 运行，构建全部 PWA 应用并比较 HTTP 哈希。检查技能窗口、F 键、重登后的冷却、效果状态图标和长说明滚动。验证施放时先保留角色状态证据；不为解释冷却而直接清空玩家数据库。

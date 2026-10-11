@@ -10,6 +10,8 @@
 
 完整流程与限制见 [Docker 部署手册](../../docs/operations/docker-deployment.md)。Docker 定义位于 [deploy/docker](../../deploy/docker/)。
 
+`deploy` 校验包及已导入镜像后，先启动并等待 database 健康，再执行新版 Database 镜像内的 `/opt/rathena/sql/upgrades/upgrade_20261012_sessions.sql`，成功后才启动整栈；SQL 失败停止后续命令，不批量执行历史升级脚本。保留旧库升级同样执行，须先停止旧服务并导入全部本版镜像。
+
 `initialize` 只生成密钥和 custom 模板；随后 `deploy` 的 Admin 初始化任务创建 `admin/admin` 超级管理员；Database 初始化会创建 `happyro/happyro` GM 账号。两项初始化均幂等，已有数据库不会重复插入账号。
 
 自定义内容采用 `CUSTOM_DIR`，默认 `./custom`。`initialize-custom` 只创建缺失文件，`refresh-custom-catalogs` 使用 Admin 镜像刷新查询资料；二者不会构建镜像。`custom.py` 管理初始化与归档恢复；`catalogs.py` 在 Admin 镜像内生成声明资料快照。发行包仅复制 templates，`prepare` 不读取用户 custom，ZIP 拒绝实际 custom/。备份含 custom-files.tar，恢复精确替换对应内容。

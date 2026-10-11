@@ -23,6 +23,10 @@
 
 ## 校验
 
-肖蒂及动态菜单漏译的修复范围、抽样结果和待验收项见 [NPC 动态菜单修复记录](npc-dialogue-menus.md)。
+动态菜单还需检查 `setarray`、变量拼接、三元表达式和子程序参数，保留半角冒号、空选项、颜色码、格式占位符与导航参数。回归入口为 Server 的 `tests/test_dialogue_menu_localization.py`。
 
 对话被硬拆成多行时，合并必须保留不同句子和刻意表演的换行，不能为了整齐把独立对白拼成一句。服务端编译和 `make server-verify` 只能证明进程起来，不能证明译文在游戏里显示正确；涉及对话或系统消息的改动需要进游戏核对。
+
+## 副本名称与引用
+
+副本创建、进入、名称变量、候选数组和 `ILI_NAME` 判断必须与 Renewal `db/re/instance_db.yml` 注册名一致；共用地图的 OnInstanceInit 分支也要核对，不能只修入口。回归入口为 Server 的 `tests/test_instance_names.py`。静态检查和实例创建抽样不代表完整任务通关。

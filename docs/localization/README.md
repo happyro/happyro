@@ -1,6 +1,6 @@
 # 本地化文档
 
-本目录记录当前有效的中文资源维护方式。历史翻译批次和 Agent 分片不在这里，见 [历史记录](../history/README.md)。
+本目录记录当前有效的中文资源维护方式。产品翻译直接维护对应应用仓库，kRO 编译源以 localization/sources 为准；不维护旧批次的交接和回写流程。
 
 - [概览](overview.md)：汉化方法、限制和当前维护边界。
 - [客户端资源](client-resources.md)：散装覆盖、ItemInfo、卡片前缀和 Gateway 生效链。
