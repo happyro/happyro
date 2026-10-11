@@ -32,7 +32,7 @@
 
 ```text
 官方 GRF / 服务端 db、npc / 已审查中文源
-        ↓ tools/resources、tools/generate-npc-catalog.mjs、Client 构建脚本
+        ↓ tools/resources、tools/resources/world/generate-npc-catalog.mjs、Client 构建脚本
 Admin backend/resources/game-data/...
 Client src/DB 与 applications/pwa/data/...
         ↓

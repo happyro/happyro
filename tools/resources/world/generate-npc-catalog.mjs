@@ -5,10 +5,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import MapInfo from '../repos/happyro-client/src/DB/Map/MapTable.js';
-import MonsterTable from '../repos/happyro-client/src/DB/Monsters/MonsterTable.js';
+import MapInfo from '../../../repos/happyro-client/src/DB/Map/MapTable.js';
+import MonsterTable from '../../../repos/happyro-client/src/DB/Monsters/MonsterTable.js';
 
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const serverRoot = path.join(workspaceRoot, 'repos/happyro-server');
 const clientRoot = path.join(workspaceRoot, 'repos/happyro-client');
 const adminRoot = path.join(workspaceRoot, 'repos/happyro-admin/backend');
@@ -332,7 +332,7 @@ async function check() {
 function help(noColor) {
 	const color = code => (noColor ? '' : `\u001b[${code}m`);
 	const reset = color('0');
-	process.stdout.write(`\n${color('1;36')}HappyRO NPC catalog${reset}\n\n${color('1;33')}Usage${reset}\n  ${color('1;32')}node tools/generate-npc-catalog.mjs generate${reset} [--no-color]\n  ${color('1;32')}node tools/generate-npc-catalog.mjs check${reset} [--no-color]\n\n${color('1;33')}Examples${reset}\n  ${color('36')}node tools/generate-npc-catalog.mjs generate${reset}\n  ${color('36')}node tools/generate-npc-catalog.mjs check --no-color${reset}\n\n`);
+	process.stdout.write(`\n${color('1;36')}HappyRO NPC catalog${reset}\n\n${color('1;33')}Usage${reset}\n  ${color('1;32')}node tools/resources/world/generate-npc-catalog.mjs generate${reset} [--no-color]\n  ${color('1;32')}node tools/resources/world/generate-npc-catalog.mjs check${reset} [--no-color]\n\n${color('1;33')}Examples${reset}\n  ${color('36')}node tools/resources/world/generate-npc-catalog.mjs generate${reset}\n  ${color('36')}node tools/resources/world/generate-npc-catalog.mjs check --no-color${reset}\n\n`);
 }
 
 if (path.resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {

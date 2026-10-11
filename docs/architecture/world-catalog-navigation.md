@@ -13,7 +13,7 @@ HappyRO 在游戏内提供两个面向世界资料的入口：
 
 ### NPC
 
-NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为完整来源。根仓库 `tools/generate-npc-catalog.mjs generate` 解析这些定义，并结合 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json` 写出版本化目录（Admin 副本和规范目录）。客户端脚本 `repos/happyro-client/scripts/generate-world-catalog-assets.mjs` 再根据该目录和预生成 PNG 生成：
+NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为完整来源。根仓库 `tools/resources/world/generate-npc-catalog.mjs generate` 解析这些定义，并结合 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json` 写出版本化目录（Admin 副本和规范目录）。客户端脚本 `repos/happyro-client/scripts/generate-world-catalog-assets.mjs` 再根据该目录和预生成 PNG 生成：
 
 - `applications/pwa/data/navigation/npc-instances.json`（懒加载 JSON）：服务器 NPC 的地图、坐标、中文名称及源名称索引，供右上角导航搜索使用；
 - `applications/pwa/data/world/npc-assets.json` 和 NPC 图集：客户端可用的外观资源。

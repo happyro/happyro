@@ -1,6 +1,24 @@
 # 游戏资料构建工具
 
-`catalog/` 是 HappyRO Admin 游戏资料的独立构建工程。当前实现物品和魔物流水线，后续 NPC 和地图作为并列资料类型扩展；生成逻辑和跨仓库来源校验归根仓库维护。
+本目录负责规范资料生成、资源安装与审计；跨仓库来源校验由根仓库维护。
+
+| 位置 | 职责 |
+| --- | --- |
+| `catalog/` | 物品、魔物资料与图片，附魔/改造目录 |
+| [world/](world/README.md) | NPC 与地图规范目录、地形预览 |
+| `install-*.mjs` | 按来源清单安装资源并校验哈希 |
+| `audit-*.mjs` | 资源与引用关系检查 |
+
+## 附魔与改造
+
+```bash
+python3 tools/resources/catalog/generate-item-services.py check --no-color
+python3 tools/resources/catalog/generate-item-services.py generate --no-color
+```
+
+check 只核对服务端定义与客户端 ItemServices.json；generate 更新客户端版本化目录。首次运行前安装下文 catalog 依赖。
+
+## 物品与魔物
 
 ## 结构
 

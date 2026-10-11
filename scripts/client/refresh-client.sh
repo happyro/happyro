@@ -67,7 +67,7 @@ sync_npc_catalog() {
 	[[ -n "$admin_user" ]] || fail "cannot determine the Admin service user"
 	[[ "$EUID" -eq 0 || "$(id -un)" == "$admin_user" ]] || fail "run build as root or $admin_user to synchronize the NPC database"
 
-	node "$PROJECT_ROOT/tools/generate-npc-catalog.mjs" generate --no-color
+	node "$PROJECT_ROOT/tools/resources/world/generate-npc-catalog.mjs" generate --no-color
 	npm --prefix "$CLIENT_REPO" run catalog:world
 	(
 		cd "$admin_backend"
@@ -82,7 +82,7 @@ sync_npc_catalog() {
 if [[ "$command_name" == "build" ]]; then
 	cd "$CLIENT_REPO"
 	[[ -d node_modules ]] || npm install
-	python3 "$PROJECT_ROOT/tools/generate-item-services.py" generate --no-color
+	python3 "$PROJECT_ROOT/tools/resources/catalog/generate-item-services.py" generate --no-color
 	sync_npc_catalog
 	npm run build:pwa
 fi

@@ -13,10 +13,9 @@
 地图名称表随客户端维护。世界目录和导航数据：
 
 ```bash
-cd repos/happyro-client
-npm run catalog:world
-node ../../scripts/resources/generate-navigation-data.mjs --write
-node ../../tools/generate-map-catalog.mjs generate
+(cd repos/happyro-client && npm run catalog:world)
+node scripts/resources/generate-navigation-data.mjs --write
+node tools/resources/world/generate-map-catalog.mjs generate
 ```
 
 Admin 地图名 JSON 位于 `repos/happyro-admin/backend/resources/game-data/world/map-names.zh-CN.json`。`generate-map-catalog.mjs` 同时写出 Admin 副本（`resources/game-data/world/map-catalog.json`）和客户端懒加载副本（见下），两处不同步会导致地图预览或分页结果不一致。

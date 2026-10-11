@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 SERVER = ROOT / 'repos/happyro-server'
 TARGET = ROOT / 'repos/happyro-client/src/DB/Items/ItemServices.json'
 
@@ -104,7 +104,7 @@ def main():
     args = parser.parse_args()
     if not args.command:
         c = (lambda code: '') if args.no_color else (lambda code: '\033[' + code + 'm')
-        print(f"\n{c('1;36')}HappyRO item service catalog{c('0')}\n\n{c('1;33')}Usage{c('0')}\n  {c('1;32')}python3 tools/generate-item-services.py generate|check [--no-color]{c('0')}\n\n{c('1;33')}Examples{c('0')}\n  {c('36')}python3 tools/generate-item-services.py generate --no-color{c('0')}\n")
+        print(f"\n{c('1;36')}HappyRO item service catalog{c('0')}\n\n{c('1;33')}Usage{c('0')}\n  {c('1;32')}python3 tools/resources/catalog/generate-item-services.py generate|check [--no-color]{c('0')}\n\n{c('1;33')}Examples{c('0')}\n  {c('36')}python3 tools/resources/catalog/generate-item-services.py generate --no-color{c('0')}\n")
         return
     data = compile_catalog()
     payload = json.dumps(data, ensure_ascii=False, separators=(',', ':')) + '\n'

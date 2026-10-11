@@ -64,7 +64,7 @@ make server-verify
 
 ```bash
 python3 -m unittest discover tools/resources/catalog/tests
-node --test tools/generate-npc-catalog.test.mjs
+node --test tools/resources/world/generate-npc-catalog.test.mjs
 ```
 
 ## 结果记录

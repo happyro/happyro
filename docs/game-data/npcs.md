@@ -13,9 +13,9 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器实例为完整
 分步操作如下：
 
 ```bash
-node tools/generate-npc-catalog.mjs generate
-cd repos/happyro-client && npm run catalog:world
-cd repos/happyro-admin/backend && php artisan game-data:import-npcs --renewal
+node tools/resources/world/generate-npc-catalog.mjs generate
+(cd repos/happyro-client && npm run catalog:world)
+(cd repos/happyro-admin/backend && php artisan game-data:import-npcs --renewal)
 ```
 
 根仓库生成器写出版本化目录；Client 构建脚本再生成导航名称索引和 WebP 图集；Admin 导入命令把目录写入 `game_npcs` 表，供查询接口使用。目录内容变化后必须重新执行导入，否则查询接口返回旧数据。
@@ -46,4 +46,4 @@ cd repos/happyro-admin/backend && php artisan game-data:import-npcs --renewal
 - 生成结果必须包含启用脚本、实例 ID、中文名称、显示 Sprite、传送 class 和来源审计字段。
 - 无图片 NPC 在完整目录中保留；游戏内图鉴可以按产品规则过滤。
 - NPC 传送由服务器按地图、坐标容差和 Class 再次校验，并排除隐藏或不可见 NPC。
-- 修改脚本或名称表后重新生成目录，并跑 `tools/generate-npc-catalog.test.mjs`。
+- 修改脚本或名称表后重新生成目录，并跑 `tools/resources/world/generate-npc-catalog.test.mjs`。

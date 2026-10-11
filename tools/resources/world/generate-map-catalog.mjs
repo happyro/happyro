@@ -2,16 +2,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import sharp from '../repos/happyro-client/node_modules/sharp/lib/index.js';
+import sharp from '../../../repos/happyro-client/node_modules/sharp/lib/index.js';
 
-const root = path.resolve(import.meta.dirname, '..');
+const root = path.resolve(import.meta.dirname, '../../..');
 const client = path.join(root, 'repos/happyro-client');
 const admin = path.join(root, 'repos/happyro-admin/backend/resources/game-data/world');
 const load = async file => (await import(pathToFileURL(path.join(client, file)))).default;
 const command = process.argv[2];
 if (command !== 'generate') {
  const color = (code, text) => process.argv.includes('--no-color') ? text : `\x1b[${code}m${text}\x1b[0m`;
- console.log(`\n${color('1;36','HappyRO shared map catalog')}\n\n${color('1;33','Usage')}\n  node tools/generate-map-catalog.mjs ${color('1;32','generate')} [--no-color]\n\n${color('36','Example: node tools/generate-map-catalog.mjs generate')}\n`);
+ console.log(`\n${color('1;36','HappyRO shared map catalog')}\n\n${color('1;33','Usage')}\n  node tools/resources/world/generate-map-catalog.mjs ${color('1;32','generate')} [--no-color]\n\n${color('36','Example: node tools/resources/world/generate-map-catalog.mjs generate')}\n`);
 } else {
  const [supported, worlds, info, aliases] = await Promise.all([
   load('src/DB/Map/SupportedMapTable.js'), load('src/DB/Map/WorldMap.js'),
