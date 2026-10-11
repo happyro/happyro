@@ -158,6 +158,8 @@ make gateway-start
 
 ## 文档导航
 
+- [NPC 审计收口](docs/localization/npc-audit-20261011.md)：四包覆盖、验证边界及暂缓事项。
+
 - [自定义功能实现](docs/architecture/customization.md)：本次如何接入 NPC、数据库、资源及目录刷新。
 - [Docker 部署与升级](docs/operations/docker-deployment.md)：定制操作、持久目录、备份恢复。
 - [镜像构建与交付](docs/operations/docker-release.md)：完整打包流程与发布边界。

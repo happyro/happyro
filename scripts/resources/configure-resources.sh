@@ -34,6 +34,8 @@ title_table="$PROJECT_ROOT/localization/client/data/titletable.json"
 skill_description_table="$PROJECT_ROOT/localization/client/data/skilldesctable.txt"
 skill_name_table="$PROJECT_ROOT/localization/client/data/skillnametable.txt"
 card_prefix_table="$PROJECT_ROOT/localization/client/data/cardprefixnametable.txt"
+sign_notice_dir="$PROJECT_ROOT/localization/client/data/texture/유저인터페이스/illust"
+sign_notice_manifest="$PROJECT_ROOT/localization/client/data/sign-notices.zh-CN.json"
 # Archived itemlocalization overlay; itemInfo_true.lub is the active source.
 # item_localization_table="$PROJECT_ROOT/localization/client/data/itemlocalization.json"
 
@@ -127,8 +129,36 @@ if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$item_localization_table"; then
 fi
 fi
 
+for notice in sign_01 sign_02 sign_03 sign_04; do
+	[[ -f "$sign_notice_dir/${notice}.bmp" ]] || {
+		echo "missing localized notice: $sign_notice_dir/${notice}.bmp" >&2
+		exit 1
+	}
+	notice_expected_hash="$(jq -er --arg suffix "/${notice}.bmp" \
+		'.notices[] | select(.file | endswith($suffix)) | .sha256' "$sign_notice_manifest")"
+	notice_source_hash="$(sha256sum "$sign_notice_dir/${notice}.bmp")"
+	[[ "${notice_source_hash%% *}" == "$notice_expected_hash" ]] || {
+		echo "localized notice hash mismatch: ${notice}.bmp" >&2
+		exit 1
+	}
+done
+
 mkdir -p "$resources_dir"
 install -m 0600 "$card_prefix_table" "$GATEWAY_REPO/data/cardprefixnametable.txt"
+
+for notice in sign_01 sign_02 sign_03 sign_04; do
+	notice_source_hash="$(sha256sum "$sign_notice_dir/${notice}.bmp")"
+	for notice_root in "$runtime_client/data" "$GATEWAY_REPO/data"; do
+		install -D -m 0644 "$sign_notice_dir/${notice}.bmp" \
+			"$notice_root/texture/유저인터페이스/illust/${notice}.bmp"
+		notice_target_hash="$(sha256sum "$notice_root/texture/유저인터페이스/illust/${notice}.bmp")"
+		[[ "${notice_source_hash%% *}" == "${notice_target_hash%% *}" ]] || {
+			echo "installed notice hash mismatch: ${notice}.bmp" >&2
+			exit 1
+		}
+	done
+done
+install -m 0644 "$sign_notice_manifest" "$runtime_client/sign-notices.zh-CN.json"
 
 ensure_link() {
 	local link_path="$1"
