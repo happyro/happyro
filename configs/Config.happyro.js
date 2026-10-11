@@ -24,6 +24,7 @@ window.ROConfigHappyRO = {
 	loadLua: true,
 	enableMapName: true,
 	enableAchievements: true,
+	enableRefineUI: true,
 	skipServerList: true,
 	skipIntro: false,
 	registrationweb: '',

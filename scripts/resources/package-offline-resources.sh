@@ -25,7 +25,7 @@ print_help() {
 	happyro_cli_style "$color"
 	printf '\n%sHappyRO 跨机器资源归档%s\n\n' "$HAPPYRO_C_TITLE" "$HAPPYRO_C_RESET"
 	printf '%s用法%s\n  %s%s create%s --output PATH.tar.gz [--no-color]\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_CMD" "$0" "$HAPPYRO_C_RESET"
-	printf '%s常用例子%s\n  %s%s create --output artifacts/happyro-resources-20260924.tar.gz%s\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET"
+	printf '%s常用例子%s\n  %s%s create --output artifacts/happyro-resources-transfer.tar.gz%s\n\n' "$HAPPYRO_C_SECTION" "$HAPPYRO_C_RESET" "$HAPPYRO_C_EXAMPLE" "$0" "$HAPPYRO_C_RESET"
 }
 
 if [[ -z "$action" || "$action" == "help" ]]; then

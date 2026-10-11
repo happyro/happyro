@@ -33,11 +33,24 @@
 
 如果需要把本机资源送到另一台构建电脑，可在工作区根目录生成传输归档；示例文件名已存在时换用新的输出路径：
 
+| 资源源目录 | 跨机器同步方式 |
+| --- | --- |
+| `inputs/runtime/kro-20211105/client/` | 资源归档；prepare 使用 `DATA.INI`、其引用的 GRF，以及 `AI/`、`BGM/`、`System/`、`data/` |
+| `work/game-data/items/kro-20211105/` | 资源归档；物品图片 |
+| `work/game-data/monsters/kro-20211105/` | 资源归档；魔物图片 |
+| `repos/happyro-admin/backend/resources/game-data/world/{npcs,maps,terrain}/` | 已纳入 Admin Git 仓库，随对应提交拉取 |
+
+下面的归档脚本完整收录前三个目录，保留相对于工作区的路径。无需同步整个 `inputs/`、`work/` 或 `artifacts/`；官方源材料 `inputs/official/`、翻译工作区、旧离线包、旧镜像、旧构建产物和运行中的数据库／存档均不属于此次资源传输输入。文件内容大小与磁盘占用可能不同，压缩包大小以实际生成结果为准。
+
 ```bash
 bash scripts/resources/package-offline-resources.sh create --output artifacts/happyro-resources-transfer.tar.gz
 ```
 
-脚本同时生成 `happyro-resources-transfer.tar.gz.sha256`。将两个文件传到目标电脑，先在文件所在目录运行 `sha256sum -c happyro-resources-transfer.tar.gz.sha256`（macOS 使用 `shasum -a 256 -c`），再在该电脑的 HappyRO 工作区根目录解压：`tar -xzf happyro-resources-transfer.tar.gz`。目标电脑还需有对应的五个代码仓库；Admin 的 NPC、地图和地形图片由 Admin 仓库提供。解压后在目标电脑运行下面的 `prepare` 和 `verify --prepared`。此归档只是资源传输文件，不替代最终包含双架构镜像的离线 ZIP。
+脚本同时生成 `happyro-resources-transfer.tar.gz.sha256`。将两个文件传到目标电脑，先在文件所在目录运行 `sha256sum -c happyro-resources-transfer.tar.gz.sha256`（macOS 使用 `shasum -a 256 -c`），再进入该电脑的 HappyRO 工作区根目录，用归档的实际绝对路径解压：`tar -xzf /path/to/happyro-resources-transfer.tar.gz`。目标电脑还需有对应的五个代码仓库；Admin 的 NPC、地图和地形图片由 Admin 仓库提供。解压后在目标电脑运行下面的 `prepare` 和 `verify --prepared`。资源传输脚本在来源机器需要 Bash、tar 和 sha256sum；macOS 若生成归档，须先安装提供 sha256sum 的工具。此归档只是资源传输文件，不替代最终包含双架构镜像的离线 ZIP。
+
+跨机器准备有两条路径，选择其一：传输原始资源归档后在构建机运行 prepare，或传输已通过 verify --prepared 的准备目录。不要把前者当成准备包，也不要向已存在的准备目录再次执行 prepare。
+
+构建前核对 `configs/Config.happyro.js` 与 Client 的 `applications/pwa/Config.happyro.js` 内容一致（可忽略 CRLF/LF）。Gateway Dockerfile 使用 Client 中的配置副本；若不同，先审查并同步配置源，提交后重新核对五仓库。prepare/build 会拒绝脏仓库，但不会替你同步 origin/main 或判断配置语义一致。
 
 在源码根目录执行：
 
@@ -52,6 +65,8 @@ python3 tools/deployment/manage.py verify --directory artifacts/deployment/relea
 
 构建机器需要完整源码、Python 3.11+、Docker Buildx、Skopeo，以及双架构构建能力。Linux 使用 Docker Engine，macOS 使用 OrbStack 或 Docker Desktop 的 Linux 容器。构建期间需要联网下载基础镜像和依赖；离线的是最终部署过程。
 
+正式构建前检查当前 Buildx builder 的 driver、可用平台及 OCI 导出能力（`docker buildx inspect`）；仅安装 Buildx 不等于能导出双架构 OCI。优先使用已配置的 docker-container builder；若尚无可用 builder，先在构建机完成创建、启动及所需的原生节点或仿真配置，再确认 amd64/arm64 均可用。预检未通过不要执行 build。
+
 本机已完成第 1 步时，直接构建，无需复制准备目录：
 
 ```bash
@@ -61,6 +76,7 @@ python3 tools/deployment/images.py build --workspace . --output artifacts/images
 仅当第 1 步因本地输入缺失而选择在资源机准备时，才将准备目录复制到构建机的 artifacts/deployment/release，保留空目录和完整结构。先确认两台机器的五仓库提交一致，再在构建机上执行（替换 SSH 用户与路径）：
 
 ```bash
+mkdir -p artifacts/deployment
 rsync -a SSH_USER@10.24.1.1:/vol2/1000/kugarocks/happyro/artifacts/deployment/release/ artifacts/deployment/release/
 python3 tools/deployment/manage.py verify --directory artifacts/deployment/release --prepared
 python3 tools/deployment/images.py build --workspace . --output artifacts/images/release
@@ -90,7 +106,9 @@ images/
     └── database.tar
 ```
 
-这些是最终指定位置，不能直接把双架构 OCI tar 放进去冒充 Docker-save 归档。组装失败会保留部分产物供检查，包仍不就绪；重试前将整个部分 images/ 内容移到包外保留，避免覆盖未知文件。
+这些是最终指定位置，不能直接把双架构 OCI tar 放进去冒充 Docker-save 归档。组装失败会保留部分产物供检查。若 release-manifest.json 仍为 prepared-not-built，重试前将整个部分 images/ 内容移到包外，保留空 images/，再执行 package。若清单已写为 offline-ready 但 ZIP 创建失败，不能直接重跑 package，也不能手改状态或哈希；保留失败目录，在新的准备目录重新 prepare/verify，再用同一批已核验且版本、提交一致的 OCI 组包。输出目录与对应 ZIP 路径都必须不存在。任何源码或配置变更都需要提交后重新 prepare，并全量无缓存构建四类镜像。
+
+offline-ready 表示目录的资源和镜像已通过校验，不代表 ZIP 已生成，更不代表运行验收通过；必须等待 package 成功退出，并按下方清单验收最终 ZIP。
 
 全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-<VERSION>.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、examples/custom/ 模板、配置及空 data/ 目录。禁止包含实际用户 custom/；自定义目录由部署端初始化，升级保留 CUSTOM_DIR。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，可在 artifacts/images/ 留存，不需要重复放入最终包。
 

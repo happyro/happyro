@@ -7,9 +7,11 @@
 ## 1. 搬迁和构建前准备
 
 - [ ] 确认本次实现及本清单已提交；跨机器构建时同步最终提交。
-- [ ] 核对六个仓库的分支、提交和工作区；参与构建的根仓库、Client、Gateway、Server、Admin 五个仓库必须干净，且与准备机器的提交一致。不要丢弃未提交文件。
-- [ ] 确定新发布版本，只修改 `deploy/docker/VERSION`，随后提交。当前记录中的 `v0.3.2` 已发布，不覆盖旧版本产物。
+- [ ] 核对根仓库、Client、Gateway、Server、Admin 五个构建仓库的分支、提交和工作区；五仓库必须干净，且与准备机器的提交一致。不要丢弃未提交文件；文档仓库不参与构建，若一并检出则记录其提交。
+- [ ] 核对 `configs/Config.happyro.js` 与 Client 的配置副本一致（忽略换行格式），避免配置安装覆盖已启用功能；差异须先审查、同步并提交。
+- [ ] 核对 `deploy/docker/VERSION`，当前目标已为 v0.4.0，不重复改号；只有更换目标版本时才修改并提交。当前记录中的 `v0.3.2` 已发布，不覆盖旧版本产物。
 - [ ] 安装 Python 3.11+、Docker、Compose v2、Buildx、Skopeo，确认能够构建 `linux/amd64` 和 `linux/arm64`。
+- [ ] 检查 Buildx 当前 builder 的平台与 OCI 导出能力；未配置好双架构 builder 时不开始构建。
 - [ ] 检查磁盘空间、Docker 分配的内存、构建联网能力和部署端口是否满足要求。
 - [ ] 补齐未随 Git 搬迁的运行资源：
   - `inputs/runtime/kro-20211105/client/` 内的 `DATA.INI`、所引用 GRF、`AI/`、`BGM/`、`System/`、`data/`。
@@ -31,6 +33,7 @@ python3 tools/deployment/manage.py verify --directory artifacts/deployment/relea
 
 - [ ] 五个应用组件全部无缓存重建：完整 `--all` PWA、Gateway、Server、Admin、Database；四类镜像均包含两种架构。
 - [ ] 所有构建成功后再执行 package；归档哈希、架构、版本、源码提交校验全部通过。
+- [ ] package 成功退出且最终 ZIP 存在；offline-ready 仅表示目录校验通过，ZIP 失败按发布手册重试，不手改清单。
 - [ ] ZIP 包含两种架构的镜像、运行资源、工具、`examples/custom/` 模板及空 `data/`。
 - [ ] ZIP 不含 `.env`、实际用户 `custom/`、存档或密钥；不要在打包暂存目录运行 initialize。
 - [ ] 保存完整 ZIP、`built.json`、发布清单和构建日志。仅在用户明确要求时推送 Docker Hub。
