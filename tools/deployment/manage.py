@@ -236,6 +236,12 @@ def deploy(args):
             raise ValueError(f'Update .env image references for this release: {service}')
     custom.validate(custom.custom_root(config))
     verify_loaded(release, daemon_architecture())
+    # Apply the game schema before starting upgraded login/web services, including
+    # installations that retain an existing database volume.
+    compose(root, 'up', '-d', '--wait', '--pull', 'never', '--no-build', 'database')
+    compose(root, 'exec', '-T', 'database', 'sh', '-c',
+            'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb --user=root "$MARIADB_DATABASE" '
+            '< /opt/rathena/sql/upgrades/upgrade_20261012_sessions.sql')
     compose(root, 'up', '-d', '--pull', 'never', '--no-build')
     compose(root, 'ps', '-a')
 

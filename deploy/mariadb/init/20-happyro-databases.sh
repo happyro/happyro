@@ -12,6 +12,7 @@ SQL
 
 "${mariadb_root[@]}" "$MARIADB_DATABASE" < /opt/rathena/sql/main.sql
 "${mariadb_root[@]}" "$MARIADB_DATABASE" < /opt/rathena/sql/web.sql
+"${mariadb_root[@]}" "$MARIADB_DATABASE" < /opt/rathena/sql/upgrades/upgrade_20261012_sessions.sql
 "${mariadb_root[@]}" "$MARIADB_DATABASE" < /opt/rathena/sql/roulette_default_data.sql
 "${mariadb_root[@]}" "$HAPPYRO_LOG_DATABASE" < /opt/rathena/sql/logs.sql
 

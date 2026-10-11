@@ -142,6 +142,30 @@ class OfflineTests(unittest.TestCase):
             self.assertEqual(compose.call_count, 1)
             self.assertEqual(compose.call_args.args[1], 'config')
 
+    def test_schema_failure_prevents_starting_game_services(self):
+        release = {'version': 'v9.0.0'}
+        (self.root / '.env').write_text('fixture')
+        names = {'gateway': 'gateway', 'admin': 'admin', 'admin-init': 'admin',
+                 'database': 'database', 'login': 'server', 'char': 'server',
+                 'map': 'server', 'web-api': 'server'}
+        config = {'services': {service: {'image': reference(image, release['version']),
+                  'pull_policy': 'never'} for service, image in names.items()}}
+        calls = []
+        def compose(root, *args, **kwargs):
+            calls.append(args)
+            if args[0] == 'config':
+                return argparse.Namespace(stdout=json.dumps(config))
+            if args[0] == 'exec':
+                raise RuntimeError('schema failed')
+        with patch('manage.verify', return_value=release), patch('manage.compose', side_effect=compose), \
+             patch('manage.custom.custom_root'), patch('manage.custom.validate'), \
+             patch('manage.verify_loaded'), patch('manage.daemon_architecture', return_value='amd64'):
+            with self.assertRaisesRegex(RuntimeError, 'schema failed'):
+                manage.deploy(argparse.Namespace(directory=self.root))
+        starts = [call for call in calls if call[0] == 'up']
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0][-1], 'database')
+
     def test_package_completes_only_after_all_archives(self):
         output = self.root / 'build'
         bundle = self.root / 'bundle'
