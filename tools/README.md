@@ -8,8 +8,6 @@
 | [deployment/](deployment/README.md) | Docker 部署包、资源校验、密钥初始化、备份恢复和镜像发布 |
 | [client/](client/README.md) | LUB 提取与回编译 |
 | [resources/](resources/README.md) | 物品 / 魔物目录生成 |
-| [translation/](translation/README.md) | 历史翻译分片的合并、校验和回写 |
-| `workspace/` | kRO 工作区清单校验 |
 | `generate-npc-catalog.mjs` | 版本化 NPC 目录 |
 | `generate-map-catalog.mjs` | 游戏与后台共用地图目录；generate 同步两仓库数据并导出地形预览 |
 

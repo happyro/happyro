@@ -1,6 +1,6 @@
 # localization
 
-版本管理的本地化源和覆盖资源。官方输入在 `inputs/`，历史批次在 `archive/translation/`。
+版本管理的本地化源和覆盖资源。官方输入在 `inputs/official/`；运行目录为 `inputs/runtime/`，旧批次通过 Git 历史查询。
 
 | 路径 | 用途 |
 | --- | --- |

@@ -1,6 +1,6 @@
 # 服务端内容
 
-服务端玩家可见文本直接维护在 `repos/happyro-server`。旧的 client-server 翻译工作区只作为历史记录，不得再向该仓库回写。
+服务端玩家可见文本直接维护在 `repos/happyro-server`。不通过旧分片或历史合并产物回写源码。
 
 ## 维护范围
 

@@ -50,7 +50,7 @@ Gateway 收到 `/data/...` 请求后的查找顺序为：
 
 `num2cardillustnametable.txt` 和 `cardpostfixnametable.txt` 仍来自官方 GRF：前者只关联卡片图片资源名，后者只标记装备名称采用前缀还是后缀，它们不承载需要翻译的卡片显示名称。
 
-已归档的 `itemlocalization.json` 由翻译后的 `itemInfo_true.lub` 取代，现保留在 `archive/localization/client/data/`。
+物品文本以翻译后的 `itemInfo_true.lub` 为准，不再维护额外的物品名称覆盖表。
 
 回编译输入位于 `localization/sources/kro-20211105/merged/files/lub/`，默认由 `tools/client/build` 读取。
 

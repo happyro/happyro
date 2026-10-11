@@ -26,7 +26,7 @@
 - 生成文件放在 work/ 或 artifacts/。
 - repos/happyro-client 和 repos/happyro-server 是独立 Git 仓库。
 - repos/happyro-admin 是独立的 HappyRO GM 管理后台仓库；其代码实现规范和仓库 changelog 规则以 `repos/happyro-admin/AGENTS.md` 与 `repos/happyro-admin/changelog/` 为准。
-- `archive/translation/zh-cn/` 中的旧翻译工作区仅作为历史记录，后续不得再作为发布源向客户端或服务端仓库回写；产品翻译直接修改对应仓库。kRO 回编译输入位于 `localization/sources/kro-20211105/`。
+- 产品翻译直接修改对应仓库；kRO 回编译输入位于 `localization/sources/kro-20211105/`。不恢复旧分片合并回写流程，也不为过时计划、交接和批次报告另建归档；必要历史通过 Git 查询。
 
 ## Docker 镜像发布规则
 

@@ -36,8 +36,6 @@ skill_name_table="$PROJECT_ROOT/localization/client/data/skillnametable.txt"
 card_prefix_table="$PROJECT_ROOT/localization/client/data/cardprefixnametable.txt"
 sign_notice_dir="$PROJECT_ROOT/localization/client/data/texture/유저인터페이스/illust"
 sign_notice_manifest="$PROJECT_ROOT/localization/client/data/sign-notices.zh-CN.json"
-# Archived itemlocalization overlay; itemInfo_true.lub is the active source.
-# item_localization_table="$PROJECT_ROOT/localization/client/data/itemlocalization.json"
 
 [[ -d "$runtime_client" ]] || {
 	echo "missing runtime client: $runtime_client" >&2
@@ -104,31 +102,6 @@ if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$card_prefix_table"; then
 	echo "localized card prefix table contains Korean text: $card_prefix_table" >&2
 	exit 1
 fi
-if false; then # Archived itemlocalization overlay validation.
-[[ -f "$item_localization_table" ]] || {
-	echo "missing item localization table: $item_localization_table" >&2
-	exit 1
-}
-jq -e '
-	length == 16127 and
-	."501"[1] == "红色药水" and
-	all(.[];
-		length == 4 and
-		(.[0] | type == "string") and
-		(.[1] | type == "string") and
-		(.[2] | type == "array") and
-		(.[3] | type == "array")
-	)
-' "$item_localization_table" >/dev/null || {
-	echo "item localization table is incomplete: $item_localization_table" >&2
-	exit 1
-}
-if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$item_localization_table"; then
-	echo "item localization table contains Korean text: $item_localization_table" >&2
-	exit 1
-fi
-fi
-
 for notice in sign_01 sign_02 sign_03 sign_04; do
 	[[ -f "$sign_notice_dir/${notice}.bmp" ]] || {
 		echo "missing localized notice: $sign_notice_dir/${notice}.bmp" >&2
@@ -197,4 +170,3 @@ echo "configured: $title_table"
 echo "configured: $skill_description_table"
 echo "configured: $skill_name_table"
 echo "configured: $card_prefix_table"
-# Archived itemlocalization overlay is not configured.

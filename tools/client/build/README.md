@@ -1,6 +1,6 @@
 # LUB 回编译工具
 
-本目录将 kRO 2021-11-05 翻译流程合并出的规范化 JSON 重新生成为 Lua 源码，编译成客户端可加载的 LUB，并执行语义回环校验。Lua 5.0 和 Lua 5.1 使用独立入口及独立目标清单：
+本目录将 kRO 2021-11-05 已审查的规范化 JSON 重新生成为 Lua 源码，编译成客户端可加载的 LUB，并执行语义回环校验。Lua 5.0 和 Lua 5.1 使用独立入口及独立目标清单：
 
 ```text
 build/
@@ -9,7 +9,7 @@ build/
 └── common.py       # JSON 序列化、工具链准备和公共校验
 ```
 
-工具不会修改 `inputs/` 中的官方文件，也不会写回翻译工作区。默认输入是正式合并目录 `localization/sources/kro-20211105/merged/files/lub/`，默认输出是 `artifacts/client/lub/`。正式合并结果尚未发布时，必须用 `--input` 明确指定已复核的临时合并目录。
+工具不会修改 `inputs/` 中的官方文件，也不会覆盖输入 JSON。默认输入是版本化源目录 `localization/sources/kro-20211105/merged/files/lub/`，默认输出是 `artifacts/client/lub/`。需要验证临时修改时，用 `--input` 指定已复核的 JSON 目录。
 
 ## 准备编译器
 
@@ -28,11 +28,11 @@ Lua 5.0 固定使用 5.0.2，Lua 5.1 固定使用 5.1.5。下载和构建结果�
 
 ```bash
 python3 tools/client/build/lua50/main.py build \
-  --input work/translation-merge/kro-20211105/<batch>/merged/files/lub \
+  --input localization/sources/kro-20211105/merged/files/lub \
   --output artifacts/client/lub
 
 python3 tools/client/build/lua51/main.py build \
-  --input work/translation-merge/kro-20211105/<batch>/merged/files/lub \
+  --input localization/sources/kro-20211105/merged/files/lub \
   --output artifacts/client/lub
 ```
 
@@ -40,7 +40,7 @@ python3 tools/client/build/lua51/main.py build \
 
 每个目标按以下顺序处理：
 
-1. 读取并校验对应的合并 JSON；
+1. 读取并校验对应的 JSON；
 2. 按客户端原文件的全局变量和顶层结构生成 Lua；
 3. 将中文字符串编码为 UTF-8 字节，并使用定长十进制转义写入 ASCII Lua 源码；
 4. 使用目标 ABI 的 `luac -s` 生成 LUB，并检查字节码头；
@@ -50,3 +50,9 @@ python3 tools/client/build/lua51/main.py build \
 这里验证的是 LUB 中字符串字节为 UTF-8。最终投放前仍需确认目标客户端字体和文本渲染链路支持 UTF-8；编译成功本身不能让 CP949 原生客户端自动显示简体中文。
 
 命令不带参数时只显示帮助，不准备工具链，也不构建文件。使用 `--no-color` 可关闭帮助中的 ANSI 颜色。
+
+## 安装到运行目录
+
+构建器只输出编译结果，不自动安装或重启服务。两种 Lua 目标编译及语义回环全部通过后，对照 `manifest-lua50.tsv` 和 `manifest-lua51.tsv` 中的相对路径、SHA-256 与验证状态，将本次 LUB 放到 `inputs/runtime/kro-20211105/client/` 下对应位置；先备份将替换的目标，覆盖后重新计算目标哈希并与清单比较。直接文本同样记录版本化源与安装目标哈希。
+
+官方安装包和 GRF 不修改。来源提交、编译清单、安装目标及校验结果保存到本次 work/ 或 artifacts/ 记录；不能拿旧分片重新生成并覆盖当前源。客户端显示、字体及 Gateway 缓存生效仍按[资源手册](../../../docs/localization/client-resources.md)验证。

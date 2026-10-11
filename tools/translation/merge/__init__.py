@@ -1,2 +1,0 @@
-"""Translation chunk merge package."""
-

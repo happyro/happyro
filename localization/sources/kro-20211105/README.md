@@ -18,4 +18,4 @@ python3 tools/client/build/lua51/main.py build
 python3 tools/resources/catalog/main.py items client
 ```
 
-历史 Agent 分片和提取基准仍在 `archive/translation/zh-cn/kro-20211105/`。
+直接维护本目录已审查的 JSON 与文本，不恢复旧 Agent 分片。编译与语义校验见 [LUB 构建说明](../../../tools/client/build/README.md)，安装到运行目录后须校验目标哈希并记录来源。
