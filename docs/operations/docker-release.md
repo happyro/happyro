@@ -35,12 +35,14 @@
 
 | 资源源目录 | 跨机器同步方式 |
 | --- | --- |
-| `inputs/runtime/kro-20211105/client/` | 资源归档；prepare 使用 `DATA.INI`、其引用的 GRF，以及 `AI/`、`BGM/`、`System/`、`data/` |
+| `inputs/runtime/kro-20211105/` | 整个目录纳入资源归档；prepare 使用其中 `client/` 的 `DATA.INI`、其引用的 GRF，以及 `AI/`、`BGM/`、`System/`、`data/` |
 | `work/game-data/items/kro-20211105/` | 资源归档；物品图片 |
 | `work/game-data/monsters/kro-20211105/` | 资源归档；魔物图片 |
 | `repos/happyro-admin/backend/resources/game-data/world/{npcs,maps,terrain}/` | 已纳入 Admin Git 仓库，随对应提交拉取 |
 
 下面的归档脚本完整收录前三个目录，保留相对于工作区的路径。无需同步整个 `inputs/`、`work/` 或 `artifacts/`；官方源材料 `inputs/official/`、翻译工作区、旧离线包、旧镜像、旧构建产物和运行中的数据库／存档均不属于此次资源传输输入。文件内容大小与磁盘占用可能不同，压缩包大小以实际生成结果为准。
+
+传输前确认生成资源与当前源码一致：按 [LUB 回编译说明](../../tools/client/build/README.md) 校验当前 JSON 与运行 LUB，过期时先编译、语义验证、备份并安装，再核对目标哈希；物品和魔物图片应匹配当前资源映射，Admin 资料快照应与当前客户端／服务端来源一致。归档校验及 prepare/verify 只验证所收录内容的完整性，不证明生成产物已同步最新源码。源码或快照有更新时，构建机须同步这些代码变更，资源归档不包含 Git 仓库。
 
 ```bash
 bash scripts/resources/package-offline-resources.sh create --output artifacts/happyro-resources-transfer.tar.gz

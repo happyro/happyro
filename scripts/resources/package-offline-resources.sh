@@ -39,7 +39,7 @@ fi
 }
 
 sources=(
-	inputs/runtime/kro-20211105/client
+	inputs/runtime/kro-20211105
 	work/game-data/items/kro-20211105
 	work/game-data/monsters/kro-20211105
 )
