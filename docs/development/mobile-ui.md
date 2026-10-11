@@ -1,6 +1,6 @@
 # 移动端 UI 开发与验收
 
-布局与组件接入规则以客户端的[菜单布局](../../../repos/happyro-client/docs/mobile-menu-layout.md)为准；登录与恢复见[连接恢复](../../../repos/happyro-client/docs/connection-recovery.md)。根仓库只维护跨端验收边界，不复制组件尺寸、设备断点或已完成批次。
+布局与组件接入规则以客户端的[菜单布局](../../repos/happyro-client/docs/mobile-menu-layout.md)为准；登录与恢复见[连接恢复](../../repos/happyro-client/docs/connection-recovery.md)。根仓库只维护跨端验收边界，不复制组件尺寸、设备断点或已完成批次。
 
 ## 开发约束
 
@@ -18,6 +18,6 @@
 - 真机软键盘、横竖屏切换、平板分屏、多指移动与技能操作、浮层和长内容。
 - 双方交易、摆摊、商店、邮件附件、银行、仓库容量/重量、宠物进化等真实消耗场景。
 - 伴侣指定攻击/移动、技能详情与状态同步；低频商城/奖励、验证码、装备比较及聊天室窗口按实际可达性复查。
-- 移动导航现有搜索与路线预览不等于自动行走；自动战斗不支持全地图巡逻。
+- 冒险工具自动寻路仅支持当前地图；跨地图路线预览不等于自动完成跨图交互，需分别验收寻路、停止和传送。自动战斗不支持全地图巡逻。
 
-当前发行包统一使用[发布验收清单](../../operations/release-checklist.md)，只把实际执行过的范围标为通过。复现、截图和日志放在 work/ 或 artifacts/，产品行为变化写入对应仓库 changelog。
+当前发行包统一使用[发布验收清单](../operations/release-checklist.md)，只把实际执行过的范围标为通过。复现、截图和日志放在 work/ 或 artifacts/，产品行为变化写入对应仓库 changelog。

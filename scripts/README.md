@@ -12,9 +12,11 @@
 | [gateway/](gateway/README.md) | 网关配置、启动和健康检查 |
 | [resources/](resources/README.md) | 运行资源配置与技能 / 导航生成 |
 | [server/](server/README.md) | rAthena 配置、编译和启停 |
-| `deploy/` | Docker 镜像构建推送 |
+| `local/` | macOS 原生服务启停；入口见[服务管理](../docs/operations/services.md) |
 | `maintenance/` | doctor、status、upstream |
 | `localization/` | 只读本地化清单扫描 |
 | `_lib/` | 共享路径和上游检查 |
 
 常用入口见 [docs/development/common-commands.md](../docs/development/common-commands.md)。
+
+Docker 镜像构建与离线交付统一使用 [tools/deployment](../tools/deployment/README.md)，本目录不维护第二套发布脚本。

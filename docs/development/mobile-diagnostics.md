@@ -22,29 +22,13 @@ CLIENT_DIAGNOSTICS_DIR=../../work/diagnostics/client
 
 修改客户端后必须完整构建 `npm run build -- --all`。构建清单同时校验 `debug.js`、`debug-upload.js` 和 `Online.js`；只重启 Gateway 不会更新客户端代码。
 
-## 当前 Mac 的物理运行环境
+## 调试环境
 
-当前采用 Docker 数据库与 macOS 原生应用的混合部署。应用由用户级 launchd 管理，配置在 `work/runtime/native/launchd/`，仅加载到当前登录会话，不注册开机启动：
+先按[服务手册](../operations/services.md)核对当前机器的部署方式、服务状态和实际入口。Linux 使用 systemd，macOS 的已配置混合环境使用 launchd 与独立 Docker 数据库；不要同时启动两套占用相同端口的应用。
 
-```bash
-bash scripts/local/macos-services.sh status --no-color
-bash scripts/local/macos-services.sh stop --no-color
-bash scripts/local/macos-services.sh start --no-color
-```
+macOS 的数据目录与部署信息以 `work/runtime/native/hybrid-deployment.json` 为准，数据库由 `work/runtime/native/database-compose.json` 定义，应用日志位于 `work/runtime/native/logs/`。这些文件描述本机环境，不代表其他机器；不要沿用旧发行包目录或把完整 Docker 栈的数据目录当作独立数据库。
 
-该命令只管理已经配置的容器与进程，不负责首次安装。数据库使用独立的 `happyro-native-database` Docker 容器（Compose 项目为 `happyro-native`）；login/char/map/web、Node Gateway、Admin 的 Laravel 后端和 Umi 前端均在 macOS 原生运行。启动时先等待 Docker 数据库健康，停止时先退出应用再停止数据库，不删除数据。客户端构建固定 Renewal / PACKETVER=20211103 / 不混淆封包，保留启动页和全部查看器。
-
-本机独立数据库包含 `happyro`、`happyro_log` 和 `happyro_admin`，数据位于 `artifacts/deployment/install/happyro-v0.3.1/data/database/`；完整 Docker 游戏栈的数据库使用 `artifacts/deployment/install/happyro-v0.3.2/data/database/`，二者不共享数据目录。独立数据库由 `work/runtime/native/database-compose.json` 定义，固定映射 `127.0.0.1:13306:3306`，应用通过主机端口连接，不依赖容器 IP。该配置含凭据，不提交；不得使用完整游戏栈的 Compose 管理本机独立数据库。其他 Docker 应用容器保持停止，不同时启动两套应用。游戏服务器仅监听回环地址，通过 Gateway 的 WebSocket 代理供手机访问。Gateway 监听 3338。数据库、内部服务密码和本地验收账号保存在权限为 0600 的 `work/runtime/native/credentials.json`，不要提交或放入诊断日志。
-
-原生 MariaDB 已停止，其 launchd 配置已移入切换备份；旧数据目录 `work/runtime/native/database/` 保留。两套数据库的 SQL 备份及切换前配置保存在 `work/runtime/native/backups/`，本次备份路径记录于 `work/runtime/native/hybrid-backup-path.txt`。不要删除数据库数据目录、切换备份或整个 `work/runtime/`。
-
-本机 `repos/happyro-server/conf/import/packet_conf.txt` 配置 `allow: 127.0.0.1`，用于上述仅监听回环地址的原生环境。Gateway 转发的玩家连接和服务间连接都来自该地址；2026-09-25 曾被角色服务的连接频率检查标记为 DDoS，表现为登录成功后连接角色服务立即断开、地图服务反复重连。增加本机地址允许规则并重启 login／char／map 后恢复。运行配置位于 Git 忽略目录，其他机器部署时需按自身入口配置；进程显示 running 不代表服务间连接已恢复，应继续确认 char 收到地图注册并实际登录游戏。
-
-账号和角色沿用 Docker 库，当前本地验收使用已有 `happyro` 账号；旧原生库的 `happytest` / `MobileDebug` 仅保留在旧数据和备份中，未合并到当前库。进程日志在 `work/runtime/native/logs/`。
-
-Admin 前端入口为 `http://<Mac局域网IP>:8000`，Laravel 仅监听 `127.0.0.1:18081`，由前端代理 API 和认证请求。Mac 使用 `local.happyro.admin-frontend` 和 `local.happyro.admin-backend` 两个 launchd 服务管理，对应仓库 Linux 部署中的 systemd 单元。后台沿用 Docker 中的 `happyro_admin` 数据库和原有管理员账号，并同步原 Docker 应用的加密密钥；它与游戏账号分开存储。数据库凭据、后台账号和 Game Control 密钥仍保存在上述本机凭据文件中。
-
-Admin 已导入物品、魔物和 NPC 图鉴，图片指向本次替换的运行资源。Game Control 经回环地址上的 web-server 访问 map-server Socket，并使用独立密钥认证。后台日志为 `admin-backend.log`、`admin-frontend.log`。游戏内冒险工具也通过 Gateway 的默认 `127.0.0.1:18081` 代理接入该后台。
+凭据和验收账号从本机私有配置读取，不写入文档或诊断日志，不提交 `work/runtime/`。进程处于 running 状态不代表服务互联正常，应核对地图注册、Gateway 代理和实际登录结果；首次配置及启停命令统一见服务手册。
 
 ## 如何复现与分析
 
@@ -97,14 +81,12 @@ tail -f work/diagnostics/client/YYYY-MM-DD/<会话UUID>.jsonl
 
 ## 资源来源
 
-本机运行资源已替换为用户提供的 `happyro-resources-20260924.tar.gz`，旧的三个运行资源目录已删除。归档 SHA-256 为 `ab4cffdbdb40e34ae096cca139d9a1398f0cf696fc77a184ceca00aa400523dc`。下载目录没有配套校验文件；已记录归档哈希，并逐文件比较解包内容、暂存文件和安装目标的 SHA-256。
-
-完整的 37,305 个文件来源和目标哈希在 `work/diagnostics/resource-import/20260924-installed.json`。官方源材料 `inputs/official/` 未修改。
+复现前核对当前运行资源及构建标识，记录所用归档与安装目标的哈希。资源准备见 [inputs/README.md](../../inputs/README.md)，官方源材料 `inputs/official/` 不可修改。导入清单和逐文件校验结果保存在 `work/`，旧机器的导入记录不能证明当前资源一致。
 
 ## 移动端冒险工具验收
 
-在手机游戏菜单打开「冒险工具」，或点击右上角小地图直接进入地图页。顶部标签按账号权限展示地图、魔物、NPC、物品、角色属性和游戏设置；横屏角色页同时显示职业列表和当前角色属性；窄屏通过「选择职业」进入职业列表。图鉴采用横屏列表与详情左右双栏、窄屏列表／详情分屏，返回列表保留查询与滚动位置。
+在手机游戏菜单打开「冒险工具」，或点击右上角小地图直接进入地图页。顶部标签按账号权限展示地图、魔物、NPC、物品、角色属性和游戏设置；布局按实际内容宽度调整，不以设备名称或横竖屏单独决定分栏；空间充足时保留左右布局，窄屏使用对应的紧凑布局与列表／详情切换。返回列表保留查询与滚动位置，具体规则见[移动端 UI 开发与验收](mobile-ui.md)。
 
-验收需覆盖小横屏与竖屏：真实小地图与蓝色方向箭头、地图选点、NPC 标记、寻路及传送（包括计算中防重复启动、停止后即时停步、切换 NPC 后启动新路线）；魔物筛选、属性、掉落、分布及召唤；NPC 查询和位置；物品筛选、分页、发放数量及 Zeny 输入；角色等级、点数、职业、恢复、基础与四转素质、技能操作；经验、15 项掉落倍率、导航和召唤规则。高影响操作保留确认，权限不足时隐藏分类或禁用操作，并展示服务端错误。
+验收需覆盖手机横竖屏、平板竖屏及分屏：真实小地图与蓝色方向箭头、地图选点、NPC 标记、寻路及传送（包括计算中防重复启动、停止后即时停步、切换 NPC 后启动新路线）；魔物筛选、属性、掉落、分布及召唤；NPC 查询和位置；物品筛选、分页、发放数量及 Zeny 输入；角色等级、点数、职业、恢复、基础与四转素质、技能操作；经验、15 项掉落倍率、导航和召唤规则。高影响操作保留确认，权限不足时隐藏分类或禁用操作，并展示服务端错误。
 
 确认底部按钮完整可触摸、详情与长表单可以滚动，键盘弹出时保持内容布局稳定并按浏览器可视区域裁切；关闭、切图及断线后应释放输入锁与订阅，迟到的请求不得重新打开窗口。桌面冒险工具仍使用原窗口，两端共用功能注册与操作服务。自动化验收可拦截修改请求核对参数与错误反馈，避免更改实际角色及全服设置。

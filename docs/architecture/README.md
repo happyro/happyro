@@ -12,3 +12,4 @@
 - [本地化运行时](localization-runtime.md)：中文资源如何进入客户端，以及静态数据与服务器权威的边界。
 - [世界图鉴与导航](world-catalog-navigation.md)：NPC、魔物、地图的统一实体模型和双入口职责。
 - [客户端静态运行数据与 Lua 生命周期](client-static-runtime-data.md)：技能与导航静态生成、按需加载边界、AI Lua 生命周期。
+- [自定义内容](customization.md)：NPC、数据库及资源覆盖与目录刷新、备份边界。
