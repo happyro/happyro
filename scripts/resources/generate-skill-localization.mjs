@@ -419,7 +419,7 @@ const additionalNames = {
 function formatProse(value) {
 	return value
 		.split(/\n+/)
-		.flatMap(line => line.split(/(?<=[。；！？])(?![”’])/u))
+		.flatMap(line => line.split(/(?<=[。；！？])(?![」’])/u))
 		.map(line => line.trim())
 		.filter(Boolean)
 		.join('\n');
