@@ -5,6 +5,7 @@
 | 资料 | 文档 |
 | --- | --- |
 | 物品 | [items.md](items.md) |
+| 装备可用范围与实机抽样 | [equipment-availability.md](equipment-availability.md) |
 | 魔物 | [monsters.md](monsters.md) |
 | 地图 | [maps.md](maps.md) |
 | NPC | [npcs.md](npcs.md) |

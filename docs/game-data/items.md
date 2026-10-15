@@ -38,6 +38,8 @@ python3 tools/resources/catalog/generate_item_name_overrides.py --write
 - 客户端背包、装备名、卡片前缀、冒险工具物品详情。
 - Gateway 通过覆盖或本地 `data/` 提供 TXT；LUB 来自运行目录。
 
+冒险工具的物品查询限定在当前客户端目录收录范围，服务端有装备定义不代表图鉴中可见或已完成效果验收。范围说明与 2026-10-16 实机抽样结果见[装备可用范围与实机抽样](equipment-availability.md)。
+
 ## 校验规则
 
 - 客户端 ID 必须全部出现在服务端快照。
