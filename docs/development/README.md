@@ -11,3 +11,4 @@
 - [三端游戏展示图](multiplatform-images.md)：截图要求、设备构图、合成规格与发布素材使用方式。
 - [四转开发与维护](fourth-jobs/README.md)：实现、使用、资源和回归边界。
 - [移动端 UI 开发与验收](mobile-ui.md)：客户端规范入口和跨端待核验范围。
+- [同职业分支骑乘外观方案](riding-appearance.md)：待实现的旧坐骑外观选择、资源核验与同步验收边界。
