@@ -83,6 +83,7 @@ if [[ "$command_name" == "build" ]]; then
 	cd "$CLIENT_REPO"
 	[[ -d node_modules ]] || npm install
 	python3 "$PROJECT_ROOT/tools/resources/catalog/generate-item-services.py" generate --no-color
+	php "$PROJECT_ROOT/tools/resources/catalog/generate-item-subtypes.php" generate --no-color
 	sync_npc_catalog
 	npm run build:pwa
 fi

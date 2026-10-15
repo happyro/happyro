@@ -8,5 +8,6 @@
 - [测试与构建](testing.md)：doctor、客户端、网关和服务端检查。
 - [Git 工作流](git-workflow.md)：提交格式、changelog 和推送边界。
 - [文档维护](documentation.md)：分类、权威来源、链接和验证规则。
+- [三端游戏展示图](multiplatform-images.md)：截图要求、设备构图、合成规格与发布素材使用方式。
 - [四转开发与维护](fourth-jobs/README.md)：实现、使用、资源和回归边界。
 - [移动端 UI 开发与验收](mobile-ui.md)：客户端规范入口和跨端待核验范围。

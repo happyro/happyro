@@ -11,6 +11,7 @@
 
 ```bash
 python3 tools/resources/catalog/main.py items server
+php tools/resources/catalog/generate-item-subtypes.php generate --no-color
 python3 tools/resources/catalog/main.py items client
 python3 tools/resources/catalog/main.py items images
 python3 tools/resources/catalog/generate_item_name_overrides.py --write
@@ -18,12 +19,15 @@ python3 tools/resources/catalog/generate_item_name_overrides.py --write
 
 `items client` 读取 `localization/sources/kro-20211105/merged/files/lub/itemInfo_true.json`、GRF `manifest.json` 与后台 Renewal 快照。客户端物品 ID 必须全部命中服务端快照，中文、英文名称和说明不能为空。
 
+背包与仓库子类通过 `generate-item-subtypes.php` 生成，直接复用 Admin 的 `ItemSubtype` 分类逻辑与 Renewal 快照，覆盖武器、防具、卡片（含附魔）。更新物品快照或分类规则后需重新生成；运行需要 PHP CLI，`scripts/client/refresh-client.sh build` 已包含该步骤。映射随 PWA 构建，不在打开菜单时联网查询。
+
 ## 输出位置
 
 | 产物 | 路径 |
 | --- | --- |
 | 服务端双语快照 | `repos/happyro-admin/backend/resources/game-data/items/renewal.json` 等 |
 | 客户端快照与资源映射 | 同目录 `client-kro-20211105.json`、`item-assets.json`、`descriptions.json` |
+| 子类映射 | `repos/happyro-client/src/DB/Items/ItemSubtypes.generated.json` |
 | 名称差异补丁 | `repos/happyro-client/src/DB/Items/ItemNameOverrides.generated.js` |
 | 卡片前缀 | `localization/client/data/cardprefixnametable.txt` |
 | PNG 图标 / 详情 | `work/game-data/items/kro-20211105/` |
@@ -45,3 +49,5 @@ python3 tools/resources/catalog/generate_item_name_overrides.py --write
 ## 附魔交互约束
 
 提交前按当前装备身份重新校验费用和材料；请求等待期间锁定装备、方式、重复提交和关闭操作，结果处理后解除锁定。服务端可能静默拒绝无效请求，不能依赖必有失败回包。客户端回归见 `tests/ui/DesktopEnchant.test.js`、`MobileEnchant.test.js`、`EquipmentSockets.test.js`。目录生成只同步规范数据，不修改服务端费用、成功率或支持装备范围。
+
+卡片镶嵌的装备类型与职业筛选复用上述生成目录中的装备子类及 `Jobs` 规则；`equipment` 字段由同一生成命令更新，运行时不请求后台接口。
