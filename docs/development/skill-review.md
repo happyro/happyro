@@ -14,9 +14,9 @@
 | 6 | 商人／铁匠／机甲神匠／机甲大师 | 89 个技能代码审查完成，修复并完成自动验证 |
 | 7 | 魔法师／贤者／妖术师／元素大师 | 93 个技能代码审查完成，修复并完成自动验证 |
 | 8 | 商人／炼金术师／基因学者／生物学者 | 71 个主技能及 58 个生命体技能代码审查完成，修复并完成自动验证 |
-| 9 | 服事／武僧／修罗／审判官 | 待审查 |
-| 10 | 盗贼／流氓／魅影追踪者／深渊追踪者 | 待审查 |
-| 11 | 弓箭手／诗人、舞娘／宫廷乐师、漫游舞者／吟游诗人、咏唱舞姬 | 待审查 |
+| 9 | 服事／武僧／修罗／审判官 | 78 个主技能代码审查完成，修复并完成自动验证 |
+| 10 | 盗贼／流氓／魅影追踪者／深渊追踪者 | 74 个主技能代码审查完成，含遗留涂鸦功能缺口 |
+| 11 | 弓箭手／诗人、舞娘／宫廷乐师、漫游舞者／吟游诗人、咏唱舞姬 | 85 个主技能代码审查完成，修复并完成自动验证 |
 
 ## 1. 猎人线
 
@@ -528,6 +528,10 @@
 - 魔法诱饵先验证所选属性，再扣除一次属性石；修复原有连续两次扣除和非法属性选择先扣材料的问题。
 - 斧踏、冲击震荡的整套启动动画只在成功通知播放，保留各目标命中动画，避免范围命中重复叠加。
 
+### 共享路径复核补充
+
+岩浆喷发的地面周期分支在职业／魔物分流之前还无条件计算了一次机匠版本伤害，导致机匠重复命中、魔物混入额外公式。删除分流之前的重复调用，保留两种版本各自一次周期伤害。扩展 `tests/mechanic-resources.test.mjs` 执行实际分支，分别断言职业／魔物的调用次数和技能 ID；修复前断言失败，修复后 UBSan 回归通过。
+
 ### 验证与边界
 
 - 生产 C++ 代码提取回归通过 UBSan：五级修复及实时 HP／存档不一致，非机甲／非玩家拒绝；普通／10 亿／UINT_MAX SP 与多等级自爆；普通及极高属性 ABR／无限型；三种手推车容量、空载／半载／满载和十级终结；四种属性石、单颗／多颗、非法属性、缺材料及扣除失败。
@@ -922,3 +926,324 @@
 | 8057 | `MH_HEILIGE_PFERD` | 主动：工厂、对应实现与状态／地面／伤害分支 |
 | 8058 | `MH_GOLDENE_TONE` | 主动：工厂、对应实现与状态／地面／伤害分支 |
 | 8059 | `MH_BLAZING_LAVA` | 被动：属性计算与技能前置 |
+
+## 9. 武僧／修罗线
+
+### 范围与依据
+
+从 Acolyte、Acolyte_High、Monk、Champion、Sura、Sura_T、Inquisitor 提取 78 个去重主技能。全部 ID、名称和等级与客户端一致。继承服事路径沿用第 3 线；本线独立实现、状态技能、被动、气弹计时器／消耗、连招开启／结束、延迟攻击、印记和阶段要求逐项核对。另检查新月肘击派生反击及闪光连击三个定时阶段。
+
+客户端检查技能动作、球体／位移／束缚通知、效果配置与运行时 BSON：本机 BSON 未提供这批审判官基础技能的效果映射，因此不能将自动加载视为已有表现。新增显式原生效果使用成功／命中／地面阶段，保持目标与施法者区分。
+
+### 明确问题与修复
+
+- 地狱之门（`SR_GATEOFHELL`）SP 伤害系数原本在整数除法后赋给浮点变量，1–4 级和 6–9 级丢失中间加成。改为宽整数百分比计算，普通施放和连招均保留每级 20% 的增量。
+- 拳套箭的延迟击退方向原本使用全局变量，多人交错施放、移动或前一击清空后会互相干扰。方向随各次定时攻击保存，通过攻击入口传递到击退处理；撞墙追加保留不再击退的规则。
+- 诅咒圆环目标状态结束原本只在最后一个目标解除时通知客户端。改为每个目标结束都解除束缚表现，施法者消失也能清理；群体释放共用这个路径，不重复通知。
+- 旋风腿由受击者逐次旋转改为施法者成功施放时旋转一次。虎炮、狂暴爆破、狮子吼的启动动画与逐目标命中分离；虎炮普通施放和闪光连击共用一次成功通知。
+- 补齐大缠崩坠、地狱之门、虎炮、狂暴爆破、狮子吼及审判官信念／印记／阶段攻击等可用原生 STR；雷光弹使用明确地面位置，避免每目标重复播放地面音效。
+
+### 验证与限制
+
+- 服务端生产 C++ 提取回归通过 UBSan：地狱之门十级、普通／连招与极高 SP；两人反向交错施放、移动、撞墙追加；诅咒圆环逐个解除／施法者消失；虎炮普通／连招和逐目标调用。
+- 21 项客户端测试通过，覆盖施法者／受击者归属、范围启动不重复、阶段攻击目标、雷光弹地面坐标、一次性效果固定位置及既有四转效果。
+- 48 个 STR、663 个关联资源通过 Gateway 读取与结构检查，客户端 ESLint 通过；完整 PWA、map-server 和文档构建在提交前核对。
+- 未重启地图服务，没有宣称逐技能真人战斗、人工听音或全部官方效果已还原。部分旧技能仍只有动作／音效／状态图标，本轮不以无关动画代替。
+- 保留上游公式的不确定项，包括大缠崩坠等 STR／AGI 系数及新技能未知 POW 系数。Power Velocity 现有实现最多补到五气弹并清空施法者，描述为转移全部；高于五气弹时的产品规则需要单独确认，本轮未据文案擅改上限或消耗。
+
+### 逐技能记录
+
+| ID | 技能 | 主要实现 | 核验内容 |
+| --- | --- | --- | --- |
+| 22 | `AL_DP` | `shared/passive` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 23 | `AL_DEMONBANE` | `shared/passive` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 24 | `AL_RUWACH` | `ruwach.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 25 | `AL_PNEUMA` | `pneuma.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 26 | `AL_TELEPORT` | `teleport.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 27 | `AL_WARP` | `warpportal.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 28 | `AL_HEAL` | `heal.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 29 | `AL_INCAGI` | `incagi.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 30 | `AL_DECAGI` | `decagi.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 31 | `AL_HOLYWATER` | `holywater.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 32 | `AL_CRUCIS` | `crucis.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 33 | `AL_ANGELUS` | `angelus.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 34 | `AL_BLESSING` | `blessing.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 35 | `AL_CURE` | `cure.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 156 | `AL_HOLYLIGHT` | `holylight.cpp` | 沿用第 3 线服事继承审查；目标、资源、恢复／增益和通用窗口 |
+| 259 | `MO_IRONHAND` | `shared/passive` | 空手／拳套武器类型与攻击被动加成 |
+| 260 | `MO_SPIRITSRECOVERY` | `shared/passive` | 坐下 HP／SP 恢复、百分比与恢复字段边界 |
+| 261 | `MO_CALLSPIRITS` | `summonspiritsphere.cpp` | 气弹数量／计时器、潜龙升天上限与实体通知 |
+| 262 | `MO_ABSORBSPIRITS` | `absorbspiritsphere.cpp` | 自身／敌方气弹与灵符、枪手排除、魔物成功率与 SP 回复 |
+| 263 | `MO_TRIPLEATTACK` | `ragingtrifectablow.cpp` | 普攻触发率、倍率、连招目标与后续技能窗口 |
+| 264 | `MO_BODYRELOCATION` | `snap.cpp` | 可达位置、位移通知、爆气免气弹与阿修罗冷却 |
+| 265 | `MO_DODGE` | `shared/passive` | 回避被动加成与实际字段钳制 |
+| 266 | `MO_INVESTIGATE` | `occultimpaction.cpp` | 气弹消耗、真剑百破加成、延迟伤害与状态解除 |
+| 267 | `MO_FINGEROFFENSIVE` | `throwspiritsphere.cpp` | 气弹消耗、真剑百破加成、延迟伤害与状态解除 |
+| 268 | `MO_STEELBODY` | `StatusSkillImpl` | 减伤、移动／攻击限制、状态初始化与结束 |
+| 269 | `MO_BLADESTOP` | `StatusSkillImpl` | 双侧状态关联、攻击触发、Boss 持续时间与双方解除 |
+| 270 | `MO_EXPLOSIONSPIRITS` | `StatusSkillImpl` | 暴击增益、自然 SP 恢复限制与灵魂链接例外 |
+| 271 | `MO_EXTREMITYFIST` | `asurastrike.cpp` | 爆气／连招／气弹条件、SP 清空、伤害上限及失败移动／消耗 |
+| 272 | `MO_CHAINCOMBO` | `ragingquadrupleblow.cpp` | 前置连招、气弹／SP、拳套和点穴加成、技能窗口与追加控制 |
+| 273 | `MO_COMBOFINISH` | `ragingthrust.cpp` | 前置连招、气弹／SP、拳套和点穴加成、技能窗口与追加控制 |
+| 370 | `CH_PALMSTRIKE` | `ragingpalmstrike.cpp` | 延迟命中、隐匿与击退分支、伤害倍率 |
+| 371 | `CH_TIGERFIST` | `glacierfist.cpp` | 前置连招、气弹／SP、拳套和点穴加成、技能窗口与追加控制 |
+| 372 | `CH_CHAINCRUSH` | `chaincrushcombo.cpp` | 前置连招、气弹／SP、拳套和点穴加成、技能窗口与追加控制 |
+| 401 | `CH_SOULCOLLECT` | `zen.cpp` | 气弹数量／计时器、潜龙升天上限与实体通知 |
+| 1015 | `MO_KITRANSLATION` | `kitranslation.cpp` | 队伍／目标职业和气弹上限、成功时手动转移数量 |
+| 1016 | `MO_BALKYOUNG` | `kiexplosion.cpp` | 主目标伤害、周边击退／眩晕和范围标记 |
+| 2326 | `SR_DRAGONCOMBO` | `dragoncombo.cpp` | 连招目标、追加状态、后续虎炮／地狱之门窗口及倍率 |
+| 2327 | `SR_SKYNETBLOW` | `skynetblow.cpp` | 自身范围、逐目标伤害／控制、一次性启动与逐目标命中；旋风腿旋转施法者 |
+| 2328 | `SR_EARTHSHAKER` | `earthshaker.cpp` | 隐匿目标倍率、解除、Boss／守护者条件和范围动作 |
+| 2329 | `SR_FALLENEMPIRE` | `fallenempire.cpp` | 连招目标、追加状态、后续虎炮／地狱之门窗口及倍率 |
+| 2330 | `SR_TIGERCANNON` | `tigercannon.cpp` | HP／SP 比例、连招倍率、范围；普通施放和闪光连击共用一次启动通知 |
+| 2332 | `SR_RAMPAGEBLASTER` | `rampageblaster.cpp` | 自身范围、逐目标伤害／控制、一次性启动与逐目标命中；旋风腿旋转施法者 |
+| 2333 | `SR_CRESCENTELBOW` | `StatusSkillImpl` | 受击反击概率、上限、派生通知、自损与解除 |
+| 2334 | `SR_CURSEDCIRCLE` | `cursedcircle.cpp` | 气弹／目标上限、Boss 排除、双侧状态；修复逐目标解除通知 |
+| 2335 | `SR_LIGHTNINGWALK` | `StatusSkillImpl` | 远程非魔法触发、移动位置、方向与消耗状态 |
+| 2336 | `SR_KNUCKLEARROW` | `knucklearrow.cpp` | 冲刺、延迟击退与撞墙追加；改为每次施放独立保存方向 |
+| 2337 | `SR_WINDMILL` | `windmill.cpp` | 自身范围、逐目标伤害／控制、一次性启动与逐目标命中；旋风腿旋转施法者 |
+| 2338 | `SR_RAISINGDRAGON` | `raisingdragon.cpp` | HP／SP 加成、气弹扩容、低 HP 和到期恢复上限 |
+| 2340 | `SR_ASSIMILATEPOWER` | `assimilatepower.cpp` | 自身与对战目标、枪手排除、气弹／灵符吸收及百分比 SP 回复 |
+| 2341 | `SR_POWERVELOCITY` | `powervelocity.cpp` | 要求气弹、目标数量上限与转移；保留现有规则，文案与高气弹数量语义待另行确认 |
+| 2343 | `SR_GATEOFHELL` | `gateofhell.cpp` | 连招条件、额外 HP／SP 伤害；修复逐等级 SP 加成整数截断 |
+| 2344 | `SR_GENTLETOUCH_QUIET` | `gentletouchquiet.cpp` | 目标、沉默／净化、战场治疗限制与恢复量 |
+| 2345 | `SR_GENTLETOUCH_CURE` | `gentletouchcure.cpp` | 目标、沉默／净化、战场治疗限制与恢复量 |
+| 2346 | `SR_GENTLETOUCH_ENERGYGAIN` | `StatusSkillImpl` | 攻击／受击气弹、攻速／生命恢复、点穴互斥与伤害联动 |
+| 2347 | `SR_GENTLETOUCH_CHANGE` | `StatusSkillImpl` | 攻击／受击气弹、攻速／生命恢复、点穴互斥与伤害联动 |
+| 2348 | `SR_GENTLETOUCH_REVITALIZE` | `StatusSkillImpl` | 攻击／受击气弹、攻速／生命恢复、点穴互斥与伤害联动 |
+| 2517 | `SR_HOWLINGOFLION` | `howlingoflion.cpp` | 自身范围、逐目标伤害／控制、一次性启动与逐目标命中；旋风腿旋转施法者 |
+| 2518 | `SR_RIDEINLIGHTNING` | `rideinlightening.cpp` | 气弹、地面坐标、多段与范围倍率；地面通知播放一次 |
+| 5009 | `SR_FLASHCOMBO` | `flashcombo.cpp` | 三阶段定时器、目标距离／消失、已学等级、动作限制与虎炮联动 |
+| 5014 | `ALL_FULL_THROTTLE` | `shared/passive` | 沿用共享恢复、属性增益、周期消耗及结束副作用审查 |
+| 5238 | `IQ_POWERFUL_FAITH` | `StatusSkillImpl` | ATK／P.ATK、HP／RES、攻速／命中状态与三种增益互斥 |
+| 5239 | `IQ_FIRM_FAITH` | `StatusSkillImpl` | ATK／P.ATK、HP／RES、攻速／命中状态与三种增益互斥 |
+| 5240 | `IQ_WILL_OF_FAITH` | `shared/passive` | 拳套要求、不死／恶魔种族攻击与抗性被动 |
+| 5241 | `IQ_OLEUM_SANCTUM` | `oleumsanctum.cpp` | 自身范围、圣油／强化状态、POW／种族倍率及启动／命中原生效果 |
+| 5242 | `IQ_SINCERE_FAITH` | `StatusSkillImpl` | ATK／P.ATK、HP／RES、攻速／命中状态与三种增益互斥 |
+| 5243 | `IQ_MASSIVE_F_BLASTER` | `massiveflameblaster.cpp` | 自身范围、圣油／强化状态、POW／种族倍率及启动／命中原生效果 |
+| 5244 | `IQ_EXPOSION_BLASTER` | `explosionblaster.cpp` | 自身范围、圣油／强化状态、POW／种族倍率及启动／命中原生效果 |
+| 5245 | `IQ_FIRST_BRAND` | `firstbrand.cpp` | 目标印记、阶段状态前置、更新／互斥和范围；目标启动与命中分离 |
+| 5246 | `IQ_FIRST_FAITH_POWER` | `StatusSkillImpl` | 阶段增益互斥、后续技能解锁、气弹免耗联动与启动动画 |
+| 5247 | `IQ_JUDGE` | `StatusSkillImpl` | 阶段增益互斥、后续技能解锁、气弹免耗联动与启动动画 |
+| 5248 | `IQ_SECOND_FLAME` | `secondflame.cpp` | 目标印记、阶段状态前置、更新／互斥和范围；目标启动与命中分离 |
+| 5249 | `IQ_SECOND_FAITH` | `secondfaith.cpp` | 目标印记、阶段状态前置、更新／互斥和范围；目标启动与命中分离 |
+| 5250 | `IQ_SECOND_JUDGEMENT` | `secondjudgement.cpp` | 目标印记、阶段状态前置、更新／互斥和范围；目标启动与命中分离 |
+| 5251 | `IQ_THIRD_PUNISH` | `thirdpunish.cpp` | 第二印记与阶段条件、气弹补充／多段、HP／POW 倍率、印记结束与范围动画 |
+| 5252 | `IQ_THIRD_FLAME_BOMB` | `thirdflamebomb.cpp` | 第二印记与阶段条件、气弹补充／多段、HP／POW 倍率、印记结束与范围动画 |
+| 5253 | `IQ_THIRD_CONSECRATION` | `thirdconsecration.cpp` | 第二印记与阶段条件、气弹补充／多段、HP／POW 倍率、印记结束与范围动画 |
+| 5254 | `IQ_THIRD_EXOR_FLAME` | `StatusSkillImpl` | 阶段增益互斥、后续技能解锁、气弹免耗联动与启动动画 |
+| 6519 | `IQ_BLAZING_FLAME_BLAST` | `blazingflameblast.cpp` | 目标命中、强化状态倍率、AP／POW 与原生效果阶段 |
+
+## 10. 流氓／魅影追踪者线
+
+### 范围与依据
+
+从 Thief、Thief_High、Rogue、Stalker、Shadow_Chaser、Shadow_Chaser_T、Abyss_Chaser 提取 74 项主技能，全部 ID／名称／等级与客户端一致。逐项检查技能定义、工厂分派及 57 个相关实现文件；继承能力结合先前盗贼、剑士、弓箭手路径核对。共享检查包括复制／保持、自动暗影法术列表及提交、脱装保护、禁锢双侧状态、隐匿周期、面具状态、地面陷阱与深渊球生命周期。派生连锁反应射击、来自深渊与深渊火焰也纳入。
+
+### 明确问题与修复
+
+- 近身禁锢的目标结束时错误递减施法者状态的技能等级（val1），而非目标计数（val2），导致第一个目标解除就释放全部目标。改为递减正确计数，最后一个目标结束才解除施法者。
+- 暗影形态把敌对判定当布尔值使用，漏掉返回 -1 的非敌对目标；改为仅允许正值，关系失效后停止转伤并清理关联。
+- 隐身术高 SP 周期消耗先在 32 位相乘，可能回绕；改为宽整数百分比计算。
+- 自动暗影法术选择提交重新检查待选状态、所学等级、存活和交易状态；所有路径先清除等待用的停止状态，取消不弹失败，拒绝失效窗口继续创建增益。
+- 深渊匕首启动动画改为成功通知播放一次，不随每个受击者重复。欧米伽深渊打击大范围动画使用选定地面坐标，不逐目标重复；不幸冲击启动效果放在施法者，保留目标命中。
+
+### 验证与限制
+
+- `tests/rogue-state.test.mjs` 执行提取的实际 C++ 选择／解除／消耗路径，覆盖 1–10 级、取消、交易、死亡、重置／复制失效、多个禁锢目标、三种敌对结果和 UINT32_MAX SP，UBSan 通过。
+- FourthJobEffects 与 MonkEffectRouting 共 22 项回归通过；深渊追踪者 38 个 STR、592 个贴图依赖均可从 Gateway 获取且结构有效。
+- 完整 map-server、PWA（`--all`）和文档构建；未重启服务、未逐技能实战或人工听音。
+- 遗留涂鸦系列不是完整可用功能：`RG_FLAGGRAFFITI` 缺专属服务端实现，涂鸦客户端没有完整文字输入／地面显示。本轮记录缺口，不自行发明城旗规则；不能据“已审查”宣称这些技能已补完。
+- 部分旧技能只有状态／动作或不完整程序特效；背刺命中率、致命威胁 AGI 与深渊自动触发率仍有上游规则 TODO，未推测修改平衡。
+
+### 逐技能清单
+
+| ID | 技能 | 实现入口 | 核验重点 |
+| --- | --- | --- | --- |
+| 2 | `SM_SWORD` | `passive` | 沿用剑士／猎人继承路径；武器、射程、箭矢与陷阱目标 |
+| 44 | `AC_VULTURE` | `passive` | 沿用剑士／猎人继承路径；武器、射程、箭矢与陷阱目标 |
+| 46 | `AC_DOUBLE` | `passive` | 沿用剑士／猎人继承路径；武器、射程、箭矢与陷阱目标 |
+| 48 | `TF_DOUBLE` | `doubleattack.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 49 | `TF_MISS` | `passive` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 50 | `TF_STEAL` | `steal.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 51 | `TF_HIDING` | `hiding.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 52 | `TF_POISON` | `envenom.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 53 | `TF_DETOXIFY` | `detoxify.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 124 | `HT_REMOVETRAP` | `passive` | 沿用剑士／猎人继承路径；武器、射程、箭矢与陷阱目标 |
+| 149 | `TF_SPRINKLESAND` | `sandattack.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 150 | `TF_BACKSLIDING` | `backslide.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 151 | `TF_PICKSTONE` | `findstone.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 152 | `TF_THROWSTONE` | `stonefling.cpp` | 沿用刺客线盗贼审查；本次重新核对技能定义与继承入口 |
+| 210 | `RG_SNATCHER` | `passive` | 普通攻击偷窃、商店折扣、同坐人数或隐匿移动的共享被动路径 |
+| 211 | `RG_STEALCOIN` | `mug.cpp` | 目标必须为未被抢劫的非免疫魔物；成功率、收益和同步 |
+| 212 | `RG_BACKSTAP` | `backstab.cpp` | 贴身位置、刀／弓倍率、方向、隐匿解除与追加眩晕 |
+| 213 | `RG_TUNNELDRIVE` | `passive` | 普通攻击偷窃、商店折扣、同坐人数或隐匿移动的共享被动路径 |
+| 214 | `RG_RAID` | `sightlessmind.cpp` | 隐匿前置、范围标记、目标状态和施法后解除隐匿 |
+| 215 | `RG_STRIPWEAPON` | `divestweapon.cpp` | 脱装概率、时间、装备位置、化学保护／影装保护与失败通知 |
+| 216 | `RG_STRIPSHIELD` | `divestshield.cpp` | 脱装概率、时间、装备位置、化学保护／影装保护与失败通知 |
+| 217 | `RG_STRIPARMOR` | `divestarmor.cpp` | 脱装概率、时间、装备位置、化学保护／影装保护与失败通知 |
+| 218 | `RG_STRIPHELM` | `divesthelm.cpp` | 脱装概率、时间、装备位置、化学保护／影装保护与失败通知 |
+| 219 | `RG_INTIMIDATE` | `snatch.cpp` | 延迟带走、目标消失／死亡、地图传送限制和就近空格 |
+| 220 | `RG_GRAFFITI` | `scribble.cpp` | 涂鸦地面单位与文字存储、已有涂鸦限制和清理；客户端文字入口／显示仍未完整支持 |
+| 221 | `RG_FLAGGRAFFITI` | `passive` | 遗留技能定义存在，但没有服务端专属施放实现；记录限制，不推测城旗涂改规则 |
+| 222 | `RG_CLEANER` | `remover.cpp` | 涂鸦地面单位与文字存储、已有涂鸦限制和清理；客户端文字入口／显示仍未完整支持 |
+| 223 | `RG_GANGSTER` | `passive` | 普通攻击偷窃、商店折扣、同坐人数或隐匿移动的共享被动路径 |
+| 224 | `RG_COMPULSION` | `passive` | 普通攻击偷窃、商店折扣、同坐人数或隐匿移动的共享被动路径 |
+| 225 | `RG_PLAGIARISM` | `passive` | 复制资格、状态开关、等级上限、双槽去重、替换和持久化 |
+| 389 | `ST_CHASEWALK` | `stealth.cpp` | 关闭免耗、定时 SP、行走／STR 增益及灵魂链接 |
+| 390 | `ST_REJECTSWORD` | `counterinstinct.cpp` | 武器类型、反击概率、减伤与反击次数结束 |
+| 475 | `ST_PRESERVE` | `StatusSkillImpl` | 复制资格、状态开关、等级上限、双槽去重、替换和持久化 |
+| 476 | `ST_FULLSTRIP` | `divestall.cpp` | 脱装概率、时间、装备位置、化学保护／影装保护与失败通知 |
+| 1005 | `RG_CLOSECONFINE` | `closeconfine.cpp` | 目标与施法者关联、计数和解除；修复将等级误当目标数递减 |
+| 2284 | `SC_FATALMENACE` | `fatalmenace.cpp` | 范围／箭矢、刀额外命中、AGI／等级倍率及命中率 |
+| 2285 | `SC_REPRODUCE` | `reproduce.cpp` | 复制资格、状态开关、等级上限、双槽去重、替换和持久化 |
+| 2286 | `SC_AUTOSHADOWSPELL` | `autoshadowspell.cpp` | 复制技能列表、取消、交易／死亡／重置失效、触发等级与消费；补选择时校验及状态清理 |
+| 2287 | `SC_SHADOWFORM` | `shadowform.cpp` | 双侧关联、距离／地图／死亡、转伤计数；修复非敌对目标判定 |
+| 2288 | `SC_TRIANGLESHOT` | `triangleshot.cpp` | 范围／箭矢、刀额外命中、AGI／等级倍率及命中率 |
+| 2289 | `SC_BODYPAINT` | `bodypainting.cpp` | 范围显隐、解除状态、盲目和攻速减益 |
+| 2290 | `SC_INVISIBILITY` | `invisibility.cpp` | 开关、SP 周期和属性／攻速／暴击；修复大 SP 乘法回绕 |
+| 2291 | `SC_DEADLYINFECT` | `StatusSkillImpl` | 双方攻击触发、免疫和可传播状态、剩余计时复制 |
+| 2292 | `SC_ENERVATION` | `masqueradeenervation.cpp` | 材料、Boss 排除、状态重复、能力／负重抗性、气弹／随行解除与 SP 等对应效果 |
+| 2293 | `SC_GROOMY` | `masqueradegloomy.cpp` | 材料、Boss 排除、状态重复、能力／负重抗性、气弹／随行解除与 SP 等对应效果 |
+| 2294 | `SC_IGNORANCE` | `masqueradeignorance.cpp` | 材料、Boss 排除、状态重复、能力／负重抗性、气弹／随行解除与 SP 等对应效果 |
+| 2295 | `SC_LAZINESS` | `masqueradelaziness.cpp` | 材料、Boss 排除、状态重复、能力／负重抗性、气弹／随行解除与 SP 等对应效果 |
+| 2296 | `SC_UNLUCKY` | `masqueradeunlucky.cpp` | 材料、Boss 排除、状态重复、能力／负重抗性、气弹／随行解除与 SP 等对应效果 |
+| 2297 | `SC_WEAKNESS` | `masqueradeweakness.cpp` | 材料、Boss 排除、状态重复、能力／负重抗性、气弹／随行解除与 SP 等对应效果 |
+| 2298 | `SC_STRIPACCESSARY` | `stripaccessory.cpp` | 脱装概率、时间、装备位置、化学保护／影装保护与失败通知 |
+| 2299 | `SC_MANHOLE` | `manhole.cpp` | 材料、范围／数量、地面触发、地图限制、陷阱目标、状态与单位清理 |
+| 2300 | `SC_DIMENSIONDOOR` | `dimensiondoor.cpp` | 材料、范围／数量、地面触发、地图限制、陷阱目标、状态与单位清理 |
+| 2301 | `SC_CHAOSPANIC` | `chaospanic.cpp` | 材料、范围／数量、地面触发、地图限制、陷阱目标、状态与单位清理 |
+| 2302 | `SC_MAELSTROM` | `maelstrom.cpp` | 材料、范围／数量、地面触发、地图限制、陷阱目标、状态与单位清理 |
+| 2303 | `SC_BLOODYLUST` | `bloodylust.cpp` | 材料、范围／数量、地面触发、地图限制、陷阱目标、状态与单位清理 |
+| 2304 | `SC_FEINTBOMB` | `feintbomb.cpp` | 地面单位、后退、诱饵／定时爆炸或夹子；失败与材料条件 |
+| 5010 | `SC_ESCAPE` | `emergencyescape.cpp` | 地面单位、后退、诱饵／定时爆炸或夹子；失败与材料条件 |
+| 5014 | `ALL_FULL_THROTTLE` | `passive` | 沿用共享恢复、属性增益、周期消耗及结束副作用审查 |
+| 5311 | `ABC_DAGGER_AND_BOW_M` | `passive` | 武器类型、体型加成数组、双持和魔法修炼 |
+| 5312 | `ABC_MAGIC_SWORD_M` | `passive` | 武器类型、体型加成数组、双持和魔法修炼 |
+| 5313 | `ABC_STRIP_SHADOW` | `stripshadow.cpp` | 脱装概率、时间、装备位置、化学保护／影装保护与失败通知 |
+| 5314 | `ABC_ABYSS_DAGGER` | `abyssdagger.cpp` | 范围伤害与自身增益；启动动画从逐目标命中移至成功通知 |
+| 5315 | `ABC_UNLUCKY_RUSH` | `unluckyrush.cpp` | 突进、追加不幸、追击加成；启动效果明确位于施法者 |
+| 5316 | `ABC_CHAIN_REACTION_SHOT` | `chainreactionshot.cpp` | 主／派生范围、延迟参数、箭矢与追击倍率 |
+| 5317 | `ABC_FROM_THE_ABYSS` | `fromtheabyss.cpp` | 深渊球创建／补充／消耗／结束、普攻派生与自动地面技能联动 |
+| 5318 | `ABC_ABYSS_SLAYER` | `StatusSkillImpl` | AP、持续时间、P.ATK／S.MATK 与命中刷新 |
+| 5319 | `ABC_ABYSS_STRIKE` | `omegaabyssstrike.cpp` | 地面范围、种族与 SPL 倍率；启动动画固定于选定地面，保留命中特效 |
+| 5320 | `ABC_DEFT_STAB` | `deftstab.cpp` | 范围／多段、概率追加、武器／箭矢、AP 与 POW／CON 倍率 |
+| 5321 | `ABC_ABYSS_SQUARE` | `abysssquare.cpp` | 地面周期、施法者在范围内时双倍段数、魔法剑联动与实体生命周期 |
+| 5322 | `ABC_FRENZY_SHOT` | `frenzyshot.cpp` | 范围／多段、概率追加、武器／箭矢、AP 与 POW／CON 倍率 |
+| 6512 | `ABC_HIT_AND_SLIDING` | `hitandsliding.cpp` | 移动位置／失败、追击状态、多段／范围与 AP／属性倍率 |
+| 6513 | `ABC_CHASING_BREAK` | `chasingbreak.cpp` | 移动位置／失败、追击状态、多段／范围与 AP／属性倍率 |
+| 6514 | `ABC_CHASING_SHOT` | `chasingshot.cpp` | 移动位置／失败、追击状态、多段／范围与 AP／属性倍率 |
+| 6515 | `ABC_ABYSS_FLAME` | `abyssflame.cpp` | 自身范围与主目标派生、魔法剑修炼、SPL、通知和独立派生技能 ID |
+
+## 11. 诗人／舞娘双分支
+
+### 范围与依据
+
+包含 Archer、Archer_High、Bard、Dancer、Clown、Gypsy、Minstrel、Wanderer、Minstrel_T、Wanderer_T、Troubadour、Trouvere 的 85 个去重主技能，逐项核对定义、76 个相关实现文件、共享歌曲／搭档／状态逻辑，另覆盖残响旧派生、严重暴雨周期、玫瑰绽放派生和混音自然结束攻击。
+
+客户端有两处命名差异而非封包 ID 错误：服务端 `BA_FROSTJOKER` 对应客户端 `BA_FROSTJOKE`（318），`CG_SPECIALSINGER` 对应生成信息 `SKID_CG_SPECIALSINGER`（5068）。全部技能 ID／等级一致，没有为内部名称差异添加兼容别名。
+
+### 明确问题与修复
+
+- 音乐插曲、爪哇岛小夜曲、普隆德拉进行曲原本单人分支只加状态，不记录最后歌曲、也无成功通知。现在单人和组队共用记录／通知入口，保留各自目标范围和搭档增益，回顾可正确重唱。
+- 魔力之歌先给施法者恢复，再通过包含自己的队伍遍历恢复一次，造成组队施法者重复恢复。递归传播跳过已处理的施法者，队员各处理一次。
+- 魔力之歌启动恢复和沉睡周期恢复先用宽整数计算百分比，避免高 HP／SP 回绕。
+- 命运塔罗牌失败边界由 `>` 改为 `>=`，各等级恢复正确的 8% 增量；恶魔牌诅咒的成功率与技能等级参数原本传反，改为 100% 基础成功率并保留正常状态抗性。
+- 本机 BSON 无 TR 技能映射，补齐交响乐、克瓦希尔奏鸣曲、尼夫海姆安魂曲、普隆德拉进行曲与金属狂怒的现有原生 STR，分别接成功／命中阶段，不伪装持续光环。
+
+### 验证与限制
+
+- `tests/bard-song.test.mjs` 提取实际生产方法，验证三种歌曲单人／组队、搭档标志、记录与一次通知；魔力之歌每人一次，塔罗牌 0–99 随机全边界、恶魔诅咒参数，以及高 HP／SP，C++ UBSan 通过。
+- 四转资源与阶段 9 项测试通过；42 个 STR、420 个依赖贴图从 Gateway 校验，未发现缺失。
+- 完整客户端 `--all`、map-server、文档构建和 Gateway 产物检查。未重启服务、未逐技能多人实战或人工听音。
+- 上游仍有若干未定规则（课程加成、部分四转异常成功率、金属狂怒 SPL 等）；未凭猜测更改平衡。旧程序特效和连续舞台表现不代表全部与官方一致；人偶控制仍按现有 8 位属性片段上限，不扩展规则。
+
+### 逐技能清单
+
+| ID | 技能 | 实现入口 | 核验重点 |
+| --- | --- | --- | --- |
+| 43 | `AC_OWL` | `passive` | 继承弓箭手路径，沿用猎人线；本次核对箭矢、射程与动作入口 |
+| 44 | `AC_VULTURE` | `passive` | 继承弓箭手路径，沿用猎人线；本次核对箭矢、射程与动作入口 |
+| 45 | `AC_CONCENTRATION` | `concentration.cpp` | 继承弓箭手路径，沿用猎人线；本次核对箭矢、射程与动作入口 |
+| 46 | `AC_DOUBLE` | `doublestrafe.cpp` | 继承弓箭手路径，沿用猎人线；本次核对箭矢、射程与动作入口 |
+| 47 | `AC_SHOWER` | `arrowshower.cpp` | 继承弓箭手路径，沿用猎人线；本次核对箭矢、射程与动作入口 |
+| 147 | `AC_MAKINGARROW` | `makingarrow.cpp` | 继承弓箭手路径，沿用猎人线；本次核对箭矢、射程与动作入口 |
+| 148 | `AC_CHARGEARROW` | `chargearrow.cpp` | 继承弓箭手路径，沿用猎人线；本次核对箭矢、射程与动作入口 |
+| 304 | `BD_ADAPTATION` | `amp.cpp` | Renewal 增益／重演入口、上次歌曲、已学技能、SP 折扣与施放条件 |
+| 305 | `BD_ENCORE` | `encore.cpp` | Renewal 增益／重演入口、上次歌曲、已学技能、SP 折扣与施放条件 |
+| 306 | `BD_LULLABY` | `lullaby.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 307 | `BD_RICHMANKIM` | `mentalsensing.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 308 | `BD_ETERNALCHAOS` | `downtempo.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 309 | `BD_DRUMBATTLEFIELD` | `battletheme.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 310 | `BD_RINGNIBELUNGEN` | `harmoniclick.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 311 | `BD_ROKISWEIL` | `classicalpluck.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 312 | `BD_INTOABYSS` | `powerchord.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 313 | `BD_SIEGFRIED` | `acousticrhythm.cpp` | Renewal 即时范围歌曲、队伍／敌对、搭档与疲劳、状态／额外效果及互斥 |
+| 315 | `BA_MUSICALLESSON` | `passive` | 武器／性别条件、攻击／攻速／SP／恢复／P.ATK 与 S.MATK 被动 |
+| 316 | `BA_MUSICALSTRIKE` | `melodystrike.cpp` | 乐器／鞭、箭矢、伤害段数、等级倍率与弹道 |
+| 317 | `BA_DISSONANCE` | `unchainedserenade.cpp` | Renewal 即时攻击歌曲与减 SP，范围目标／状态，保留未定属性规则 |
+| 318 | `BA_FROSTJOKER` | `unbarringoctave.cpp` | 三秒定时范围、目标队伍概率与持续时间、冰冻／眩晕抗性 |
+| 319 | `BA_WHISTLE` | `perfecttablature.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 320 | `BA_ASSASSINCROSS` | `impressiveriff.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 321 | `BA_POEMBRAGI` | `magicstrings.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 322 | `BA_APPLEIDUN` | `songoflutie.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 323 | `DC_DANCINGLESSON` | `passive` | 武器／性别条件、攻击／攻速／SP／恢复／P.ATK 与 S.MATK 被动 |
+| 324 | `DC_THROWARROW` | `slingingarrow.cpp` | 乐器／鞭、箭矢、伤害段数、等级倍率与弹道 |
+| 325 | `DC_UGLYDANCE` | `hipshaker.cpp` | Renewal 即时攻击歌曲与减 SP，范围目标／状态，保留未定属性规则 |
+| 326 | `DC_SCREAM` | `dazzler.cpp` | 三秒定时范围、目标队伍概率与持续时间、冰冻／眩晕抗性 |
+| 327 | `DC_HUMMING` | `focusballet.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 328 | `DC_DONTFORGETME` | `slowgrace.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 329 | `DC_FORTUNEKISS` | `ladyluck.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 330 | `DC_SERVICEFORYOU` | `gypsyskiss.cpp` | Renewal 即时歌曲与状态计算／互斥；不将旧地面舞台当必需施放路径 |
+| 394 | `CG_ARROWVULCAN` | `vulcanarrow.cpp` | 乐器／鞭、箭矢、伤害段数、等级倍率与弹道 |
+| 395 | `CG_MOONLIT` | `shelteringbliss.cpp` | 地面群组、搭档施放、双方关联和群组结束 |
+| 396 | `CG_MARIONETTE` | `marionettecontrol.cpp` | 性别／职业／状态限制、双方关联、属性打包与上限、距离和解除 |
+| 488 | `CG_HERMODE` | `wandofhermode.cpp` | Renewal 范围歌曲，对非自身友方清除对应增益 |
+| 489 | `CG_TAROTCARD` | `tarotcardoffate.cpp` | 十四种牌、成功消费、随机概率与状态参数；修复成功率多 1% 和恶魔诅咒参数顺序 |
+| 1010 | `BA_PANGVOICE` | `pangvoice.cpp` | Renewal 玩家／魔物目标、种族、异常与成功通知 |
+| 1011 | `DC_WINKCHARM` | `winkofcharm.cpp` | Renewal 玩家／魔物目标、种族、异常与成功通知 |
+| 2350 | `WA_SWING_DANCE` | `swingdance.cpp` | 单人／队伍范围、课程等级、状态初始化及能力刷新 |
+| 2351 | `WA_SYMPHONY_OF_LOVER` | `symphonyoflovers.cpp` | 单人／队伍范围、课程等级、状态初始化及能力刷新 |
+| 2352 | `WA_MOONLIT_SERENADE` | `moonlitserenade.cpp` | 单人／队伍范围、课程等级、状态初始化及能力刷新 |
+| 2381 | `MI_RUSH_WINDMILL` | `windmillrushattack.cpp` | 单人／队伍范围、课程等级、状态初始化及能力刷新 |
+| 2382 | `MI_ECHOSONG` | `echosong.cpp` | 单人／队伍范围、课程等级、状态初始化及能力刷新 |
+| 2383 | `MI_HARMONIZE` | `harmonize.cpp` | 对非自身施放时同步双方状态，属性降低与持续时间 |
+| 2412 | `WM_LESSON` | `passive` | 武器／性别条件、攻击／攻速／SP／恢复／P.ATK 与 S.MATK 被动 |
+| 2413 | `WM_METALICSOUND` | `metallicsound.cpp` | 魔法倍率、课程／混音联动、箭矢属性／消费及范围派发 |
+| 2414 | `WM_REVERBERATION` | `reverberation.cpp` | 魔法倍率、课程／混音联动、箭矢属性／消费及范围派发 |
+| 2418 | `WM_SEVERE_RAINSTORM` | `severerainstorm.cpp` | 地面周期、派生物理命中、乐器／鞭倍率与期间装备限制 |
+| 2419 | `WM_POEMOFNETHERWORLD` | `poemofthenetherworld.cpp` | 地面目标、免疫／GVG／队伍条件、触发后单位结束 |
+| 2420 | `WM_VOICEOFSIREN` | `voiceofsiren.cpp` | 范围魅惑、职业／课程成功率、来源记录与目标关系 |
+| 2421 | `WM_DEADHILLHERE` | `valleyofdeath.cpp` | 仅死亡玩家、以 SP 换 HP、复活与资源同步 |
+| 2422 | `WM_LULLABY_DEEPSLEEP` | `deepsleeplullaby.cpp` | 成功率、INT／等级减时与周期 HP／SP 恢复；修复百分比回绕 |
+| 2423 | `WM_SIRCLEOFNATURE` | `circleofnaturessound.cpp` | 合唱资格、自己先启动／队伍传播、课程增益、互斥和持续时间 |
+| 2424 | `WM_RANDOMIZESPELL` | `improvisedsong.cpp` | 成功率与合唱状态清除；保留现行技能规则 |
+| 2425 | `WM_GLOOMYDAY` | `gloomyday.cpp` | 目标已学技能分支、特定攻击增益／减益与状态参数 |
+| 2426 | `WM_GREAT_ECHO` | `greatecho.cpp` | 地面范围、搭档检索与消费、伤害加成和课程倍率 |
+| 2427 | `WM_SONG_OF_MANA` | `songofmana.cpp` | 启动 SP 恢复和队伍传播；施法者只恢复一次，高 SP 使用宽整数 |
+| 2428 | `WM_DANCE_WITH_WUG` | `dancewithawarg.cpp` | 合唱资格、自己先启动／队伍传播、课程增益、互斥和持续时间 |
+| 2429 | `WM_SOUND_OF_DESTRUCTION` | `soundofdestruction.cpp` | 范围／玩家／敌对、成功率、状态互斥、属性和周期副作用 |
+| 2430 | `WM_SATURDAY_NIGHT_FEVER` | `saturdaynightfever.cpp` | 范围／玩家／敌对、成功率、状态互斥、属性和周期副作用 |
+| 2431 | `WM_LERADS_DEW` | `leradsdew.cpp` | 合唱资格、自己先启动／队伍传播、课程增益、互斥和持续时间 |
+| 2432 | `WM_MELODYOFSINK` | `melodyofsink.cpp` | 范围／玩家／敌对、成功率、状态互斥、属性和周期副作用 |
+| 2433 | `WM_BEYOND_OF_WARCRY` | `warcryofbeyond.cpp` | 范围／玩家／敌对、成功率、状态互斥、属性和周期副作用 |
+| 2434 | `WM_UNLIMITED_HUMMING_VOICE` | `unlimitedhummingvoice.cpp` | 合唱资格、自己先启动／队伍传播、课程增益、互斥和持续时间 |
+| 5007 | `WM_FRIGG_SONG` | `friggssong.cpp` | 单人／队伍、自身覆盖、HP 增益与每秒恢复 |
+| 5014 | `ALL_FULL_THROTTLE` | `passive` | 沿用共享恢复、属性增益、周期消耗及结束副作用审查 |
+| 5068 | `CG_SPECIALSINGER` | `skilledspecialsinger.cpp` | 仅解除合奏疲劳；客户端名称不同但 ID／等级一致 |
+| 5349 | `TR_STAGE_MANNER` | `passive` | 武器／性别条件、攻击／攻速／SP／恢复／P.ATK 与 S.MATK 被动 |
+| 5350 | `TR_RETROSPECTION` | `retrospection.cpp` | 已学技能复查、上次歌曲记录、SP 折扣和 AP 联动 |
+| 5351 | `TR_MYSTIC_SYMPHONY` | `StatusSkillImpl` | 状态施放、AP、后续攻击／合奏限制联动；补原生启动资源 |
+| 5352 | `TR_KVASIR_SONATA` | `StatusSkillImpl` | 状态施放、AP、后续攻击／合奏限制联动；补原生启动资源 |
+| 5353 | `TR_ROSEBLOSSOM` | `roseblossom.cpp` | 命中后种子状态、定时派生范围、混音和种族／CON 倍率 |
+| 5355 | `TR_RHYTHMSHOOTING` | `rhythmshooting.cpp` | 范围／段数、混音与交响乐、属性倍率、箭矢属性／消费和 AP；补金属狂怒效果 |
+| 5356 | `TR_METALIC_FURY` | `metallicfury.cpp` | 范围／段数、混音与交响乐、属性倍率、箭矢属性／消费和 AP；补金属狂怒效果 |
+| 5357 | `TR_SOUNDBLEND` | `soundblend.cpp` | 初始攻击与状态、自然结束派生、其他攻击解除和箭矢属性 |
+| 5358 | `TR_GEF_NOCTURN` | `geffenianocturn.cpp` | 记录歌曲、异性同队四转搭档、敌方范围及状态／概率；补尼夫海姆原生效果 |
+| 5359 | `TR_ROKI_CAPRICCIO` | `rokicapriccio.cpp` | 记录歌曲、异性同队四转搭档、敌方范围及状态／概率；补尼夫海姆原生效果 |
+| 5360 | `TR_AIN_RHAPSODY` | `ainrhapsody.cpp` | 记录歌曲、异性同队四转搭档、敌方范围及状态／概率；补尼夫海姆原生效果 |
+| 5361 | `TR_MUSICAL_INTERLUDE` | `musicalinterlude.cpp` | 单人／队伍增益和搭档加成；修复单人不记录歌曲／无成功通知，补普隆德拉进行曲效果 |
+| 5362 | `TR_JAWAII_SERENADE` | `jawaiiserenade.cpp` | 单人／队伍增益和搭档加成；修复单人不记录歌曲／无成功通知，补普隆德拉进行曲效果 |
+| 5363 | `TR_NIPELHEIM_REQUIEM` | `nipelheimrequiem.cpp` | 记录歌曲、异性同队四转搭档、敌方范围及状态／概率；补尼夫海姆原生效果 |
+| 5364 | `TR_PRON_MARCH` | `pronmarch.cpp` | 单人／队伍增益和搭档加成；修复单人不记录歌曲／无成功通知，补普隆德拉进行曲效果 |
+| 6521 | `TR_RHYTHMICAL_WAVE` | `rhythmicalwave.cpp` | 范围／段数、混音与交响乐、属性倍率、箭矢属性／消费和 AP；补金属狂怒效果 |
