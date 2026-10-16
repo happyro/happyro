@@ -364,7 +364,7 @@
 | 2 | 剑术修炼 `SM_SWORD` | `status.cpp／battle.cpp／skill.cpp` | 短剑／单手剑武器限制及修炼伤害 |
 | 3 | 双手剑修炼 `SM_TWOHAND` | `status.cpp／battle.cpp／skill.cpp` | 双手剑修炼伤害及武器限制 |
 | 4 | 增加HP恢复 `SM_RECOVERY` | `status.cpp／battle.cpp／skill.cpp` | 自然恢复、生命值比例及恢复量钳制 |
-| 5 | 狂击 `SM_BASH` | `SkillCustomBash` | 武器限制、命中修正、伤害及致命攻击联动 |
+| 5 | 狂击 `SM_BASH` | `SkillBash` | 武器限制、命中修正、伤害及致命攻击联动 |
 | 6 | 挑衅 `SM_PROVOKE` | `provoke.cpp` | 目标免疫、成功率、攻击／防御状态 |
 | 7 | 怒爆 `SM_MAGNUM` | `magnum.cpp` | 自身范围火属性、击退及攻击状态；沿用已修复固定位置动画 |
 | 8 | 钢铁之心 `SM_ENDURE` | `StatusSkillImpl` | 次数／持续时间、地图限制及牺牲保护继承 |
