@@ -1,0 +1,1 @@
+await jobNpc.contact(114,50);const proof=await jobNpc.run(['进入最终测试场']);await fs.writeFile('docs/development/job-change-review/evidence/rune-knight-final-entry.json',JSON.stringify(proof,null,2));const s=await snapshot();return {proof,state:{map:s.map,x:s.x,y:s.y,job:s.job_id}};

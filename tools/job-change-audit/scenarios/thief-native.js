@@ -1,0 +1,4 @@
+assert.equal((await snapshot()).name,'JobAudit2F');assert.equal((await snapshot()).job_id,0);
+const proof={character:'JobAudit2F',preparation:'Base10 Job10 and learned basic skills only; native interview and job change; no quest writes'};
+await command('character.progression.update',{base_level:10,job_level:10});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});
+await jobNpc.travel('moc_prydb1',39,128);await jobNpc.contact(39,129);proof.interview=await jobNpc.run(['我想成为盗贼。','是。','是的。'],100);await jobNpc.contact(42,133);proof.change=await jobNpc.run([],80);const s=await snapshot();proof.result={job:s.job_id,base:s.base_level,jobLevel:s.job_level};await fs.writeFile('docs/development/job-change-review/evidence/thief-npc.json',JSON.stringify(proof,null,2));assert.equal(s.job_id,6);assert.equal(s.job_level,1);return proof.result;

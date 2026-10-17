@@ -1,0 +1,3 @@
+assert.equal((await snapshot()).name,'JobAuditM');assert.equal((await snapshot()).map,'job3_rune01');
+const file='docs/development/job-change-review/evidence/rune-knight-hunt-delivery.json';const proof=JSON.parse(await fs.readFile(file));proof.returnConfirmed={map:'job3_rune01',note:'Repeated native return dialogue after first attempt stayed in camp; second attempt reached headquarters.'};
+await jobNpc.travel('job3_rune01',55,49);await jobNpc.contact(55,50);proof.stages.push({name:'Renoa rune task',...await jobNpc.run()});await fs.writeFile(file,JSON.stringify(proof,null,2));return proof.stages.at(-1);

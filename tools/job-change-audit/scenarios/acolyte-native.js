@@ -1,0 +1,7 @@
+assert.equal((await snapshot()).name,'JobDirectF');
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.RESTART();p.type=1;t.network.sendPacket(p);});await game.locator('#slot0').waitFor({state:'visible',timeout:30000});await game.locator('#slot0').click();await game.locator('.charinfo .ok').click();await game.waitForFunction(()=>window.__fourthTest.session.Playing&&window.__fourthTest.session.Entity,null,{timeout:90000});await game.waitForTimeout(1000);
+assert.equal((await snapshot()).name,'JobAuditF');assert.equal((await snapshot()).job_id,0);
+const file='docs/development/job-change-review/evidence/acolyte-npc.json';const proof={character:'JobAuditF',stages:[]};
+await jobNpc.travel('prt_church',184,40);await jobNpc.contact(184,41);const early=await jobNpc.run(['转职为服事']);assert.equal((await snapshot()).job_id,0);assert(early.pages.some(p=>p.text?.includes('还没完成基础修行')));proof.stages.push({name:'Untrained novice rejected',...early});await fs.writeFile(file,JSON.stringify(proof,null,2));
+await command('character.progression.update',{base_level:10,job_level:10});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});await jobNpc.contact(184,41);proof.stages.push({name:'Acolyte change',...await jobNpc.run(['转职为服事'])});
+const s=await snapshot();assert.equal(s.job_id,4);assert.equal(s.job_level,1);proof.result={job:s.job_id,base:s.base_level,jobLevel:s.job_level};await fs.writeFile(file,JSON.stringify(proof,null,2));return proof.result;

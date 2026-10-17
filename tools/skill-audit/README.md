@@ -1,6 +1,6 @@
 # 技能审计工具
 
-本目录持久化本次九条职业线、607 个技能审计使用的会话、实机操作片段和诊断脚本。范围与技能清单见[审查总览](../../docs/development/skill-review.md)，修复明细见[已修复问题](../../docs/development/skill-review-fixes.md)，后续工作见[未解决事项](../../docs/development/skill-review-pending.md)，已审查证据位于 [evidence](../../docs/development/skill-review/evidence/)。它们属于根仓库版本管理，不再依赖 `work/skill-live/` 中的脚本。
+本目录持久化本次九条职业线、607 个技能审计使用的会话、实机操作片段和诊断脚本。范围与技能清单见[审查总览](../../docs/development/skill-review/README.md)，修复明细见[已修复问题](../../docs/development/skill-review/fixes.md)，后续工作见[未解决事项](../../docs/development/skill-review/pending.md)，已审查证据位于 [evidence](../../docs/development/skill-review/evidence)。它们属于根仓库版本管理，不再依赖 `work/skill-live/` 中的脚本。
 
 ## 只读核验
 

@@ -9,7 +9,7 @@ make doctor
 make status
 ```
 
-`doctor` 是配置检查，不是完整运行健康检查。它依赖已有应用检出和部分生成配置；缺失时先按[本地开发](../development/local-setup.md)准备。
+`doctor` 是配置检查，不是完整运行健康检查。它依赖已有应用检出和部分生成配置；缺失时先按[本地开发](../development/workflow/local-setup.md)准备。
 
 若报告 `HappyRO Gateway is not at locked commit`，当前脚本在 `scripts/maintenance/doctor.sh` 要求 Gateway HEAD 精确等于 `versions/sources.lock` 中的旧锁定值。维护分支有新提交也会失败。这不是回退源码的理由：检查锁定提交是否是当前 HEAD 祖先，再独立验证封包、配置、端口与服务。更新锁定策略需要单独修改脚本和基线，不在排障时执行 `git checkout` 丢弃新版本。
 
@@ -51,7 +51,7 @@ systemctl status happyro-admin-frontend.service
 
 ## iOS 攻击时整个画面停顿
 
-先按[移动端性能日志回传](../development/mobile-diagnostics.md)采集同一设备、同一浏览器下开启和关闭音效的战斗对照。对比实际帧间隔与 `audio.start` 同步耗时，区分资源加载／解码的异步等待时间；旧构建使用 `audio.play.*` 指标。
+先按[移动端性能日志回传](../development/client/mobile-diagnostics.md)采集同一设备、同一浏览器下开启和关闭音效的战斗对照。对比实际帧间隔与 `audio.start` 同步耗时，区分资源加载／解码的异步等待时间；旧构建使用 `audio.play.*` 指标。
 
 短音效使用 Web Audio。排查时检查实际资源加载、解码与主线程启动耗时，保留同设备对照；旧版本 `.play()` 同步阻塞的历史结果不能证明当前构建正常。iPhone、iPad、Chrome 与 Safari 分别记录，关闭音效只用于对照。
 

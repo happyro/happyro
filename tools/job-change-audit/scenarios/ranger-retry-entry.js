@@ -1,0 +1,4 @@
+assert.equal((await snapshot()).name,'JobDirectM');assert.equal((await snapshot()).map,'tur_dun01');
+const proof={chat:await game.evaluate(()=>window.__fourthTest.chat._shadow.querySelector('.content')?.innerText),preparation:'Drop leftover native novice potions normally; instructor removes reports/bombs during retry. No quest writes.'};
+await game.evaluate(()=>{const t=window.__fourthTest,i=t.inventory.getItemById(569);if(i){const p=new t.packet.CZ.ITEM_THROW2();p.Index=i.index;p.count=i.count;t.network.sendPacket(p);}});await game.waitForTimeout(600);
+await jobNpc.contact(91,169);proof.retry=await jobNpc.run(['去实战测试场！'],100);const s=await snapshot();proof.result={map:s.map,x:s.x,y:s.y};await fs.writeFile('docs/development/job-change-review/evidence/ranger-retry-entry.json',JSON.stringify(proof,null,2));assert.equal(s.map,'job3_rang01');return proof.result;

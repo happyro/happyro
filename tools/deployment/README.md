@@ -8,7 +8,7 @@
 
 两者不带参数仅显示帮助，支持 `--no-color`。外层离线交付只生成 `.zip`，包内供 Docker 导入的镜像保持 `.tar`。生成文件放 `artifacts/`，不修改官方源材料。
 
-构建端执行入口见[镜像构建与交付](../../docs/operations/docker-release.md)；包内安装步骤见 [Docker 部署手册](../../docs/operations/docker-deployment.md)。Docker 定义位于 [deploy/docker](../../deploy/docker/)。
+构建端执行入口见[镜像构建与交付](../../docs/operations/docker-release.md)；包内安装步骤见 [Docker 部署手册](../../docs/operations/docker-deployment.md)。Docker 定义位于 [deploy/docker](../../deploy/docker)。
 
 `deploy` 校验包及已导入镜像后，先启动并等待 database 健康，再执行新版 Database 镜像内的 `/opt/rathena/sql/upgrades/upgrade_20261012_sessions.sql`，成功后才启动整栈；SQL 失败停止后续命令，不批量执行历史升级脚本。保留旧库升级同样执行，须先停止旧服务并导入全部本版镜像。
 

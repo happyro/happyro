@@ -1,0 +1,1 @@
+assert.equal((await snapshot()).name,'JobAuditF');assert.equal((await snapshot()).map,'job3_arch01');await jobNpc.contact(29,34);const proof=await jobNpc.run(['是','我该怎么做'],100);await fs.writeFile('docs/development/job-change-review/evidence/archbishop-valkyrie-intro.json',JSON.stringify(proof,null,2));return proof;

@@ -25,11 +25,11 @@
 
 ## 按任务查找
 
-- 首次安装：[本地开发](development/local-setup.md)。
+- 首次安装：[本地开发](development/workflow/local-setup.md)。
 - 更新并确认浏览器拿到新版本：[服务更新](operations/services.md#修改后的更新路径)。
 - 游戏断线、技能不能释放、中文没生效：[故障检查](operations/troubleshooting.md)。
 - 发布镜像：[强制发布规则](operations/docker-release.md)。
 - 清理目录或迁移主机前：[备份与恢复](operations/backup-recovery.md)。
-- 新增或修改文档：[文档维护](development/documentation.md)。
+- 新增或修改文档：[文档维护](development/workflow/documentation.md)。
 
 文档中的“当前源码”依据仓库实现；带日期的主机观察和测试计数不代表当前状态。`work/runtime` 中的数据库和密钥不能当缓存清理。本文档审查不代表已发布新镜像或重新执行所有产品测试。

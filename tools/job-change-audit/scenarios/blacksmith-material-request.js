@@ -1,0 +1,1 @@
+assert.equal((await snapshot()).name,'JobAudit2M');await jobNpc.contact(201,27);const proof=await jobNpc.run([],100);await fs.writeFile('docs/development/job-change-review/evidence/blacksmith-material-request.json',JSON.stringify(proof,null,2));return proof;

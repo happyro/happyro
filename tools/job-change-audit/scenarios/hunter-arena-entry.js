@@ -1,0 +1,1 @@
+assert.equal((await snapshot()).name,'JobDirectM');await jobNpc.travel('payon_in03',131,8);await jobNpc.contact(131,7);const proof=await jobNpc.run(['开始测试','好']);await fs.writeFile('docs/development/job-change-review/evidence/hunter-arena-entry.json',JSON.stringify(proof,null,2));const s=await snapshot();return {proof,map:s.map,x:s.x,y:s.y};

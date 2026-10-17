@@ -1,0 +1,1 @@
+assert.equal((await snapshot()).name,'JobDirectM');await jobNpc.travel('hu_in01',382,381);await jobNpc.contact(382,382);const proof=await jobNpc.run([0]);await fs.writeFile('docs/development/job-change-review/evidence/hunter-material-request.json',JSON.stringify(proof,null,2));return proof;

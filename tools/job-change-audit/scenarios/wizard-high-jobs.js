@@ -1,0 +1,12 @@
+const start=await snapshot();assert.equal(start.name,'JobDirectF');assert.equal(start.job_id,4001);
+await command('character.progression.update',{base_level:10,job_level:10});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});
+await jobNpc.travel('geffen_in',164,123);const mageNpc=await jobNpc.contact(164,124);const mage=await jobNpc.run();
+let s=await snapshot();assert.equal(s.job_id,4003);
+const proof={preparation:'Only levels/skills/points prepared. ADVJOB comes from native Valkyrie rebirth.',mageNpc,mage,highMage:{job:s.job_id,jobLevel:s.job_level}};
+await fs.writeFile('docs/development/job-change-review/evidence/wizard-high-jobs.json',JSON.stringify(proof,null,2));
+await command('character.progression.update',{base_level:99,job_level:50});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});
+await jobNpc.travel('yuno_in02',93,206);await jobNpc.contact(93,207);proof.book=await jobNpc.run(['继续阅读']);
+await game.waitForTimeout(1800);assert.equal((await snapshot()).map,'valkyrie');
+await jobNpc.travel('valkyrie',44,46);proof.lordNpc=await jobNpc.contact(44,47);proof.lord=await jobNpc.run(['是。']);
+s=await snapshot();assert.equal(s.job_id,4010);proof.highWizard={job:s.job_id,base:s.base_level,jobLevel:s.job_level};
+await fs.writeFile('docs/development/job-change-review/evidence/wizard-high-jobs.json',JSON.stringify(proof,null,2));return proof.highWizard;

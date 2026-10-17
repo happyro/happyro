@@ -1,0 +1,3 @@
+assert.equal((await snapshot()).name,'JobAuditF');const before=await game.evaluate(()=>window.__fourthTest.inventory.getItemById(12184)?.count||0);assert(before<100);
+await snapshot();const r=await game.request.post('http://127.0.0.1:3338/api/adventure-tools/items/grants',{headers,data:{idempotency_key:crypto.randomUUID(),target:{type:'self'},item_id:12184,amount:200}});assert.equal(r.status(),200,await r.text());
+const proof={before,added:200,reason:'Additional test consumable preparation for escort; normal potion use only, not a claim about normal-game supply or difficulty'};await fs.writeFile('docs/development/job-change-review/evidence/archbishop-extra-potions.json',JSON.stringify(proof,null,2));return proof;

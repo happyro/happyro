@@ -1,17 +1,16 @@
 # 开发文档
 
-本目录面向在根仓库编排四个应用仓库的开发者。
+本目录集中维护跨仓库开发流程、客户端专题和职业系统资料。按任务进入对应目录；产品内部规范仍以各应用仓库为准。
 
-- [本地开发](local-setup.md)：依赖、配置和启动顺序。
-- [移动端性能日志回传](mobile-diagnostics.md)：Mac 物理调试环境、手机日志自动落盘和攻击卡顿对照分析。
-- [常用命令](common-commands.md)：Makefile 与脚本入口。
-- [测试与构建](testing.md)：doctor、客户端、网关和服务端检查。
-- [Git 工作流](git-workflow.md)：提交格式、changelog 和推送边界。
-- [文档维护](documentation.md)：分类、权威来源、链接和验证规则。
-- [三端游戏展示图](multiplatform-images.md)：截图要求、设备构图、合成规格与发布素材使用方式。
-- [四转开发与维护](fourth-jobs/README.md)：实现、使用、资源和回归边界。
-- [移动端 UI 开发与验收](mobile-ui.md)：客户端规范入口和跨端待核验范围。
-- [同职业分支骑乘外观方案](riding-appearance.md)：待实现的旧坐骑外观选择、资源核验与同步验收边界。
-- [职业技能审查结果](skill-review.md)：12 条线范围、九条线 607 项处理统计、逐技能证据及详细清单入口。
-- [技能审计已修复问题](skill-review-fixes.md)：逐职业线的明确缺陷、最终修复、验证边界及来源索引。
-- [技能审计未解决事项](skill-review-pending.md)：当前说明差异、功能／表现缺口、规则待确认项及验证待办。
+| 主题目录 | 内容 | 常用入口 |
+| --- | --- | --- |
+| [开发流程](workflow/README.md) | 本地环境、命令、测试、Git 与文档协作 | [本地开发](workflow/local-setup.md)、[常用命令](workflow/common-commands.md) |
+| [客户端专题](client/README.md) | 移动端 UI、性能诊断和三端展示图 | [移动端诊断](client/mobile-diagnostics.md)、[UI 规范](client/mobile-ui.md) |
+| [职业外观](character-appearance/README.md) | 职业与显示分离、同步协议及十二职业线扩展 | [当前实现](character-appearance/implementation.md)、[实施待办](character-appearance/TODO.md) |
+| [四转开发](fourth-jobs/README.md) | 使用、实现、资源、回归规则与有效待办 | [四转使用](fourth-jobs/usage.md)、[验收边界](fourth-jobs/acceptance.md) |
+| [技能审查](skill-review/README.md) | 12 条职业线代码复查、607 项实机处理清单、修复与待办 | [已修复问题](skill-review/fixes.md)、[未解决事项](skill-review/pending.md)、[逐技能清单](skill-review/catalog.md) |
+| [转职实测](job-change-review/README.md) | 12 条线、13 个分支至四转和正常重登的流程与证据 | [转职流程索引](job-change-review/walkthrough.md)、[缺陷修复](job-change-review/fixes.md) |
+
+技能效果审查与 NPC 转职流程验收是不同范围：转职整线通过不表示该线每项技能效果均已通过。统计口径、测试准备和例外说明以各主题总览为准。
+
+部署、发布和备份见[运维文档](../operations/README.md)，文档分类与维护规则见[文档维护](workflow/documentation.md)。同一主题的说明与证据集中在所属目录，避免在本层新增重复入口文件。

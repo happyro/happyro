@@ -135,7 +135,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 
 推荐使用[离线包](https://happyro.kugarocks.com/guide/downloads)部署 HappyRO。包内已包含双架构镜像、kRO 运行资源、配置模板和配套工具，只需提前安装 Docker Engine、Compose v2 和 Python 3.11+，即可按照[离线安装手册](https://happyro.kugarocks.com/container/docker)完成部署。
 
-源码开发的依赖、资源准备、构建与服务启动见[本地开发手册](docs/development/local-setup.md)；Linux 使用 systemd，macOS 原生服务使用 launchd，具体入口见[服务管理](docs/operations/services.md)。不要将原生开发环境与 Docker 离线包的数据目录和端口混用。
+源码开发的依赖、资源准备、构建与服务启动见[本地开发手册](docs/development/workflow/local-setup.md)；Linux 使用 systemd，macOS 原生服务使用 launchd，具体入口见[服务管理](docs/operations/services.md)。不要将原生开发环境与 Docker 离线包的数据目录和端口混用。
 
 离线包的默认公开地址适用于部署机器本机浏览器；局域网访问需按部署手册配置主机地址、端口和代理。本机开发 Gateway 的监听与访问范围以实际配置为准。
 

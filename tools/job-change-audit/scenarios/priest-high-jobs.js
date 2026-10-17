@@ -1,0 +1,12 @@
+const start=await snapshot();assert.equal(start.name,'JobAuditF');assert.equal(start.job_id,4001);
+await command('character.progression.update',{base_level:10,job_level:10});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});
+await jobNpc.travel('prt_church',184,40);const acolyteNpc=await jobNpc.contact(184,41);const acolyte=await jobNpc.run();
+let s=await snapshot();assert.equal(s.job_id,4005);
+const proof={preparation:'Only levels/skills/points prepared. ADVJOB comes from native Valkyrie rebirth.',acolyteNpc,acolyte,highAcolyte:{job:s.job_id,jobLevel:s.job_level}};
+await fs.writeFile('docs/development/job-change-review/evidence/priest-high-jobs.json',JSON.stringify(proof,null,2));
+await command('character.progression.update',{base_level:99,job_level:50});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});
+await jobNpc.travel('yuno_in02',93,206);await jobNpc.contact(93,207);proof.book=await jobNpc.run(['继续阅读']);
+await game.waitForTimeout(1800);assert.equal((await snapshot()).map,'valkyrie');
+await jobNpc.travel('valkyrie',44,41);proof.priestNpc=await jobNpc.contact(44,42);proof.priest=await jobNpc.run(['是']);
+s=await snapshot();assert.equal(s.job_id,4009);proof.highPriest={job:s.job_id,base:s.base_level,jobLevel:s.job_level};
+await fs.writeFile('docs/development/job-change-review/evidence/priest-high-jobs.json',JSON.stringify(proof,null,2));return proof.highPriest;

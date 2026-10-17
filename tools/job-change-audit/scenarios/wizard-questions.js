@@ -1,0 +1,12 @@
+assert.equal((await snapshot()).name,'JobDirectF');
+await jobNpc.travel('gef_tower',102,25);await jobNpc.contact(102,24);
+const introduction=await jobNpc.run(['我想继续测试']);assert.equal(introduction.waiting,'choice');
+const options=introduction.pages.at(-1).options;
+let answers;
+if(options[0].includes('火箭术'))answers=[4,1,2,4,3,2,2,4,2,1];
+else if(options[0].includes('盗虫'))answers=[3,1,2,4,1,2,4,3,3,3];
+else if(options[0]==='INT')answers=[1,2,3,4,2,4,4,2,1,2];
+else throw Error('Unknown wizard question set '+JSON.stringify(options));
+const examination=await jobNpc.run(answers.map(n=>n-1),80);
+assert(examination.pages.some(p=>p.text?.includes('100 分')));
+await fs.writeFile('docs/development/job-change-review/evidence/wizard-questions.json',JSON.stringify({introduction,answers,examination},null,2));return examination.pages.slice(-3);

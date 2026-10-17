@@ -1,0 +1,4 @@
+assert.equal((await snapshot()).name,'JobDirectM');assert.equal((await snapshot()).job_id,4012);assert.equal((await snapshot()).map,'job3_rang01');
+await jobNpc.contact(90,43);const proof={dialogue:await jobNpc.run(['我准备好了','是！'],100)};const s=await snapshot();proof.result={job:s.job_id,base:s.base_level,jobLevel:s.job_level};await fs.writeFile('docs/development/job-change-review/evidence/ranger-npc-complete.json',JSON.stringify(proof,null,2));assert.equal(s.job_id,4062);assert.equal(s.job_level,1);
+await command('character.stats.update',{str:99,agi:99,vit:99,int:99,dex:99,luk:99});await command('character.vitals.restore',{});
+for(const file of ['windhawk-fourth.js','windhawk-relog.js']){const code=await fs.readFile('tools/job-change-audit/scenarios/'+file,'utf8');await eval('(async()=>{'+code+'})()');}return {job:(await snapshot()).job_id};

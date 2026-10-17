@@ -1,0 +1,1 @@
+assert.equal((await snapshot()).name,'JobDirectM');await jobNpc.contact(91,169);const proof=await jobNpc.run(['哦，尽管吃吧','我们去实践测试场吧'],100);await fs.writeFile('docs/development/job-change-review/evidence/ranger-practical-entry.json',JSON.stringify(proof,null,2));const s=await snapshot();return {proof,map:s.map,x:s.x,y:s.y};

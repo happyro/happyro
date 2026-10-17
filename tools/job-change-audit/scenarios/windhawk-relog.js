@@ -1,0 +1,10 @@
+assert.equal((await snapshot()).name,'JobDirectM');const before=await snapshot();assert.equal(before.job_id,4257);
+const clientBefore=await game.evaluate(()=>({job:window.__fourthTest.session.Entity.job,skills:window.__fourthTest.skills.getSkills(),points:window.__fourthTest.skills.getSkillPoints()}));
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.RESTART();p.type=1;t.network.sendPacket(p);});
+await game.locator('#slot1').waitFor({state:'visible',timeout:30000});await game.locator('#slot1').click();await game.locator('.charinfo .ok').click();
+await game.waitForFunction(()=>window.__fourthTest.session.Playing&&window.__fourthTest.session.Entity?.job===4257,null,{timeout:90000});await game.waitForTimeout(1500);
+const after=await snapshot();assert.equal(after.job_id,4257);assert.equal(after.base_level,200);assert.equal(after.job_level,1);assert(after.traits.enabled);
+const clientAfter=await game.evaluate(()=>({job:window.__fourthTest.session.Entity.job,skills:window.__fourthTest.skills.getSkills(),points:window.__fourthTest.skills.getSkillPoints()}));
+assert.deepEqual(clientAfter.skills.map(s=>[s.SKID,s.level]).sort((a,b)=>a[0]-b[0]),clientBefore.skills.map(s=>[s.SKID,s.level]).sort((a,b)=>a[0]-b[0]));
+const proof={method:'Normal return to character selection and re-enter same character',before:{job:before.job_id,base:before.base_level,jobLevel:before.job_level,traits:before.traits},after:{job:after.job_id,base:after.base_level,jobLevel:after.job_level,traits:after.traits},clientBefore,clientAfter};
+await fs.writeFile('docs/development/job-change-review/evidence/windhawk-relog.json',JSON.stringify(proof,null,2));return {before:proof.before,after:proof.after,skills:clientAfter.skills};

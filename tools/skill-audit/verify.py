@@ -28,7 +28,7 @@ for skill in skills:
             parsed.add(path)
 for name, expected in coverage['retestEvidenceSha256'].items():
     assert hashlib.sha256((evidence / name).read_bytes()).hexdigest() == expected, name
-report = root / 'docs/development/skill-review.md'
+report = root / 'docs/development/skill-review/catalog.md'
 for link in re.findall(r'\]\(([^)]+)\)', report.read_text()):
     if '://' in link or link.startswith('#'):
         continue

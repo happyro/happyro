@@ -1,0 +1,1 @@
+assert.equal((await snapshot()).name,'JobAuditM');const proof=await jobNpc.run(['准备全部完成']);const s=await snapshot();await fs.writeFile('docs/development/job-change-review/evidence/rune-knight-npc-complete.json',JSON.stringify({proof,result:{job:s.job_id,jobLevel:s.job_level}},null,2));assert.equal(s.job_id,4060);return {job:s.job_id,jobLevel:s.job_level};

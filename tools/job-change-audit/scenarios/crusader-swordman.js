@@ -1,0 +1,4 @@
+assert.equal((await snapshot()).name,'JobDirectF');
+const proof={character:'JobDirectF',preparation:'Reuse dedicated finished mage audit character as novice starting fixture; Base10 Job10, basic skills. All subsequent jobs require native NPCs; no quest writes.'};
+await command('character.progression.update',{job_id:0,base_level:10,job_level:10});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});
+await jobNpc.travel('izlude_in',74,171);await jobNpc.contact(74,172);proof.dialogue=await jobNpc.run(['我想成为剑士。','是的。'],80);const s=await snapshot();proof.result={job:s.job_id,base:s.base_level,jobLevel:s.job_level};await fs.writeFile('docs/development/job-change-review/evidence/crusader-swordman.json',JSON.stringify(proof,null,2));assert.equal(s.job_id,1);assert.equal(s.job_level,1);return proof.result;

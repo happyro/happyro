@@ -1,0 +1,4 @@
+const s=await snapshot();assert.equal(s.name,'JobDirectF');assert.equal(s.job_id,4255);assert(s.traits.enabled);assert(s.max_ap>0);
+const client=await game.evaluate(()=>({job:window.__fourthTest.session.Entity.job,skills:window.__fourthTest.skills.getSkills()}));assert.equal(client.job,4255);const native=JSON.parse(await fs.readFile('docs/development/job-change-review/evidence/archmage-relog.json'));assert(native.clientAfter.skills.some(sk=>sk.SKID===5228));
+const direct=JSON.parse(await fs.readFile('docs/development/job-change-review/evidence/direct-mage-relog.json'));assert(direct.passed);assert.equal(direct.stages.length,8);
+const proof={job:s.job_id,base:s.base_level,jobLevel:s.job_level,ap:s.ap,maxAp:s.max_ap,traits:s.traits,skillIds:client.skills.map(sk=>sk.SKID),directStages:8};await fs.writeFile('docs/development/job-change-review/evidence/mage-line-final-check.json',JSON.stringify(proof,null,2));return {job:s.job_id,ap:s.ap,maxAp:s.max_ap,directStages:8};

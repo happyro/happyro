@@ -17,6 +17,6 @@
 | `localization/` | 只读本地化清单扫描 |
 | `_lib/` | 共享路径和上游检查 |
 
-常用入口见 [docs/development/common-commands.md](../docs/development/common-commands.md)。
+常用入口见 [docs/development/workflow/common-commands.md](../docs/development/workflow/common-commands.md)。
 
 Docker 镜像构建与离线交付统一使用 [tools/deployment](../tools/deployment/README.md)，本目录不维护第二套发布脚本。

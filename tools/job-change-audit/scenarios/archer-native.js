@@ -1,0 +1,6 @@
+assert.equal((await snapshot()).name,'JobAuditM');
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.RESTART();p.type=1;t.network.sendPacket(p);});await game.locator('#slot1').waitFor({state:'visible',timeout:30000});await game.locator('#slot1').click();await game.locator('.charinfo .ok').click();await game.waitForFunction(()=>window.__fourthTest.session.Playing&&window.__fourthTest.session.Entity,null,{timeout:90000});await game.waitForTimeout(1500);
+assert.equal((await snapshot()).name,'JobDirectM');assert.equal((await snapshot()).job_id,0);
+await command('character.progression.update',{base_level:10,job_level:10});await command('character.skills.learn_all',{});await command('character.points.update',{skill_points:0});
+await jobNpc.travel('payon_in02',64,70);await jobNpc.contact(64,71);const dialogue=await jobNpc.run([0]);const s=await snapshot();assert.equal(s.job_id,3);assert.equal(s.job_level,1);
+await fs.writeFile('docs/development/job-change-review/evidence/archer-npc.json',JSON.stringify({character:s.name,preparation:'Base10 Job10 and basic skills; native NPC change',dialogue,result:{job:s.job_id,base:s.base_level,jobLevel:s.job_level}},null,2));return {job:s.job_id,jobLevel:s.job_level};

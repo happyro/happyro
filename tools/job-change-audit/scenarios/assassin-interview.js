@@ -1,0 +1,2 @@
+assert.equal((await snapshot()).name,'JobAudit2F');assert.equal((await snapshot()).map,'in_moc_16');
+const {walk}=await import('./walk.mjs?arch=9');const proof={moves:await walk(game,snapshot,[26,90],0)};proof.dialogue=await jobNpc.run(['是的。'],100);const s=await snapshot();proof.result={map:s.map,x:s.x,y:s.y};await fs.writeFile('docs/development/job-change-review/evidence/assassin-interview.json',JSON.stringify(proof,null,2));assert(s.y>=140);return proof.result;
