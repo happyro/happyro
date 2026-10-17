@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | [开发流程](workflow/README.md) | 本地环境、命令、测试、Git 与文档协作 | [本地开发](workflow/local-setup.md)、[常用命令](workflow/common-commands.md) |
 | [客户端专题](client/README.md) | 移动端 UI、性能诊断和三端展示图 | [移动端诊断](client/mobile-diagnostics.md)、[UI 规范](client/mobile-ui.md) |
+| [设置审查](settings/README.md) | 设置汉化、实际效果检查、修复与暂时关闭项 | [审查进度](settings/README.md) |
 | [职业外观](character-appearance/README.md) | 职业与显示分离、同步协议及十二职业线扩展 | [当前实现](character-appearance/implementation.md)、[实施待办](character-appearance/TODO.md) |
 | [四转开发](fourth-jobs/README.md) | 使用、实现、资源、回归规则与有效待办 | [四转使用](fourth-jobs/usage.md)、[验收边界](fourth-jobs/acceptance.md) |
 | [技能审查](skill-review/README.md) | 12 条职业线代码复查、607 项实机处理清单、修复与待办 | [已修复问题](skill-review/fixes.md)、[未解决事项](skill-review/pending.md)、[逐技能清单](skill-review/catalog.md) |
