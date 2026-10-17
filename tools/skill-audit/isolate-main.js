@@ -1,0 +1,1 @@
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.HAPPYRO_MAP_TELEPORT();p.requestId=911;p.mapName='prontera';p.x=150;p.y=150;t.network.sendPacket(p);});await game.waitForTimeout(2000);const s=await snapshot();assert.equal(s.map,'prontera');return {map:s.map};

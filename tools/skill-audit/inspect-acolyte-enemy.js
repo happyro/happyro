@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest,out=[];t.entities.forEach(e=>{if(e.job===1026||e.GID===2000000)out.push({id:e.GID,job:e.job,x:e.position[0],y:e.position[1],hp:e.hp,action:e.action});});return {entities:out,holy:window.__learnState[156],attacks:window.__masteryHits.slice(-8),skill:window.__magicDefense.slice(-8)};});

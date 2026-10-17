@@ -1,0 +1,1 @@
+return {live:typeof live,playing:await game.evaluate(()=>window.__fourthTest?.session.Playing),learn:await game.evaluate(()=>({count:Object.keys(window.__learnState||{}).length,radius:window.__learnState?.[2208]}))};

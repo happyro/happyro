@@ -1,0 +1,2 @@
+await game.screenshot({path:'artifacts/skill-live/talkie-debug2.png'});
+return {state:await snapshot(),debug:await game.evaluate(()=>{const t=window.__fourthTest;const p=new t.packet.CZ.USE_SKILL_TOGROUNDMoreInfo();return {entity:[...t.session.Entity.position],playing:t.session.Playing,errors:window.__audit,skill:t.skills.getSkillById(125),ver:p.getPacketVersion(),moveTick:t.session.Entity.amotionTick,rendererTick:t.renderer.tick};})};

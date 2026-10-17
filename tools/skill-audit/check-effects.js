@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({storage:Object.fromEntries(Object.entries(localStorage).filter(([k])=>/pref|effect/i.test(k))),units:(()=>{const a=[];window.__fourthTest.entities.forEach(e=>{if(e.objecttype<0)a.push({id:e.GID,type:e.objecttype,skill:e.skillUnitId})});return a;})()}));

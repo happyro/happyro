@@ -1,0 +1,2 @@
+const r=await game.request.post('http://127.0.0.1:3338/api/adventure-tools/items/grants',{headers,data:{idempotency_key:crypto.randomUUID(),target:{type:'self'},item_id:717,amount:10}});assert.equal(r.status(),200,await r.text());
+await game.evaluate(()=>window.__fourthTest.targeting.onUseSkillToPos(286,5,120,120));await game.waitForTimeout(5000);await game.screenshot({path:'artifacts/skill-live/deluge-fixture.png'});return {done:true};

@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({abr:(()=>{const a=[];window.__fourthTest.entities.forEach(e=>{if(e.job===20834)a.push(e.GID)});return a})(),hits:window.__abrPackets.filter(p=>p.damage>0).slice(-10),level:window.__learnState[5301]?.level}));

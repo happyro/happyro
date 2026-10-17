@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const a=[];const roots=[document];for(let i=0;i<roots.length;i++)for(const n of roots[i].querySelectorAll('*')){if(n.shadowRoot)roots.push(n.shadowRoot);if(n.id==='WinPrompt'||n.classList.contains('btn')&&n.textContent==='确定')a.push({tag:n.tagName,id:n.id,cls:n.className,text:n.textContent,html:n.outerHTML.slice(0,400)});}return a;});

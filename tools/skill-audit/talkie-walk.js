@@ -1,0 +1,17 @@
+live.partner=async(code)=>{const r=await fetch('http://127.0.0.1:9343',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});const j=await r.json();assert(j.ok,j.error);return j.value;};
+const arm=`await game.evaluate(()=>{const t=window.__fourthTest;window.__talkie=[];for(const p of t.packets){if(!p?.callback||!p.name.includes('TALKBOX'))continue;const fn=p.callback;p.callback=function(pkt){window.__talkie.push({...pkt});return fn.apply(this,arguments);};}});`;
+await eval('(async()=>{'+arm+'})()');await live.partner(arm);
+await game.evaluate(()=>{const t=window.__fourthTest;const p=new t.packet.CZ.REQUEST_MOVE2();p.dest[0]=136;p.dest[1]=115;t.network.sendPacket(p);});await game.waitForTimeout(2000);
+const cells=await live.partner(`return await game.evaluate(()=>{const t=window.__fourthTest;const e=t.session.Entity;const cells=t.altitude.getCellsInSquareRange(e.position[0]|0,e.position[1]|0,3);const trap={x:e.position[0]|0,y:e.position[1]|0};const landing=cells.find(p=>p.x===trap.x+1&&p.y===trap.y)||cells.find(p=>p.x===trap.x&&p.y===trap.y+1);return {trap,landing};});`);assert(cells.landing,'adjacent clear cell');
+const placed=await live.partner(`await command('character.vitals.restore',{});await game.evaluate(()=>{window.__audit.packets=[];window.__fourthTest.targeting.onUseSkillToPos(125,1,${cells.trap.x},${cells.trap.y});});const input=game.getByLabel('话匣子留言',{exact:true});await input.fill('中'.repeat(7));const invalid=await input.evaluate(el=>!el.validity.valid);assert(invalid,'Reject more than 20 UTF-8 bytes');await input.fill('中文留言验收');await game.getByRole('button',{name:'确认',exact:true}).last().click();await game.waitForTimeout(500);return {invalid,packets:await game.evaluate(()=>window.__audit.packets)};`);
+assert(placed.packets.some(p=>p.name.includes('SKILL_ENTRY')),'Trap created');
+await game.evaluate(cells=>{const t=window.__fourthTest;const p=new t.packet.CZ.REQUEST_MOVE2();p.dest[0]=cells.landing.x;p.dest[1]=cells.landing.y;t.network.sendPacket(p);},cells);
+await game.waitForFunction(()=>window.__talkie.length>0,null,{timeout:8000});
+await game.waitForFunction(()=>{const t=window.__fourthTest;const message=window.__talkie.at(-1);const e=message&&t.entities.get(message.AID);return e?.dialog.display&&e.dialog.text==='中文留言验收'&&e.dialog.canvas.isConnected;},null,{timeout:3000});
+await game.screenshot({path:'artifacts/skill-live/talkie-fixed-trigger.png'});
+const received=await game.evaluate(()=>window.__talkie);assert.equal(received.at(-1).contents,'中文留言验收');
+const partner=await live.partner("const s=await snapshot();return {name:s.name,received:await game.evaluate(()=>window.__talkie),playing:await game.evaluate(()=>window.__fourthTest.session.Playing)};");
+assert.equal(partner.received.at(-1).contents,'中文留言验收');assert(partner.playing);
+const followup=await live.cast('MG_SIGHT',{wait:1500});assert(followup.packets.some(p=>p.SKID===10&&p.result===1),'Can still cast skills after message');
+const after=await snapshot();
+await fs.writeFile('artifacts/skill-live/talkie-fixed.json',JSON.stringify({placed,received,partner,followup,after:{name:after.name,x:after.x,y:after.y}},null,2));return {received,partner,position:[after.x,after.y]};

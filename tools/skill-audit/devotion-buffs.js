@@ -1,0 +1,1 @@
+const rows=[];rows.push(await live.cast('CR_AUTOGUARD',{wait:1500}));rows.push(await live.cast('CR_DEFENDER',{wait:1500}));rows.push(await live.cast('CR_DEVOTION',{target:{id:2000001},wait:5000}));rows.push(await live.cast('CR_PROVIDENCE',{target:{id:2000001},wait:5000}));await fs.writeFile('artifacts/skill-live/devotion-buffs.json',JSON.stringify(rows,null,2));return rows;

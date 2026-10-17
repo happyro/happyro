@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({updates:window.__audit.packets.filter(p=>[259,265].includes(p.SKID)),last:window.__audit.packets.filter(p=>p.skillList).slice(-1).map(p=>p.skillList.filter(s=>[259,265].includes(s.SKID)))}));

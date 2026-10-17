@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const root=document.getElementById('Vending')?.shadowRoot;return {text:root?.textContent?.slice(-1200),items:[...(root?.querySelectorAll('[data-index]')||[])].map(e=>({index:e.dataset.index,text:e.textContent})),chat:window.__audit.chat,red:window.__fourthTest.inventory.getItemById(501)?.count};});

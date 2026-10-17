@@ -1,0 +1,1 @@
+return {character:await snapshot().then(s=>({job:s.job_id,hp:s.hp,sp:s.sp,maxSp:s.max_sp})),skills:await game.evaluate(()=>({edp:window.__learnState[378],research:window.__learnState[2024],weapon:window.__fourthTest.inventory.equippedItems,packets:window.__poisonStatus}))};

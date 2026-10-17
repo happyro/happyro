@@ -1,0 +1,4 @@
+await live.job(4262,275,60);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:30});await command('character.traits.update',{pow:100,sta:100,wis:100,spl:100,con:100,crt:100});
+const rows=[];await live.cast('IQ_FIRST_FAITH_POWER',{wait:1000});
+for(const phase of [['IQ_FIRST_BRAND','IQ_SECOND_FAITH','IQ_THIRD_PUNISH'],['IQ_JUDGE','IQ_FIRST_BRAND','IQ_SECOND_JUDGEMENT','IQ_THIRD_CONSECRATION'],['IQ_THIRD_EXOR_FLAME','IQ_FIRST_BRAND','IQ_SECOND_FLAME','IQ_THIRD_FLAME_BOMB']]){await command('character.vitals.restore',{});const target=await live.durable();for(const name of phase)rows.push(await live.cast(name,{target:live.db.find(s=>s.Name===name).TargetType==='Attack'?target:undefined,wait:650,restore:false}));}
+await fs.writeFile('artifacts/skill-live/inquisitor-chains.json',JSON.stringify(rows,null,2));return rows;

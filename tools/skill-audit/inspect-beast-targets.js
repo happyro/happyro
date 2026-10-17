@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest,found=[];t.entities.forEach(e=>{if([21069,2938].includes(e.job))found.push({id:e.GID,mob:e.job,x:e.position[0]|0,y:e.position[1]|0});});return {targets:found,level:window.__learnState[126]?.level};});

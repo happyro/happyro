@@ -1,0 +1,1 @@
+await game.locator('#Vending .available .item').first().dragTo(game.locator('#Vending .OutputWindow .content'));await game.locator('#InputBox input').waitFor({timeout:5000});return {value:await game.locator('#InputBox input').inputValue()};

@@ -1,0 +1,1 @@
+await game.locator('#Vending .available .item').first().dblclick({force:true});return await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>e.getBoundingClientRect().width&&/input|vend/i.test(e.id)).map(e=>({id:e.id,input:e.shadowRoot?.querySelector('input')?.outerHTML,text:e.shadowRoot?.querySelector('.text')?.textContent})));

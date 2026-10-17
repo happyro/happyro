@@ -1,0 +1,1 @@
+return await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>e.shadowRoot&&e.getBoundingClientRect().width).map(e=>({id:e.id,text:e.shadowRoot.textContent.replace(/\s+/g,' ').slice(-550)})));

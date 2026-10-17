@@ -1,0 +1,1 @@
+const s=await snapshot();return {hp:s.hp,map:s.map,x:s.x,y:s.y,entities:await game.evaluate(()=>{const a=[];window.__fourthTest.entities.forEach(e=>{if(e.job>=1000)a.push({id:e.GID,job:e.job,pos:[...e.position]});});return a;})};

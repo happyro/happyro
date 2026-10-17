@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {hooks:t.packets.filter(p=>p?.name&&/SPIRIT/.test(p.name)).map(p=>({name:p.name,callback:!!p.callback})),states:window.__audit.packets.filter(p=>/STATE_CHANGE/.test(p.name))};});

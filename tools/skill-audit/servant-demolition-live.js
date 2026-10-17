@@ -1,0 +1,1 @@
+const rows=[];rows.push(await live.cast('DK_SERVANTWEAPON',{wait:8000}));const target=await live.durable();rows.push(await live.cast('DK_SERVANT_W_SIGN',{target,wait:1000}));rows.push(await live.cast('DK_SERVANT_W_DEMOL',{wait:4500,restore:false}));await fs.writeFile('artifacts/skill-live/servant-demolition.json',JSON.stringify(rows,null,2));return rows;

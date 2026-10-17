@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const p=window.__audit.packets;return {updates:p.filter(p=>p.SKID===65),lists:p.filter(p=>p.skillList).slice(-1).map(p=>p.skillList.filter(s=>[1,22,23,24,28,29,32,33,34,65].includes(s.SKID))),chat:window.__audit.chat};});

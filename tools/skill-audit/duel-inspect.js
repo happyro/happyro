@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {chat:window.__audit.chat.slice(-10),items:t.inventory.list.filter(i=>[1201,12717,6128].includes(i.ITID)).map(i=>({id:i.ITID,count:i.count||1})),name:t.session.Entity.display?.name};});

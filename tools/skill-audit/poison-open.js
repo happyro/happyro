@@ -1,0 +1,1 @@
+await live.grant(12717,10);const row=await live.cast('GC_POISONINGWEAPON',{wait:2200});await game.screenshot({path:'artifacts/skill-live/poison-selection-before.png'});return {row,visible:await game.getByText('制作箭矢',{exact:true}).count()};

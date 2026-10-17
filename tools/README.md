@@ -13,3 +13,5 @@
 生成物写入 `work/` 或产品仓库资源目录，不把工具输出当作文档。
 
 按职责放置工具：离线交付归 deployment，运行环境操作归 operations，Lua 提取编译归 client，资料及资源处理归 resources。不要在 tools 根目录继续堆积业务生成器。
+
+- [技能审计工具](skill-audit/README.md)：607 项技能审计的实机脚本、环境边界与只读证据核验。

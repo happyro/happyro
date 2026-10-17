@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {targetKeys:Object.keys(t.targeting),sessionKeys:Object.keys(t.session).filter(k=>/skill|item/i.test(k)),packets:window.__freezePackets,body:document.body.innerText.slice(-1000)};});

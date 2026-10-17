@@ -1,0 +1,1 @@
+const result=await live.cast('ALL_BUYING_STORE',{wait:1200});return {result,items:await game.locator('#Vending .available .item').evaluateAll(es=>es.map(e=>({index:e.dataset.index,text:e.textContent,html:e.outerHTML.slice(0,220)})))};

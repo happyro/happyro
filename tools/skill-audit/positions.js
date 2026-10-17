@@ -1,0 +1,1 @@
+const s=await snapshot();return {name:s.name,map:s.map,pos:[s.x,s.y],client:await game.evaluate(()=>window.__fourthTest.session.Entity&&Array.from(window.__fourthTest.session.Entity.position)),messages:await game.evaluate(()=>window.__audit.chat),talkie:await game.evaluate(()=>window.__talkie)};

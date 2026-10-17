@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest,list=[];t.entities.forEach(e=>{if(e.job>=1000)list.push({id:e.GID,job:e.job});});return {list,chat:document.querySelector('#ChatBox')?.shadowRoot?.textContent.slice(-1200),skill:window.__learnState[5240]};});

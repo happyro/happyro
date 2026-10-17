@@ -1,0 +1,12 @@
+await live.job(4252,275,60);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:120});
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.REQ_LEAVE_GROUP();t.network.sendPacket(p);});await game.waitForTimeout(500);
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.HAPPYRO_MAP_TELEPORT();p.requestId=921;p.mapName='pvp_y_1-2';p.x=100;p.y=100;t.network.sendPacket(p);});
+await live.partner("await command('character.stats.update',{str:200,agi:80,vit:80,int:120,dex:1000,luk:1});await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.HAPPYRO_MAP_TELEPORT();p.requestId=922;p.mapName='pvp_y_1-2';p.x=101;p.y=100;t.network.sendPacket(p);});await game.waitForTimeout(2000);return true;");
+const rows=[];
+for(const id of [1201,1151,1451,1351,1201]){
+ const item=await game.evaluate(id=>window.__fourthTest.inventory.getItemById(id),id);if(item)await live.equip(id);
+ await command('character.vitals.restore',{});await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.REQUEST_MOVE2();p.dest[0]=100;p.dest[1]=101;t.network.sendPacket(p);});await game.waitForTimeout(500);
+ const before=await snapshot();await live.partner("await game.evaluate(()=>{window.__masteryHits=[];const t=window.__fourthTest,p=new t.packet.CZ.REQUEST_ACT2();p.targetGID=2000001;p.action=7;t.network.sendPacket(p);});await game.waitForTimeout(6500);await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.REQUEST_MOVE2();p.dest[0]=t.session.Entity.position[0]|0;p.dest[1]=t.session.Entity.position[1]|0;t.network.sendPacket(p);});await game.waitForTimeout(300);return true;");
+ const after=await snapshot(),packets=await live.partner('return await game.evaluate(()=>window.__masteryHits);');const seen=new Set(),hits=packets.filter(p=>{if(p.GID!==2000000||p.targetGID!==2000001||p.damage<=0||p.action===10)return false;const k=p.startTime+':'+p.GID;if(seen.has(k))return false;seen.add(k);return true;});assert(after.hp>0);assert(hits.length>=3);rows.push({id,beforeHp:before.hp,afterHp:after.hp,hits,min:Math.min(...hits.map(p=>p.damage)),max:Math.max(...hits.map(p=>p.damage))});await fs.writeFile('artifacts/skill-live/dragon-defense-live.json',JSON.stringify(rows,null,2));
+}
+for(const r of rows.slice(1,4))assert(r.max<rows[0].min);assert(rows[4].min<=rows[0].max&&rows[0].min<=rows[4].max);return rows.map(r=>({id:r.id,min:r.min,max:r.max,hits:r.hits.length}));

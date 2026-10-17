@@ -1,0 +1,1 @@
+const s=await snapshot();return {job:s.job_id,skillPoints:s.skill_points,jobLevel:s.job_level,skills:await game.evaluate(()=>{const t=window.__fourthTest;return {keys:Object.keys(t.skills),chat:window.__audit.chat,packet:t.packet.CZ.UPGRADE_SKILLLEVEL.toString()};})};

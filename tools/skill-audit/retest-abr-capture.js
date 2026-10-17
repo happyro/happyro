@@ -1,0 +1,1 @@
+const actual=await game.evaluate(()=>{const entities=[];window.__fourthTest.entities.forEach(e=>entities.push({id:e.GID,job:e.job,hp:e.life?.hp,maxHP:e.life?.hp_max,name:e.name}));return {entities,packets:window.__abrPackets};});await fs.writeFile('artifacts/skill-live/revalidation/abr-one.json',JSON.stringify({actual,snapshot:await snapshot()},null,2));return actual;

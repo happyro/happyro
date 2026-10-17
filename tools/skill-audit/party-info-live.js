@@ -1,0 +1,11 @@
+live.partner=async(code)=>{const r=await fetch('http://127.0.0.1:9343',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});const j=await r.json();assert(j.ok,j.error);return j.value;};
+const read=()=>game.evaluate(()=>{const root=document.getElementById('PartyFriendsV1')?.shadowRoot;return [...(root?.querySelectorAll('.content .party .node')||[])].map(e=>({aid:e.dataset.aid,level:e.querySelector('.level')?.textContent,job:e.querySelector('.job-icon-container')?.dataset.tooltip,leader:e.classList.contains('leader'),online:e.classList.contains('online')}));});
+const before=await read();
+await live.partner("await command('character.progression.update',{job_id:4016,base_level:98,job_level:70});return {done:true};");
+await game.waitForFunction(()=>document.getElementById('PartyFriendsV1').shadowRoot.querySelector('.node[data-aid="2000000"] .level')?.textContent==='Lv. 98',null,{timeout:6000});
+const lower=await read();assert(lower.find(r=>r.aid==='2000000').leader,'Must preserve party leader');
+await live.partner("await command('character.progression.update',{job_id:4077,base_level:200,job_level:70});return {done:true};");
+await game.waitForFunction(()=>document.getElementById('PartyFriendsV1').shadowRoot.querySelector('.node[data-aid="2000000"] .level')?.textContent==='Lv. 200',null,{timeout:6000});
+const after=await read();assert(after.find(r=>r.aid==='2000000').leader);assert.notEqual(after.find(r=>r.aid==='2000000').job,lower.find(r=>r.aid==='2000000').job);
+await game.keyboard.press('Alt+z');await game.keyboard.up('Alt');await game.waitForTimeout(600);await game.screenshot({path:'artifacts/skill-live/party-info-fixed.png'});await game.keyboard.press('Alt+z');await game.keyboard.up('Alt');
+await fs.writeFile('artifacts/skill-live/party-info-fixed.json',JSON.stringify({before,lower,after},null,2));return {before,lower,after};

@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const roots=[document],found=[];for(let i=0;i<roots.length;i++)for(const e of roots[i].querySelectorAll('*')){if(e.shadowRoot)roots.push(e.shadowRoot);if(e.id==='MakeItemSelection')found.push({html:e.outerHTML.slice(0,1000),text:e.shadowRoot?.innerHTML.slice(-2000)});}return found;});

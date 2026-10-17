@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({skill:Object.fromEntries([9,19,2456,2457,2463,5374].map(id=>[id,window.__learnState[id]])),last:window.__abrPackets?.filter(p=>p.SKID&&/UPDATE/.test(p.name)).slice(-2)}));

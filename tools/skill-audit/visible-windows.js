@@ -1,0 +1,1 @@
+return await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>e.shadowRoot&&e.getBoundingClientRect().width).map(e=>{const c=e.shadowRoot.cloneNode(true);c.querySelectorAll('style').forEach(s=>s.remove());return {id:e.id,text:c.textContent.slice(0,600)};}));

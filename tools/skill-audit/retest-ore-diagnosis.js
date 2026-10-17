@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({position:[...window.__fourthTest.session.Entity.position],packets:window.__abrPackets?.slice(-15),ore:window.__orePackets.slice(-8),inventory:window.__fourthTest.inventory.list.length,entities:(()=>{const a=[];window.__fourthTest.entities.forEach(e=>{if(e.job===1002)a.push({id:e.GID,pos:[...e.position],dead:e.isDead()})});return a})()}));

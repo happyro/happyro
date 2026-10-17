@@ -1,0 +1,1 @@
+const s=await snapshot();return {job:s.job_id,skillPoints:s.skill_points,skills:await game.evaluate(()=>Object.values(window.__learnState).filter(s=>s.level>0).map(s=>({id:s.SKID,level:s.level})).slice(0,10))};

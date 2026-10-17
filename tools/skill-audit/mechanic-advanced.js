@@ -1,0 +1,12 @@
+const rows=[];
+await live.job(4064,200,70);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:30});
+for(const name of ['NC_AXEBOOMERANG','NC_POWERSWING','NC_AXETORNADO','NC_MAGMA_ERUPTION'])rows.push(await live.cast(name,{wait:7000}));
+const names=['NC_BOOSTKNUCKLE','NC_VULCANARM','NC_FLAMELAUNCHER','NC_COLDSLOWER','NC_ARMSCANNON','NC_ACCELERATION','NC_HOVERING','NC_F_SIDESLIDE','NC_B_SIDESLIDE','NC_SHAPESHIFT','NC_EMERGENCYCOOL','NC_INFRAREDSCAN','NC_ANALYZE','NC_MAGNETICFIELD','NC_NEUTRALBARRIER','NC_STEALTHFIELD','NC_REPAIR'];
+await live.resources(names);await live.grant(18000,100);await live.equip(18000);await live.equip(2801);
+const s=await snapshot();const m=s.riding.find(r=>r.kind==='mado');assert(m,JSON.stringify(s.riding));if(!m.active)await command('character.riding.update',{kind:m.kind,enabled:true,fee:m.fee,ticket:m.ticket});
+for(const name of names)rows.push(await live.cast(name,{wait:7500}));
+await live.job(4253,275,60);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:30});await command('character.traits.update',{pow:100,sta:100,wis:100,spl:100,con:100,crt:100});
+const riding=(await snapshot()).riding.find(r=>r.kind==='mado');if(riding&&!riding.active)await command('character.riding.update',{kind:riding.kind,enabled:true,fee:riding.fee,ticket:riding.ticket});
+const fourth=['MT_AXE_STOMP','MT_RUSH_QUAKE','MT_A_MACHINE','MT_D_MACHINE','MT_SUMMON_ABR_BATTLE_WARIOR','MT_SUMMON_ABR_DUAL_CANNON','MT_SUMMON_ABR_MOTHER_NET','MT_SUMMON_ABR_INFINITY','MT_SPARK_BLASTER','MT_TRIPLE_LASER','MT_MIGHTY_SMASH','MT_RUSH_STRIKE','MT_POWERFUL_SWING','MT_ENERGY_CANNONADE'];
+await live.resources(fourth);for(const name of fourth)rows.push(await live.cast(name,{wait:8000}));
+await game.screenshot({path:'artifacts/skill-live/meister.png'});return rows;

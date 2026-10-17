@@ -1,0 +1,1 @@
+const target=await live.durable();const row=await live.cast('MT_ENERGY_CANNONADE',{target,wait:14000});await fs.writeFile('artifacts/skill-live/energy-cannonade.json',JSON.stringify({target,row},null,2));return row;

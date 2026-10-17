@@ -1,0 +1,13 @@
+const learned=await game.evaluate(()=>({skill:window.__learnState[5228],smatk:window.__learnStats[226],increments:window.__audit.packets.filter(p=>p.varID===226)}));
+assert.equal(learned.skill.level,10);assert.equal(learned.smatk,25);
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.REQ_TAKEOFF_EQUIP();p.index=80;t.network.sendPacket(p);});
+await game.waitForFunction(()=>window.__learnStats[226]===5);
+await game.waitForFunction(()=>Boolean(window.__fourthTest.inventory.getItemById(2000)));
+const off=await game.evaluate(()=>({smatk:window.__learnStats[226],item:window.__fourthTest.inventory.getItemById(2000)}));assert.equal(off.item.index,80);
+await live.equip(2000);await game.waitForFunction(()=>window.__learnStats[226]===25);
+const on=await game.evaluate(()=>({smatk:window.__learnStats[226],equipped:window.__fourthTest.inventory.equippedItems}));
+assert(on.equipped.includes(80));
+await fs.writeFile('artifacts/skill-live/twohandstaff-passive-live.json',JSON.stringify({learned,off,on},null,2));
+assert.deepEqual(learned.increments.slice(-11).map(p=>p.count),[5,7,9,11,13,15,17,19,21,23,25]);
+await command('character.skills.learn_all',{});await command('character.vitals.restore',{});
+return {smatk:[5,25,off.smatk,on.smatk],restored:true};

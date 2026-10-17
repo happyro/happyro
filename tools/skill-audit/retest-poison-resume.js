@@ -1,0 +1,3 @@
+const {startedAt,traversal}=JSON.parse(await fs.readFile('artifacts/skill-live/revalidation/poison-research.json','utf8'));await live.equip(1201);const rows=[];
+for(const level of [0,1,10]){if(level)await live.retestLearn(2024,level);await game.evaluate(()=>{window.__poisonStatus=[];window.__fourthTest.skills.onUseSkill(378,5);});await game.waitForTimeout(3000);const packets=await game.evaluate(()=>window.__poisonStatus);rows.push({level,packets});await fs.writeFile('artifacts/skill-live/revalidation/poison-research.json',JSON.stringify({startedAt,traversal,rows},null,2));assert(packets.some(p=>p.SKID===378&&p.result===1),'EDP actual activation');}
+return rows;

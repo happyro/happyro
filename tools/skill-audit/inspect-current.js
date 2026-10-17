@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;const enemies=[];t.entities.forEach(e=>{if(e.job===2559)enemies.push({id:e.GID,x:e.position[0]|0,y:e.position[1]|0});});return {enemies,actor:{id:t.session.Entity.GID,pos:Array.from(t.session.Entity.position)},hooks:t.packets.filter(p=>p?.name?.includes('USESKILL_ACK')).map(p=>p.name)};});

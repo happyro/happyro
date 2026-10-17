@@ -1,0 +1,1 @@
+if(!live.controlFixtureBeforeOreStop){live.controlFixtureBeforeOreStop=live.controlFixture;live.controlFixture=async(type,payload)=>{if(type==='monster.spawn'&&payload.monster_id===1002)throw Error('USER_REQUESTED_STOP: skip time-consuming random ore sampling');return live.controlFixtureBeforeOreStop(type,payload);};}return {stopAtNextWave:true};

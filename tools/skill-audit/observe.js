@@ -1,0 +1,1 @@
+await game.screenshot({path:'artifacts/skill-live/field-current.png'});return {errors:report.errors,chat:await game.evaluate(()=>window.__audit.chat),currentJob:(await snapshot()).job_id,count:live.results.length};

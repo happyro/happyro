@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {inventoryKeys:Object.keys(t.inventory),sessionKeys:Object.keys(t.session),inv:t.inventory.getItems?.(),entityKeys:Object.keys(t.session.Entity)};});

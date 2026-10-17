@@ -1,0 +1,1 @@
+const buttons=game.getByRole('button',{name:'取消',exact:true});if(await buttons.count())await buttons.last().click();await game.screenshot({path:'artifacts/skill-live/wizard-ui.png'});return {cancelled:await buttons.count()===0};

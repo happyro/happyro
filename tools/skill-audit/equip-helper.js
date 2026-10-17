@@ -1,0 +1,1 @@
+live.equip=async(id)=>{const index=await game.evaluate(id=>{const t=window.__fourthTest;const item=t.inventory.getItemById(id);if(!item)throw Error('Item not in inventory '+id);t.inventory.useItem(item);return item.index;},id);await game.waitForFunction(index=>window.__fourthTest.inventory.equippedItems.includes(index),index,{timeout:5000});};return {ready:true};

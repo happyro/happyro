@@ -1,0 +1,1 @@
+await game.evaluate(()=>{window.__masteryHits=[];const t=window.__fourthTest,p=new t.packet.CZ.REQUEST_ACT2();p.targetGID=2000001;p.action=7;t.network.sendPacket(p);});await game.waitForTimeout(1100);await live.retestStop();return {hits:await game.evaluate(()=>window.__masteryHits),self:await snapshot()};

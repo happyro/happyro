@@ -1,0 +1,6 @@
+await live.job(1,99,50);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:120});await game.evaluate(()=>{window.__learnState={};});await command('character.skills.reset',{});await game.waitForFunction(()=>window.__learnState[4]?.level===0);
+await game.evaluate(()=>{const t=window.__fourthTest;window.__hpRecovery=[];for(const p of t.packets){if(!p?.callback||!/RECOVERY/.test(p.name)||p.__hpAudit)continue;const f=p.callback;p.__hpAudit=true;p.callback=function(pkt){window.__hpRecovery.push({name:p.name,...structuredClone(pkt)});return f.apply(this,arguments);};}const p=new t.packet.CZ.REQ_LEAVE_GROUP();t.network.sendPacket(p);});await game.waitForTimeout(500);
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.HAPPYRO_MAP_TELEPORT();p.requestId=901;p.mapName='pvp_y_1-2';p.x=100;p.y=100;t.network.sendPacket(p);});
+await live.partner("await command('character.stats.update',{str:200,agi:80,vit:80,int:120,dex:1000,luk:1});await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.HAPPYRO_MAP_TELEPORT();p.requestId=902;p.mapName='pvp_y_1-2';p.x=101;p.y=100;t.network.sendPacket(p);});await game.waitForTimeout(2000);return true;");
+await game.waitForTimeout(1000);
+return {main:(await snapshot()).map,partner:await live.partner('return (await snapshot()).map;')};

@@ -1,0 +1,3 @@
+await game.locator('#MakeItemSelection .list .item').first().click();await game.locator('#MakeItemSelection ui-button.ok').click();await game.waitForTimeout(1800);
+const after=await game.evaluate(()=>window.__fourthTest.inventory.list.map(i=>({id:i.ITID,count:i.count||1})));const amount=(a,id)=>a.find(i=>i.id===id)?.count||0;const delta=Object.fromEntries([12736,7210,7939,12727].map(id=>[id,amount(after,id)-amount(runeBefore,id)]));
+await fs.writeFile('artifacts/skill-live/rune-crafted.json',JSON.stringify({before:runeBefore,after,delta,observed:await game.evaluate(()=>window.__audit)},null,2));assert.equal(delta[7210],-1);assert.equal(delta[7939],-1);assert(delta[12727]>0);return delta;

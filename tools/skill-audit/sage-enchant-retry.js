@@ -1,0 +1,1 @@
+await live.grant(1601);await live.equip(1601);const rows=[];for(const name of ['SA_FLAMELAUNCHER','SA_FROSTWEAPON','SA_LIGHTNINGLOADER','SA_SEISMICWEAPON'])rows.push(await live.cast(name,{wait:6000}));await fs.writeFile('artifacts/skill-live/sage-enchants.json',JSON.stringify(rows,null,2));return rows;

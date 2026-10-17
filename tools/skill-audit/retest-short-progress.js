@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({levels:Object.values(window.__learnState||{}).filter(s=>s.level>0).length,last:window.__freezePackets?.slice(-2).map(p=>({name:p.name,id:p.SKID,level:p.level})),radius:window.__learnState?.[2208]?.level,freeze:window.__learnState?.[2232]?.level}));

@@ -1,0 +1,1 @@
+await live.cast('CH_SOULCOLLECT',{wait:1500});const row=await live.cast('MO_BODYRELOCATION',{target:{x:125,y:115},wait:2500});const position=await game.evaluate(()=>window.__fourthTest.session.Entity.position.slice(0,2));await fs.writeFile('artifacts/skill-live/sura-relocation.json',JSON.stringify({row,position},null,2));return {row,position};

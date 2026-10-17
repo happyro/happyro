@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest,names=[];for(const p of t.packets){if(!p?.callback||!/SC_NOTIFY|STATE_CHANGE|STATUS_CHANGE|OPTION/.test(p.name))continue;names.push(p.name);const f=p.callback;p.callback=function(pkt){window.__audit.packets.push({name:p.name,...pkt});return f.apply(this,arguments);};}return names;});

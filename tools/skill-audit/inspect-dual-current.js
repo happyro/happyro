@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {levels:[window.__learnState[132],window.__learnState[133]],equipped:t.inventory.equippedItems,daggers:t.inventory.list.filter(i=>i?.ITID===1201).map(i=>({index:i.index,location:i.location,WearState:i.WearState}))};});

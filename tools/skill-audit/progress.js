@@ -1,0 +1,1 @@
+const original=live.cast;live.cast=async(...args)=>{const result=await original(...args);console.log(new Date().toISOString(),result.name,JSON.stringify(result.chat));return result;};return {count:live.results.length};

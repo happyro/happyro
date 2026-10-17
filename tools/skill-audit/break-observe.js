@@ -1,0 +1,1 @@
+const s=await snapshot();return {hp:s.hp,player:await game.evaluate(()=>{const t=window.__fourthTest;return {p:Array.from(t.session.Entity.position),item:t.inventory.getItemById(1501),breaks:window.__audit.packets.filter(p=>p.SKID===343).slice(-10),chat:window.__audit.chat.slice(-6)};})};

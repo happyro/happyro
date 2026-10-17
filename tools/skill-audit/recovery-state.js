@@ -1,0 +1,1 @@
+const s=await snapshot();return {hp:s.hp,maxHp:s.max_hp,map:s.map,x:s.x,y:s.y,view:await game.evaluate(()=>({party:window.__fourthTest.session.hasParty,pos:window.__fourthTest.session.Entity.position})),partner:await live.partner("const s=await snapshot();return {map:s.map,x:s.x,y:s.y,party:await game.evaluate(()=>window.__fourthTest.session.hasParty)};")};

@@ -1,0 +1,1 @@
+return {me:await snapshot(),client:await game.evaluate(()=>({position:Array.from(window.__fourthTest.session.Entity.position),playing:window.__fourthTest.session.Playing,dead:window.__fourthTest.session.Entity.isDead()})),partner:await live.partner('return await game.evaluate(()=>({talkie:window.__talkie,packets:window.__audit.packets.slice(-15)}));')};

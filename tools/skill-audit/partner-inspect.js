@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {party:t.session.hasParty,altitude:!!t.altitude,freeCells:t.altitude.getCellsInSquareRange(120,120,8),pos:Array.from(t.session.Entity.position)};});

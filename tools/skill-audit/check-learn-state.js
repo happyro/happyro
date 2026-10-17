@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({target:window.__learnState[5288],updates:window.__audit.packets.filter(p=>p.SKID===5288),available:Object.values(window.__learnState).filter(s=>s.upgradable).map(s=>({id:s.SKID,level:s.level})).slice(0,15)}));

@@ -1,0 +1,1 @@
+return {state:await snapshot(),entities:await game.evaluate(()=>{const a=[];window.__fourthTest.entities.forEach(e=>a.push({id:e.GID,type:e.objecttype,job:e.job,name:e.display?.name||e.name,x:e.position[0],y:e.position[1]}));return a;})};

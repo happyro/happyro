@@ -1,0 +1,1 @@
+await live.partner("await command('character.stats.update',{str:1,agi:1,vit:80,int:1,dex:120,luk:1});return true;");await command('character.vitals.restore',{});const s=await snapshot();return {hp:s.hp,maxHp:s.max_hp};

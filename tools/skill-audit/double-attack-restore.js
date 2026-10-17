@@ -1,0 +1,1 @@
+const data=JSON.parse(await fs.readFile('artifacts/skill-live/double-attack-live.json','utf8'));const items=await game.evaluate(indices=>indices.map(index=>{const t=window.__fourthTest,i=t.inventory.list.find(i=>i&&i.index===index);return {index,equipped:t.inventory.equippedItems.includes(index),id:i?.ITID};}),data.index);return items;

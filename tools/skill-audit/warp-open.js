@@ -1,0 +1,1 @@
+await live.grant(717,2);const p=await snapshot();await live.cast('AL_WARP',{level:4,target:{x:p.x+2,y:p.y},wait:2500});return await game.evaluate(()=>[...document.querySelectorAll('#NpcMenu')].map(e=>{const d=document.createElement('div');d.innerHTML=e.shadowRoot?.innerHTML||'';d.querySelectorAll('style').forEach(s=>s.remove());return d.textContent;}));

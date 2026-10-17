@@ -1,0 +1,1 @@
+await live.cast('AC_MAKINGARROW',{wait:1500});const title=await game.locator('#MakeArrowSelection .head .text').innerText();assert.equal(title,'制作箭矢');await game.screenshot({path:'artifacts/skill-live/arrow-title-fixed.png'});await game.locator('#MakeArrowSelection ui-button.cancel').click();return {title};

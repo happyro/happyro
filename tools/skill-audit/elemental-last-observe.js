@@ -1,0 +1,1 @@
+const observed=await game.evaluate(()=>window.__audit);await fs.writeFile('artifacts/skill-live/elemental-serpens-recovery.json',JSON.stringify(observed,null,2));return {chat:observed.chat,packets:observed.packets.filter(p=>p.SKID>=5367)};

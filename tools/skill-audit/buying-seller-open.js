@@ -1,0 +1,1 @@
+await game.locator('button').filter({hasText:'技能收购验收'}).dblclick();await game.waitForTimeout(800);return {items:await game.locator('#NpcStore .InputWindow .item').evaluateAll(es=>es.map(e=>({index:e.dataset.index,text:e.textContent}))),available:await game.locator('#NpcStore .AvailableItemsWindow .item').count()};

@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {list:t.inventory.list.map(i=>({index:i.index,id:i.ITID})),recent:window.__audit.packets.filter(p=>/ITEM|EQUIP/.test(p.name)).slice(-10)};});

@@ -1,0 +1,1 @@
+const observed=await live.partner('return await game.evaluate(()=>window.__audit);');await fs.writeFile('artifacts/skill-live/benedictio-low-sp-recovered.json',JSON.stringify(observed,null,2));return {packets:observed.packets.filter(p=>p.SKID===69),chat:observed.chat};

@@ -1,0 +1,1 @@
+await live.grant(6377,1);await live.cast('ALL_BUYING_STORE',{wait:1500});const index=await game.evaluate(()=>window.__fourthTest.inventory.getItemById(501).index);return {index,items:await game.locator('#Vending .available .item').evaluateAll(es=>es.map(e=>({index:e.dataset.index,text:e.textContent})))};

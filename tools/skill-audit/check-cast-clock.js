@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {tick:t.renderer.tick,amotion:t.session.Entity.amotionTick,hidden:document.hidden,playing:t.session.Playing,freeze:window.__learnState[2232],skill:t.skills.getSkillById(5078)};});

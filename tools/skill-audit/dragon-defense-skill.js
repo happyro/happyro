@@ -1,0 +1,1 @@
+const skill=await game.evaluate(()=>window.__learnState[5207]);assert.equal(skill.level,10);await fs.writeFile('artifacts/skill-live/dragon-defense-skill.json',JSON.stringify(skill,null,2));return skill;

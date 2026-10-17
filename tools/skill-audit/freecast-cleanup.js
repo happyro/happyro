@@ -1,0 +1,1 @@
+await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:120});await command('character.skills.learn_all',{});await command('character.vitals.restore',{});const s=await snapshot();return {job:s.job_id,map:s.map,int:s.int,dex:s.dex,hp:s.hp,maxHp:s.max_hp};

@@ -1,0 +1,12 @@
+await game.evaluate(()=>{const t=window.__fourthTest;const monster=window.__support.packets.find(p=>p.SKID===2052&&p.targetAID)?.targetAID;if(monster)t.targeting.onUseSkillToId(156,1,monster);});
+await game.waitForTimeout(3000);
+const before=support.before.data;
+await support.command('character.progression.update',{job_id:before.job_id,base_level:before.base_level,job_level:before.job_level});
+await support.command('character.skills.learn_all',{});await support.command('character.vitals.restore',{});
+const after=(await (await game.request.get(api,{headers:sessionHeaders})).json()).data;
+const expected={130:119,380:386,383:389,2046:755,2050:719,2052:753,2053:'priest:expiatio',2054:'ef_duplelight',2057:'priest:silentium'};
+for(const [id,effect] of Object.entries(expected))assert(support.rows.some(r=>r.id===Number(id)&&r.layers.some(l=>l.effect===effect&&l.ready&&l.draws>0)),id);
+assert.equal(support.errors.length,0);assert.equal(after.job_id,before.job_id);
+const result={build:JSON.parse(await fs.readFile('repos/happyro-client/dist/Web/build-info.json','utf8')).buildId,verifiedSkills:Object.keys(expected).map(Number),rows:support.rows,errors:support.errors,restored:{job_id:after.job_id,base_level:after.base_level,job_level:after.job_level}};
+await fs.writeFile('artifacts/skill-live/support-effects-live.json',JSON.stringify(result,null,2));
+return {verified:result.verifiedSkills.length,errors:result.errors,restored:result.restored};

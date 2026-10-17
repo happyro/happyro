@@ -1,0 +1,4 @@
+const rows=[];await live.job(4255,275,60);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:30});await command('character.traits.update',{pow:100,sta:100,wis:100,spl:100,con:100,crt:100});
+for(const name of ['AG_DEADLY_PROJECTION','AG_DESTRUCTIVE_HURRICANE','AG_RAIN_OF_CRYSTAL','AG_MYSTERY_ILLUSION','AG_VIOLENT_QUAKE','AG_SOUL_VC_STRIKE','AG_STRANTUM_TREMOR','AG_ALL_BLOOM','AG_CRYSTAL_IMPACT','AG_TORNADO_STORM','AG_FLORAL_FLARE_ROAD','AG_ASTRAL_STRIKE','AG_ROCK_DOWN','AG_STORM_CANNON','AG_CRIMSON_ARROW','AG_FROZEN_SLASH'])rows.push(await live.cast(name,{wait:6500}));
+rows.push(await live.cast('AG_CLIMAX',{wait:3500}));rows.push(await live.cast('AG_ENERGY_CONVERSION',{wait:3500}));
+await game.screenshot({path:'artifacts/skill-live/archmage.png'});return rows;

@@ -1,0 +1,1 @@
+await live.grant(7433,5);await live.cast('SA_CREATECON',{wait:2500});return await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>e.shadowRoot&&e.getBoundingClientRect().width&&/produce|make|select|mix/i.test(e.id)).map(e=>({id:e.id,html:e.shadowRoot.innerHTML})));

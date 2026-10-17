@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {learn:window.__learnState[2201],radius:window.__learnState[2208],skills:Object.keys(t.skills),entity:{id:t.session.Entity.GID},body:document.body.innerText.slice(-1800)};});

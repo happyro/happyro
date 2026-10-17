@@ -1,0 +1,3 @@
+const row=live.results.findLast(r=>r.name==='HT_FREEZINGTRAP');const unit=row.observed.packets.find(p=>p.name==='PACKET_ZC_SKILL_ENTRY5');const before=await game.evaluate(()=>window.__fourthTest.inventory.getItemById(1065).count);
+await live.cast('HT_REMOVETRAP',{target:{id:unit.AID},wait:2200});const after=await game.evaluate(()=>window.__fourthTest.inventory.getItemById(1065).count);const observed=live.results.at(-1).observed;
+await fs.writeFile('artifacts/skill-live/trap-recycle.json',JSON.stringify({before,after,placement:row.observed,removal:observed},null,2));return {before,after,packets:observed.packets.filter(p=>!/PAR_CHANGE/.test(p.name)),chat:observed.chat};

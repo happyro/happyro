@@ -1,0 +1,4 @@
+const rows=[];await live.job(4077,200,70);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:30});
+rows.push(await live.cast('SR_RAISINGDRAGON',{wait:6000}));
+for(const name of ['SR_DRAGONCOMBO','SR_SKYNETBLOW','SR_EARTHSHAKER','SR_TIGERCANNON','SR_RAMPAGEBLASTER','SR_CRESCENTELBOW','SR_LIGHTNINGWALK','SR_KNUCKLEARROW','SR_WINDMILL','SR_GENTLETOUCH_QUIET','SR_GENTLETOUCH_CURE','SR_GENTLETOUCH_ENERGYGAIN','SR_GENTLETOUCH_CHANGE','SR_GENTLETOUCH_REVITALIZE','SR_HOWLINGOFLION','SR_RIDEINLIGHTNING','SR_GATEOFHELL','SR_FLASHCOMBO']){rows.push(await live.cast('CH_SOULCOLLECT',{wait:1800}));rows.push(await live.cast(name,{target:live.db.find(s=>s.Name===name).TargetType==='Attack'?await live.durable():undefined,wait:7500}));}
+await game.screenshot({path:'artifacts/skill-live/sura.png'});return rows;

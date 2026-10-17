@@ -1,0 +1,1 @@
+return {snapshot:await snapshot().then(({jobs,...s})=>s),entity:await game.evaluate(()=>{const e=window.__fourthTest.session.Entity;return {action:e.action,dead:e.dead,sitting:e.sitting,weight:e.weight,hp:e.hp};})};

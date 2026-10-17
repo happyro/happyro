@@ -1,0 +1,1 @@
+const s=await snapshot();for(const r of s.riding.filter(r=>r.active))await command('character.riding.update',{kind:r.kind,enabled:false,fee:r.fee,ticket:r.ticket});return {before:s.riding,after:(await snapshot()).riding};

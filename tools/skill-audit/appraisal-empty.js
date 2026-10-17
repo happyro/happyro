@@ -1,0 +1,1 @@
+await live.cast('MC_IDENTIFY',{wait:1500});return {chat:await game.evaluate(()=>window.__audit.chat),windows:await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>e.shadowRoot&&e.getBoundingClientRect().width&&/identify|select/i.test(e.id)).map(e=>({id:e.id})))};

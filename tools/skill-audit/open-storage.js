@@ -1,0 +1,1 @@
+await game.evaluate(()=>{const t=window.__fourthTest;t.chat.onRequestTalk('','@storage',t.chat.TYPE.PUBLIC)});await game.waitForTimeout(1800);return await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>/storage/i.test(e.id)).map(e=>({id:e.id,text:e.shadowRoot?.textContent?.slice(-300)})));

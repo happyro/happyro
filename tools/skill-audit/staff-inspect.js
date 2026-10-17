@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {stats:window.__learnStats,skill:window.__learnState[5228],equipped:t.inventory.equippedItems,keys:Object.keys(t.inventory).filter(k=>/item/i.test(k)),item:t.inventory.getItemById(2000),items:t.inventory.list?.filter?.(i=>i?.ITID===2000)};});

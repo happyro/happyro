@@ -1,0 +1,1 @@
+const result=await live.cast('SA_AUTOSPELL',{wait:3000});return {result,hosts:await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>e.shadowRoot&&e.getBoundingClientRect().width&&/skill|spell|select/i.test(e.id)).map(e=>({id:e.id,html:e.shadowRoot.innerHTML.slice(0,4000)})))};

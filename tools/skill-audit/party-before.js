@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const host=document.getElementById('PartyFriendsV1');return {html:host?.shadowRoot?.querySelector('.content .party')?.innerHTML,own:{job:window.__fourthTest.session.Entity.job,level:window.__fourthTest.session.Entity.display.lvl}};});

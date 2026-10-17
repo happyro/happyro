@@ -1,0 +1,1 @@
+await game.evaluate(()=>{const i=window.__fourthTest.inventory;i.useItem(i.getItemById(18000));});await game.waitForTimeout(1000);return await game.evaluate(()=>({equipped:window.__fourthTest.inventory.equippedItems,chat:window.__audit.chat}));

@@ -1,0 +1,1 @@
+const s=await snapshot();return {job:s.job_id,hp:s.hp,sp:s.sp,client:await game.evaluate(()=>{const t=window.__fourthTest;return {skill:t.skills.getSkillById(373),playing:t.session.Playing,position:Array.from(t.session.Entity.position),action:t.session.Entity.action,chat:window.__audit.chat};})};

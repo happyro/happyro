@@ -1,0 +1,1 @@
+await game.evaluate(()=>{const t=window.__fourthTest;const p=new t.packet.CZ.HAPPYRO_MAP_TELEPORT();p.requestId=4501;p.mapName='izlude';p.x=105;p.y=145;t.network.sendPacket(p);});await game.waitForTimeout(3000);return (await snapshot()).map;

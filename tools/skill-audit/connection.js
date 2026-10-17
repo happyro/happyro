@@ -1,0 +1,2 @@
+await game.screenshot({path:'artifacts/skill-live/connection-'+(await game.evaluate(()=>window.__fourthTest.session.AID))+'.png'});
+return {errors:report.errors,client:await game.evaluate(()=>{const t=window.__fourthTest;return {position:t.session.Entity?Array.from(t.session.Entity.position):null,playing:t.session.Playing,visible:document.visibilityState,dialogs:Array.from(document.querySelectorAll('dialog')).map(d=>d.textContent)};})};

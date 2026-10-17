@@ -1,0 +1,9 @@
+const rows=[];
+await live.job(4074,200,70);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:30});
+const names=['SO_FIREWALK','SO_ELECTRICWALK','SO_EARTHGRAVE','SO_DIAMONDDUST','SO_PSYCHIC_WAVE','SO_CLOUD_KILL','SO_POISON_BUSTER','SO_STRIKING','SO_WARMER','SO_VACUUM_EXTREME','SO_VARETYR_SPEAR','SO_ARRULLO','SO_FIRE_INSIGNIA','SO_WATER_INSIGNIA','SO_WIND_INSIGNIA','SO_EARTH_INSIGNIA','SO_SUMMON_AGNI','SO_SUMMON_AQUA','SO_SUMMON_VENTUS','SO_SUMMON_TERA'];
+await live.resources(names);for(const name of names)rows.push(await live.cast(name,{wait:8000}));
+rows.push(await live.cast('SO_EL_CONTROL',{level:3,wait:1500}));rows.push(await live.cast('SO_EL_ACTION'));rows.push(await live.cast('SO_EL_CURE'));
+await live.job(4261,275,60);await command('character.stats.update',{str:1000,agi:80,vit:80,int:120,dex:120,luk:30});await command('character.traits.update',{pow:100,sta:100,wis:100,spl:100,con:100,crt:100});
+const fourth=['EM_SPELL_ENCHANTING','EM_DIAMOND_STORM','EM_LIGHTNING_LAND','EM_VENOM_SWAMP','EM_CONFLAGRATION','EM_TERRA_DRIVE','EM_SUMMON_ELEMENTAL_ARDOR','EM_SUMMON_ELEMENTAL_DILUVIO','EM_SUMMON_ELEMENTAL_PROCELLA','EM_SUMMON_ELEMENTAL_TERREMOTUS','EM_SUMMON_ELEMENTAL_SERPENS','EM_ELEMENTAL_BUSTER','EM_ELEMENTAL_VEIL','EM_PSYCHIC_STREAM'];
+await live.resources(fourth);for(const name of fourth){const base={EM_SUMMON_ELEMENTAL_ARDOR:'SO_SUMMON_AGNI',EM_SUMMON_ELEMENTAL_DILUVIO:'SO_SUMMON_AQUA',EM_SUMMON_ELEMENTAL_PROCELLA:'SO_SUMMON_VENTUS',EM_SUMMON_ELEMENTAL_TERREMOTUS:'SO_SUMMON_TERA',EM_SUMMON_ELEMENTAL_SERPENS:'SO_SUMMON_AGNI'}[name];if(base)rows.push(await live.cast(base,{level:3,wait:8000}));if(name==='EM_ELEMENTAL_BUSTER')await live.spawn();rows.push(await live.cast(name,{wait:8500}));}
+await game.screenshot({path:'artifacts/skill-live/elemental-master.png'});return rows;

@@ -1,0 +1,1 @@
+await game.locator('#InputBox input').fill('5');await game.locator('#InputBox ui-button').click();await game.locator('#InputBox input').fill('100');await game.locator('#InputBox ui-button').click();await game.locator('#Vending .shopname').fill('技能验收勿买');return {items:await game.locator('#Vending .add_shop .item').count()};

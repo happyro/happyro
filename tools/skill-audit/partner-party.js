@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;if(t.session.hasParty)return {existing:true};const p=new t.packet.CZ.MAKE_GROUP2();p.groupName='技能验收1017';p.ItemPickupRule=0;p.ItemDivisionRule=0;t.network.sendPacket(p);return {requested:true};});

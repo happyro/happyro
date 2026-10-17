@@ -1,0 +1,1 @@
+return await game.evaluate(()=>({playing:window.__fourthTest.session.Playing,skills:Object.fromEntries([5297,5301,5302].map(id=>[id,window.__learnState[id]])),learned:Object.values(window.__learnState).filter(s=>s.level>0).length}));

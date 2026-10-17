@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest;return {inventoryKeys:Object.keys(t.inventory).filter(k=>/item|equip/i.test(k)),inventory:t.inventory.getItemById(1401),sessionKeys:Object.keys(t.session).filter(k=>/equip|item|inventory/i.test(k))};});

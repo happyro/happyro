@@ -1,0 +1,1 @@
+return {errors:report.errors.slice(-8),callbacks:await game.evaluate(()=>({skill:window.__fourthTest.skills.onUseSkill.toString().slice(0,400),network:window.__fourthTest.network.sendPacket.toString().slice(0,200)}))};

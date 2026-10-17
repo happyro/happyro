@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest,e=t.session.Entity;return {action:e.action,constants:e.ACTION,entityKeys:Object.keys(e).filter(k=>/act|sit|dead|motion|option/i.test(k)),skill:t.skills.getSkillById(2210)};});

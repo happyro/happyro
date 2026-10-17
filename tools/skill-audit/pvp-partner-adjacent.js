@@ -1,0 +1,1 @@
+const before=await snapshot();await fs.writeFile('artifacts/skill-live/pvp-partner-before.json',JSON.stringify(before,null,2));await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.HAPPYRO_MAP_TELEPORT();p.requestId=702;p.mapName='pvp_y_1-2';p.x=101;p.y=100;t.network.sendPacket(p);});await game.waitForTimeout(4000);return await snapshot();

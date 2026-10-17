@@ -1,0 +1,1 @@
+const observed=await game.evaluate(()=>window.__audit);await fs.writeFile('artifacts/skill-live/sura-combo-reactive-failure.json',JSON.stringify(observed,null,2));return {chat:observed.chat,packets:observed.packets.filter(p=>[2326,2329,2330].includes(p.SKID)),sent:observed.sent};

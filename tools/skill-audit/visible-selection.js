@@ -1,0 +1,1 @@
+return {row:live.results.at(-1)?.name,windows:await game.evaluate(()=>[...document.querySelectorAll('[id]')].filter(e=>e.shadowRoot&&e.getBoundingClientRect().width&&/select|mix|skillitem/i.test(e.id)).map(e=>({id:e.id,text:e.shadowRoot.textContent.slice(-1500)}))),chat:await game.evaluate(()=>window.__audit.chat)};

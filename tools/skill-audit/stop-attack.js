@@ -1,0 +1,1 @@
+await game.evaluate(()=>{const t=window.__fourthTest,p=new t.packet.CZ.REQUEST_MOVE2();p.dest[0]=Math.floor(t.session.Entity.position[0]);p.dest[1]=Math.floor(t.session.Entity.position[1]);t.network.sendPacket(p);});await game.waitForTimeout(800);return {stopped:true};

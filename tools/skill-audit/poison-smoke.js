@@ -1,0 +1,1 @@
+await live.cast('GC_POISONINGWEAPON',{wait:1800});await game.locator('#MakeArrowSelection .item').filter({hasText:'麻痹'}).dblclick();await game.waitForTimeout(800);const row=await live.cast('GC_POISONSMOKE',{wait:6500});return row;

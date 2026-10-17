@@ -1,0 +1,1 @@
+const rows=[];const names=['SA_ELEMENTFIRE','SA_ELEMENTWATER','SA_ELEMENTGROUND','SA_ELEMENTWIND'];await live.resources(names);for(const name of names)rows.push(await live.cast(name,{target:await live.neutral(),wait:3500}));await fs.writeFile('artifacts/skill-live/sage-element-changes.json',JSON.stringify(rows,null,2));return rows;

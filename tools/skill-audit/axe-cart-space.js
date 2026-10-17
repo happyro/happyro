@@ -1,0 +1,4 @@
+let s=await snapshot(),c=s.riding.find(r=>r.kind==='cart');live.axeCartWasActive=c.active;if(!c.active)await command('character.riding.update',{kind:'cart',enabled:true,fee:c.fee,ticket:c.ticket});
+await game.evaluate(()=>{const t=window.__fourthTest;window.__cartAudit=[];for(const p of t.packets){if(!p?.callback||!/CART/.test(p.name)||p.__cartAudit)continue;const f=p.callback;p.__cartAudit=true;p.callback=function(pkt){window.__cartAudit.push({name:p.name,...structuredClone(pkt)});return f.apply(this,arguments);};}const i=t.inventory.getItemByIndex(52);if(i?.ITID!==1351)throw Error('fixture changed');const p=new t.packet.CZ.MOVE_ITEM_FROM_BODY_TO_CART();p.index=i.index;p.count=1;t.network.sendPacket(p);});
+await game.waitForFunction(()=>!window.__fourthTest.inventory.getItemByIndex(52));
+return await game.evaluate(()=>window.__cartAudit);

@@ -1,0 +1,1 @@
+const observed=await game.evaluate(()=>window.__audit);await fs.writeFile('artifacts/skill-live/knight-pierce-recovery.json',JSON.stringify(observed,null,2));return {chat:observed.chat,packets:observed.packets.filter(p=>p.SKID===6502||p.damage>0),playing:await game.evaluate(()=>window.__fourthTest.session.Playing)};

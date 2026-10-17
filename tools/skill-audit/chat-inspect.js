@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const r=document.querySelector('#ChatBox')?.shadowRoot;return {text:r?.querySelector('.content')?.textContent?.slice(-1200),keys:Object.keys(window.__fourthTest.packet.CZ).filter(k=>/ITEM.*(FLOOR|STORE|THROW)|STORE|STORAGE/.test(k))};});

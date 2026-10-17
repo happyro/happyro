@@ -1,0 +1,1 @@
+const s=await snapshot();return {character:s.character,riding:s.riding,items:await game.evaluate(()=>[1701,1750,1000311].map(id=>{const i=window.__fourthTest.inventory.getItemById(id);return{id,index:i?.index,count:i?.count};})),hooks:await game.evaluate(()=>({learn:Boolean(window.__learnState),damage:Array.isArray(window.__magicDefense)}))};

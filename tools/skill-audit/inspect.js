@@ -1,0 +1,1 @@
+return {snapshot:await snapshot(),errors:report.errors,entity:await game.evaluate(()=>{const t=window.__fourthTest;return {job:t.session.Entity.job,pos:Array.from(t.session.Entity.position),weapon:t.session.Entity.weapon,skills:Object.keys(t.skills),inventory:Object.keys(t.inventory)};})};

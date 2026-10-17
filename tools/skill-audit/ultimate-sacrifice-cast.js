@@ -1,0 +1,1 @@
+await live.cast('IG_GUARD_STANCE',{wait:1800});const row=await live.cast('IG_ULTIMATE_SACRIFICE',{wait:4500});await fs.writeFile('artifacts/skill-live/ultimate-sacrifice-caster.json',JSON.stringify(row,null,2));return row;

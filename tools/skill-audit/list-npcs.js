@@ -1,0 +1,1 @@
+return await game.evaluate(()=>{const t=window.__fourthTest,a=[];t.entities.forEach(e=>{if(e.objecttype===6||/卡普|Kafra/i.test(e.display?.name||e.name||''))a.push({id:e.GID,type:e.objecttype,job:e.job,name:e.display?.name||e.name,x:e.position[0],y:e.position[1]});});return a;});

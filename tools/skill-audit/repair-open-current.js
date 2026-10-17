@@ -1,0 +1,1 @@
+await live.cast('BS_REPAIRWEAPON',{target:{id:2000000},wait:5500});return {items:await game.locator('#RefineWeaponSelection .item').evaluateAll(items=>items.map(i=>({index:i.dataset.index,text:i.textContent}))),chat:await game.evaluate(()=>window.__audit.chat)};

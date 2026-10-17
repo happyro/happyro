@@ -1,0 +1,1 @@
+await game.locator('#WinDeal .btns button:nth-child(1)').click();await game.locator('#NpcStore .InputWindow .item').first().waitFor();return await game.locator('#NpcStore .InputWindow .item').evaluateAll(es=>es.map(e=>({index:e.dataset.index,text:e.textContent})));

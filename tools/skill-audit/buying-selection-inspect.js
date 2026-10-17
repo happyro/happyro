@@ -1,0 +1,1 @@
+return {output:await game.locator('#NpcStore .OutputWindow .content').innerText(),available:await game.locator('#NpcStore .AvailableItemsWindow .content').innerHTML(),input:await game.locator('#NpcStore .InputWindow .item').first().getAttribute('data-index')};

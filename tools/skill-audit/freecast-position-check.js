@@ -1,0 +1,3 @@
+const initial=JSON.parse(await fs.readFile('artifacts/skill-live/freecast-live.json','utf8'))[1],rows=[];
+for(const x of [140,142]){await game.evaluate(x=>{const t=window.__fourthTest,p=new t.packet.CZ.REQUEST_MOVE2();p.dest[0]=x;p.dest[1]=105;t.network.sendPacket(p);},x);await game.waitForTimeout(1500);const s=await snapshot();assert.equal(s.x,x);await command('character.vitals.restore',{});await game.evaluate(target=>{window.__freecastPackets=[];window.__fourthTest.targeting.onUseSkillToId(19,10,target.id);},initial.target);await game.waitForTimeout(6000);rows.push({x,y:s.y,packets:await game.evaluate(()=>window.__freecastPackets)});}
+await fs.writeFile('artifacts/skill-live/freecast-position-check.json',JSON.stringify(rows,null,2));return rows;

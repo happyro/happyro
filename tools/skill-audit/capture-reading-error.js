@@ -1,0 +1,1 @@
+globalThis.readingErrors=[];game.on('pageerror',e=>globalThis.readingErrors.push(e.stack));await game.evaluate(()=>{const t=window.__fourthTest;t.inventory.useItem(t.inventory.getItemById(100068));});await game.waitForTimeout(1500);return globalThis.readingErrors;

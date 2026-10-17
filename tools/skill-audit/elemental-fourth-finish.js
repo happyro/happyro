@@ -1,0 +1,1 @@
+const rows=[];await live.durable();for(const name of ['EM_ELEMENTAL_BUSTER','EM_ELEMENTAL_VEIL','EM_PSYCHIC_STREAM'])rows.push(await live.cast(name,{wait:8000}));await fs.writeFile('artifacts/skill-live/elemental-fourth-final.json',JSON.stringify(rows,null,2));await game.screenshot({path:'artifacts/skill-live/elemental-fourth-final.png'});return rows;
