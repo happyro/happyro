@@ -9,7 +9,7 @@
 - `server`：`repos/happyro-server` rAthena 服务端。
 
 - `admin`：`repos/happyro-admin` 管理后台，原始记录位于其 `changelog/`。
-- `gateway`：`repos/happyro-gateway` 资源网关，原始记录位于其 `CHANGELOG.md`。
+- `gateway`：`repos/happyro-gateway` 资源网关，新记录位于其 `changelog/`，旧记录保留在 `CHANGELOG.md`。
 
 根仓库可汇总 Admin 与 Gateway 的用户可见变化；集中日志不能替代产品仓库内的记录。文档站的同步规则、导航与主题维护不另写产品日志。
 
@@ -75,7 +75,7 @@ python3 tools/changelog/manage.py sync
 
 ## 日期索引
 
-- [2026-10-18](2026/10/2026-10-18.md)：职业显示、转职流程及任务怪物名称修复。
+- [2026-10-18](2026/10/2026-10-18.md)：职业外观扩展、转职完成、移动 UI 与菜单设置修复。
 - [2026-10-17](2026/10/2026-10-17.md)：猎人线技能第二轮审查与电击陷阱修复。
 - [2026-10-16](2026/10/2026-10-16.md)：修复桌面仓库分类与搜索窗口及数量同步。
 - [2026-10-15](2026/10/2026-10-15.md)：修复装备评级等待状态与成功率显示。

@@ -13,11 +13,11 @@ PWA (dist/Web)
        └── HTTP 代理 → web-server :8889
 ```
 
-客户端不直连 login / char / map 端口。WebSocket 目标白名单为 `127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121`。
+客户端不直连 login / char / map 端口。原生开发模板的 WebSocket 目标白名单为 `127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121`。
 
 ## 资源查找
 
-Gateway 处理 `/data/...` 的顺序为：
+未配置自定义资源时，Gateway 处理 `/data/...` 的顺序为：
 
 1. Gateway 仓库内同路径的本地文件，例如 `repos/happyro-gateway/data/...`。
 2. `DATA_OVERRIDE_PATH` 中按顺序配置的目录。当前为已审查运行目录，然后是 `localization/client/data/`。
@@ -71,4 +71,6 @@ GameTools（客户端）
                  → DatabaseNpcRepository（分页查询 game_npcs 表）
 ```
 
-魔物图鉴不经过这条链路：`GameTools` 直接向 Gateway 请求客户端 PWA 内的静态文件（`applications/pwa/data/monsters/catalog.json`），不经 Admin，也没有分页——原因见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
+魔物图鉴不经过这条链路：`GameTools` 直接向 Gateway 请求客户端 PWA 内的静态文件（`applications/pwa/data/monsters/catalog.json`），不经 Admin，分页在浏览器内完成——原因见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
+
+配置 `CUSTOM_RESOURCE_PATH` 时，用户资源先于内置来源和缓存读取；删除回退及缓存规则见[自定义设计](customization.md#资源与资料刷新)。

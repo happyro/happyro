@@ -4,19 +4,11 @@ HappyRO 是浏览器可玩的中文 RO 栈。玩家只访问 Gateway；登录、
 
 固定基线为 `PACKETVER=20211103`、Renewal、kRO 2021-11-05 客户端资源。Client 与 Server 的包定义和混淆设置必须一致；Gateway 透明转发字节流，Admin 使用相应服务端接口。
 
-## 仓库职责
-
-| 仓库 | 职责 |
-| --- | --- |
-| 根仓库 | 编排脚本、本机配置、官方输入清单、版本化本地化覆盖、跨仓库文档 |
-| `happyro-client` | 浏览器 PWA、游戏 UI、静态中文表、世界图鉴前端 |
-| `happyro-server` | login / char / map / web-server，NPC 脚本，游戏数据库定义，Game Control |
-| `happyro-gateway` | PWA 静态文件、`/data` 资源、GRF、WebSocket 代理、rAthena Web API 反向代理 |
-| `happyro-admin` | GM 认证、玩家查询、游戏资料、物品发放和运行中世界操作 |
+六仓库职责及目录归属统一见[仓库边界](repository-boundaries.md)，下文专注运行关系。
 
 ## 运行时拓扑
 
-游戏 TCP 与数据库本机默认绑定回环地址。Gateway 对浏览器监听 `3338`，可经局域网访问；Admin 的绑定由其部署配置管理。
+以下为 Linux 原生开发模板；macOS 和 Docker 的端口、服务管理及网络布局见[服务管理](../operations/services.md)。游戏 TCP 与数据库本机默认绑定回环地址。Gateway 对浏览器监听 `3338`，可经局域网访问；Admin 的绑定由其部署配置管理。
 
 ```text
 浏览器
@@ -33,10 +25,10 @@ Admin 浏览器 :8000
         ├── MariaDB :33062
         │     ├── happyro / happyro_log   游戏库（只读查询与发放记录）
         │     └── happyro_admin           后台账号、权限、审计
-        └── Game Control                → map-server Unix Socket / web-server
+        └── Game Control                → web-server HTTP → map-server Unix Socket
 ```
 
-MariaDB 本机端口为 `33062`，避免与系统默认 `3306` 冲突。数据库镜像或 Compose 只服务游戏库初始化；Admin 使用同一实例中的独立 `happyro_admin` 库。
+MariaDB 本机端口为 `33062`，避免与系统默认 `3306` 冲突。Admin 使用同一实例中的独立 `happyro_admin` 库；具体初始化由所用原生／Docker 部署入口负责。
 
 ## 玩家进入游戏
 

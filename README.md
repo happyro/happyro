@@ -106,7 +106,7 @@ HappyRO Admin 是独立的游戏管理后台，支持查询游戏资料、调整
 
 ## 项目组成
 
-HappyRO 由一个编排仓库和四个独立应用仓库组成：
+HappyRO 由一个编排仓库、四个独立应用仓库和一个公开文档仓库组成：
 
 | 仓库 | 职责 |
 | --- | --- |
@@ -115,6 +115,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 | [happyro-server](https://github.com/happyro/happyro-server) | rAthena 登录、角色、地图和 Web API 服务 |
 | [happyro-gateway](https://github.com/happyro/happyro-gateway) | Node.js 网关、静态资源、HTTP 与 WebSocket 代理 |
 | [happyro-admin](https://github.com/happyro/happyro-admin) | 游戏后台、Laravel API 与 Ant Design Pro 前端 |
+| [happyro-doc](https://github.com/happyro/happyro-doc) | 公开安装、玩家指南与文档站 |
 
 详细调用关系见[系统概览](https://happyro.kugarocks.com/guide/introduction#运行关系)，各仓库职责见[项目组成](https://happyro.kugarocks.com/guide/introduction#项目组成)。
 
@@ -149,7 +150,7 @@ HappyRO 由一个编排仓库和四个独立应用仓库组成：
 ## 文档导航
 
 - [开发与维护总览](docs/README.md)：当前架构、开发、运维和本地化说明。
-- [NPC 审读与验收边界](docs/localization/npc-audit-20261011.md)：审读覆盖及仍需核验的玩法范围。
+- [NPC 审读与验收边界](docs/localization/server-content.md#审读范围与未完成验收)：审读覆盖及仍需核验的玩法范围。
 - [自定义功能实现](docs/architecture/customization.md)：NPC、数据库、资源及目录刷新机制。
 - [Docker 部署与升级](docs/operations/docker-deployment.md)：定制操作、持久目录、备份恢复。
 - [镜像构建与交付](docs/operations/docker-release.md)：完整打包流程与发布边界。

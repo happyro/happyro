@@ -10,6 +10,7 @@
 | `repos/happyro-server` | 独立 | rAthena 源码、`conf/`、`db/`、`npc/` |
 | `repos/happyro-gateway` | 独立 | 网关源码；`data/` 是本机部署副本，不单独维护中文源 |
 | `repos/happyro-admin` | 独立 | Laravel + Ant Design Pro；资料 JSON 由根仓库生成器写入 |
+| `repos/happyro-doc` | 独立 | VitePress 公开产品、安装与玩家指南；不参与应用镜像构建 |
 
 ## 根仓库目录
 
@@ -23,6 +24,7 @@
 | `tools/` | 按 client/resources/deployment/operations/changelog 分类的工具 | 否 |
 | `deploy/` | 部署模板和环境样例，不承载业务逻辑 | 否 |
 | `configs/` | 客户端与导航等跨仓库配置源 | 否 |
+| `config/` | 职业外观权威映射等结构化配置 | 否 |
 | `work/` | 构建中间结果、缓存，以及数据库、密钥等持久运行状态 | 不可整体删除；先辨别子目录并备份 |
 | `artifacts/` | 可交付结果和验收证据 | 可重建，不作为运行输入 |
 | `repos/` | 四个应用仓库及文档站的独立检出 | 否 |

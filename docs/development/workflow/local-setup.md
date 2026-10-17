@@ -4,12 +4,9 @@
 
 Linux 本机游戏开发栈使用 systemd 管理应用进程、Compose 管理 MariaDB。根仓库启动脚本可创建临时单元，已部署主机也可能装有长期单元；先按[服务手册](../../operations/services.md)识别实际单元，不同时运行两套启动方式。完整 Docker 拓扑见[Docker 部署](../../operations/docker-deployment.md)。
 
-macOS 当前使用 Docker 数据库加 launchd 原生应用，使用 `bash scripts/local/macos-services.sh start|stop|status --no-color` 管理已配置环境。数据库仅监听 `127.0.0.1:13306`，游戏入口为 `http://<Mac局域网IP>:3338/applications/pwa/index.html`，Admin 为 `http://<Mac局域网IP>:8000`。下文 systemd 命令适用于 Linux。
+macOS 使用 Docker 数据库加 launchd 原生应用；已配置环境的启停、数据位置和端口统一见[服务手册](../../operations/services.md#macos-原生应用与独立数据库)，首次源码准备见[公开 macOS 指南](https://happyro.kugarocks.com/native/macos)。下文 systemd 命令仅适用于 Linux，不能与完整 Docker 栈共用数据目录。
 
-
-macOS 的数据目录与部署信息以本机 `work/runtime/native/hybrid-deployment.json` 为准，独立数据库由 `work/runtime/native/database-compose.json` 定义，应用日志位于 `work/runtime/native/logs/`。这些文件描述本机已配置环境，不代表其他机器；不要混用旧发行包或完整 Docker 栈的数据目录。
-
-凭据和验收账号从本机私有配置读取，不写入文档或诊断日志，不提交 `work/runtime/`。进程处于 running 状态不代表服务互联正常，应核对地图注册、Gateway 代理和实际登录；首次配置及启停命令以[服务手册](../../operations/services.md)为准。手机性能采集另见[移动端诊断](../client/mobile-diagnostics.md)。
+凭据从本机私有配置读取，不提交 `work/runtime/`。进程 running 不代表服务互联正常；仍需检查地图注册、代理及实际登录。手机性能采集见[移动端诊断](../client/mobile-diagnostics.md)。
 
 ## 依赖
 
@@ -66,12 +63,7 @@ make gateway-start
 
 局域网验收入口为 `http://<主机IP>:3338/applications/pwa/index.html`。该页应为带“进入游戏”和查看器入口的启动页。禁止用只构建 Online 的产物覆盖本机入口。
 
-Admin 不由根仓库 Makefile 管理。本机地址：
-
-- 前端：<http://10.24.1.1:8000>
-- Laravel：<http://10.24.1.1:18081/api/health>
-
-Admin 启动、账号创建和验收见 `repos/happyro-admin/README.md`。
+Admin 不由根仓库 Makefile 管理，前端通常为 `http://<主机>:8000`，Laravel 健康接口为 `http://<主机>:18081/api/health`；以部署配置实际地址为准。启动、账号创建和验收见[Admin 入口](../../../repos/happyro-admin/README.md)。
 
 ## 客户端与网关配置
 

@@ -1,6 +1,6 @@
 # 移动端 UI 开发与验收
 
-布局与组件接入规则以客户端的[菜单布局](../../../repos/happyro-client/docs/mobile-menu-layout.md)为准；登录与恢复见[连接恢复](../../../repos/happyro-client/docs/connection-recovery.md)。根仓库只维护跨端验收边界，不复制组件尺寸、设备断点或已完成批次。
+布局与组件接入规则以客户端的[菜单布局](../../../repos/happyro-client/docs/ui/mobile-menu-layout.md)为准；登录与恢复见[连接恢复](../../../repos/happyro-client/docs/network/connection-recovery.md)。根仓库只维护跨端验收边界，不复制组件尺寸、设备断点或已完成批次。
 
 ## 开发约束
 
@@ -25,7 +25,7 @@
 
 ## 菜单样式维护
 
-组件尺寸、设备断点、`data-menu-arrangement`、底栏角色和样式加载顺序统一由客户端的[菜单布局规范](../../../repos/happyro-client/docs/mobile-menu-layout.md)维护。新增菜单沿用公共布局与按钮规则，更改布局时清理被替代的覆盖样式；根仓库不复制具体尺寸和逐菜单实现。
+组件尺寸、设备断点、`data-menu-arrangement`、底栏角色和样式加载顺序统一由客户端的[菜单布局规范](../../../repos/happyro-client/docs/ui/mobile-menu-layout.md)维护。新增菜单沿用公共布局与按钮规则，更改布局时清理被替代的覆盖样式；根仓库不复制具体尺寸和逐菜单实现。
 
 ## 冒险工具交互验收
 

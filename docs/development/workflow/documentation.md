@@ -16,7 +16,7 @@
 
 ## 目录与索引
 
-- 开发文档按 `workflow/`、`client/`、`character-appearance/`、`fourth-jobs/`、`skill-review/`、`job-change-review/` 集中维护；同一主题的说明和证据放在同一目录。目录首页提供导航，较长的逐项清单独立成文。
+- 开发文档按 `workflow/`、`client/`、`character-appearance/`、`fourth-jobs/`、`skill-review/`、`job-change-review/`、`settings/` 集中维护；同一主题的说明和证据放在同一目录。目录首页提供导航，较长的逐项清单独立成文。
 - 其他分类的单页主题使用主题名 `.md`；只有多篇共享主题的文档才建立子目录及 README 索引。
 - 每篇文档从所属分类 README 直接可达；总 README 按职责导航，根 README 只展示产品和关键入口。
 - 工具旁 README 解释参数、输入和输出；docs 解释跨仓库流程、权威来源及维护约束，避免复制工具实现细节。
@@ -45,3 +45,20 @@
 ## 游戏展示图片
 
 制作 PC／平板／手机同框宣传图时，遵循[三端游戏展示图](../client/multiplatform-images.md)的截图与合成规则。先确认预览，再更新正式引用。
+
+## 六仓库内容归属
+
+| 仓库 | 维护内容 | 入口 |
+| --- | --- | --- |
+| 根仓库 | 跨仓库设计、资源来源、开发编排、发布和专题验收 | [总索引](../../README.md) |
+| Client | 客户端结构、UI、网络协议接入、渲染与游戏行为 | [客户端文档](../../../repos/happyro-client/docs/README.md) |
+| Server | 服务端配置、权威校验、封包和运行命令 | [服务端文档](../../../repos/happyro-server/docs/README.md) |
+| Gateway | 资源优先级、同源代理、会话 Cookie 和诊断 | [网关文档](../../../repos/happyro-gateway/docs/README.md) |
+| Admin | 产品能力、权限、资料导入及控制通道 | [后台文档](../../../repos/happyro-admin/docs/README.md) |
+| Doc | 公开安装、玩家指南和根仓库日志镜像 | [文档站维护](../../../repos/happyro-doc/README.md) |
+
+六仓库是维护范围；镜像构建输入为根仓库加四个应用仓库，文档站不参与。文档站保留面向用户的可独立阅读步骤，内部文档维护源码和验收细节；公开操作有变化时同步核对两边，不机械复制整章。
+
+专题使用“规则／实现／验证结果／有效待办”区分职责，简单主题可在一页内分节。TODO 只保留待执行工作；已完成步骤归并为结果，问题保留复现、原因、修复与证据。没有新结果时不要自动把旧构建或旧主机状态更新为当前通过。
+
+正式版本日志、必要来源、被测试读取的 JSON 清单及明确有效的攻略证据保留。过期 checkpoint、重复审计流水和已被最终结论替代的任务计划删除；不通过新增 archive 转移冗余。发布前待办从[发布清单](../../operations/release-checklist.md)进入，不复制多个打勾清单。

@@ -14,7 +14,7 @@
 
 ```bash
 python3 tools/resources/catalog/main.py monsters
-cd repos/happyro-client && npm run catalog:monsters
+(cd repos/happyro-client && npm run catalog:monsters)
 ```
 
 根仓库命令生成 Admin 双语快照和 PNG。Client 命令生成 PWA 魔物图鉴资源。
@@ -52,4 +52,4 @@ Admin 的 NPC 查询已经改为服务端分页（`game_npcs` 表 + 分页 API�
 2. 魔物的 `spawns`（出没地图）和 `atlas`/`tile`（图集坐标）目前完全不在 Admin 数据库里，只存在于 `repos/happyro-client/scripts/generate-monster-catalog.mjs` 解析 rAthena 服务端 spawn 配置文件生成的静态产物中。要做服务端分页，必须先把这两项数据迁移进数据库，这是尚未开始的前置工作。
 3. `repos/happyro-client/src/UI/Components/WorldMap/WorldMap.js`（游戏内世界地图，不是冒险工具弹窗）同样读取 `catalog.json` 的 `spawns` 字段在地图上画怪物点位。改造服务端分页时不能只考虑冒险工具这一个消费者。
 
-真正值得做的优化是图集懒加载（按可视区域触发，而不是整页触发），不是服务端分页。
+后续优化先测量目录下载、图集请求和交互耗时；可评估按可视区域加载图集。服务端分页属于资料模型和全部消费者的联合改造，不仅是替换前端分页控件。
