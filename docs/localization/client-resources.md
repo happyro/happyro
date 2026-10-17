@@ -34,6 +34,7 @@ Gateway 收到 `/data/...` 请求后的查找顺序为：
 
 | 资源 | 版本化来源 | 部署方式 | 客户端消费方式 | 用途 |
 | --- | --- | --- | --- | --- |
+| `metalprocessitemlist.txt` | `localization/client/data/`，按官方材料表翻译的 75 条制作配方 | 校验后安装到运行目录及 Gateway `data/` | `DBManager.loadTable` 以 UTF-8 读取 | 锻造／制药窗口的材料说明 |
 | `cardprefixnametable.txt` | `localization/client/data/`，由物品本地化生成器生成 | 校验后安装到 Gateway `data/` | `DBManager.loadTable` 以 UTF-8 读取 | 插卡装备的中文前缀 |
 | `msgstringtable.txt` | `localization/client/data/` | `DATA_OVERRIDE_PATH` | `DBManager.loadTable` 按客户端字符集读取 | 系统消息 |
 | `skillnametable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 可访问的散装输出；当前主要 UI 读取生成 JS | 技能名称 |

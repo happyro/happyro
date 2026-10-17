@@ -34,6 +34,7 @@ title_table="$PROJECT_ROOT/localization/client/data/titletable.json"
 skill_description_table="$PROJECT_ROOT/localization/client/data/skilldesctable.txt"
 skill_name_table="$PROJECT_ROOT/localization/client/data/skillnametable.txt"
 card_prefix_table="$PROJECT_ROOT/localization/client/data/cardprefixnametable.txt"
+craft_material_table="$PROJECT_ROOT/localization/client/data/metalprocessitemlist.txt"
 sign_notice_dir="$PROJECT_ROOT/localization/client/data/texture/유저인터페이스/illust"
 sign_notice_manifest="$PROJECT_ROOT/localization/client/data/sign-notices.zh-CN.json"
 
@@ -116,6 +117,19 @@ for notice in sign_01 sign_02 sign_03 sign_04; do
 	}
 done
 
+[[ -f "$craft_material_table" ]] && [[ "$(rg -c '^[0-9]+#$' "$craft_material_table")" -eq 75 ]] || {
+	echo "localized crafting material table is incomplete: $craft_material_table" >&2
+	exit 1
+}
+if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$craft_material_table"; then
+	echo "localized crafting material table contains Korean text" >&2
+	exit 1
+fi
+for craft_target in "$runtime_client/data/metalprocessitemlist.txt" "$GATEWAY_REPO/data/metalprocessitemlist.txt"; do
+	install -D -m 0644 "$craft_material_table" "$craft_target"
+	cmp -s "$craft_material_table" "$craft_target" || exit 1
+done
+
 mkdir -p "$resources_dir"
 install -m 0600 "$card_prefix_table" "$GATEWAY_REPO/data/cardprefixnametable.txt"
 
@@ -170,3 +184,4 @@ echo "configured: $title_table"
 echo "configured: $skill_description_table"
 echo "configured: $skill_name_table"
 echo "configured: $card_prefix_table"
+echo "configured: $craft_material_table"
