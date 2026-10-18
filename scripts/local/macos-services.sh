@@ -21,14 +21,14 @@ fi
 if [[ -z "$action" || "$action" == help ]]; then
   printf '\n%sHappyRO Mac 本机服务%s\n\n' "$title" "$reset"
   printf '%s用法%s\n  %s%s start|stop|status%s [--no-color]\n\n' "$section" "$reset" "$command_color" "$0" "$reset"
-  printf '管理独立 Docker 数据库 happyro-native-database，以及 launchd 中的原生游戏服务、Gateway 和 Admin。\n不会初始化数据库或重新构建程序，停止服务时保留数据库数据。\n\n'
+  printf '管理独立 Docker 数据库 happyro-native-database，以及 launchd 中的原生游戏服务、Gateway、Admin 和 OpenResty。\n不会初始化数据库或重新构建程序，停止服务时保留数据库数据。\n\n'
   printf '%s常用例子%s\n  %s%s status%s\n  %s%s stop --no-color%s\n  %s%s start%s\n\n' "$section" "$reset" "$example" "$0" "$reset" "$example" "$0" "$reset" "$example" "$0" "$reset"
   exit 0
 fi
 [[ "$(uname -s)" == Darwin ]] || { echo 'macOS is required' >&2; exit 1; }
 domain="gui/$(id -u)"
-services=(database login char map web gateway admin-backend admin-frontend)
-if [[ "$action" == stop ]]; then services=(admin-frontend admin-backend gateway web map char login database); fi
+services=(database login char map web gateway admin-backend openresty)
+if [[ "$action" == stop ]]; then services=(openresty admin-backend gateway web map char login database); fi
 for service in "${services[@]}"; do
   if [[ "$service" == database ]]; then
     case "$action" in
@@ -51,6 +51,27 @@ for service in "${services[@]}"; do
         if details="$(docker inspect --format '{{.State.Status}} ({{.State.Health.Status}})' "$database_container" 2>/dev/null)"; then
           printf 'database: Docker %s\n' "$details"
         else printf 'database: Docker unavailable\n'; fi
+        ;;
+    esac
+    continue
+  fi
+  if [[ "$service" == openresty ]]; then
+    label="local.happyro.openresty"
+    plist="/Library/LaunchDaemons/$label.plist"
+    case "$action" in
+      start)
+        [[ -f "$plist" ]] || { echo "missing service configuration: $plist" >&2; exit 1; }
+        if ! launchctl print "system/$label" >/dev/null 2>&1; then sudo launchctl bootstrap system "$plist"; fi
+        printf 'openresty: loaded\n'
+        ;;
+      stop)
+        if launchctl print "system/$label" >/dev/null 2>&1; then sudo launchctl bootout "system/$label"; fi
+        printf 'openresty: stopped\n'
+        ;;
+      status)
+        if details="$(launchctl print "system/$label" 2>/dev/null)"; then
+          printf 'openresty: %s\n' "$(sed -n 's/^[[:space:]]*state = //p' <<< "$details" | head -1)"
+        else printf 'openresty: stopped\n'; fi
         ;;
     esac
     continue

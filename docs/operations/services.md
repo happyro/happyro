@@ -16,6 +16,12 @@ bash scripts/local/macos-services.sh stop --no-color
 
 原生服务配置与日志在 `work/runtime/native/launchd/`、`work/runtime/native/logs/`。游戏入口为 `http://127.0.0.1:3338/applications/pwa/index.html`，后台为 `http://127.0.0.1:8000`，后台内部端口为 `127.0.0.1:18081`。服务端可执行文件位于 `work/runtime/native/bin/`；编译后须在对应进程停止时更新这些文件，再启动并核对服务互联。
 
+本机 WireGuard 部署使用 `https://rodev-mm.kugarocks.com` 进入游戏，后台入口为 `https://rodev-mm.kugarocks.com:8443`。OpenResty 仅绑定 `10.8.1.39:80/443/8443`，游戏 TCP、Gateway、后台 API、后台静态站点及数据库都仅绑定 `127.0.0.1`。后台静态产物直接由 OpenResty 提供，不运行 Umi 开发服务器。
+
+OpenResty 由 `/Library/LaunchDaemons/local.happyro.openresty.plist` 管理；配置为 `work/runtime/native/nginx.conf`，证书在 `work/runtime/native/ssl/`。服务脚本启停 OpenResty 时通过 `sudo launchctl` 操作系统服务。其他应用通过 `~/Library/LaunchAgents/` 中的配置在用户登录后启动，数据库由 Docker 重启策略管理。
+
+本机 macOS 27 的 Command Line Tools 链接器无法读取随附的 27 SDK，原生构建使用已安装的 `MacOSX15.4.sdk`，数据库客户端明确链接 `mariadb-connector-c`。原生游戏服务的 launchd 环境设置 `MARIADB_TLS_DISABLE_PEER_VERIFICATION=1`，用于连接仅发布在回环地址的 Docker MariaDB 10.11；该设置只用于此本机连接。
+
 下文 Makefile 和 systemd 命令适用于 Linux。
 
 ## 进程与端口
