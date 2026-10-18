@@ -16,7 +16,7 @@
 
 ## 目录与索引
 
-- 开发文档按 `workflow/`、`client/`、`character-appearance/`、`fourth-jobs/`、`skill-review/`、`job-change-review/`、`settings/` 集中维护；同一主题的说明和证据放在同一目录。目录首页提供导航，较长的逐项清单独立成文。
+- 开发文档按 `workflow/`、`client/`、`character-appearance/`、`fourth-jobs/`、`skill-review/`、`job-change-review/`、`settings/`、`companion-review/` 集中维护；同一主题的说明和证据放在同一目录。目录首页提供导航，较长的逐项清单独立成文。
 - 其他分类的单页主题使用主题名 `.md`；只有多篇共享主题的文档才建立子目录及 README 索引。
 - 每篇文档从所属分类 README 直接可达；总 README 按职责导航，根 README 只展示产品和关键入口。
 - 工具旁 README 解释参数、输入和输出；docs 解释跨仓库流程、权威来源及维护约束，避免复制工具实现细节。
