@@ -37,6 +37,8 @@ flowchart LR
 
 ## NPC 如何接入
 
+NPC 定制通过宿主机文件挂载接入，不写回镜像。配套版本部署完成后，使用已有脚本能力的新增、修改和撤销只需更新文件及加载清单，再重载游戏；资料目录独立刷新，无需重建镜像或离线包。新增引擎能力或修改服务端代码仍需构建镜像；正式版本发布遵循全量构建规则。具体步骤见[新增及覆盖 NPC](../operations/docker-deployment.md#新增及覆盖-npc)。
+
 HAPPYRO_CUSTOM_NPC_PATH 指向 `/opt/happyro/custom/npc`。新增脚本只从 scripts.conf 显式登记，支持 `npc: additions/xxx.txt` 和 `import: additions/xxx.conf`；子清单仍以 custom/npc 为根，不递归扫描任意文件。路径校验拒绝越界、符号链接和循环 import。
 
 内置 `npc/cities/prontera.txt` 的候选覆盖是 `overrides/cities/prontera.txt`。加载时替换读取源，但保留原逻辑文件名，因此启动、`@reloadscript`、`@loadnpc` 一致，`@unloadnpcfile` 仍按原文件定位；`@unloadnpc` 接受 NPC 名称。覆盖不是再加载一遍同名 NPC。仅注释文件可停用定义，删除覆盖恢复当前镜像版本；未被内置清单引用的旧覆盖不会自动启用。

@@ -54,6 +54,17 @@ bash scripts/resources/package-offline-resources.sh create --output artifacts/ha
 
 构建前核对 `configs/Config.happyro.js` 与 Client 的 `applications/pwa/Config.happyro.js` 内容一致（可忽略 CRLF/LF）。Gateway Dockerfile 使用 Client 中的配置副本；若不同，先审查并同步配置源，提交后重新核对五仓库。prepare/build 会拒绝脏仓库，但不会替你同步 origin/main 或判断配置语义一致。
 
+预检 Admin NPC 快照时，同时核对条目内容和来源指纹。条目内容未变不代表快照来源仍与当前 Server 一致；来源校验失败时，按 Admin 的目录生成流程重新生成并审查差异，提交实际变更后再 prepare/build，不手改指纹绕过校验。
+
+如在 macOS 运行部署工具测试遇到临时路径的符号链接拒绝，先检查临时目录是否经过 `/var` 等符号链接。为该次测试指定工作区内的真实目录，不关闭路径安全检查。在源码根目录执行：
+
+```bash
+mkdir -p work/deployment-test-tmp
+TMPDIR="$(pwd -P)/work/deployment-test-tmp" python3 -m unittest discover -s tools/deployment -p 'test_*.py'
+```
+
+该设置只作用于这次测试；其它测试失败仍须逐项排查，不能统一归因于临时目录。
+
 在源码根目录执行：
 
 ```bash
@@ -134,6 +145,8 @@ offline-ready 表示目录的资源和镜像已通过校验，不代表 ZIP 已�
 最终包须验证 HTTP/HTTPS 的持久登录、页面内临时会话、重新打开进入选角、断线原角色与同地图镜头恢复、PIN、主动退出及账号变更撤销、会话和票据到期、服务重启与代理 Host。三端视口及 iOS/Android 真机后台冻结、页面回收分别记录；源码联调不能替代容器和真机验收。逐项标准见[当前验收清单](release-checklist.md#保持登录与断线恢复)。
 
 ### 运行验收
+
+试打包也执行完整构建与包校验，但使用独立输出、解压、数据及自定义目录，测试 NPC 不加入发行模板。记录源码提交、ZIP SHA-256、实际运行架构、已验证操作及未验证边界，证据放在 `work/` 或 `artifacts/`。双架构构建成功不等于双架构运行通过，桌面测试不等于手机／平板真机通过；试打包成功不更新已发布版本、公开下载或 Docker Hub 标签，也不直接勾选正式发布清单。
 
 包内 README 来自 docker-deployment.md，部署者无需引用源码文档。部署工具根据 Docker daemon 架构选择镜像，而非根据运行 Python 的架构判断。使用 Rosetta 也不能改变目标 Docker 架构。
 

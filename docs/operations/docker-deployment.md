@@ -193,22 +193,25 @@ restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换
 
 ### 新增及覆盖 NPC
 
+已部署配套 v0.4.0 镜像、工具和挂载配置后，修改 `CUSTOM_DIR/npc` 中的脚本不需要重新构建镜像或离线包。使用现有脚本指令、数据库内容和客户端资源即可新增对话、商店、兑换、治疗、仓库等 NPC；如果需要新增服务端脚本指令或修改引擎代码，则需要更新 Server 镜像，正式版本仍按完整发布流程构建。
+
+操作顺序：在宿主机编辑脚本 → 新增脚本登记清单 → 执行 `@reloadscript` 或维护时重启 map → 在游戏中验证。需要后台或冒险工具同步名称、坐标等资料时，再执行 `refresh-custom-catalogs`；目录刷新不能代替游戏重载。保存文件本身不会自动重载。
+
 以下 `custom/` 指 `.env` 的实际 CUSTOM_DIR。例如在 `npc/additions/review.txt` 写入测试脚本（声明行各字段之间必须使用 Tab）：
 
 ```text
-prontera,150,180,4	script	ReviewCustom	100,{
+prontera,150,176,4	script	ReviewCustom	100,{
     mes "自定义 NPC 已生效。";
     close;
 }
 ```
 
-该地图、坐标及外观在本轮隔离环境验证可用；正式使用前确认位置没有冲突，NPC 名称不得与其他脚本重复。
+该地图、坐标及外观在隔离测试环境验证可用；正式使用前确认位置没有冲突、精灵未被场景遮挡且能够点击，NPC 名称不得与其他脚本重复。
 
-
-新增 `custom/npc/additions/example.txt`，然后在 `custom/npc/scripts.conf` 中登记：
+在 `custom/npc/scripts.conf` 中登记上述文件：
 
 ```text
-npc: additions/example.txt
+npc: additions/review.txt
 // 子清单同样以 custom/npc 为根，不以清单所在目录为根：
 // import: additions/events.conf
 ```
