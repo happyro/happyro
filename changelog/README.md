@@ -7,7 +7,6 @@
 - `root`：工作区工具、部署和文档。
 - `client`：`repos/happyro-client` Web 客户端。
 - `server`：`repos/happyro-server` rAthena 服务端。
-
 - `admin`：`repos/happyro-admin` 管理后台，原始记录位于其 `changelog/`。
 - `gateway`：`repos/happyro-gateway` 资源网关，新记录位于其 `changelog/`，旧记录保留在 `CHANGELOG.md`。
 
@@ -58,7 +57,7 @@ python3 tools/changelog/manage.py sync
 
 ## 版本摘要
 
-- [v0.4.0 · 未发布](releases/v0.4.0.md)：相对各仓库 v0.3.2 标签汇总最终变化，不表示已发布。
+- [v0.5.0 · 未发布](releases/v0.5.0.md)：相对 v0.3.2 汇总当前变化，后续可继续补充，不表示已发布。
 - [v0.3.2](releases/v0.3.2.md)：GitHub Release 历史说明，发布于 2026-09-26。
 - [v0.3.1](releases/v0.3.1.md)：GitHub Release 历史说明，发布于 2026-09-25。
 - [v0.3.0](releases/v0.3.0.md)：GitHub Release 历史说明，发布于 2026-09-24。
@@ -75,6 +74,7 @@ python3 tools/changelog/manage.py sync
 
 ## 日期索引
 
+- [2026-10-20](2026/10/2026-10-20.md)：仓库与摆摊交互、宠物窗口、邮件性能及 v0.5.0 文档准备。
 - [2026-10-19](2026/10/2026-10-19.md)：移动端交互、随行菜单与快捷操作、氏族译文及本机部署调整。
 - [2026-10-18](2026/10/2026-10-18.md)：职业外观扩展、转职完成、移动 UI 与菜单设置修复。
 - [2026-10-17](2026/10/2026-10-17.md)：猎人线技能第二轮审查与电击陷阱修复。

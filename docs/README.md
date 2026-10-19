@@ -25,6 +25,19 @@
 
 根仓库及嵌套仓库的操作规则以仓库根 `AGENTS.md` 为准。
 
+## 当前发布准备
+
+下一版本为 [v0.5.0 · 未发布](../changelog/releases/v0.5.0.md)，从 v0.3.2 直接升级，跳过未发布的 v0.4.x。版本摘要可随后续小改继续更新；日期日志记录实际变更，发布时再填写交付与验收结果。
+
+| 阅读目标 | 入口 |
+| --- | --- |
+| 玩家操作与公开安装 | [文档站](../repos/happyro-doc/README.md) |
+| 客户端 UI、网络与游戏逻辑 | [Client](../repos/happyro-client/docs/README.md) |
+| 服务端规则、会话与封包 | [Server](../repos/happyro-server/docs/README.md) |
+| 资源、代理与会话 Cookie | [Gateway](../repos/happyro-gateway/docs/README.md) |
+| 账号、资料与游戏控制 | [Admin](../repos/happyro-admin/docs/README.md) |
+| 构建交付与最终验收 | [发布流程](operations/docker-release.md)、[验收清单](operations/release-checklist.md) |
+
 ## 按任务查找
 
 - 首次安装：[本地开发](development/workflow/local-setup.md)。

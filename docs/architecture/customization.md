@@ -1,6 +1,6 @@
 # 自定义功能的实现与维护
 
-v0.4.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使修改可独立于镜像升级保存。使用方式见[部署手册](../operations/docker-deployment.md#服务端与资源自定义)，最终包检查见[验收清单](../operations/release-checklist.md)。固定 PACKETVER=20211103、Renewal，不修改官方输入，也不从历史翻译目录发布。
+v0.5.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使修改可独立于镜像升级保存。使用方式见[部署手册](../operations/docker-deployment.md#服务端与资源自定义)，最终包检查见[验收清单](../operations/release-checklist.md)。固定 PACKETVER=20211103、Renewal，不修改官方输入，也不从历史翻译目录发布。
 
 ## 本次增加了什么
 
@@ -57,7 +57,7 @@ Admin 镜像保留物品/魔物/NPC 基线和 Server 的 npc/conf 快照。catal
 
 首轮 Admin 刷新读取 conf/script_athena.conf 引用的 conf/import/script_conf.txt 时失败。该目录被 Docker 构建上下文排除；Server 启动会从 import-tmpl 创建，Admin 快照没有初始化，导致 admin-init 退出 1。
 
-根仓库修复提交 `2179b923` 在 Admin Dockerfile 中将版本化 conf/import-tmpl 复制到快照的 conf/import，与 Server 默认初始化一致，没有增加忽略缺失文件的分支。实际容器定向验证后，四类镜像全部再次无缓存双架构重建，当时的候选包仅含第二轮产物；这不是后续最终 v0.4.0 发行包的验收结论。
+根仓库修复提交 `2179b923` 在 Admin Dockerfile 中将版本化 conf/import-tmpl 复制到快照的 conf/import，与 Server 默认初始化一致，没有增加忽略缺失文件的分支。实际容器定向验证后，四类镜像全部再次无缓存双架构重建，当时的候选包仅含第二轮产物；这不是后续最终 v0.5.0 发行包的验收结论。
 
 ## 打包、升级与恢复约束
 

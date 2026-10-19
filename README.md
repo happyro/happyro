@@ -20,7 +20,7 @@
 
 HappyRO 是一个中文友好的网页端 RO 项目，除了提供基础游戏功能，还提供地图、魔物和物品图鉴，并配备账号与角色管理后台。
 
-当前源码面向待发布的 [v0.4.0](changelog/releases/v0.4.0.md)，公开已发布版本为 [v0.3.2](changelog/releases/v0.3.2.md)。以下介绍包含尚未发布的新功能，离线交付以对应版本说明为准。
+当前源码面向待发布的 [v0.5.0](changelog/releases/v0.5.0.md)，公开已发布版本为 [v0.3.2](changelog/releases/v0.3.2.md)。以下介绍包含尚未发布的新功能，离线交付以对应版本说明为准。
 
 ### 项目特色
 
@@ -149,6 +149,7 @@ HappyRO 由一个编排仓库、四个独立应用仓库和一个公开文档仓
 
 ## 文档导航
 
+- [v0.5.0 发布准备](changelog/releases/v0.5.0.md)：相对 v0.3.2 的变化、升级要求及待验收边界。
 - [开发与维护总览](docs/README.md)：当前架构、开发、运维和本地化说明。
 - [NPC 审读与验收边界](docs/localization/server-content.md#审读范围与未完成验收)：审读覆盖及仍需核验的玩法范围。
 - [自定义功能实现](docs/architecture/customization.md)：NPC、数据库、资源及目录刷新机制。
