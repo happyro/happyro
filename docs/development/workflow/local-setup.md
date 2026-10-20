@@ -4,7 +4,7 @@
 
 Linux 本机游戏开发栈使用 systemd 管理应用进程、Compose 管理 MariaDB。根仓库启动脚本可创建临时单元，已部署主机也可能装有长期单元；先按[服务手册](../../operations/services.md)识别实际单元，不同时运行两套启动方式。完整 Docker 拓扑见[Docker 部署](../../operations/docker-deployment.md)。
 
-macOS 使用 Docker 数据库加 launchd 原生应用；已配置环境的启停、数据位置和端口统一见[服务手册](../../operations/services.md#macos-原生应用与独立数据库)，首次源码准备见[公开 macOS 指南](https://happyro.kugarocks.com/native/macos)。下文 systemd 命令仅适用于 Linux，不能与完整 Docker 栈共用数据目录。
+macOS 使用 Docker 数据库加 launchd 原生应用；已配置环境的启停、数据位置和端口统一见[服务手册](../../operations/services.md#macos-原生应用与独立数据库)，首次源码准备见[公开 macOS 指南](https://happyro.kugarocks.com/development/setup/macos)。下文 systemd 命令仅适用于 Linux，不能与完整 Docker 栈共用数据目录。
 
 凭据从本机私有配置读取，不提交 `work/runtime/`。进程 running 不代表服务互联正常；仍需检查地图注册、代理及实际登录。手机性能采集见[移动端诊断](../client/mobile-diagnostics.md)。
 

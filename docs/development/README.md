@@ -5,7 +5,8 @@
 | 主题目录 | 内容 | 常用入口 |
 | --- | --- | --- |
 | [开发流程](workflow/README.md) | 本地环境、命令、测试、Git 与文档协作 | [本地开发](workflow/local-setup.md)、[常用命令](workflow/common-commands.md) |
-| [客户端专题](client/README.md) | 移动端 UI、性能诊断和三端展示图 | [移动端诊断](client/mobile-diagnostics.md)、[UI 规范](client/mobile-ui.md) |
+| [客户端专题](client/README.md) | 移动端 UI 与性能诊断 | [移动端诊断](client/mobile-diagnostics.md)、[UI 规范](client/mobile-ui.md) |
+| [README 图片制作](readme-images/README.md) | 五张展示图的截图、合成与复用 | [截图参数](readme-images/capture.md)、[合成与预览](readme-images/composition.md) |
 | [设置审查](settings/README.md) | 设置汉化、实际效果检查、修复与暂时关闭项 | [已修复与未完成](settings/README.md) |
 | [随行菜单实测](companion-review/README.md) | 宠物、佣兵、生命体双端已测路径、修复和未覆盖项 | [测试覆盖](companion-review/coverage.md)、[修复总结](companion-review/repair-summary.md)、[有效待办](companion-review/pending.md) |
 | [职业外观](character-appearance/README.md) | 职业与显示分离、同步协议及十二职业线扩展 | [当前实现](character-appearance/implementation.md)、[有效待办](character-appearance/TODO.md) |

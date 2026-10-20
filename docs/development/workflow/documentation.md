@@ -16,7 +16,7 @@
 
 ## 目录与索引
 
-- 开发文档按 `workflow/`、`client/`、`character-appearance/`、`fourth-jobs/`、`skill-review/`、`job-change-review/`、`settings/`、`companion-review/` 集中维护；同一主题的说明和证据放在同一目录。目录首页提供导航，较长的逐项清单独立成文。
+- 开发文档按 `workflow/`、`client/`、`readme-images/`、`character-appearance/`、`fourth-jobs/`、`skill-review/`、`job-change-review/`、`settings/`、`companion-review/` 集中维护；同一主题的说明和证据放在同一目录。目录首页提供导航，较长的逐项清单独立成文。
 - 其他分类的单页主题使用主题名 `.md`；只有多篇共享主题的文档才建立子目录及 README 索引。
 - 每篇文档从所属分类 README 直接可达；总 README 按职责导航，根 README 只展示产品和关键入口。
 - 工具旁 README 解释参数、输入和输出；docs 解释跨仓库流程、权威来源及维护约束，避免复制工具实现细节。
@@ -44,7 +44,7 @@
 
 ## 游戏展示图片
 
-制作 PC／平板／手机同框宣传图时，遵循[三端游戏展示图](../client/multiplatform-images.md)的截图与合成规则。先确认预览，再更新正式引用。
+制作或更新 README 首图和特性图时，遵循 [README 图片制作](../readme-images/README.md)中的截图参数与持久化模板，以当前五张正式成图为准。先确认预览，再更新正式引用。
 
 ## 六仓库内容归属
 

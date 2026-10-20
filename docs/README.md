@@ -46,5 +46,16 @@
 - 发布镜像：[强制发布规则](operations/docker-release.md)。
 - 清理目录或迁移主机前：[备份与恢复](operations/backup-recovery.md)。
 - 新增或修改文档：[文档维护](development/workflow/documentation.md)。
+- 更换 README 地图、角色或截图：[README 图片制作](development/readme-images/README.md)。
 
 文档中的“当前源码”依据仓库实现；带日期的主机观察和测试计数不代表当前状态。`work/runtime` 中的数据库和密钥不能当缓存清理。本文档审查不代表已发布新镜像或重新执行所有产品测试。
+
+## 公开使用文档
+
+面向玩家、服主和外部贡献者的使用说明统一维护在 [HappyRO 文档站](https://happyro.kugarocks.com/guide/quick-start)。本目录保留实现设计、内部维护流程与验收记录，不复制公开教程正文。
+
+- [玩家指南](https://happyro.kugarocks.com/game/)与[转职攻略](https://happyro.kugarocks.com/strategy/job-change/)
+- [部署与运维](https://happyro.kugarocks.com/deploy/)与[管理后台](https://happyro.kugarocks.com/admin/)
+- [公开开发指南](https://happyro.kugarocks.com/development/)
+
+文档站新增专题后，根 README 在相关功能段落补链接；更新日志和主页宣传图片仍以根仓库为来源。站点维护规则见 [happyro-doc README](../repos/happyro-doc/README.md)。
