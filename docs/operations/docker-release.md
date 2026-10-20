@@ -2,13 +2,13 @@
 
 本文件是发布端与 Agent 的执行入口。部署机器只需要完成的离线包，不需要源码。用户明确要求不构建时，只维护工具和文档，不运行 build、package 或部署。
 
-当前 VERSION 为待发布的 v0.5.0，公开已发布版本仍为 v0.3.2。当前代码的最终包构建与验收仍待执行，不能沿用旧候选包的通过状态。正式交付信息见[版本说明](../../changelog/releases/v0.5.0.md)。
+当前 VERSION 与正式发布版本均为 v0.5.0。本轮已全量无缓存双架构重建、组包、本机空库验证，并将同一批 OCI 归档推送到 Docker Hub 的 `v0.5.0` 与 `latest`。正式交付信息见[版本说明](../../changelog/releases/v0.5.0.md)。
 
 自定义功能见[实现与维护说明](../architecture/customization.md)，用户操作见[部署手册](docker-deployment.md#服务端与资源自定义)。
 
 ## 版本与交付规则
 
-- 下一次发布版本只从 `deploy/docker/VERSION` 读取。已发布版本为 v0.3.2（2026-09-26 全量重建，完成 Mac arm64 完整离线包验收、现网 amd64 仅替换镜像升级及 Docker Hub 双架构标签核验）。
+- 下一次发布版本只从 `deploy/docker/VERSION` 读取。正式发布版本为 v0.5.0；历史候选包或已删除的旧 Hub 上传不能替代当前交付。
 - 应用、资源、配置和镜像使用同一个版本，默认组成一个完整目录交付。用户明确要求拆分时，可从同一个已校验 ZIP 生成互补的资源包与镜像／部署文件包，提供合并说明，并验证合并后的全部文件与完整包一致；拆分包不能单独部署。
 - 五个仓库（根仓库、Client、Gateway、Server、Admin）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的五仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、Admin（含后台前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。

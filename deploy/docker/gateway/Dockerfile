@@ -10,6 +10,9 @@ RUN npm run build:pwa
 
 FROM node:22-bookworm-slim AS gateway
 
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV NODE_ENV=production \
     PORT=3338 \
     ENABLE_WSPROXY=true \
@@ -24,6 +27,7 @@ RUN npm install --omit=dev --ignore-scripts
 COPY repos/happyro-gateway/ ./
 COPY --from=client-builder /src/client/dist/Web /opt/robrowser
 COPY localization/client/data/ /opt/overrides/
+COPY deploy/docker/gateway/entrypoint.sh /usr/local/bin/happyro-gateway
 
 RUN mkdir -p /opt/gateway/resources /opt/overrides /opt/gateway/logs \
     && rm -rf /opt/gateway/resources /opt/gateway/AI /opt/gateway/BGM /opt/gateway/System \
@@ -31,7 +35,8 @@ RUN mkdir -p /opt/gateway/resources /opt/overrides /opt/gateway/logs \
     && ln -s /resources/kro-20211105/AI /opt/gateway/AI \
     && ln -s /resources/kro-20211105/BGM /opt/gateway/BGM \
     && ln -s /resources/kro-20211105/System /opt/gateway/System \
-    && chown -R node:node /opt/gateway /opt/robrowser
-USER node
+    && chown -R node:node /opt/gateway /opt/robrowser \
+    && chmod 755 /usr/local/bin/happyro-gateway
+ENTRYPOINT ["/usr/local/bin/happyro-gateway"]
 EXPOSE 3338
 CMD ["node", "start-prod.js"]
