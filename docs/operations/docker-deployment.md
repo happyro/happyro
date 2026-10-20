@@ -303,3 +303,15 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 - 资源无效：确认没有额外一层 data/、路径大小写和编码一致、格式受客户端支持；查看 Gateway 日志并重新进入游戏。
 - admin-init 提示缺少 `server-base/conf/import/script_conf.txt`：确认 Admin 镜像已包含 Server import 模板快照；使用完整新版包，不手工修改容器补文件。
 - `verify` 失败：先检查是否混用了不同包的配置、镜像或工具，不改清单哈希来掩盖损坏。用户只应编辑 `.env`、custom 和持久化数据，不编辑受清单校验的发行文件。
+
+### 登录页初始凭据提示
+
+在部署目录 `.env` 设置 `SHOW_DEFAULT_CREDENTIALS=true` 后运行 `docker compose up -d --no-deps --force-recreate admin`，登录页显示初始账号密码 `admin/admin`。默认关闭，设为 `false` 隐藏。切换无需重新构建镜像；此开关不修改账号密码。
+
+### 初始管理员账号
+
+部署目录 `.env` 中的 `ADMIN_INITIAL_USERNAME` 和 `ADMIN_INITIAL_PASSWORD` 指定初始管理员，默认均为 `admin`。首次初始化只在管理库没有任何账号时创建超级管理员；已有账号时直接跳过，不覆盖密码、角色或状态。修改变量不会重置已有账号。用户名沿用小写字母、数字、下划线、点及短横线规则，密码为 5–255 个字符。
+
+使用自定义账号或密码时，登录页隐藏默认凭据提示，即使 `SHOW_DEFAULT_CREDENTIALS=true`；公开配置接口不返回自定义凭据。直接部署使用 `php artisan gm:user:create --initial --no-interaction --no-color`。
+
+提示是固定的 `admin/admin` 文案，不读取真实密码。初始化配置仍为默认值但实际密码已经修改时，应设置 `SHOW_DEFAULT_CREDENTIALS=false` 隐藏提示。

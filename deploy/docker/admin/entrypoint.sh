@@ -27,7 +27,7 @@ case "$1" in
     serve) exec supervisord -c /etc/supervisor/supervisord.conf ;;
     initialize)
         php artisan migrate --force
-        php artisan gm:user:create admin --name=admin --password=admin --role=super_admin --ensure --no-color
+        php artisan gm:user:create --initial --no-interaction --no-color
         refresh_catalogs
         ;;
     refresh-custom-catalogs) refresh_catalogs ;;
