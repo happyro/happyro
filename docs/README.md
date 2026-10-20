@@ -55,7 +55,7 @@
 面向玩家、服主和外部贡献者的使用说明统一维护在 [HappyRO 文档站](https://happyro.kugarocks.com/guide/quick-start)。本目录保留实现设计、内部维护流程与验收记录，不复制公开教程正文。
 
 - [玩家指南](https://happyro.kugarocks.com/game/)与[转职攻略](https://happyro.kugarocks.com/strategy/job-change/)
-- [部署与运维](https://happyro.kugarocks.com/deploy/)与[管理后台](https://happyro.kugarocks.com/admin/)
+- [安装运维](https://happyro.kugarocks.com/deploy/)与[管理后台](https://happyro.kugarocks.com/admin/)
 - [公开开发指南](https://happyro.kugarocks.com/development/)
 
 文档站新增专题后，根 README 在相关功能段落补链接；更新日志和主页宣传图片仍以根仓库为来源。站点维护规则见 [happyro-doc README](../repos/happyro-doc/README.md)。

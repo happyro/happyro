@@ -24,7 +24,7 @@ HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面�
 
 <p><img src="docs/assets/readme/happyro-responsive-skills.png" alt="剑士狂击技能在平板横屏中的左右分栏与手机竖屏中的上下布局" width="100%"></p>
 
-操作说明见[界面与操作](https://happyro.kugarocks.com/game/controls)、[快捷键与技能](https://happyro.kugarocks.com/game/shortcuts)及[PWA 使用方法](https://happyro.kugarocks.com/game/pwa)；频道、私聊和组队见[聊天与社交](https://happyro.kugarocks.com/game/social)。
+操作说明见[界面与操作](https://happyro.kugarocks.com/game/controls)、[快捷键与技能](https://happyro.kugarocks.com/game/shortcuts)及[PWA 使用方法](https://happyro.kugarocks.com/game/pwa)；频道、私聊和组队见[聊天与社交](https://happyro.kugarocks.com/game/social)，物品往来见[交易与摆摊](https://happyro.kugarocks.com/game/trading)及[邮件与附件](https://happyro.kugarocks.com/game/mail)。
 
 ## 图鉴与冒险工具
 
