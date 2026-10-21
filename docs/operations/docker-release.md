@@ -76,6 +76,8 @@ python3 tools/deployment/manage.py verify --directory artifacts/deployment/relea
 
 ## 2. 在本机构建镜像
 
+Admin 的 PHP 基础镜像在 `deploy/docker/admin/Dockerfile` 固定为 `php:8.4.27-fpm-bookworm`，包含 CVE-2026-109618、CVE-2026-109619 修复。构建前确认该标签提供 amd64 和 arm64 清单；标签为空或缺少架构时等待官方镜像发布，不回退到未修复版本。修改基础镜像不会自动更新既有容器和离线包，必须重新构建及部署。
+
 构建机器需要完整源码、Python 3.11+、Docker Buildx、Skopeo，以及双架构构建能力。Linux 使用 Docker Engine，macOS 使用 OrbStack 或 Docker Desktop 的 Linux 容器。构建期间需要联网下载基础镜像和依赖；离线的是最终部署过程。
 
 正式构建前检查当前 Buildx builder 的 driver、可用平台及 OCI 导出能力（`docker buildx inspect`）；仅安装 Buildx 不等于能导出双架构 OCI。优先使用已配置的 docker-container builder；若尚无可用 builder，先在构建机完成创建、启动及所需的原生节点或仿真配置，再确认 amd64/arm64 均可用。预检未通过不要执行 build。

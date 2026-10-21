@@ -6,7 +6,7 @@ RUN npm ci --ignore-scripts
 COPY repos/happyro-admin/frontend/ ./
 RUN npx max setup && npm run build
 
-FROM php:8.4-fpm-bookworm AS backend
+FROM php:8.4.27-fpm-bookworm AS backend
 RUN apt-get update && apt-get install -y --no-install-recommends nginx supervisor libicu-dev libonig-dev libzip-dev unzip curl python3 python3-yaml \
     && docker-php-ext-install pdo_mysql mbstring intl zip opcache bcmath \
     && rm -rf /var/lib/apt/lists/*
