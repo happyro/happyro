@@ -10,7 +10,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 DATABASE = 'happyro-database'
-SERVICES = ['happyro-admin', 'happyro-web-api', 'happyro-map',
+SERVICES = ['happyro-api', 'happyro-web-api', 'happyro-map',
             'happyro-char', 'happyro-login']
 OWNED_TABLES = '''achievement bonus_script cart_inventory char_configs
 char_reg_num char_reg_str friends hotkey inventory memo merchant_configs

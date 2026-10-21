@@ -21,7 +21,7 @@ python3 tools/operations/manage.py reset-characters --account happyro --execute
 生命体、佣兵、精灵及摆摊数据，并清理其他角色的好友引用。
 存在队伍、公会或家庭关系时拒绝执行，需先在游戏内解除关系。
 
-执行时停止当前运行的 Admin、Web API、Map、Char、Login 容器，重新核对角色列表，
+执行时停止当前运行的 Go API（`happyro-api`）、Web API、Map、Char、Login 容器，重新核对角色列表，
 将完整 `happyro` 数据库备份至 `work/operations/backups/`，随后删除角色数据。
 备份权限为 `0600`，包含账号信息，应妥善保管。成功后只启动原先运行的容器。
 执行期间不要另行启动服务或运行直接写库的工具。

@@ -18,6 +18,6 @@ options=()
 [[ "$command_name" != check ]] || options+=(--check)
 [[ "$color" == true ]] || options+=(--no-color)
 cd "$root/repos/happyro-api"
-exec go run -mod=readonly ./cmd/happyro-admin catalog export-subtypes \
+exec go run -mod=readonly ./cmd/happyro-api catalog export-subtypes \
  --server-items resources/game-data/items/renewal.json \
  --output "$root/repos/happyro-client/src/DB/Items/ItemSubtypes.generated.json" "${options[@]}"

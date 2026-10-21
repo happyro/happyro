@@ -64,7 +64,7 @@ checksum="$output.sha256"
 }
 
 mkdir -p "$(dirname "$output")"
-tar -C "$PROJECT_ROOT" -czf "$output" "${sources[@]}"
+COPYFILE_DISABLE=1 tar --exclude='._*' --exclude='.DS_Store' -C "$PROJECT_ROOT" -czf "$output" "${sources[@]}"
 (
 	cd "$(dirname "$output")"
 	sha256sum "$(basename "$output")" > "$(basename "$checksum")"
