@@ -20,7 +20,7 @@ NPC 图鉴以 `repos/happyro-server/npc/**/*.txt` 中的服务器 NPC 实例为�
 
 NPC 目录生成时还会从客户端 `src/DB/Map/MapTable.js` 导出的已汉化地图名称同步生成 Admin 的 `map-names.zh-CN.json`，并将名称哈希记录到目录来源中。NPC 位置使用这份映射，避免独立副本继续保留英文；修改 NPC 脚本、名称翻译或地图名称后，执行 `scripts/client/refresh-client.sh build` 同步目录、数据库和客户端资源。
 
-Admin 后端另外通过 `php artisan game-data:import-npcs --renewal` 把目录导入 `game_npcs` 表（MySQL）。冒险工具 NPC 图鉴不再持有完整目录，而是运行时调用 `GET /api/adventure-tools/npcs`（服务端分页）和 `GET /api/adventure-tools/maps/{map}/npcs`（单张地图整图查询，不分页，供地图预览标记使用），两个接口都直接查这张表。这与魔物图鉴“客户端全量拉取 + 内存分页”是两种不同的运行时模式，原因见 [魔物](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
+Admin 后端另外通过 Go `catalog import` 完整快照导入 把目录导入 `catalog_npcs` 表（MySQL）。冒险工具 NPC 图鉴不再持有完整目录，而是运行时调用 `GET /api/adventure-tools/npcs`（服务端分页）和 `GET /api/adventure-tools/maps/{map}/npcs`（单张地图整图查询，不分页，供地图预览标记使用），两个接口都直接查这张表。这与魔物图鉴“客户端全量拉取 + 内存分页”是两种不同的运行时模式，原因见 [魔物](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
 
 官方 `navi_npc_krpri.lub` 不是 NPC 存在性的权威来源。它用于补充导航 ID、NPC Class、官方名称、别名、路线位置等导航身份。未匹配官方导航的实例仍保留在完整目录中，是否出现在游戏图鉴另受 `gameVisible` 过滤；没有可验证身份时不开放“传送到 NPC 附近”。
 
@@ -41,7 +41,7 @@ Admin 后端另外通过 `php artisan game-data:import-npcs --renewal` 把目录
 三类图像均以官方客户端资源为只读源，由离线工具生成运行时产物；后台和游戏端不在请求或渲染期间转换 BMP。
 
 - 物品：根仓库 `tools/resources/catalog/main.py items images` 将资源映射中的官方 BMP 生成透明 PNG，输出到 `work/game-data/items/kro-20211105/icons/` 和 `illustrations/`。后台按物品 ID读取 PNG，游戏端按需请求列表图标和选中物品的详情图。
-- NPC：已提交的 Admin PNG 在 `repos/happyro-admin/backend/resources/game-data/world/npcs/`。客户端构建脚本 `scripts/generate-world-catalog-assets.mjs` 将这些 PNG 合成为 WebP 图集，并通过 `npc-assets.json` 的图集坐标显示。游戏端不逐个请求 NPC 图片。物品大体积 PNG 仍写入不入库的 `work/game-data/`。
+- NPC：已提交的 Admin PNG 在 `repos/happyro-api/resources/game-data/world/npcs/`。客户端构建脚本 `scripts/generate-world-catalog-assets.mjs` 将这些 PNG 合成为 WebP 图集，并通过 `npc-assets.json` 的图集坐标显示。游戏端不逐个请求 NPC 图片。物品大体积 PNG 仍写入不入库的 `work/game-data/`。
 - 地图：后台保留有效地图 PNG，客户端按需读取当前列表可见的地图图片；选中地图时另外读取对应 GAT，用于坐标换算、缩略预览和当前地图寻路。没有真实图片时只使用 GAT 预览。
 
 资源产物与客户端资源版本绑定。重新生成图片后，服务端图片 URL 携带生成版本，避免浏览器继续使用旧缓存。Admin NPC PNG、Client 图集和 JSON 按产品仓库策略版本管理，物品大图等 `work/game-data/` 输出不入库；不能笼统删除所有生成目录。

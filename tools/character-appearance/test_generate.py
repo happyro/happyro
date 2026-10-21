@@ -84,7 +84,7 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(len(set(digests)), 1)
         self.assertIn('nullptr', outputs['server'])
         self.assertIn('mountedJob: 0', outputs['client'])
-        self.assertIn("'ids' => [0, 1, 2, 3", outputs['admin'])
+        self.assertIn("case 0, 1, 2, 3", outputs['admin'])
 
     def test_check_reports_each_missing_or_modified_catalog_without_writes(self):
         with tempfile.TemporaryDirectory() as directory:

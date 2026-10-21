@@ -7,10 +7,10 @@ import subprocess
 import tarfile
 import tempfile
 
-NAMES = ('gateway', 'server', 'admin', 'database')
+NAMES = ('gateway', 'server', 'api', 'database')
 ARCHES = ('amd64', 'arm64')
 REPOS = ('.', 'repos/happyro-client', 'repos/happyro-gateway',
-         'repos/happyro-server', 'repos/happyro-admin')
+         'repos/happyro-server', 'repos/happyro-admin', 'repos/happyro-api')
 
 
 def digest(path):

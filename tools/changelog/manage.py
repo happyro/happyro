@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 SECTIONS = ('新增', '优化', '修复', '移除', '部署与维护', '验证与待办')
-SCOPES = ('root', 'client', 'server', 'admin', 'gateway')
+SCOPES = ('root', 'client', 'server', 'admin', 'api', 'gateway')
 SCOPE = re.compile(r'^- `\[([a-z]+(?:/[a-z]+)*)\]` \S')
 NAV = re.compile(r'const changelog = \[.*?\n\](?=\n\nexport default)', re.S)
 

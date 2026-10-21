@@ -4,7 +4,7 @@ HappyRO 是浏览器可玩的中文 RO 栈。玩家只访问 Gateway；登录、
 
 固定基线为 `PACKETVER=20211103`、Renewal、kRO 2021-11-05 客户端资源。Client 与 Server 的包定义和混淆设置必须一致；Gateway 透明转发字节流，Admin 使用相应服务端接口。
 
-六仓库职责及目录归属统一见[仓库边界](repository-boundaries.md)，下文专注运行关系。
+七仓库职责及目录归属统一见[仓库边界](repository-boundaries.md)，下文专注运行关系。
 
 ## 运行时拓扑
 
@@ -18,17 +18,18 @@ HappyRO 是浏览器可玩的中文 RO 栈。玩家只访问 Gateway；登录、
   │                                     ├── login-server :6900
   │                                     ├── char-server  :6121
   │                                     └── map-server   :5121
+  ├── HTTP  /api/adventure-tools/* → Gateway → happyro-api
   └── HTTP  /userconfig 等 Web API  → Gateway → web-server :8889
 
 Admin 浏览器 :8000
-  └── HTTP API :18081               → Laravel
+  └── HTTP API :18081               → happyro-api（Go / Gin）
         ├── MariaDB :33062
-        │     ├── happyro / happyro_log   游戏库（只读查询与发放记录）
+        │     ├── happyro / happyro_log   游戏库（查询、账号维护和邮件发放）
         │     └── happyro_admin           后台账号、权限、审计
         └── Game Control                → web-server HTTP → map-server Unix Socket
 ```
 
-MariaDB 本机端口为 `33062`，避免与系统默认 `3306` 冲突。Admin 使用同一实例中的独立 `happyro_admin` 库；具体初始化由所用原生／Docker 部署入口负责。
+MariaDB 本机端口为 `33062`，避免与系统默认 `3306` 冲突。API 使用同一实例中的独立 `happyro_admin` 库；具体初始化由所用原生／Docker 部署入口负责。
 
 ## 玩家进入游戏
 
@@ -40,4 +41,4 @@ MariaDB 本机端口为 `33062`，避免与系统默认 `3306` 冲突。Admin �
 
 ## Admin 与游戏世界
 
-Admin 不模拟 map-server 内存。后台读取静态资料目录和 MariaDB 中的玩家数据；发放物品、召唤魔物、修改在线角色等操作经 Game Control 到达 map-server。冒险工具在游戏内发起的同类请求，由 Gateway 同源反向代理到 Admin API，浏览器不持有服务密钥。
+Admin 不模拟 map-server 内存。后台读取静态资料目录和 MariaDB 中的玩家数据；发放物品、召唤魔物、修改在线角色等操作经 Game Control 到达 map-server。冒险工具在游戏内发起的同类请求，由 Gateway 同源反向代理到 happyro-api 的玩家接口，浏览器不持有服务密钥。

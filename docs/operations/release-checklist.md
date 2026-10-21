@@ -7,7 +7,7 @@
 ## 1. 搬迁和构建前准备
 
 - [ ] 确认本次实现及本清单已提交；跨机器构建时同步最终提交。
-- [ ] 核对根仓库、Client、Gateway、Server、Admin 五个构建仓库的分支、提交和工作区；五仓库必须干净，且与准备机器的提交一致。不要丢弃未提交文件；文档仓库不参与构建，若一并检出则记录其提交。
+- [ ] 核对根仓库、Client、Gateway、Server、Admin、API 六个构建仓库的分支、提交和工作区；六仓库必须干净，且与准备机器的提交一致。不要丢弃未提交文件；文档仓库不参与构建，若一并检出则记录其提交。
 - [ ] 核对 `configs/Config.happyro.js` 与 Client 的配置副本一致（忽略换行格式），避免配置安装覆盖已启用功能；差异须先审查、同步并提交。
 - [ ] 核对 `deploy/docker/VERSION`，当前目标已为 v0.5.0，不重复改号；只有更换目标版本时才修改并提交。当前记录中的 `v0.3.2` 已发布，不覆盖旧版本产物。
 - [ ] 安装 Python 3.11+、Docker、Compose v2、Buildx、Skopeo，确认能够构建 `linux/amd64` 和 `linux/arm64`。
@@ -16,7 +16,7 @@
 - [ ] 补齐未随 Git 搬迁的运行资源：
   - `inputs/runtime/kro-20211105/client/` 内的 `DATA.INI`、所引用 GRF、`AI/`、`BGM/`、`System/`、`data/`。
   - `work/game-data/items/kro-20211105/`、`work/game-data/monsters/kro-20211105/`。
-  - Admin 的 `backend/resources/game-data/world/` 下 `npcs/`、`maps/`、`terrain/`。
+  - API 的 `resources/game-data/world/` 下 `npcs/`、`maps/`、`terrain/`。
 - [ ] 若使用资源传输归档，先核对附带的 SHA-256，再在源码根目录解压；不修改 `inputs/official/`，不使用历史翻译目录作为发布源。
 
 ## 2. 完整构建和离线包
@@ -31,7 +31,7 @@ python3 tools/deployment/images.py package --output artifacts/images/release --b
 python3 tools/deployment/manage.py verify --directory artifacts/deployment/release
 ```
 
-- [ ] 五个应用组件全部无缓存重建：完整 `--all` PWA、Gateway、Server、Admin、Database；四类镜像均包含两种架构。
+- [ ] 五个应用组件全部无缓存重建：完整 `--all` PWA、Gateway、Server、API（包含 Admin 前端）、Database；四类镜像均包含两种架构。
 - [ ] 所有构建成功后再执行 package；归档哈希、架构、版本、源码提交校验全部通过。
 - [ ] package 成功退出且最终 ZIP 存在；offline-ready 仅表示目录校验通过，ZIP 失败按发布手册重试，不手改清单。
 - [ ] ZIP 包含两种架构的镜像、运行资源、工具、`examples/custom/` 模板及空 `data/`。
@@ -55,11 +55,11 @@ python3 tools/deployment/manage.py initialize --directory .
 python3 tools/deployment/manage.py initialize-custom --directory .
 python3 tools/deployment/manage.py deploy --directory .
 docker compose ps -a
-docker compose logs admin-init
+docker compose logs api-init
 docker compose logs map gateway
 ```
 
-- [ ] 七个常驻服务正常，`admin-init` 完成并以 0 退出；无迁移、目录导入、脚本加载或挂载错误。
+- [ ] 七个常驻服务正常，`api-init` 完成并以 0 退出；无迁移、目录导入、脚本加载或挂载错误。
 - [ ] 首次生成 `npc/scripts.conf`、`npc/additions/`、`npc/overrides/`、`db/`、`resources/`；数据库模板版本与当前服务端匹配。
 - [ ] 再次执行 initialize-custom，已有文件内容不改变，只补齐缺少的模板。
 - [ ] 用 `docker compose config` 和容器 inspect 确认以下挂载来源正确且只读。输出可能包含密钥，不直接公开。
@@ -69,7 +69,7 @@ docker compose logs map gateway
 | `CUSTOM_DIR/npc` | `/opt/happyro/custom/npc` | Server |
 | `CUSTOM_DIR/db` | `/opt/rathena/db/import` | Server |
 | `CUSTOM_DIR/resources` | `/opt/happyro/custom/resources` | Gateway |
-| `CUSTOM_DIR` | `/opt/happyro/custom` | Admin |
+| `CUSTOM_DIR` | `/opt/happyro/custom` | API |
 
 - [ ] 游戏 `/applications/pwa/index.html` 显示启动页和查看器入口；能登录、选角、进入地图，地图、音效、中文正常。
 - [ ] 后台能登录，冒险工具的物品、魔物、NPC 查询正常；空 custom 不改变原有数据和行为。
@@ -162,7 +162,7 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 
 - [ ] 保留旧完整包及配套工具，停止旧服务写入并备份；旧版备份用旧版工具恢复。
 - [ ] 记录用户自定义文件的路径和 SHA-256，以及角色/仓库/后台设置的验收值。
-- [ ] 解压并 verify 新包；复制旧 `.env`，保留 `APP_KEY`、密码、令牌和 Compose 项目名。
+- [ ] 解压并 verify 新包；复制旧 `.env`，保留密码、令牌和 Compose 项目名；旧 PHP 管理库不兼容，迁移 Go 时建立全新管理库并重新初始化管理员。
 - [ ] 从新版 `.env.example` 更新 `RELEASE_VERSION` 和四个 IMAGE 变量；`DATA_DIR`、`CUSTOM_DIR` 指向旧数据的绝对路径，`RESOURCE_DIR` 使用新包资源。
 - [ ] 不重新 initialize 已有环境；只运行 initialize-custom。旧版没有 custom 时建立新目录，已有 custom 只补缺少模板。
 
@@ -170,7 +170,7 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 python3 tools/deployment/manage.py initialize-custom --directory .
 python3 tools/deployment/manage.py import-images --directory .
 docker compose up -d --wait --pull never --no-build database
-docker compose run --rm --no-deps --pull never admin-init
+docker compose run --rm --no-deps --pull never api-init
 python3 tools/deployment/manage.py deploy --directory .
 ```
 
@@ -182,15 +182,15 @@ python3 tools/deployment/manage.py deploy --directory .
 
 ## 9. 备份、恢复和失败处理
 
-停止游戏及后台写入，确保 admin-init 已完成，并暂停宿主机 custom 编辑，仅保留数据库运行。备份输出目录使用尚不存在的路径：
+停止游戏及后台写入，确保 api-init 已完成，并暂停宿主机 custom 编辑，仅保留数据库运行。备份输出目录使用尚不存在的路径：
 
 ```bash
-docker compose stop gateway admin web-api map char login
+docker compose stop gateway api web-api map char login
 python3 tools/deployment/manage.py backup --directory . --output ../backups/custom-review
 ```
 
-- [ ] 备份包含数据库、Admin 文件/服务端设置、`custom-files.tar`、`.env`、部署清单和 `checksums.json`。妥善保管密钥，不提交到 Git。
-- [ ] 保留匹配版本完整包。在隔离恢复环境准备数据目录，复制备份 `.env` 并修正目录和地址，保留原 `APP_KEY`，不重新 initialize。
+- [ ] 备份包含数据库、服务端设置、`custom-files.tar`、`.env`、部署清单和 `checksums.json`。妥善保管密钥，不提交到 Git。
+- [ ] 保留匹配版本完整包。在隔离恢复环境准备数据目录，复制备份 `.env` 并修正目录和地址，保留原数据库凭据与游戏控制令牌，不重新 initialize。
 - [ ] initialize-custom 建立挂载目录，导入匹配镜像，仅启动 database，然后恢复：
 
 ```bash

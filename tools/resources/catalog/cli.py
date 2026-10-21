@@ -17,12 +17,12 @@ from .storage import read_git_yaml, read_json, read_yaml, write_json, write_pret
 
 
 DEFAULT_CLIENT_SOURCE = Path("localization/sources/kro-20211105/merged/files/lub/itemInfo_true.json")
-DEFAULT_SERVER_CATALOG = Path("repos/happyro-admin/backend/resources/game-data/items/renewal.json")
-DEFAULT_MONSTER_CATALOG = Path("repos/happyro-admin/backend/resources/game-data/monsters/renewal.json")
+DEFAULT_SERVER_CATALOG = Path("repos/happyro-api/resources/game-data/items/renewal.json")
+DEFAULT_MONSTER_CATALOG = Path("repos/happyro-api/resources/game-data/monsters/renewal.json")
 DEFAULT_GRF_MANIFEST = Path("work/grf-extract/kro-20211105/data/manifest.json")
 DEFAULT_SERVER_ROOT = Path("repos/happyro-server/db")
 DEFAULT_SERVER_REPOSITORY = Path("repos/happyro-server")
-DEFAULT_OUTPUT_DIRECTORY = Path("repos/happyro-admin/backend/resources/game-data/items")
+DEFAULT_OUTPUT_DIRECTORY = Path("repos/happyro-api/resources/game-data/items")
 DEFAULT_ITEM_ASSET_MAP = DEFAULT_OUTPUT_DIRECTORY / "item-assets.json"
 DEFAULT_ITEM_SOURCE_ROOT = Path("work/grf-extract/kro-20211105/data/data")
 DEFAULT_ITEM_IMAGES = Path("work/game-data/items/kro-20211105")
@@ -30,7 +30,7 @@ DEFAULT_MONSTER_DATABASE = Path("repos/happyro-server/db/re/mob_db.yml")
 DEFAULT_MONSTER_NAMES = Path("repos/happyro-client/src/DB/Monsters/MonsterNameTable.js")
 DEFAULT_MONSTER_SPRITES = Path("repos/happyro-client/src/DB/Monsters/MonsterTable.js")
 DEFAULT_MONSTER_SPRITE_ROOT = Path("work/grf-extract/kro-20211105/data/data/sprite/몬스터")
-DEFAULT_MONSTER_OUTPUT = Path("repos/happyro-admin/backend/resources/game-data/monsters")
+DEFAULT_MONSTER_OUTPUT = Path("repos/happyro-api/resources/game-data/monsters")
 DEFAULT_MONSTER_IMAGES = Path("work/game-data/monsters/kro-20211105")
 
 

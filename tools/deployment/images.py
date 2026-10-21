@@ -31,7 +31,7 @@ def build(args):
     for name in NAMES:
         archive = output / f'{name}.tar'
         run('docker', 'buildx', 'build', '--no-cache', '--pull', '--platform',
-            'linux/amd64,linux/arm64', '--file', str(root / f'deploy/docker/{name}/Dockerfile'),
+            'linux/amd64,linux/arm64', '--file', str(root / ('repos/happyro-api/deploy/docker/Dockerfile' if name == 'api' else f'deploy/docker/{name}/Dockerfile')),
             '--output', f'type=oci,dest={archive}', str(root))
         inspect(f'oci-archive:{archive}')
         state['images'][name] = digest(archive)

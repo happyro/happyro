@@ -28,7 +28,7 @@ if [[ -z "$action" || "$action" == "help" ]]; then
 fi
 
 secret_file="$MARIADB_RUNTIME/secrets.env"
-admin_env="$PROJECT_ROOT/repos/happyro-admin/backend/.env"
+admin_env="$PROJECT_ROOT/repos/happyro-api/.env"
 [[ -f "$MARIADB_PROFILE" ]] || {
 	echo "missing MariaDB profile: $MARIADB_PROFILE" >&2
 	exit 1

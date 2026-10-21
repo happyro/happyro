@@ -33,9 +33,9 @@
 
 相关实现：
 
-- [冒险工具物品接口](../../repos/happyro-admin/backend/app/Http/Controllers/AdventureTools/AdventureItemController.php)：列表与详情使用 `client` 范围，发放检查账号权限。
-- [物品目录查询](../../repos/happyro-admin/backend/app/Services/GameData/DatabaseItemRepository.php)：按当前客户端／服务端目录版本查询，并限制 `client_exists`。
-- [物品目录视图构建](../../repos/happyro-admin/backend/app/Services/GameData/DatabaseItemViewBuilder.php)：分别记录客户端与服务端是否收录。
+- [冒险工具物品接口](../../repos/happyro-api/internal/httpapi/adventure_catalog.go)：列表与详情使用 `client` 范围，发放检查账号权限。
+- [物品目录查询](../../repos/happyro-api/internal/catalog/repository.go)：按当前客户端／服务端目录版本查询，并限制 `client_exists`。
+- [物品目录视图构建](../../repos/happyro-api/internal/catalog/items.go)：分别记录客户端与服务端是否收录。
 - [服务端发放实现](../../repos/happyro-server/src/map/game_control_item_grant.cpp)：检查物品是否存在且可用、数量、负重和背包空位；不按装备系列限制，宠物蛋不允许直接发放。
 - [Renewal 装备定义](../../repos/happyro-server/db/re/item_db_equip.yml)：装备要求、基础属性与效果脚本。
 

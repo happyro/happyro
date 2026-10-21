@@ -66,7 +66,7 @@ class OfflineTests(unittest.TestCase):
     def test_complete_bundle_and_tampering(self):
         release = self.bundle()
         verify_images(self.root, release)
-        with (self.root / 'images/arm64/admin.tar').open('ab') as stream:
+        with (self.root / 'images/arm64/api.tar').open('ab') as stream:
             stream.write(b'changed')
         with self.assertRaisesRegex(ValueError, 'mismatch'):
             verify_images(self.root, release)
@@ -134,7 +134,7 @@ class OfflineTests(unittest.TestCase):
         release = self.bundle()
         (self.root / '.env').write_text('fixture')
         services = {name: {'image': 'old:version', 'pull_policy': 'never'} for name in
-                    ['gateway', 'admin', 'admin-init', 'database', 'login', 'char', 'map', 'web-api']}
+                    ['gateway', 'api', 'api-init', 'database', 'login', 'char', 'map', 'web-api']}
         with patch('manage.verify', return_value=release), patch('manage.compose') as compose:
             compose.return_value.stdout = json.dumps({'services': services})
             with self.assertRaisesRegex(ValueError, 'Update .env'):
@@ -145,7 +145,7 @@ class OfflineTests(unittest.TestCase):
     def test_schema_failure_prevents_starting_game_services(self):
         release = {'version': 'v9.0.0'}
         (self.root / '.env').write_text('fixture')
-        names = {'gateway': 'gateway', 'admin': 'admin', 'admin-init': 'admin',
+        names = {'gateway': 'gateway', 'api': 'api', 'api-init': 'api',
                  'database': 'database', 'login': 'server', 'char': 'server',
                  'map': 'server', 'web-api': 'server'}
         config = {'services': {service: {'image': reference(image, release['version']),
@@ -199,7 +199,7 @@ class OfflineTests(unittest.TestCase):
         with zipfile.ZipFile(archive) as packaged:
             self.assertIsNone(packaged.testzip())
             self.assertIn('happyro-v9.0.0/release-manifest.json', packaged.namelist())
-            self.assertIn('happyro-v9.0.0/images/arm64/admin.tar', packaged.namelist())
+            self.assertIn('happyro-v9.0.0/images/arm64/api.tar', packaged.namelist())
             self.assertIn('happyro-v9.0.0/data/database/', packaged.namelist())
 
     def test_zip_rejects_secrets_and_non_zip_output(self):

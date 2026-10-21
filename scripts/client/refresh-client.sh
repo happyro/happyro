@@ -61,29 +61,35 @@ verify_client() {
 }
 
 sync_npc_catalog() {
-	local admin_backend="$PROJECT_ROOT/repos/happyro-admin/backend"
-	local admin_user
-	admin_user="$(systemctl show happyro-admin-backend.service --property=User --value)"
-	[[ -n "$admin_user" ]] || fail "cannot determine the Admin service user"
-	[[ "$EUID" -eq 0 || "$(id -un)" == "$admin_user" ]] || fail "run build as root or $admin_user to synchronize the NPC database"
+	local api_root="$PROJECT_ROOT/repos/happyro-api"
+	local api_user
+	api_user="$(systemctl show happyro-api.service --property=User --value)"
+	[[ -n "$api_user" ]] || fail "cannot determine the API service user"
+	[[ "$EUID" -eq 0 || "$(id -un)" == "$api_user" ]] || fail "run build as root or $api_user to synchronize the NPC database"
 
 	node "$PROJECT_ROOT/tools/resources/world/generate-npc-catalog.mjs" generate --no-color
 	npm --prefix "$CLIENT_REPO" run catalog:world
-	(
-		cd "$admin_backend"
-		if [[ "$EUID" -eq 0 ]]; then
-			runuser -u "$admin_user" -- php -d memory_limit=512M artisan game-data:import-npcs --renewal --no-color
-		else
-			php -d memory_limit=512M artisan game-data:import-npcs --renewal --no-color
-		fi
-	)
+	local api_binary="${HAPPYRO_API_BINARY:-/usr/local/bin/happyro-api}"
+	[[ -x "$api_binary" ]] || fail "missing Go API binary: $api_binary"
+	[[ -f "$api_root/.env" ]] || fail "missing API environment: $api_root/.env"
+	local import_command=(bash -c 'set -e; set -a; source "$1"; set +a; shift; exec "$@"' happyro-catalog-import
+		"$api_root/.env" "$api_binary" catalog import
+		--client-items "$api_root/resources/game-data/items/client-kro-20211105.json"
+		--server-items "$api_root/resources/game-data/items/renewal.json"
+		--monsters "$api_root/resources/game-data/monsters/renewal.json"
+		--npcs "$api_root/resources/game-data/world/npc-catalog.json" --no-color)
+	if [[ "$EUID" -eq 0 ]]; then
+		runuser -u "$api_user" -- "${import_command[@]}"
+	else
+		"${import_command[@]}"
+	fi
 }
 
 if [[ "$command_name" == "build" ]]; then
 	cd "$CLIENT_REPO"
 	[[ -d node_modules ]] || npm install
 	python3 "$PROJECT_ROOT/tools/resources/catalog/generate-item-services.py" generate --no-color
-	php "$PROJECT_ROOT/tools/resources/catalog/generate-item-subtypes.php" generate --no-color
+	bash "$PROJECT_ROOT/tools/resources/catalog/generate-item-subtypes.sh" generate --no-color
 	sync_npc_catalog
 	npm run build:pwa
 fi

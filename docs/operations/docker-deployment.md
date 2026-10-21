@@ -1,5 +1,7 @@
 # HappyRO 离线部署
 
+Go 重写版本使用全新的管理库结构，不支持在原 Laravel 管理库上直接运行迁移。部署前准备独立的空管理库；本页的一般升级和备份恢复步骤仅适用于相同 Go 管理库结构的版本。现有游戏库还需使用具备结构修改权限的账号应用 happyro-server 中的 `sql-files/happyro-accounts.sql`、`happyro-mail.sql` 和 `happyro-admin.sql`，不会自动转换不符合要求的表引擎或删除重复游戏账号。
+
 本手册随 `.zip` 离线包作为 README.md 交付。目标机器无需 Git 源码、Node、PHP、Skopeo 或镜像仓库连接。需要已安装的 Docker Engine/Compose v2（macOS 使用 Docker Desktop）与 Python 3.11+。
 
 下文自定义流程适用于包含 `initialize-custom`、`refresh-custom-catalogs` 的 v0.5.0 及后续部署包。旧包不会因新增宿主机目录而自动获得该功能，须先升级配套镜像、工具及 Compose 配置。正式交付状态以[版本说明](../../changelog/releases/v0.5.0.md)为准。
@@ -33,7 +35,6 @@ happyro-版本/
 │   └── offline.py
 └── data/
     ├── database/
-    ├── admin-storage/
     ├── server-settings/
     ├── server-logs/
     ├── gateway-logs/
@@ -62,7 +63,6 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 
 - GAME_PUBLIC_URL：默认 `http://127.0.0.1:3338`，局域网访问时改为主机 IP。
 - ADMIN_PUBLIC_URL：默认 `http://127.0.0.1:8000`，局域网访问时改为主机 IP。
-- ADMIN_STATEFUL_DOMAINS：默认 `127.0.0.1:8000`，不含协议；局域网访问时同步改为主机 IP。
 - SOCKET_PROXY_URL：默认留空并使用当前页面同源的 `/ws/`；WebSocket 使用独立域名时填写完整前缀，例如 `wss://happyro-ws.example.com/ws/`。
 - GATEWAY_PORT、ADMIN_PORT：默认 3338、8000。修改端口时同步 URL。
 - RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
@@ -73,24 +73,24 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 
 反向代理须将 `/api/game-session/*` 原路径转发到 Gateway，保留浏览器的 Host（包括非默认端口）、Origin、Cookie 和 Set-Cookie，不缓存该接口响应；Gateway 会返回 `Cache-Control: no-store`。Nginx 可用 `proxy_set_header Host $http_host;` 保留 Host，并传递原始协议供后台使用。仅设置 X-Forwarded-Host、把 Host 改成内部容器名，会使游戏会话接口因 Origin/Host 不匹配返回 403。独立 WebSocket 域名只影响 `/ws/`，游戏会话 API 仍走页面同源入口。
 
-默认 `127.0.0.1` 仅适用于部署机器本机浏览器，其他设备访问应填写部署机器的局域网地址。initialize 生成随机密钥；保留 APP_KEY，已有 .env 不会被覆盖。镜像变量必须保持该包 .env.example 中的值。
+默认 `127.0.0.1` 仅适用于部署机器本机浏览器，其他设备访问应填写部署机器的局域网地址。initialize 生成随机密钥；保留生成的数据库密码和控制令牌，已有 .env 不会被覆盖。镜像变量必须保持该包 .env.example 中的值。
 
 ```bash
 python3 tools/deployment/manage.py deploy --directory .
 docker compose ps -a
 ```
 
-部署初始化会幂等创建后台 `admin/admin` 超级管理员和游戏 `happyro/happyro` GM 账号；重复运行不会新增重复账号。deploy 校验整个包、Compose 镜像配置和已导入镜像后，先等待数据库健康，执行登录会话 SQL，再启动整栈；SQL 失败停止后续启动。它不构建、不拉取、不覆盖 .env，具体升级行为见下文“升级”。首次后台初始化可能耗时，使用 docker compose logs admin-init 查看迁移、默认账号和图鉴导入。
+部署初始化会幂等创建后台 `admin/admin` 超级管理员和游戏 `happyro/happyro` GM 账号；重复运行不会新增重复账号。deploy 校验整个包、Compose 镜像配置和已导入镜像后，先等待数据库健康，执行登录会话 SQL，再启动整栈；SQL 失败停止后续启动。它不构建、不拉取、不覆盖 .env，具体升级行为见下文“升级”。首次后台初始化可能耗时，使用 docker compose logs api-init 查看迁移、默认账号和图鉴导入。
 
 v0.5.0 首次空库初始化还会为 `happyro` 创建第一角色位“罗安”（男剑士 Base 99 / Job 50、10,000 Zeny），配置技能、普通剑、各 100 瓶红／蓝药水、收回的波利蛋与前六个快捷栏。完整属性见[默认角色配置](https://happyro.kugarocks.com/deploy/docker)。已有数据库不补建、不覆盖角色。
 
-admin-init 依次执行：数据库迁移（`migrate --force`）→ 创建默认管理员 → 导入物品（`game-data:import-items --all`）→ 导入魔物（`game-data:import-monsters --renewal`）→ 导入 NPC（`game-data:import-npcs --renewal`）。三条导入命令都以 `-d memory_limit=512M` 运行，避免大目录导入时触发内存限制。
+api-init 依次执行 Go 管理库迁移（`migrate`）、初始账号创建（`init`）、自定义资料刷新及四份目录的原子导入（`catalog import`）。任一步骤失败即停止，不启动 Admin 服务。
 
 游戏入口：GAME_PUBLIC_URL/applications/pwa/index.html，应先显示启动页。后台入口为 ADMIN_PUBLIC_URL。
 
 ## 服务与后台维护
 
-正常运行七个服务容器和一个完成后退出的 admin-init：
+正常运行七个服务容器和一个完成后退出的 api-init：
 
 Compose 已为服务设置固定容器名（如 `happyro-admin`、`happyro-gateway`、`happyro-map`），不会再追加默认的 `-1` 序号。固定容器名意味着同一台主机不能同时运行两个相同部署包实例；如需并行实例，应修改 Compose 中的容器名前缀。
 
@@ -98,14 +98,14 @@ Compose 已为服务设置固定容器名（如 `happyro-admin`、`happyro-gatew
 | --- | --- |
 | Gateway（含全量 PWA 和中文覆盖） | gateway |
 | Server（PACKETVER=20211103、Renewal） | login、char、map、web-api |
-| Admin（前端、Laravel、Nginx、PHP-FPM） | admin、admin-init |
+| API（含 Admin 前端） | api、api-init |
 | Database（MariaDB 10.11） | database |
 
 后台默认宿主机 8000 → 容器 8080；游戏 3338 → 3338，其余端口只在 Docker 网络内。后台资料版本固定在配置中（kro-20211105、2fe6ab3dc4d8），不是应用发布版本，不在页面修改。
 
-Admin 容器的 PHP 运行时限制为 `memory_limit=256M` 并开启 OPcache（`deploy/docker/admin/php.ini`），nginx 对 JSON、JS、CSS 等文本响应开启 gzip；Gateway 对反代到 Admin 的 `/api/adventure-tools/*` 响应同样启用压缩。这两项都只在镜像里生效，修改配置文件后必须重新构建镜像，重启容器不够——OPcache 默认 `validate_timestamps=0`，只信任构建时的文件快照。
+Admin 容器由 Go 进程同时提供 API 和前端静态文件，不再运行 PHP-FPM、Nginx 或 Supervisor。进程以 www-data 身份运行，健康检查使用 `/api/health`；Gateway 继续压缩转发到 Admin 的冒险工具响应。
 
-游戏依赖链是 database → login → char → map → web-api → gateway。Admin 等待数据库、admin-init 完成和 web-api 健康。游戏不等待 Admin；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
+游戏依赖链是 database → login → char → map → web-api → gateway。Admin 等待数据库、api-init 完成和 web-api 健康。游戏不等待 Admin；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
 
 ```bash
 docker compose stop admin
@@ -120,12 +120,12 @@ docker compose up -d --pull never admin
 
 - 用旧版配套工具停写备份，保留旧完整包及旧 `.env`。新旧包不得同时连接同一份存档。
 - 记录 DATA_DIR、CUSTOM_DIR 的实际绝对路径及 custom 文件哈希；旧版无 custom 时使用新的专用目录。
-- 新目录复制旧 `.env`，保留 `APP_KEY`、数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与四个镜像引用等明确需要变更的值。
+- 新目录复制旧 `.env`，保留 数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与四个镜像引用等明确需要变更的值。
 - `DATA_DIR=./data` 等相对路径会随包目录改变，须改成原数据的绝对路径；`RESOURCE_DIR` 指向新包资源。若搬迁数据，需在停写状态复制完整结构，而非只复制数据库目录。
 - 固定容器名会冲突。备份完成后在旧包目录执行 `docker compose down`，再启动新版；bind mount 数据会保留。
 
 1. 保留新版完整包并执行 verify；先在旧部署目录停止写入并备份（见下节）。同一存档只能有一套游戏服务运行。
-2. 在新版包根目录复制旧 .env，保留 APP_KEY、数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
+2. 在新版包根目录复制旧 .env，保留 数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
 3. 将 DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），CUSTOM_DIR 指向旧的自定义目录（同样建议绝对路径），RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 或 custom/ 当成旧内容。
 4. 执行 `python3 tools/deployment/manage.py initialize-custom --directory .`：首次引入自定义功能时建立目录；后续仅补齐新版新增的模板文件，已有文件不覆盖，不合并。旧版本备份需使用旧版本配套工具恢复，不能直接交给新工具。
 5. 导入本版四类镜像，等待 database 健康，再显式执行 Admin 迁移和目录导入；成功后运行 `deploy`，由工具升级游戏会话结构并启动整栈。以下命令逐条执行，任一步失败即停止。
@@ -134,7 +134,7 @@ docker compose up -d --pull never admin
 python3 tools/deployment/manage.py initialize-custom --directory .
 python3 tools/deployment/manage.py import-images --directory .
 docker compose up -d --wait --pull never --no-build database
-docker compose run --rm --no-deps --pull never admin-init
+docker compose run --rm --no-deps --pull never api-init
 python3 tools/deployment/manage.py deploy --directory .
 ```
 
@@ -142,13 +142,13 @@ python3 tools/deployment/manage.py deploy --directory .
 
 保持登录需要客户端、Gateway、login-server、web-server 与会话数据库结构配套更新，`PACKETVER` 保持 `20211103`。必须导入本版 Database 镜像，不能仅替换 Server/Gateway 镜像。升级前按上文停止旧服务；`deploy` 的失败停止机制不会替你关闭此前已运行的旧服务。
 
-已有环境不要重新运行 `initialize`，只运行 `initialize-custom` 补齐模板。升级后核对七服务健康、admin-init 退出 0、角色/仓库数据、后台设置及 custom 哈希，再分别检查未覆盖 NPC 随镜像更新、覆盖文件仍优先、删除覆盖后恢复新版内置文件。只重部署同一版本应记录为流程演练。
+已有环境不要重新运行 `initialize`，只运行 `initialize-custom` 补齐模板。升级后核对七服务健康、api-init 退出 0、角色/仓库数据、后台设置及 custom 哈希，再分别检查未覆盖 NPC 随镜像更新、覆盖文件仍优先、删除覆盖后恢复新版内置文件。只重部署同一版本应记录为流程演练。
 
-上述升级流程显式运行 `admin-init`，每次执行都会重跑迁移和三条导入命令；不要只凭已存在的退出容器判断本轮导入已完成。只有跳过 `admin-init`、只对已有数据库单独执行 `migrate` 的场景才需要注意：新迁移建出的表（例如 `game_npcs`）不会自动有数据，必须单独补跑对应的 `artisan game-data:import-*` 命令，否则查询接口会一直返回空结果。
+上述流程显式运行 `api-init`：执行 Go 管理库迁移、初始账号创建和完整资料的原子导入。不要只凭已存在的退出容器判断本轮导入已完成。需要单独刷新自定义资料时执行容器命令 `refresh-custom-catalogs`。
 
 ## 备份与恢复
 
-先确认 admin-init 已完成，再停止游戏及后台写入，并暂停宿主机 custom 文件编辑，仅保留 database 运行。数据库含非事务表，不能在有写入时仅凭 single-transaction 获得一致备份。
+先确认 api-init 已完成，再停止游戏及后台写入，并暂停宿主机 custom 文件编辑，仅保留 database 运行。数据库含非事务表，不能在有写入时仅凭 single-transaction 获得一致备份。
 
 ```bash
 docker compose stop gateway admin web-api map char login
@@ -157,7 +157,7 @@ python3 tools/deployment/manage.py backup --directory . --output ../backups/befo
 
 普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、Admin storage、server-settings、整个 CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。备份输出目录必须不存在，示例路径用过后须换新目录。完整离线包另行保存，备份不会重复复制镜像和资源。
 
-恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 DATA_DIR、CUSTOM_DIR、资源路径和地址，保留原 APP_KEY，不重新 initialize。先执行 initialize-custom 建立容器需要的挂载目录，再恢复：
+恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 DATA_DIR、CUSTOM_DIR、资源路径和地址，保留原数据库密码和控制令牌，不重新 initialize。先执行 initialize-custom 建立容器需要的挂载目录，再恢复：
 
 ```bash
 python3 tools/deployment/manage.py initialize-custom --directory .
@@ -169,7 +169,7 @@ python3 tools/deployment/manage.py deploy --directory .
 
 restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换备份涉及的表和文件；CUSTOM_DIR 精确恢复到备份内容，移除备份中不存在的额外文件。不自动替换镜像、内置资源或密钥。覆盖已有数据前另做备份。跨数据库版本或不兼容 schema 回退，必须同时恢复配套备份。
 
-从现有 systemd 环境迁移需单独安排停服，导出三个库、storage、battle_conf.txt 并保留 APP_KEY，再导入新的宿主机数据目录。工具不会自动搬迁旧主机存档。
+从现有 systemd 环境迁移需单独安排停服，导出三个库、storage、battle_conf.txt 并保留生成的数据库密码和控制令牌，再导入新的宿主机数据目录。工具不会自动搬迁旧主机存档。
 
 ## 验收与当前边界
 
@@ -271,7 +271,7 @@ custom/resources 的路径相对于客户端 data/，例如 `custom/resources/te
 python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 ```
 
-需要数据库已运行且已有 Admin schema；此命令使用已导入的当前镜像、不构建镜像、不重载游戏脚本。先根据内置目录快照和实际加载清单生成 NPC、物品、魔物声明资料，全部解析成功后调用原有三条导入命令。升级的 admin-init 自动执行相同流程。快照仅用于导入，不生成或替换服务端 runtime 目录。删除覆盖或自定义条目后再次刷新，会从内置基线重建，避免残留旧的用户条目。
+需要数据库已运行且已有 Admin schema；此命令使用已导入的当前镜像、不构建镜像、不重载游戏脚本。先根据内置目录快照和实际加载清单生成 NPC、物品、魔物声明资料，全部解析成功后调用原有三条导入命令。升级的 api-init 自动执行相同流程。快照仅用于导入，不生成或替换服务端 runtime 目录。删除覆盖或自定义条目后再次刷新，会从内置基线重建，避免残留旧的用户条目。
 
 刷新覆盖 item_db.yml、mob_db.yml 及其 Renewal 导入、静态 NPC 定义；不执行脚本，不推断动态创建 NPC、运行时奖励或战斗倍率修正，不渲染新外观的缩略图。其它数据库仍由服务端正常加载，但不属于这三类目录资料。修改坐标的新 NPC 支持按坐标寻路；没有匹配官方导航 ID 的 NPC 不伪造 ID 开启 NPC 导航传送。原有外观可复用已发布图片，新外观需要另行准备预览资源。
 
@@ -301,7 +301,7 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 - 覆盖无效：确认原脚本当前被加载，路径为去掉开头 npc/ 后的相对路径；内置 `.conf` 不支持覆盖。
 - 游戏已更新但后台还是旧值：执行目录刷新；反之后台已更新不代表游戏已重载。
 - 资源无效：确认没有额外一层 data/、路径大小写和编码一致、格式受客户端支持；查看 Gateway 日志并重新进入游戏。
-- admin-init 提示缺少 `server-base/conf/import/script_conf.txt`：确认 Admin 镜像已包含 Server import 模板快照；使用完整新版包，不手工修改容器补文件。
+- api-init 提示缺少 `server-base/conf/import/script_conf.txt`：确认 Admin 镜像已包含 Server import 模板快照；使用完整新版包，不手工修改容器补文件。
 - `verify` 失败：先检查是否混用了不同包的配置、镜像或工具，不改清单哈希来掩盖损坏。用户只应编辑 `.env`、custom 和持久化数据，不编辑受清单校验的发行文件。
 
 ### 登录页初始凭据提示
@@ -312,6 +312,6 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 
 部署目录 `.env` 中的 `ADMIN_INITIAL_USERNAME` 和 `ADMIN_INITIAL_PASSWORD` 指定初始管理员，默认均为 `admin`。首次初始化只在管理库没有任何账号时创建超级管理员；已有账号时直接跳过，不覆盖密码、角色或状态。修改变量不会重置已有账号。用户名沿用小写字母、数字、下划线、点及短横线规则，密码为 5–255 个字符。
 
-使用自定义账号或密码时，登录页隐藏默认凭据提示，即使 `SHOW_DEFAULT_CREDENTIALS=true`；公开配置接口不返回自定义凭据。直接部署使用 `php artisan gm:user:create --initial --no-interaction --no-color`。
+使用自定义账号或密码时，登录页隐藏默认凭据提示，即使 `SHOW_DEFAULT_CREDENTIALS=true`；公开配置接口不返回自定义凭据。直接部署使用 `happyro-api init --no-color`。
 
 提示是固定的 `admin/admin` 文案，不读取真实密码。初始化配置仍为默认值但实际密码已经修改时，应设置 `SHOW_DEFAULT_CREDENTIALS=false` 隐藏提示。

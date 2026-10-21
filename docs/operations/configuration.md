@@ -25,7 +25,7 @@
 | `ROBROWSER_PUBLIC_PATH` | `/applications/pwa` | 浏览器路径前缀 |
 | `WS_ALLOWED_TARGETS` | `127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121` | 每一项必须是完整 host:port |
 | `REMOTE_CLIENT_URL` / `SOCKET_PROXY_URL` | 空 | 使用当前页面同源资源和 `/ws/`；非空时覆盖对应浏览器入口 |
-| `ADMIN_API_URL` | 代码默认 `http://127.0.0.1:18081` | `/api/adventure-tools` 同源代理目标，样例未显式设置 |
+| `HAPPYRO_API_URL` | 代码默认 `http://127.0.0.1:18081` | `/api/adventure-tools` 同源代理目标，样例未显式设置 |
 | `WS_TARGET_REDIRECTS` | 本机不设置 | Docker 将允许的客户端目标映射到容器服务名 |
 | `RATHENA_WEB_API_URL` | `http://127.0.0.1:8889` | Web API 反向代理 |
 | `DATA_OVERRIDE_PATH` | 运行目录 + `localization/client/data` | 散装资源覆盖 |

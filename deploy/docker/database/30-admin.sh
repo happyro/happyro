@@ -9,3 +9,8 @@ GRANT ALL PRIVILEGES ON happyro_admin.* TO 'happyro_admin'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON happyro.* TO 'happyro_admin'@'%';
 GRANT SELECT ON happyro_log.* TO 'happyro_admin'@'%';
 SQL
+
+# This script runs only when initializing a new database volume.
+mariadb --protocol=socket --user=root --password="$MARIADB_ROOT_PASSWORD" happyro < /opt/rathena/sql/happyro-accounts.sql
+mariadb --protocol=socket --user=root --password="$MARIADB_ROOT_PASSWORD" happyro < /opt/rathena/sql/happyro-mail.sql
+mariadb --protocol=socket --user=root --password="$MARIADB_ROOT_PASSWORD" happyro < /opt/rathena/sql/happyro-admin.sql

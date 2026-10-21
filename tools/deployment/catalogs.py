@@ -231,7 +231,7 @@ def main():
         print(color('1;33', 'Usage'))
         print(color('1;32', '  refresh --base PATH --server PATH --custom PATH --output PATH'))
         print('\n' + color('1;33', 'Example'))
-        print(color('36', 'python3 catalogs.py refresh --base /opt/happyro/catalog-base --server /opt/happyro/server-base --custom /opt/happyro/custom --output /opt/admin/resources/game-data') + '\n')
+        print(color('36', 'python3 catalogs.py refresh --base /opt/happyro/catalog-base --server /opt/happyro/server-base --custom /opt/happyro/custom --output /opt/api/resources/game-data') + '\n')
         return
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=['refresh'])

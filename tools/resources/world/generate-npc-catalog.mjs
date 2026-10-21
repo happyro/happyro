@@ -11,7 +11,7 @@ import MonsterTable from '../../../repos/happyro-client/src/DB/Monsters/MonsterT
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const serverRoot = path.join(workspaceRoot, 'repos/happyro-server');
 const clientRoot = path.join(workspaceRoot, 'repos/happyro-client');
-const adminRoot = path.join(workspaceRoot, 'repos/happyro-admin/backend');
+const adminRoot = path.join(workspaceRoot, 'repos/happyro-api');
 const entrypoints = ['npc/re/scripts_main.conf', 'conf/script_athena.conf'];
 
 const paths = {

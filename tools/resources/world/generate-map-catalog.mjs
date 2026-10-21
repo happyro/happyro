@@ -6,7 +6,7 @@ import sharp from '../../../repos/happyro-client/node_modules/sharp/lib/index.js
 
 const root = path.resolve(import.meta.dirname, '../../..');
 const client = path.join(root, 'repos/happyro-client');
-const admin = path.join(root, 'repos/happyro-admin/backend/resources/game-data/world');
+const admin = path.join(root, 'repos/happyro-api/resources/game-data/world');
 const load = async file => (await import(pathToFileURL(path.join(client, file)))).default;
 const command = process.argv[2];
 if (command !== 'generate') {

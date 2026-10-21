@@ -1,6 +1,6 @@
 # 游戏资料目录
 
-物品、魔物、地图和 NPC 使用各自的权威来源生成快照，再提供给 Client 冒险工具和 Admin 查询页。生成逻辑在根仓库，Admin 保存运行时 JSON 副本，Client 保存需要打进 PWA 的子集。
+物品、魔物、地图和 NPC 使用各自的权威来源生成快照，再提供给 Client 冒险工具和 Admin 查询页。生成逻辑在根仓库，API 保存运行时 JSON 副本，Client 保存需要打进 PWA 的子集。
 
 详细命令、输出位置和校验规则见 [游戏资料](../game-data/README.md)。世界实体模型和导航边界见 [世界图鉴与导航](world-catalog-navigation.md)。
 
@@ -23,8 +23,8 @@
 | --- | --- | --- |
 | 物品 | 有（`game_items` 等表） | 服务端分页 |
 | NPC | 有（`game_npcs` 表） | 服务端分页；单张地图另有整图查询接口，不分页 |
-| 地图 | 无，Admin 内存合并后按请求分页 | 服务端分页 |
-| 魔物 | 有，Admin 导入属性和掉落供后台查询；不含 Client 的出没地图和图集投影 | 冒险工具读取 Client 静态目录，本地分页 |
+| 地图 | 无，API 内存合并后按请求分页 | 服务端分页 |
+| 魔物 | 有，API 导入属性和掉落供后台查询；不含 Client 的出没地图和图集投影 | 冒险工具读取 Client 静态目录，本地分页 |
 
 魔物之所以是例外，是因为它的出没地图和图集坐标目前完全不经过 Admin 数据库，具体依据见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
 
@@ -33,10 +33,10 @@
 ```text
 官方 GRF / 服务端 db、npc / 已审查中文源
         ↓ tools/resources、tools/resources/world/generate-npc-catalog.mjs、Client 构建脚本
-Admin backend/resources/game-data/...
+happyro-api resources/game-data/...
 Client src/DB 与 applications/pwa/data/...
         ↓
 Admin 查询页、冒险工具、右上角导航
 ```
 
-大体积 PNG 写到 `work/game-data/`，不提交 Git。Admin 按物品 ID 或 NPC Sprite 读取预生成图片；游戏端 NPC 使用 WebP 图集，不在请求期间转换 BMP。
+大体积 PNG 写到 `work/game-data/`，不提交 Git。API 按物品 ID 或 NPC Sprite 读取预生成图片；游戏端 NPC 使用 WebP 图集，不在请求期间转换 BMP。

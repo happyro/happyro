@@ -23,7 +23,7 @@ python3 tools/resources/catalog/main.py monsters
 
 | 产物 | 路径 |
 | --- | --- |
-| Admin 快照 | `repos/happyro-admin/backend/resources/game-data/monsters/` |
+| Admin 快照 | `repos/happyro-api/resources/game-data/monsters/` |
 | PNG | `work/game-data/monsters/kro-20211105/` |
 | Client 图鉴列表 | `repos/happyro-client/applications/pwa/data/monsters/catalog.json`（schema `happyro-monster-catalog/v4`） |
 | Client 掉落详情 | `repos/happyro-client/applications/pwa/data/monsters/drops.json`（schema `happyro-monster-drops/v1`，按魔物 ID 索引，图鉴打开详情时才请求） |

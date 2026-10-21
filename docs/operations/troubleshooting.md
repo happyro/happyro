@@ -13,7 +13,7 @@ make status
 
 若报告 `HappyRO Gateway is not at locked commit`，当前脚本在 `scripts/maintenance/doctor.sh` 要求 Gateway HEAD 精确等于 `versions/sources.lock` 中的旧锁定值。维护分支有新提交也会失败。这不是回退源码的理由：检查锁定提交是否是当前 HEAD 祖先，再独立验证封包、配置、端口与服务。更新锁定策略需要单独修改脚本和基线，不在排障时执行 `git checkout` 丢弃新版本。
 
-`make status` 目前只汇总 Client / Server / Gateway 分支、数据库和五个游戏服务；不检查 Admin，也不访问浏览器。Admin 另用 `systemctl status happyro-admin-backend happyro-admin-frontend`。
+`make status` 目前只汇总 Client / Server / Gateway 分支、数据库和五个游戏服务；不检查 Admin，也不访问浏览器。Admin 另用 `systemctl status happyro-api happyro-admin-frontend`。
 
 ## 端口占用
 
@@ -76,7 +76,7 @@ docker inspect --format '{{.State.Health.Status}}' happyro-mariadb
 
 ## Docker 部署下 Admin 后端改动未生效
 
-Docker 离线包的配置见[离线部署](docker-deployment.md)。Admin 镜像开启了 OPcache 且 `validate_timestamps=0`，只信任构建镜像时打包的文件快照，容器内改代码或重启容器都不会生效。正式交付必须按[发布流程](docker-release.md)全量无缓存重建四类双架构镜像，部署完整新版包；开发调试也应核对实际 PHP/OPcache 配置，不把重启当作代码更新。
+Docker 离线包的配置见[离线部署](docker-deployment.md)。当前源码使用 Go API 镜像并包含构建后的 Admin 静态资源；修改源码后必须重新构建对应产物。正式交付必须按[发布流程](docker-release.md)全量无缓存重建四类双架构镜像，部署完整新版包；本机开发须核对实际 Go 二进制和前端监听进程，不把重启当作编译或构建。
 
 ## 保持登录或恢复失败
 

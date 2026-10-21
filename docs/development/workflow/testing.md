@@ -58,8 +58,8 @@ make server-verify
 ## Admin
 
 ```bash
-(cd repos/happyro-admin/backend && php artisan test)
-(cd repos/happyro-admin/frontend && npm run lint && npm run test && npm run build)
+(cd repos/happyro-api && go test ./...)
+(cd repos/happyro-admin && npm run lint && npm run test && npm run build)
 ```
 
 前端必须以 `happyro-admin-frontend` 服务提供的进程为准验收，不能用手工 `umi` 长期占用 `8000`。

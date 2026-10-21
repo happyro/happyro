@@ -53,7 +53,7 @@ map-server 裁决：
 
 ```text
 Admin 前端 :8000
-  → Laravel :18081
+  → Go / Gin :18081
        ├── happyro_admin     管理员、角色、权限、审计
        ├── happyro           玩家账号与角色查询（游戏库）
        ├── happyro_admin     物品 / 魔物 / NPC 目录（数据库表，服务端分页）

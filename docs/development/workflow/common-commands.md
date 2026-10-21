@@ -80,8 +80,8 @@ node scripts/resources/generate-navigation-data.mjs --write
 ```bash
 (cd repos/happyro-client && npm test && npm run build:pwa)
 (cd repos/happyro-gateway && node --test test/*.test.js)
-(cd repos/happyro-admin/backend && php artisan test)
-(cd repos/happyro-admin/frontend && npm run lint && npm run test && npm run build)
+(cd repos/happyro-api && go test ./...)
+(cd repos/happyro-admin && npm run lint && npm run test && npm run build)
 ```
 
 服务端编译使用根仓库 `make build-server`，不要绕过 HappyRO 配置直接调用上游安装脚本作为本机默认路径。

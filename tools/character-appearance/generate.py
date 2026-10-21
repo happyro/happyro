@@ -12,7 +12,7 @@ SOURCE = Path('config/character-appearance.json')
 TARGETS = {
     'server': Path('repos/happyro-server/src/common/character_appearance_data.hpp'),
     'client': Path('repos/happyro-client/src/DB/Jobs/CharacterAppearanceTable.generated.js'),
-    'admin': Path('repos/happyro-admin/backend/config/character_appearance.php'),
+    'admin': Path('repos/happyro-api/internal/catalog/appearance.go'),
 }
 SEX = {'any': -1, 'female': 0, 'male': 1}
 
@@ -142,8 +142,10 @@ def render(data):
             entries.append(f'\t{ident}: {{\n{fields}\n\t}}')
         client += f'export const {name} = {{\n' + ',\n'.join(entries) + '\n};\n'
     client = client.replace('\n', '\r\n')
-    admin = (f'<?php\n\n// {provenance}\nreturn [\n    \'default\' => 0,\n    \'ids\' => ['
-             + ', '.join(map(str, [0] + sorted(options))) + '],\n];\n')
+    admin = (f'// {provenance}\npackage catalog\n\n'
+             'func ValidAppearance(id int64) bool {\n\tswitch id {\n\tcase '
+             + ', '.join(map(str, [0] + sorted(options)))
+             + ':\n\t\treturn true\n\tdefault:\n\t\treturn false\n\t}\n}\n')
     return {'server': server, 'client': client, 'admin': admin}
 
 

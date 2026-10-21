@@ -11,8 +11,8 @@ v0.5.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使
 | 服务端 NPC | Server 的 `src/map/npc_custom.hpp`、`npc.cpp`、`map.cpp` | 新增清单加载，按内置相对路径重定向 .txt 读取，保留原脚本身份 |
 | 数据库 | Server 原生 db/import | 挂载用户 db 目录，沿用原生 YAML 合并、脚本及重载语义 |
 | 资源请求 | Gateway 的 `src/controllers/clientController.js`、`src/routes/index.js` | data 请求先读 custom，绕过旧缓存，更新/删除影响后续请求 |
-| 静态目录 | 根仓库 `tools/deployment/catalogs.py`、Admin entrypoint | 从内置基线和有效声明重建快照并执行三类导入 |
-| NPC 空目录 | Admin 的 `backend/app/Services/GameData/JsonNpcSnapshotReader.php` | 合法空 NPC 目录允许清除旧条目，缺失必要字段仍失败 |
+| 静态目录 | 根仓库 `tools/deployment/catalogs.py`、API entrypoint | 从内置基线和有效声明重建快照并执行三类导入 |
+| NPC 空目录 | API 的 `internal/catalog/snapshot.go` | 合法空 NPC 目录允许清除旧条目，缺失必要字段仍失败 |
 
 本次不需要新增客户端协议；PWA 沿用原有游戏封包、资源 URL 和冒险工具接口。客户端名称、说明、SPR/ACT 映射及后台缩略图不由服务端 YAML 自动生成。
 
@@ -49,13 +49,13 @@ HAPPYRO_CUSTOM_NPC_PATH 指向 `/opt/happyro/custom/npc`。新增脚本只从 sc
 
 Gateway 的 CUSTOM_RESOURCE_PATH 指向 resources 挂载。相对路径对应客户端 data/ 下的原路径，不能额外嵌套 data/。自定义读取发生在进程缓存和原资源读取之前；启用 custom 的 data 响应使用 no-store，更新产生新 ETag，删除回退内置来源。路径和链接错误返回错误，不读取挂载外文件。浏览器已缓存或游戏已解码的图片仍需重新加载。
 
-Admin 镜像保留物品/魔物/NPC 基线和 Server 的 npc/conf 快照。catalogs.py 按有效清单筛选静态 NPC，对覆盖文件重新解析声明；新 NPC 只有坐标寻路能力，不凭空生成官方导航 ID。物品/魔物读取 item_db.yml、mob_db.yml 及 Renewal Imports；全部解析成功后才写快照，再执行原有三条导入命令。三次数据库导入不是跨目录事务，后续导入失败时修复输入并重新刷新，不能宣称自动回滚。
+API 镜像保留物品/魔物/NPC 基线和 Server 的 npc/conf 快照。catalogs.py 按有效清单筛选静态 NPC，对覆盖文件重新解析声明；新 NPC 只有坐标寻路能力，不凭空生成官方导航 ID。物品/魔物读取 item_db.yml、mob_db.yml 及 Renewal Imports；全部解析成功后才写快照，再通过一次 catalog import 校验并原子发布完整数据库快照；导入失败时保留上一代已发布资料。
 
 每次从镜像内基线重建，删除 custom 条目后可清除旧资料。解析器不执行动态 NPC 或物品脚本、不预测奖励，也不覆盖所有原生数据库类型。合法空 NPC 目录可导入；物品/魔物空目录被拒绝。
 
 ## 首次部署缺陷与修复
 
-首轮 Admin 刷新读取 conf/script_athena.conf 引用的 conf/import/script_conf.txt 时失败。该目录被 Docker 构建上下文排除；Server 启动会从 import-tmpl 创建，Admin 快照没有初始化，导致 admin-init 退出 1。
+首轮 Admin 刷新读取 conf/script_athena.conf 引用的 conf/import/script_conf.txt 时失败。该目录被 Docker 构建上下文排除；Server 启动会从 import-tmpl 创建，Admin 快照没有初始化，导致 api-init 退出 1。
 
 根仓库修复提交 `2179b923` 在 Admin Dockerfile 中将版本化 conf/import-tmpl 复制到快照的 conf/import，与 Server 默认初始化一致，没有增加忽略缺失文件的分支。实际容器定向验证后，四类镜像全部再次无缓存双架构重建，当时的候选包仅含第二轮产物；这不是后续最终 v0.5.0 发行包的验收结论。
 

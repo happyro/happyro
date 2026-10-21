@@ -26,9 +26,22 @@ if [[ -z "$action" || "$action" == help ]]; then
   exit 0
 fi
 [[ "$(uname -s)" == Darwin ]] || { echo 'macOS is required' >&2; exit 1; }
+if [[ "$action" == start ]]; then
+  python3 - "$runtime/launchd/local.happyro.api.plist" <<'PYTHON'
+import plistlib
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(f'Missing API service configuration: {path}')
+arguments = plistlib.loads(path.read_bytes()).get('ProgramArguments', [])
+if 'artisan' in arguments or any(Path(value).name.startswith('php') for value in arguments if isinstance(value, str)):
+    raise SystemExit('API launchd still uses PHP. Prepare and install the Go configuration with tools/deployment/native_api.py before starting services.')
+PYTHON
+fi
 domain="gui/$(id -u)"
-services=(database login char map web gateway admin-backend openresty)
-if [[ "$action" == stop ]]; then services=(openresty admin-backend gateway web map char login database); fi
+services=(database login char map web gateway api admin-frontend openresty)
+if [[ "$action" == stop ]]; then services=(openresty admin-frontend api gateway web map char login database); fi
 for service in "${services[@]}"; do
   if [[ "$service" == database ]]; then
     case "$action" in

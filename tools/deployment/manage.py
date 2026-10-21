@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Prepare and operate offline bundles; only deploy explicitly starts services."""
 import argparse
-import base64
 import json
 import os
 from pathlib import Path
@@ -47,9 +46,9 @@ def prepare(args):
     sources = {
         'catalog/items': root / 'work/game-data/items/kro-20211105',
         'catalog/monsters': root / 'work/game-data/monsters/kro-20211105',
-        'catalog/npcs': root / 'repos/happyro-admin/backend/resources/game-data/world/npcs',
-        'catalog/maps': root / 'repos/happyro-admin/backend/resources/game-data/world/maps',
-        'catalog/terrain': root / 'repos/happyro-admin/backend/resources/game-data/world/terrain',
+        'catalog/npcs': root / 'repos/happyro-api/resources/game-data/world/npcs',
+        'catalog/maps': root / 'repos/happyro-api/resources/game-data/world/maps',
+        'catalog/terrain': root / 'repos/happyro-api/resources/game-data/world/terrain',
     }
     ini = (kro / 'DATA.INI').read_text()
     grfs = re.findall(r'^\s*\d+\s*=\s*([^\r\n]+\.grf)\s*$', ini, re.I | re.M)
@@ -73,7 +72,7 @@ def prepare(args):
     (output / 'VERSION').write_text(release_version + '\n')
     (output / 'images').mkdir()
     resources = output / 'resources'
-    for name in ['database', 'admin-storage', 'control-socket', 'server-settings', 'server-logs', 'gateway-logs']:
+    for name in ['database', 'control-socket', 'server-settings', 'server-logs', 'gateway-logs']:
         (output / 'data' / name).mkdir(parents=True)
     game = resources / 'kro-20211105'
     game.mkdir(parents=True)
@@ -199,7 +198,6 @@ def initialize(args):
     values = {key: secrets.token_hex(24) for key in ['DB_PASSWORD', 'ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'INTERSERVER_PASSWORD', 'GAME_CONTROL_TOKEN']}
     # rAthena inter-server authentication stores passwords in a 24-byte buffer.
     values['INTERSERVER_PASSWORD'] = secrets.token_hex(10)
-    values['APP_KEY'] = 'base64:' + base64.b64encode(secrets.token_bytes(32)).decode()
     for key, value in values.items():
         template = re.sub(rf'^{key}=.*$', f'{key}={value}', template, flags=re.M)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -225,7 +223,7 @@ def deploy(args):
         raise ValueError('Run initialize and edit .env public URLs before deploying')
     release = verify(args)
     config = json.loads(compose(root, 'config', '--format', 'json', capture_output=True, text=True).stdout)
-    services = {'gateway': 'gateway', 'admin': 'admin', 'admin-init': 'admin',
+    services = {'gateway': 'gateway', 'api': 'api', 'api-init': 'api',
                 'database': 'database', 'login': 'server', 'char': 'server',
                 'map': 'server', 'web-api': 'server'}
     if set(config['services']) != set(services):
@@ -269,7 +267,7 @@ def refresh_custom_catalogs(args):
     root = args.directory.resolve()
     verify(args)
     custom.validate(custom.custom_root(custom_config(root)))
-    compose(root, 'run', '--rm', '--no-deps', '-T', 'admin', 'refresh-custom-catalogs')
+    compose(root, 'run', '--rm', '--no-deps', '-T', 'api', 'refresh-custom-catalogs')
 
 
 def backup(args):
@@ -287,7 +285,7 @@ def backup(args):
     command = 'exec mariadb-dump --user=root --password="$MARIADB_ROOT_PASSWORD" --single-transaction --routines --events --triggers --databases happyro happyro_log happyro_admin'
     with (output / 'databases.sql').open('wb') as stream:
         compose(root, 'exec', '-T', 'database', 'sh', '-c', command, stdout=stream)
-    for service, target, directories in [('admin', 'admin-files.tar', ['/opt/admin/storage', '/run/happyro-settings'])]:
+    for service, target, directories in [('api', 'server-settings.tar', ['/run/happyro-settings'])]:
         with (output / target).open('wb') as stream:
             compose(root, 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'tar', service, '-cf', '-', *directories, stdout=stream)
     for name in ['.env', 'compose.yaml', 'release-manifest.json']:
@@ -301,7 +299,7 @@ def restore(args):
         raise ValueError('Restore replaces existing data; use --confirm-replace after stopping all writers')
     root, source = args.directory.resolve(), args.backup.resolve()
     checksums = json.loads((source / 'checksums.json').read_text())
-    required = {'databases.sql', 'admin-files.tar', 'custom-files.tar', '.env', 'compose.yaml', 'release-manifest.json'}
+    required = {'databases.sql', 'server-settings.tar', 'custom-files.tar', '.env', 'compose.yaml', 'release-manifest.json'}
     if set(checksums) != required:
         raise ValueError('Incomplete backup; restore older backups with their matching release tools')
     for name, value in checksums.items():
@@ -316,10 +314,10 @@ def restore(args):
     custom_directory = custom.custom_root(custom_config(root))
     with (source / 'databases.sql').open('rb') as stream:
         compose(root, 'exec', '-T', 'database', 'sh', '-c', 'exec mariadb --user=root --password="$MARIADB_ROOT_PASSWORD"', stdin=stream)
-    with (source / 'admin-files.tar').open('rb') as stream:
-        compose(root, 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'tar', 'admin', '-xf', '-', '-C', '/', stdin=stream)
+    with (source / 'server-settings.tar').open('rb') as stream:
+        compose(root, 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'tar', 'api', '-xf', '-', '-C', '/', stdin=stream)
     custom.restore(source / 'custom-files.tar', custom_directory)
-    print('Restored databases, custom content and admin files. Use the backed-up APP_KEY and matching image release before starting.')
+    print('Restored databases, custom content and server settings. Use the backed-up environment and matching image release before starting.')
 
 
 def help_text(no_color):
