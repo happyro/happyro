@@ -10,6 +10,7 @@
 
 - 下一次发布版本只从 `deploy/docker/VERSION` 读取。正式发布版本为 v0.5.0；历史候选包或已删除的旧 Hub 上传不能替代当前交付。
 - 应用、资源、配置和镜像使用同一个版本，默认组成一个完整目录交付。用户明确要求拆分时，可从同一个已校验 ZIP 生成互补的资源包与镜像／部署文件包，提供合并说明，并验证合并后的全部文件与完整包一致；拆分包不能单独部署。
+- 拆分包统一命名为 `happyro-<VERSION>-runtimes.zip`（resources/ 运行资源）与 `happyro-<VERSION>-images.zip`（双架构镜像及其余部署文件）。两者保留完整包的同名根目录，解压到同一目录后合并使用；版本从 `deploy/docker/VERSION` 读取。
 - 六个构建仓库（根仓库、Client、Gateway、Server、Admin、API）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的六个构建仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、API（含 Admin 前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
 - 全部构建成功后才允许组装离线包；全部归档校验成功才标记 offline-ready。没有镜像的准备包不可部署。
@@ -159,6 +160,15 @@ offline-ready 表示目录的资源和镜像已通过校验，不代表 ZIP 已�
 ## Docker Hub 发布
 
 用户已登录 Docker Hub 且明确要求推送时才执行本节。使用 Docker 的凭据助手，不将凭据写入日志。以下命令均在根仓库运行，版本只读取 `deploy/docker/VERSION`；需要 Skopeo 和 Python 3。离线包使用完整版本标签，部署仍使用 `--pull never`。
+
+已完成本轮离线包后，可使用仓库内的 [push-dockerhub.sh](../../tools/deployment/push-dockerhub.sh) 执行下述全部发布步骤：
+
+```bash
+docker login
+bash tools/deployment/push-dockerhub.sh --push
+```
+
+脚本需要 Bash、Python 3.11+ 和 Skopeo，先校验 `artifacts/images/release/` 中四个 OCI 归档的哈希、双架构、版本与离线包来源提交，再依次推送版本标签、更新 latest、核对远程摘要；任一步失败立即停止。不带参数仅显示帮助，支持 `--no-color`，版本始终读取 VERSION。
 
 ### zsh 的 `atest` 仓库名问题
 

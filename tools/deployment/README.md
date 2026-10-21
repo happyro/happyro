@@ -2,13 +2,18 @@
 
 - `manage.py`：准备统一版本离线包、校验全包、导入本机架构镜像、生成密钥、部署、备份/恢复。
 - `images.py`：在构建机器全量无缓存构建双架构 OCI；package 转为 Docker-save 归档，放入包内 images/amd64 和 images/arm64，并生成 `.zip` 离线交付包，不重新构建、不推送。
+- `push-dockerhub.sh`：校验已完成的离线包清单与四个双架构 OCI 归档，推送版本标签和 latest，并核对远程完整 index 与子 manifest；不带参数只显示帮助，支持 `--no-color`。
 - `offline.py`：包内共享校验模块，不直接执行。
 
 版本唯一来源：deploy/docker/VERSION。prepare 和 build 读取同一版本；package 要求五仓库提交也完全一致。默认交付完整 ZIP，包含镜像与资源；只有明确要求时才从同一个已校验完整包生成可合并的拆分包。无镜像时使用 verify --prepared 检查准备包；正常 verify、initialize 和 deploy 均拒绝缺失镜像的包。
 
 两者不带参数仅显示帮助，支持 `--no-color`。外层离线交付只生成 `.zip`，包内供 Docker 导入的镜像保持 `.tar`。生成文件放 `artifacts/`，不修改官方源材料。
 
+拆分交付沿用 `happyro-<VERSION>-runtimes.zip`（运行资源）和 `happyro-<VERSION>-images.zip`（双架构镜像及部署文件）命名，保留同名根目录；两包解压到同一目录后按完整包校验和部署。
+
 构建端执行入口见[镜像构建与交付](../../docs/operations/docker-release.md)；包内安装步骤见 [Docker 部署手册](../../docs/operations/docker-deployment.md)。Docker 定义位于 [deploy/docker](../../deploy/docker)。
+
+上传 Docker Hub：先执行 `docker login`，再执行 `bash tools/deployment/push-dockerhub.sh --push`。需要 Bash、Python 3.11+ 和 Skopeo；脚本自动定位仓库根目录，从 `deploy/docker/VERSION` 读取版本，使用 `artifacts/images/release/` 的原始 OCI 归档及 `artifacts/deployment/release/release-manifest.json`，核验记录写入 `work/dockerhub/版本/`。
 
 `deploy` 校验包及已导入镜像后，先启动并等待 database 健康，再执行新版 Database 镜像内的 `/opt/rathena/sql/upgrades/upgrade_20261012_sessions.sql`，成功后才启动整栈；SQL 失败停止后续命令，不批量执行历史升级脚本。保留旧库升级同样执行，须先停止旧服务并导入全部本版镜像。
 
