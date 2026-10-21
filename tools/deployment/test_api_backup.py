@@ -105,7 +105,7 @@ csrf=next(c.value for c in jar if c.name=='XSRF-TOKEN')
 request=urllib.request.Request(base+'/api/auth/login',data=json.dumps({'username':'admin','password':'admin'}).encode(),headers={'Content-Type':'application/json','Origin':origin,'X-XSRF-TOKEN':urllib.parse.unquote(csrf)})
 with client.open(request) as r: assert r.status==200
 with client.open(base+'/api/auth/user') as r: assert 'admin' in json.dumps(json.load(r))
-with client.open(base+'/api/game-data/items?per_page=1') as r: assert json.load(r)['data']
+with client.open(base+'/api/game-data/items?perPage=1') as r: assert len(json.load(r)['data']) == 1
 '''
                 probe = 'origin=' + repr(config['services']['api']['environment']['APP_URL']) + '\n' + probe
                 compose('exec', '-T', 'api', 'python3', '-c', probe)
