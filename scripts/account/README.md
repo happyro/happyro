@@ -6,3 +6,5 @@
 ```bash
 make test-account
 ```
+
+可重放的四角色功能测试账号 `happyro2` 定义在 [`deploy/mariadb/fixtures/happyro2.sql`](../../deploy/mariadb/fixtures/happyro2.sql)。角色配置、停服导入及重放行为见[功能测试账号文档](https://happyro.kugarocks.com/development/test-accounts)。该 SQL 仅按需执行，不加入正式数据库自动初始化。

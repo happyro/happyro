@@ -46,7 +46,7 @@ python3 tools/resources/catalog/main.py monsters
 
 ## 架构决策：冒险工具魔物图鉴为什么不做服务端分页
 
-Admin 的 NPC 查询已经改为服务端分页（`game_npcs` 表 + 分页 API，见 [NPC](npcs.md)），冒险工具魔物图鉴目前仍是客户端一次性拉取 `catalog.json` 后在内存里分页，两者不对称，理由如下：
+Go API 的 NPC 查询已经改为服务端分页（`catalog_npcs` 表 + 分页 API，见 [NPC](npcs.md)），冒险工具魔物图鉴目前仍是客户端一次性拉取 `catalog.json` 后在内存里分页，两者不对称，理由如下：
 
 1. `catalog.json` 经 gzip 压缩后约 150KB，且已经是懒加载（只在打开图鉴 tab 时才请求），全量拉取的成本本身不高；改成分页反而会把一次请求拆成多次往返，在高延迟链路上未必更快。
 2. 魔物的 `spawns`（出没地图）和 `atlas`/`tile`（图集坐标）目前完全不在 Admin 数据库里，只存在于 `repos/happyro-client/scripts/generate-monster-catalog.mjs` 解析 rAthena 服务端 spawn 配置文件生成的静态产物中。要做服务端分页，必须先把这两项数据迁移进数据库，这是尚未开始的前置工作。

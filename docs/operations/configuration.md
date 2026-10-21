@@ -47,7 +47,7 @@
 - 用户 `happyro`
 - Admin 库 `happyro_admin`，与玩家数据隔离
 
-初始化脚本位于 `deploy/mariadb/init/`。游戏库不承载 Laravel 框架表。
+初始化脚本位于 `deploy/mariadb/init/`。游戏库不承载 API 的管理账号、会话、权限和资料目录表；管理库由 Go API 的 Goose 迁移维护。
 
 ## 服务端导入配置
 

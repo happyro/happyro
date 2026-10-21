@@ -10,7 +10,7 @@
 
 - 下一次发布版本只从 `deploy/docker/VERSION` 读取。正式发布版本为 v0.5.0；历史候选包或已删除的旧 Hub 上传不能替代当前交付。
 - 应用、资源、配置和镜像使用同一个版本，默认组成一个完整目录交付。用户明确要求拆分时，可从同一个已校验 ZIP 生成互补的资源包与镜像／部署文件包，提供合并说明，并验证合并后的全部文件与完整包一致；拆分包不能单独部署。
-- 六个仓库（根仓库、Client、Gateway、Server、Admin、API）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的六仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
+- 六个构建仓库（根仓库、Client、Gateway、Server、Admin、API）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的六个构建仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、API（含 Admin 前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。
 - 全部构建成功后才允许组装离线包；全部归档校验成功才标记 offline-ready。没有镜像的准备包不可部署。
 - 镜像发布目标为 docker.io/kugarocks/happyro-{gateway,server,api,database}。用户要求推送时，全部构建及 OCI 校验成功后才从同一批归档推送双架构镜像，再组装离线包；Docker Hub 的 latest 指向同一版本，离线部署不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
@@ -52,7 +52,7 @@ bash scripts/resources/package-offline-resources.sh create --output artifacts/ha
 
 跨机器准备有两条路径，选择其一：传输原始资源归档后在构建机运行 prepare，或传输已通过 verify --prepared 的准备目录。不要把前者当成准备包，也不要向已存在的准备目录再次执行 prepare。
 
-构建前核对 `configs/Config.happyro.js` 与 Client 的 `applications/pwa/Config.happyro.js` 内容一致（可忽略 CRLF/LF）。Gateway Dockerfile 使用 Client 中的配置副本；若不同，先审查并同步配置源，提交后重新核对六仓库。prepare/build 会拒绝脏仓库，但不会替你同步 origin/main 或判断配置语义一致。
+构建前核对 `configs/Config.happyro.js` 与 Client 的 `applications/pwa/Config.happyro.js` 内容一致（可忽略 CRLF/LF）。Gateway Dockerfile 使用 Client 中的配置副本；若不同，先审查并同步配置源，提交后重新核对六个构建仓库。prepare/build 会拒绝脏仓库，但不会替你同步 origin/main 或判断配置语义一致。
 
 预检 Admin NPC 快照时，同时核对条目内容和来源指纹。条目内容未变不代表快照来源仍与当前 Server 一致；来源校验失败时，按 Admin 的目录生成流程重新生成并审查差异，提交实际变更后再 prepare/build，不手改指纹绕过校验。
 
@@ -74,7 +74,7 @@ python3 tools/deployment/manage.py prepare --workspace . --output artifacts/depl
 python3 tools/deployment/manage.py verify --directory artifacts/deployment/release --prepared
 ```
 
-输出目录必须不存在。prepare 从 VERSION 生成包内版本、环境模板和资源清单，记录六仓库提交，并预留空 images/。资源与配置都计算 SHA-256。任何未跟踪文件也会触发脏仓库检查；截图等应放在已忽略的 work/ 或 artifacts/，不要提交无关文件。
+输出目录必须不存在。prepare 从 VERSION 生成包内版本、环境模板和资源清单，记录六个构建仓库提交，并预留空 images/。资源与配置都计算 SHA-256。任何未跟踪文件也会触发脏仓库检查；截图等应放在已忽略的 work/ 或 artifacts/，不要提交无关文件。
 
 ## 2. 在本机构建镜像
 
@@ -90,7 +90,7 @@ Admin 使用 Go 构建镜像和 Debian 运行镜像，具体版本及固定摘�
 python3 tools/deployment/images.py build --workspace . --output artifacts/images/release
 ```
 
-仅当第 1 步因本地输入缺失而选择在资源机准备时，才将准备目录复制到构建机的 artifacts/deployment/release，保留空目录和完整结构。先确认两台机器的六仓库提交一致，再在构建机上执行（替换 SSH 用户与路径）：
+仅当第 1 步因本地输入缺失而选择在资源机准备时，才将准备目录复制到构建机的 artifacts/deployment/release，保留空目录和完整结构。先确认两台机器的六个构建仓库提交一致，再在构建机上执行（替换 SSH 用户与路径）：
 
 ```bash
 mkdir -p artifacts/deployment

@@ -10,7 +10,8 @@ PWA (dist/Web)
        ├── 静态页面与生成 JSON
        ├── /data/<path> 资源查找
        ├── /ws/ → rAthena TCP（login / char / map）
-       └── HTTP 代理 → web-server :8889
+       ├── HTTP 代理 → web-server :8889
+       └── /api/adventure-tools/* → Go API :18081
 ```
 
 客户端不直连 login / char / map 端口。原生开发模板的 WebSocket 目标白名单为 `127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121`。
@@ -31,7 +32,7 @@ PWA (dist/Web)
 
 - 技能名称、说明、技能树：Client 生成模块，进入游戏不再执行对应 LUB。
 - 导航目录与寻路图：PWA `data/navigation/*.json`，按需加载。
-- NPC / 魔物 / 地图图鉴：生成目录本身构建期产出、运行期只读，但冒险工具消费方式不统一——NPC 和地图经 Admin 服务端分页查询，魔物由客户端直接静态读取（见下方“Admin 数据流”）。
+- NPC / 魔物 / 地图图鉴：生成目录本身构建期产出、运行期只读，但冒险工具消费方式不统一——NPC 和地图经 Go API 服务端分页查询，魔物由客户端直接静态读取（见下方“后台与玩家 API 数据流”）。
 - 物品显示名和说明：运行目录中的 `System/itemInfo_true.lub`。
 - 系统消息、称号、技能 TXT、卡片前缀：`localization/client/data/`。
 
@@ -47,9 +48,9 @@ map-server 裁决：
 - 魔物召唤位置、Boss / MVP 限制和冷却；
 - 背包、邮件、鉴定等物品变更。
 
-客户端提交请求 ID、目标或坐标；成功后才更新本地冷却和界面。Admin 的 Game Control 走同一权威，不通过 SQL 改写 map-server 内存。
+客户端提交请求 ID、目标或坐标；成功后才更新本地冷却和界面。Go API 的 Game Control 走同一权威，不通过 SQL 改写 map-server 内存。
 
-## Admin 数据流
+## 后台与玩家 API 数据流
 
 ```text
 Admin 前端 :8000
@@ -61,16 +62,16 @@ Admin 前端 :8000
        └── Game Control      在线角色与地图实体变更
 ```
 
-游戏内冒险工具需要调用 Admin 能力时，由 Gateway 做同源反向代理（`/api/adventure-tools/*`），避免把服务密钥下发到浏览器。四类资料在 Admin 内部的具体查询模式并不统一，完整对比见 [资料目录·运行时查询模式](game-data-catalogs.md#运行时查询模式)；以冒险工具 NPC 图鉴为例，一次请求的完整链路是：
+游戏内冒险工具需要调用 Go API 能力时，由 Gateway 做同源反向代理（`/api/adventure-tools/*`），避免把服务密钥下发到浏览器。四类资料在 Go API 内部的具体查询模式并不统一，完整对比见 [资料目录·运行时查询模式](game-data-catalogs.md#运行时查询模式)；以冒险工具 NPC 图鉴为例，一次请求的完整链路是：
 
 ```text
 GameTools（客户端）
   → Gateway /api/adventure-tools/npcs（同源反代）
-       → Admin AdventureWorldController::npcs
-            → NpcCatalogService::search
-                 → DatabaseNpcRepository（分页查询 game_npcs 表）
+       → player.Handler.npcs（验证分页与筛选参数）
+            → catalog.SQLRepository.NPCs
+                 → catalog_npcs（按当前 generation_id 查询并在 SQL 中分页）
 ```
 
-魔物图鉴不经过这条链路：`GameTools` 直接向 Gateway 请求客户端 PWA 内的静态文件（`applications/pwa/data/monsters/catalog.json`），不经 Admin，分页在浏览器内完成——原因见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
+魔物图鉴不经过这条链路：`GameTools` 直接向 Gateway 请求客户端 PWA 内的静态文件（`applications/pwa/data/monsters/catalog.json`），不经 Go API，分页在浏览器内完成——原因见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
 
 配置 `CUSTOM_RESOURCE_PATH` 时，用户资源先于内置来源和缓存读取；删除回退及缓存规则见[自定义设计](customization.md#资源与资料刷新)。

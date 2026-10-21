@@ -8,7 +8,7 @@
 
 | 分类 | 面向 | 入口 |
 | --- | --- | --- |
-| [架构](architecture/README.md) | 长期稳定设计 | 六仓库职责、运行时数据流、资料与本地化边界 |
+| [架构](architecture/README.md) | 长期稳定设计 | 七仓库职责、运行时数据流、资料与本地化边界 |
 | [开发](development/README.md) | 开发者 | 安装、启动、常用命令、测试、Git 规则 |
 | [运维](operations/README.md) | 部署维护 | systemd、端口、环境变量、数据库、Docker 发布、故障检查 |
 | [本地化](localization/README.md) | 中文资源维护 | 客户端资源链、服务端内容、校验 |
@@ -21,7 +21,7 @@
 - Admin：`repos/happyro-admin/changelog/`
 - Gateway：`repos/happyro-gateway/changelog/`（新记录），`CHANGELOG.md`（旧记录）
 
-各仓库文档入口与维护职责见[文档维护](development/workflow/documentation.md#六仓库内容归属)。
+各仓库文档入口与维护职责见[文档维护](development/workflow/documentation.md#七仓库内容归属)。
 
 根仓库及嵌套仓库的操作规则以仓库根 `AGENTS.md` 为准。
 

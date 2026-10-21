@@ -68,7 +68,7 @@ Gateway 启动前会验证 Server 健康，并重新执行网关与资源配置�
 - `happyro-web-api.service`
 - `happyro-gateway.service`
 
-MariaDB 容器名为 `happyro-mariadb`。Admin 模板位于 `repos/happyro-admin/deploy/systemd/`；Server 长期模板位于 `repos/happyro-server/deploy/systemd/`。实际安装来源用以下只读命令核验：
+MariaDB 容器名为 `happyro-mariadb`。Admin 前端模板位于 `repos/happyro-admin/deploy/systemd/`，Go API 模板位于 `repos/happyro-api/deploy/systemd/`；Server 长期模板位于 `repos/happyro-server/deploy/systemd/`。实际安装来源用以下只读命令核验：
 
 ```bash
 systemctl show happyro-login happyro-char happyro-map happyro-web-api happyro-gateway -p Id -p FragmentPath -p Transient -p MainPID

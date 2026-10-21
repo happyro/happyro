@@ -54,6 +54,8 @@ Web 管理后台提供账号与角色查询、物品与 Zeny 发放，以及经�
 
 [v0.5.0](https://happyro.kugarocks.com/changelog/releases/v0.5.0) 是 HappyRO 的当前正式发布版本：此次跨端体验、游戏功能、中文内容与部署维护变更规模大，因此从 v0.3.x 直接跃升至 v0.5.0，跳过 v0.4.x。
 
+本轮 v0.5.0 更新还包含 **PHP 后端向 Go 的迁移**：原 `happyro-admin` 同时包含 PHP 后端和管理前端，现在只保留前端，接口由独立的 Go 服务 `happyro-api` 提供。此次迁移由 PHP 官方于 2026-10-21 公布的两个严重漏洞推动：**CVE-2026-109618、CVE-2026-109619**，均可能导致未经认证的远程代码执行，详见[官方安全公告](https://www.php.net/archive/2026.php#2026-10-21-5)。
+
 首次体验可从[快速开始](https://happyro.kugarocks.com/guide/quick-start)选择入口。自行部署时，参考 [Docker 安装手册](https://happyro.kugarocks.com/deploy/docker)，下载[离线包](https://happyro.kugarocks.com/guide/downloads)，包内包含 `linux/amd64` 与 `linux/arm64` 镜像、运行资源、配置模板和配套工具。
 
 | 入口 | 内容 |
@@ -70,7 +72,7 @@ Web 管理后台提供账号与角色查询、物品与 Zeny 发放，以及经�
 
 ## 项目组成
 
-HappyRO 由根仓库、四个应用仓库和一个公开文档仓库组成：
+HappyRO 由根仓库、五个应用仓库和一个公开文档仓库组成，共七个独立 Git 仓库：
 
 | 仓库 | 职责 |
 | --- | --- |
@@ -78,7 +80,8 @@ HappyRO 由根仓库、四个应用仓库和一个公开文档仓库组成：
 | [happyro-client](https://github.com/happyro/happyro-client) | 浏览器客户端、PWA 与游戏内冒险工具 |
 | [happyro-server](https://github.com/happyro/happyro-server) | rAthena 游戏服务与 Web API |
 | [happyro-gateway](https://github.com/happyro/happyro-gateway) | 静态资源、HTTP 与 WebSocket 网关 |
-| [happyro-admin](https://github.com/happyro/happyro-admin) | 游戏管理后台与 Laravel API |
+| [happyro-admin](https://github.com/happyro/happyro-admin) | React / Umi / Ant Design 管理前端 |
+| [happyro-api](https://github.com/happyro/happyro-api) | Go / Gin 后端，提供后台与玩家工具 API |
 | [happyro-doc](https://github.com/happyro/happyro-doc) | 安装文档、玩家指南与公开文档站 |
 
 ## 项目基线

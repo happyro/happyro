@@ -18,8 +18,8 @@ happyro-版本/
 ├── .env.example
 ├── release-manifest.json
 ├── images/
-│   ├── amd64/                 # gateway/server/admin/database.tar
-│   └── arm64/                 # gateway/server/admin/database.tar
+│   ├── amd64/                 # gateway/server/api/database.tar
+│   └── arm64/                 # gateway/server/api/database.tar
 ├── resources/
 │   ├── manifest.json
 │   ├── kro-20211105/          # DATA.INI、GRF、AI、BGM、System、data
@@ -92,7 +92,7 @@ api-init 依次执行 Go 管理库迁移（`migrate`）、初始账号创建（`
 
 正常运行七个服务容器和一个完成后退出的 api-init：
 
-Compose 已为服务设置固定容器名（如 `happyro-admin`、`happyro-gateway`、`happyro-map`），不会再追加默认的 `-1` 序号。固定容器名意味着同一台主机不能同时运行两个相同部署包实例；如需并行实例，应修改 Compose 中的容器名前缀。
+Compose 已为服务设置固定容器名（如 `happyro-api`、`happyro-gateway`、`happyro-map`），不会再追加默认的 `-1` 序号。固定容器名意味着同一台主机不能同时运行两个相同部署包实例；如需并行实例，应修改 Compose 中的容器名前缀。
 
 | 镜像 | 服务 |
 | --- | --- |
@@ -103,16 +103,16 @@ Compose 已为服务设置固定容器名（如 `happyro-admin`、`happyro-gatew
 
 后台默认宿主机 8000 → 容器 8080；游戏 3338 → 3338，其余端口只在 Docker 网络内。后台资料版本固定在配置中（kro-20211105、2fe6ab3dc4d8），不是应用发布版本，不在页面修改。
 
-Admin 容器由 Go 进程同时提供 API 和前端静态文件，不再运行 PHP-FPM、Nginx 或 Supervisor。进程以 www-data 身份运行，健康检查使用 `/api/health`；Gateway 继续压缩转发到 Admin 的冒险工具响应。
+API 容器由 Go 进程同时提供 API 和前端静态文件，不再运行 PHP-FPM、Nginx 或 Supervisor。进程以 www-data 身份运行，健康检查使用 `/api/health`；Gateway 继续压缩转发到 API 的冒险工具响应。
 
-游戏依赖链是 database → login → char → map → web-api → gateway。Admin 等待数据库、api-init 完成和 web-api 健康。游戏不等待 Admin；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
+游戏依赖链是 database → login → char → map → web-api → gateway。API 等待数据库、api-init 完成和 web-api 健康。游戏不等待 API；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
 
 ```bash
-docker compose stop admin
-docker compose up -d --pull never admin
+docker compose stop api
+docker compose up -d --pull never api
 ```
 
-后台初始化失败时，整栈启动可能报错；检查 ps -a 和 logs，只有确认本轮 deploy 已成功执行会话 SQL 后，才可单独启动游戏链：docker compose up -d --pull never --no-build gateway；会话 SQL 失败时先修复并重新运行 deploy。停止 Admin 不要停止共享数据库。Admin 和 Server 共享 data/server-settings，battle_conf.txt 的运营变更须备份；不能改成单文件挂载。
+后台初始化失败时，整栈启动可能报错；检查 ps -a 和 logs，只有确认本轮 deploy 已成功执行会话 SQL 后，才可单独启动游戏链：docker compose up -d --pull never --no-build gateway；会话 SQL 失败时先修复并重新运行 deploy。停止 Admin 不要停止共享数据库。API 和 Server 共享 data/server-settings，battle_conf.txt 的运营变更须备份；不能改成单文件挂载。
 
 ## 升级
 
@@ -151,11 +151,11 @@ python3 tools/deployment/manage.py deploy --directory .
 先确认 api-init 已完成，再停止游戏及后台写入，并暂停宿主机 custom 文件编辑，仅保留 database 运行。数据库含非事务表，不能在有写入时仅凭 single-transaction 获得一致备份。
 
 ```bash
-docker compose stop gateway admin web-api map char login
+docker compose stop gateway api web-api map char login
 python3 tools/deployment/manage.py backup --directory . --output ../backups/before-upgrade
 ```
 
-普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、Admin storage、server-settings、整个 CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。备份输出目录必须不存在，示例路径用过后须换新目录。完整离线包另行保存，备份不会重复复制镜像和资源。
+普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、server-settings、整个 CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。备份输出目录必须不存在，示例路径用过后须换新目录。完整离线包另行保存，备份不会重复复制镜像和资源。
 
 恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 DATA_DIR、CUSTOM_DIR、资源路径和地址，保留原数据库密码和控制令牌，不重新 initialize。先执行 initialize-custom 建立容器需要的挂载目录，再恢复：
 
@@ -271,7 +271,7 @@ custom/resources 的路径相对于客户端 data/，例如 `custom/resources/te
 python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 ```
 
-需要数据库已运行且已有 Admin schema；此命令使用已导入的当前镜像、不构建镜像、不重载游戏脚本。先根据内置目录快照和实际加载清单生成 NPC、物品、魔物声明资料，全部解析成功后调用原有三条导入命令。升级的 api-init 自动执行相同流程。快照仅用于导入，不生成或替换服务端 runtime 目录。删除覆盖或自定义条目后再次刷新，会从内置基线重建，避免残留旧的用户条目。
+需要数据库已运行且已完成 Go 管理库迁移；此命令使用已导入的当前镜像、不构建镜像、不重载游戏脚本。先根据内置目录快照和实际加载清单生成 NPC、物品、魔物声明资料，全部解析成功后通过 `catalog import` 原子导入四份目录（客户端物品、服务端物品、魔物、NPC）。升级的 api-init 自动执行相同流程。快照仅用于导入，不生成或替换服务端 runtime 目录。删除覆盖或自定义条目后再次刷新，会从内置基线重建，避免残留旧的用户条目。
 
 刷新覆盖 item_db.yml、mob_db.yml 及其 Renewal 导入、静态 NPC 定义；不执行脚本，不推断动态创建 NPC、运行时奖励或战斗倍率修正，不渲染新外观的缩略图。其它数据库仍由服务端正常加载，但不属于这三类目录资料。修改坐标的新 NPC 支持按坐标寻路；没有匹配官方导航 ID 的 NPC 不伪造 ID 开启 NPC 导航传送。原有外观可复用已发布图片，新外观需要另行准备预览资源。
 
@@ -301,12 +301,12 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 - 覆盖无效：确认原脚本当前被加载，路径为去掉开头 npc/ 后的相对路径；内置 `.conf` 不支持覆盖。
 - 游戏已更新但后台还是旧值：执行目录刷新；反之后台已更新不代表游戏已重载。
 - 资源无效：确认没有额外一层 data/、路径大小写和编码一致、格式受客户端支持；查看 Gateway 日志并重新进入游戏。
-- api-init 提示缺少 `server-base/conf/import/script_conf.txt`：确认 Admin 镜像已包含 Server import 模板快照；使用完整新版包，不手工修改容器补文件。
+- api-init 提示缺少 `server-base/conf/import/script_conf.txt`：确认 API 镜像已包含 Server import 模板快照；使用完整新版包，不手工修改容器补文件。
 - `verify` 失败：先检查是否混用了不同包的配置、镜像或工具，不改清单哈希来掩盖损坏。用户只应编辑 `.env`、custom 和持久化数据，不编辑受清单校验的发行文件。
 
 ### 登录页初始凭据提示
 
-在部署目录 `.env` 设置 `SHOW_DEFAULT_CREDENTIALS=true` 后运行 `docker compose up -d --no-deps --force-recreate admin`，登录页显示初始账号密码 `admin/admin`。默认关闭，设为 `false` 隐藏。切换无需重新构建镜像；此开关不修改账号密码。
+在部署目录 `.env` 设置 `SHOW_DEFAULT_CREDENTIALS=true` 后运行 `docker compose up -d --no-deps --force-recreate api`，登录页显示初始账号密码 `admin/admin`。默认关闭，设为 `false` 隐藏。切换无需重新构建镜像；此开关不修改账号密码。
 
 ### 初始管理员账号
 

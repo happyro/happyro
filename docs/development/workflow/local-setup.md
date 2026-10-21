@@ -13,6 +13,7 @@ macOS 使用 Docker 数据库加 launchd 原生应用；已配置环境的启停
 | 依赖 | 要求 |
 | --- | --- |
 | Git、Node.js、npm | Node.js 22 或更高 |
+| Go | 版本要求以 `repos/happyro-api/go.mod` 为准 |
 | CMake、C++ 编译器 | 编译 rAthena |
 | Docker、Docker Compose | MariaDB 10.11 |
 | MariaDB 客户端工具 | 账号脚本需要 |
@@ -24,7 +25,7 @@ macOS 使用 Docker 数据库加 launchd 原生应用；已配置环境的启停
 
 ## 仓库布局
 
-在根仓库工作，四个应用仓库位于 `repos/`：
+在根仓库工作，五个应用仓库位于 `repos/`：
 
 ```text
 happyro/
@@ -37,14 +38,16 @@ happyro/
     ├── happyro-client
     ├── happyro-server
     ├── happyro-gateway
-    └── happyro-admin
+    ├── happyro-admin
+    ├── happyro-api
+    └── happyro-doc           文档站，不参与应用构建
 ```
 
 运行资源必须放在本机 `inputs/runtime/kro-20211105/`。不要使用公共 roBrowser GRF 服务。准备步骤见 [inputs/README.md](../../../inputs/README.md)。
 
 ## 启动顺序
 
-先检出四个应用仓库（它们不是根仓库的子模块），并准备上述资源和依赖。以下命令从根仓库执行，适用于尚未运行的开发环境；已有服务先检查状态。
+先检出五个应用仓库（它们不是根仓库的子模块），并准备上述资源和依赖。以下命令从根仓库执行，适用于尚未运行的开发环境；已有服务先检查状态。
 
 ```bash
 make database-start
@@ -63,7 +66,7 @@ make gateway-start
 
 局域网验收入口为 `http://<主机IP>:3338/applications/pwa/index.html`。该页应为带“进入游戏”和查看器入口的启动页。禁止用只构建 Online 的产物覆盖本机入口。
 
-Admin 不由根仓库 Makefile 管理，前端通常为 `http://<主机>:8000`，Laravel 健康接口为 `http://<主机>:18081/api/health`；以部署配置实际地址为准。启动、账号创建和验收见[Admin 入口](../../../repos/happyro-admin/README.md)。
+Admin 前端与 Go API 独立启动，不由根仓库 Makefile 管理。前端通常为 `http://<主机>:8000`，Go API 健康接口为 `http://<主机>:18081/api/health`；以实际部署配置为准。前端见 [Admin 入口](../../../repos/happyro-admin/README.md)，管理库准备、初始化账号与 API 服务见 [API 部署](../../../repos/happyro-api/docs/deployment.md)。
 
 ## 客户端与网关配置
 
@@ -71,7 +74,7 @@ Admin 不由根仓库 Makefile 管理，前端通常为 `http://<主机>:8000`�
 - `make configure-gateway` 把 `deploy/remote-client/.env.example` 安装为 Gateway `.env`。
 - `make configure-resources` 校验中文覆盖、链接 GRF，并把卡片前缀表安装到 Gateway `data/`。
 
-修改客户端 JS、CSS、配置或生成表后需要完整 PWA 构建，运行中的 Gateway 可用 `./scripts/client/refresh-client.sh build --no-color` 构建并校验；只重启 Gateway 不会编译客户端。修改 Gateway 代码、环境或缓存资源时再重启 Gateway。分步更新见[服务手册](../../operations/services.md)。
+修改客户端 JS、CSS、配置或生成表后需要完整 PWA 构建，Linux 上运行中的 Gateway 可用 `./scripts/client/refresh-client.sh build --no-color` 构建并校验；只重启 Gateway 不会编译客户端。修改 Gateway 代码、环境或缓存资源时再重启 Gateway。分步更新见[服务手册](../../operations/services.md)。
 
 ## 测试账号
 
