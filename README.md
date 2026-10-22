@@ -99,6 +99,8 @@ HappyRO 由根仓库、五个应用仓库和一个公开文档仓库组成，共
 
 ## 文档与社区
 
+- [环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables)：各服务默认值、允许范围、配置入口与生效方式。
+
 - [项目站点](https://happyro.kugarocks.com) · [GitHub Pages](https://happyro.org)
 - [更新日志](changelog/README.md) · [v0.5.0 发布说明](changelog/releases/v0.5.0.md)
 - [贡献指南](https://happyro.kugarocks.com/development/contributing) · [联系与反馈](https://happyro.kugarocks.com/community/contact)
