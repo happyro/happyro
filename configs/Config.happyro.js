@@ -1,4 +1,5 @@
 window.ROConfigHappyRO = {
+	clientDefaults: (window.ROConfigRuntime || {}).clientDefaults || {},
 	development: true,
 	remoteClient: (window.ROConfigRuntime || {}).remoteClient || `${window.location.origin}/`,
 	servers: [
