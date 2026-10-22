@@ -202,6 +202,69 @@ class OfflineTests(unittest.TestCase):
             self.assertIn('happyro-v9.0.0/images/arm64/api.tar', packaged.namelist())
             self.assertIn('happyro-v9.0.0/data/database/', packaged.namelist())
 
+    def test_prepare_filters_macos_metadata_without_changing_sources(self):
+        workspace = self.root / 'workspace'
+        output = self.root / 'prepared'
+        sources = [
+            'inputs/runtime/kro-20211105/client/AI',
+            'inputs/runtime/kro-20211105/client/BGM',
+            'inputs/runtime/kro-20211105/client/System',
+            'inputs/runtime/kro-20211105/client/data',
+            'work/game-data/items/kro-20211105',
+            'work/game-data/monsters/kro-20211105',
+            *[f'repos/happyro-api/resources/game-data/world/{name}'
+              for name in ['npcs', 'maps', 'terrain']],
+            'deploy/docker/custom-templates',
+            'repos/happyro-server/db/import-tmpl',
+        ]
+        for name in sources:
+            source = workspace / name
+            source.mkdir(parents=True)
+            (source / 'real.txt').write_text('resource')
+            (source / '.DS_Store').write_bytes(b'finder')
+            (source / '._real.txt').write_bytes(b'appledouble')
+            (source / '._directory').mkdir()
+            (source / '._directory/nested').write_bytes(b'metadata')
+        for name, content in {
+            'deploy/docker/compose.yml': 'services: {}',
+            'deploy/docker/.env.example': 'VERSION=@VERSION@',
+            'docs/operations/docker-deployment.md': 'Deployment',
+            'deploy/docker/custom-templates/npc/scripts.conf': '// template',
+            'inputs/runtime/kro-20211105/client/DATA.INI': '0=data.grf',
+            'inputs/runtime/kro-20211105/client/data.grf': 'grf',
+        }.items():
+            path = workspace / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        with patch('manage.commits', return_value={'root': 'fixture'}), \
+             patch('manage.version', return_value='v9.0.0'):
+            manage.prepare(argparse.Namespace(workspace=workspace, output=output))
+        self.assertFalse(any(manage.is_macos_metadata(p.relative_to(output)) for p in output.rglob('*')))
+        self.assertTrue((workspace / sources[0] / '._real.txt').exists())
+        manifest = json.loads((output / 'resources/manifest.json').read_text())
+        self.assertEqual(len(manifest['files']), 11)
+        self.assertTrue((output / '.env.example').exists())
+        manage.verify(argparse.Namespace(directory=output, prepared=True))
+
+    def test_zip_omits_metadata_added_after_preparation(self):
+        release = self.bundle()
+        (self.root / 'release-manifest.json').write_text(json.dumps(release))
+        for name in ['.DS_Store', 'resources/._image.png',
+                     'examples/custom/.DS_Store', 'data/database/._state']:
+            (self.root / name).write_bytes(b'metadata')
+        (self.root / 'resources/._directory').mkdir()
+        (self.root / 'resources/._directory/file').write_bytes(b'metadata')
+        manage.verify(argparse.Namespace(directory=self.root))
+        with tempfile.TemporaryDirectory() as destination:
+            archive_path = Path(destination) / 'bundle.zip'
+            manage.create_zip(self.root, archive_path, release)
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertFalse(any(manage.is_macos_metadata(name) for name in archive.namelist()))
+                self.assertIn('happyro-v9.0.0/.env.example', archive.namelist())
+                extracted = Path(destination) / 'extracted'
+                archive.extractall(extracted)
+            manage.verify(argparse.Namespace(directory=extracted / 'happyro-v9.0.0'))
+
     def test_zip_rejects_secrets_and_non_zip_output(self):
         release = self.bundle()
         (self.root / 'release-manifest.json').write_text(json.dumps(release))

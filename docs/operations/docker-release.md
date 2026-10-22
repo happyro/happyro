@@ -10,6 +10,7 @@
 
 - 下一次发布版本只从 `deploy/docker/VERSION` 读取。正式发布版本为 v0.5.0；历史候选包或已删除的旧 Hub 上传不能替代当前交付。
 - 应用、资源、配置和镜像使用同一个版本，默认组成一个完整目录交付。用户明确要求拆分时，可从同一个已校验 ZIP 生成互补的资源包与镜像／部署文件包，提供合并说明，并验证合并后的全部文件与完整包一致；拆分包不能单独部署。
+- 资源复制、资源与模板校验清单、最终 ZIP 均排除任意层级的 `._*` 和 `.DS_Store`（包括同名目录及其内容），保留 `.env.example` 等业务文件。跨机器资源归档同样过滤这些文件，并禁用 macOS tar 自动生成 AppleDouble；不修改原始资源。旧发布包及其清单不会自动回写，后续重新准备的交付包使用此规则。
 - 拆分包统一命名为 `happyro-<VERSION>-runtimes.zip`（resources/ 运行资源）与 `happyro-<VERSION>-images.zip`（双架构镜像及其余部署文件）。两者保留完整包的同名根目录，解压到同一目录后合并使用；版本从 `deploy/docker/VERSION` 读取。
 - 六个构建仓库（根仓库、Client、Gateway、Server、Admin、API）须处于最终、干净的提交；仅在跨机器准备和构建时，要求两台机器的六个构建仓库提交完全一致。正式构建前同步最新 origin/main，禁止丢弃本地工作。
 - 四类镜像 Gateway（含完整 --all PWA）、Server、API（含 Admin 前端）、Database 全量无缓存构建，包含 linux/amd64 和 linux/arm64。不能复用旧 dist、vendor 或旧镜像。

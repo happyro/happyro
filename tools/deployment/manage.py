@@ -17,8 +17,14 @@ from offline import (NAMES, commits, version, checked_path, verify_images, diges
                      daemon_architecture, verify_loaded, reference)
 
 
+def is_macos_metadata(relative):
+    return any(part == '.DS_Store' or part.startswith('._') for part in Path(relative).parts)
+
+
 def files(root):
     for path in sorted(root.rglob('*')):
+        if is_macos_metadata(path.relative_to(root)):
+            continue
         if path.is_symlink():
             raise ValueError(f'Symlinks are not allowed in packaged resources: {path}')
         if path.is_file() and path != root / 'manifest.json':
@@ -33,7 +39,8 @@ def copy_directory(source, target):
     if not source.is_dir():
         raise ValueError(f'Missing resource directory: {source}')
     list(files(source))  # Reject links before copying.
-    shutil.copytree(source, target)
+    shutil.copytree(source, target, ignore=lambda directory, names: [
+        name for name in names if is_macos_metadata(name)])
 
 
 def prepare(args):
@@ -157,9 +164,11 @@ def validate_zip_target(root, output):
     if (root / 'custom').exists():
         raise ValueError('Do not package user custom/; distribute examples/custom only')
     data = root / 'data'
-    if data.is_dir() and any(path.is_file() for path in data.rglob('*')):
+    if data.is_dir() and any(path.is_file() and not is_macos_metadata(path.relative_to(data))
+                             for path in data.rglob('*')):
         raise ValueError('Offline bundle data/ must not contain runtime files')
-    paths = sorted(root.rglob('*'))
+    paths = [path for path in sorted(root.rglob('*'))
+             if not is_macos_metadata(path.relative_to(root))]
     if any(path.is_symlink() for path in paths):
         raise ValueError('Symlinks are not allowed in an offline bundle archive')
     return paths
