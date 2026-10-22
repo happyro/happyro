@@ -71,3 +71,7 @@ HappyRO 覆盖写在 `repos/happyro-server/conf/import/`。本机 `make configur
 例：`HAPPYRO_AREA_SIZE=18`、`HAPPYRO_MAX_WALK_PATH=17`。留空可继续通过管理后台维护对应 battle 文件值；配置非空环境变量后，后台修改同名文件值不会在重载时覆盖环境变量。
 
 首次使用需要更新地图服二进制。视野改为 18 不会修改客户端寻怪 20、活动 30、瞬移等待及间隔 2 秒等默认值，也不会覆盖玩家已保存设置。更大视野不等于可无限距离追击：行走路径仍受上限约束，详细语义见[服务端说明](../../repos/happyro-server/docs/battle-environment.md)。
+
+## 玩法与工具权限
+
+地图服新增 10 项 `HAPPYRO_NAVIGATION_*` / `HAPPYRO_GAME_TOOLS_*` 部署覆盖，支持导航、召怪与工具权限。配置入口同上，值留空交由文件和后台管理。非空覆盖项提交修改时由 API 明确拒绝，地图服同时校验；需更新地图服和 API。完整变量表与示例见[环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables#玩法与工具权限环境变量)。
