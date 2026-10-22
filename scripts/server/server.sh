@@ -136,6 +136,7 @@ start_servers() {
 		: > "$log_file"
 		systemd-run --quiet --collect --unit="$unit" \
 			--property=Type=simple \
+			--setenv="HAPPYRO_NEW_PLAYER_START=${HAPPYRO_NEW_PLAYER_START:-classic}" \
 			--setenv="HAPPYRO_AREA_SIZE=${HAPPYRO_AREA_SIZE:-}" \
 			--setenv="HAPPYRO_MAX_WALK_PATH=${HAPPYRO_MAX_WALK_PATH:-}" \
 			--setenv="HAPPYRO_NAVIGATION_TELEPORT_POLICY=${HAPPYRO_NAVIGATION_TELEPORT_POLICY:-}" \

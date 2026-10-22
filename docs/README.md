@@ -43,6 +43,7 @@
 - 首次安装：[本地开发](development/workflow/local-setup.md)。
 - 更新并确认浏览器拿到新版本：[服务更新](operations/services.md#修改后的更新路径)。
 - 游戏断线、技能不能释放、中文没生效：[故障检查](operations/troubleshooting.md)。
+- 训练教官传送缺图、训练场资源和修复验收：[训练场专题](development/trainning-ground/README.md)。
 - 发布镜像：[强制发布规则](operations/docker-release.md)。
 - 清理目录或迁移主机前：[备份与恢复](operations/backup-recovery.md)。
 - 新增或修改文档：[文档维护](development/workflow/documentation.md)。

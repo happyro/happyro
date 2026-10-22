@@ -147,3 +147,12 @@ test('uses translated map labels for NPC locations, including previously missing
  assert.equal(names.odin_tem01, '奥丁神殿西区');
  assert.ok(!Object.keys(names).some(name => name.endsWith('.rsw')));
 });
+
+test('corrects a reviewed stale official NPC class using the current server identity', () => {
+ const entries = [{id:'einbroch:184:194:Joe',map:'einbroch',x:184,y:194,source_name:'可疑男子',sprite_id:881,navigation:{id:25229,class:730}}];
+ applyNavigationOverrides(entries,{npcs:[]},{schema:'happyro-npc-navigation-overrides/v2',entries:[{npc_id:entries[0].id,npc_class:881}]});
+ assert.equal(entries[0].navigation.class,881);
+ assert.equal(entries[0].navigation.id,null);
+ assert.equal(entries[0].navigation.map,'einbroch');
+ assert.throws(()=>applyNavigationOverrides(entries,{npcs:[]},{schema:'happyro-npc-navigation-overrides/v2',entries:[{npc_id:entries[0].id,npc_class:881}]}),/conflicting/);
+});

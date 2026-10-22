@@ -1,5 +1,6 @@
 window.ROConfigHappyRO = {
 	clientDefaults: (window.ROConfigRuntime || {}).clientDefaults || {},
+	timeZone: (window.ROConfigRuntime || {}).timeZone || 'Asia/Shanghai',
 	development: true,
 	remoteClient: (window.ROConfigRuntime || {}).remoteClient || `${window.location.origin}/`,
 	servers: [

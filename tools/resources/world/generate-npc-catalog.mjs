@@ -177,7 +177,10 @@ export function applyNavigationOverrides(entries, navigationCatalog, overrides) 
 					x: entry.x,
 					y: entry.y
 				};
-		if (!entry || entry.navigation || !candidate || (Number.isFinite(candidate.id) && claimedNavigationIds.has(candidate.id))) {
+		// An explicit server-class correction can replace an official row whose
+		// visual class no longer matches the current server NPC at that position.
+		const correctsClass = hasNpcClass && entry?.navigation && entry.navigation.class !== entry.sprite_id;
+		if (!entry || (entry.navigation && !correctsClass) || !candidate || (Number.isFinite(candidate.id) && claimedNavigationIds.has(candidate.id))) {
 			throw new Error(`Invalid or conflicting NPC navigation override: ${override.npc_id}`);
 		}
 		const distance = Math.hypot(entry.x - candidate.x, entry.y - candidate.y);

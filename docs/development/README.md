@@ -13,6 +13,8 @@
 | [四转开发](fourth-jobs/README.md) | 使用、实现、资源、回归规则与有效待办 | [四转使用](fourth-jobs/usage.md)、[验收边界](fourth-jobs/acceptance.md) |
 | [技能审查](skill-review/README.md) | 12 条职业线代码复查、607 项实机处理清单、修复与待办 | [已修复问题](skill-review/fixes.md)、[未解决事项](skill-review/pending.md)、[逐技能清单](skill-review/catalog.md) |
 | [转职实测](job-change-review/README.md) | 12 条线、13 个分支至四转和正常重登的流程与证据 | [转职流程索引](job-change-review/walkthrough.md)、[缺陷修复](job-change-review/fixes.md) |
+| [训练场修复与验收](trainning-ground/README.md) | 三场缺图、假人外观、仓库和中文修复及官方补丁附件 | [修复问题](trainning-ground/fixes.md)、[验收记录](trainning-ground/verification.md)、[资源与安装](trainning-ground/resources.md) |
+| [经典初心者流程](classic-novice/README.md) | 沉船／经典出生模式、新手教学与任务验收 | [配置与流程](classic-novice/README.md) |
 
 技能效果审查与 NPC 转职流程验收是不同范围：转职整线通过不表示该线每项技能效果均已通过。统计口径、测试准备和例外说明以各主题总览为准。
 
