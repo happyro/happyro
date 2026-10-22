@@ -41,10 +41,11 @@ PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js
 
 ## 配置清单
 
-以下是本次统一的 52 项客户端默认设置。
+以下是本次统一的 53 项客户端默认设置。
 
 | 分类 | 配置项 | 环境变量 | 内置默认值 | 允许范围 |
 |---|---|---|---|---|
+| 脚本文字 | 最低对比度目标 | `CLIENT_SCRIPT_TEXT_MIN_CONTRAST` | `4.5` | 4.5–7 |
 | 镜头 | 桌面距离 | `CLIENT_CAMERA_DESKTOP_ZOOM` | `125` | 1–325 |
 | 镜头 | 手机横屏距离 | `CLIENT_CAMERA_PHONE_LANDSCAPE_ZOOM` | `95` | 1–325 |
 | 镜头 | 手机竖屏距离 | `CLIENT_CAMERA_PHONE_PORTRAIT_ZOOM` | `170` | 1–325 |
@@ -99,3 +100,13 @@ PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js
 | 地图显示 | 光环模式 | `CLIENT_MAP_AURA` | `1` | 0, 1, 2 |
 
 自动战斗活动范围必须大于或等于搜怪范围；单独覆盖其中一项时，另一项使用同一份内置默认值参与校验。
+
+## 脚本文字对比度
+
+`CLIENT_SCRIPT_TEXT_MIN_CONTRAST` 默认 4.5，接受 4.5–7 的小数。颜色自动修正始终开启，作用于桌面 NPC 对话和选项、移动端 NPC 对话，以及共用可读性处理的任务说明。颜色与实际背景的对比度已达到目标时保留原色，否则向黑色或白色调整；若背景无法达到设定目标，使用两者中对比度更高的端点。
+
+此项是部署显示策略，不写入玩家 localStorage。改变配置后重启 Gateway 并刷新游戏页面；值越高，颜色可能偏离原始颜色越多。
+
+## 服务端视野
+
+服务端 `HAPPYRO_AREA_SIZE`（默认 18）与 `HAPPYRO_MAX_WALK_PATH`（默认 17）独立于客户端默认值，配置入口、生效顺序及重启要求见[地图服配置](configuration.md#地图服视野与行走)。

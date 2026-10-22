@@ -136,6 +136,8 @@ start_servers() {
 		: > "$log_file"
 		systemd-run --quiet --collect --unit="$unit" \
 			--property=Type=simple \
+			--setenv="HAPPYRO_AREA_SIZE=${HAPPYRO_AREA_SIZE:-}" \
+			--setenv="HAPPYRO_MAX_WALK_PATH=${HAPPYRO_MAX_WALK_PATH:-}" \
 			--property="WorkingDirectory=$SERVER_REPO" \
 			--property="StandardOutput=append:$log_file" \
 			--property="StandardError=append:$log_file" \

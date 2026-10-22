@@ -52,3 +52,22 @@
 ## 服务端导入配置
 
 HappyRO 覆盖写在 `repos/happyro-server/conf/import/`。本机 `make configure-server` 根据 `deploy/rathena/profile.env` 生成绑定地址。`PACKETVER` 固定 `20211103`，客户端 `packetKeys` 必须为 `false`，并与服务端 `PACKET_OBFUSCATION` 关闭状态一致。
+
+
+## 地图服视野与行走
+
+| 环境变量 | 默认值 | 允许范围 |
+| --- | --- | --- |
+| `HAPPYRO_AREA_SIZE` | 18 格 | 5–50，整数 |
+| `HAPPYRO_MAX_WALK_PATH` | 17 格 | 1–32，整数 |
+
+空值或未设置时使用服务端 battle 文件配置；非空环境变量在所有导入文件加载后覆盖对应值，非法值导致地图服报错退出。修改变量需要重启进程，单独重载配置不会读取已修改的外部环境文件。重载 battle 配置仍会重新应用当前进程中的环境变量。
+
+- Linux 原生启动脚本：编辑 `deploy/rathena/profile.env` 后重启地图服。
+- macOS：编辑同一个 `deploy/rathena/profile.env`，`scripts/local/macos-services.sh start` 会把这两个值同步到地图服 launchd plist；已加载服务不会自动重启，应在合适时机 stop/start。单独 kickstart 不会重新读取 profile。直接管理 launchd 时，可修改地图服 plist 的 `EnvironmentVariables` 并重新加载服务。
+- Docker：编辑部署目录 `.env`，重新创建 map 容器。Compose 将这两个变量注入服务端进程。
+- 独立 systemd 服务：通过 `systemctl edit happyro-map-server` 的 `[Service] Environment=` 设置并重启。
+
+例：`HAPPYRO_AREA_SIZE=18`、`HAPPYRO_MAX_WALK_PATH=17`。留空可继续通过管理后台维护对应 battle 文件值；配置非空环境变量后，后台修改同名文件值不会在重载时覆盖环境变量。
+
+首次使用需要更新地图服二进制。视野改为 18 不会修改客户端寻怪 20、活动 30、瞬移等待及间隔 2 秒等默认值，也不会覆盖玩家已保存设置。更大视野不等于可无限距离追击：行走路径仍受上限约束，详细语义见[服务端说明](../../repos/happyro-server/docs/battle-environment.md)。

@@ -94,6 +94,22 @@ for service in "${services[@]}"; do
   case "$action" in
     start)
       [[ -f "$plist" ]] || { echo "missing service configuration: $plist" >&2; exit 1; }
+      if [[ "$service" == map ]]; then
+        (
+          source "$project_root/deploy/rathena/profile.env"
+          python3 - "$plist" "${HAPPYRO_AREA_SIZE:-}" "${HAPPYRO_MAX_WALK_PATH:-}" <<'PYTHON'
+import plistlib
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+config = plistlib.loads(path.read_bytes())
+environment = config.setdefault('EnvironmentVariables', {})
+for key, value in zip(('HAPPYRO_AREA_SIZE', 'HAPPYRO_MAX_WALK_PATH'), sys.argv[2:]):
+    environment[key] = value
+path.write_bytes(plistlib.dumps(config))
+PYTHON
+        )
+      fi
       if ! launchctl print "$domain/$label" >/dev/null 2>&1; then launchctl bootstrap "$domain" "$plist"; fi
       printf '%s: loaded\n' "$service"
       ;;
