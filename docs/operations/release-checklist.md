@@ -162,7 +162,7 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 
 - [ ] 保留旧完整包及配套工具，停止旧服务写入并备份；旧版备份用旧版工具恢复。
 - [ ] 记录用户自定义文件的路径和 SHA-256，以及角色/仓库/后台设置的验收值。
-- [ ] 解压并 verify 新包；复制旧 `.env`，保留密码、令牌和 Compose 项目名；旧 PHP 管理库不兼容，迁移 Go 时建立全新管理库并重新初始化管理员。
+- [ ] 解压并 verify 新包；复制旧 `.env`，保留密码、令牌和 Compose 项目名；首次部署使用独立空管理库，并完成管理员初始化。
 - [ ] 从新版 `.env.example` 更新 `RELEASE_VERSION` 和四个 IMAGE 变量；`DATA_DIR`、`CUSTOM_DIR` 指向旧数据的绝对路径，`RESOURCE_DIR` 使用新包资源。
 - [ ] 不重新 initialize 已有环境；只运行 initialize-custom。旧版没有 custom 时建立新目录，已有 custom 只补缺少模板。
 

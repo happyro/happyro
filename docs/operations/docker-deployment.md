@@ -1,8 +1,8 @@
 # HappyRO 离线部署
 
-Go 重写版本使用全新的管理库结构，不支持在原 Laravel 管理库上直接运行迁移。部署前准备独立的空管理库；本页的一般升级和备份恢复步骤仅适用于相同 Go 管理库结构的版本。现有游戏库还需使用具备结构修改权限的账号应用 happyro-server 中的 `sql-files/happyro-accounts.sql`、`happyro-mail.sql` 和 `happyro-admin.sql`，不会自动转换不符合要求的表引擎或删除重复游戏账号。
+首次部署准备独立的空管理库；升级和备份恢复须使用与管理库结构匹配的程序和工具。现有游戏库还需使用具备结构修改权限的账号应用 happyro-server 中的 `sql-files/happyro-accounts.sql`、`happyro-mail.sql` 和 `happyro-admin.sql`，不会自动转换不符合要求的表引擎或删除重复游戏账号。
 
-本手册随 `.zip` 离线包作为 README.md 交付。目标机器无需 Git 源码、Node、PHP、Skopeo 或镜像仓库连接。需要已安装的 Docker Engine/Compose v2（macOS 使用 Docker Desktop）与 Python 3.11+。
+本手册随 `.zip` 离线包作为 README.md 交付。目标机器无需 Git 源码、Node、Skopeo 或镜像仓库连接。需要已安装的 Docker Engine/Compose v2（macOS 使用 Docker Desktop）与 Python 3.11+。
 
 下文自定义流程适用于包含 `initialize-custom`、`refresh-custom-catalogs` 的 v0.5.0 及后续部署包。旧包不会因新增宿主机目录而自动获得该功能，须先升级配套镜像、工具及 Compose 配置。正式交付状态以[版本说明](../../changelog/releases/v0.5.0.md)为准。
 
@@ -84,7 +84,7 @@ docker compose ps -a
 
 v0.5.0 首次空库初始化还会为 `happyro` 创建第一角色位“罗安”（男剑士 Base 99 / Job 50、10,000 Zeny），配置技能、普通剑、各 100 瓶红／蓝药水、收回的波利蛋与前六个快捷栏。完整属性见[默认角色配置](https://happyro.kugarocks.com/deploy/docker)。已有数据库不补建、不覆盖角色。
 
-api-init 依次执行 Go 管理库迁移（`migrate`）、初始账号创建（`init`）、自定义资料刷新及四份目录的原子导入（`catalog import`）。任一步骤失败即停止，不启动 Admin 服务。
+api-init 依次执行 Go 管理库迁移（`migrate`）、初始账号创建（`init`）、自定义资料刷新及四份目录的原子导入（`catalog import`）。任一步骤失败即停止，不启动 API 服务。
 
 游戏入口：GAME_PUBLIC_URL/applications/pwa/index.html，应先显示启动页。后台入口为 ADMIN_PUBLIC_URL。
 
@@ -103,7 +103,7 @@ Compose 已为服务设置固定容器名（如 `happyro-api`、`happyro-gateway
 
 后台默认宿主机 8000 → 容器 8080；游戏 3338 → 3338，其余端口只在 Docker 网络内。后台资料版本固定在配置中（kro-20211105、2fe6ab3dc4d8），不是应用发布版本，不在页面修改。
 
-API 容器由 Go 进程同时提供 API 和前端静态文件，不再运行 PHP-FPM、Nginx 或 Supervisor。进程以 www-data 身份运行，健康检查使用 `/api/health`；Gateway 继续压缩转发到 API 的冒险工具响应。
+API 容器由 Go 进程同时提供 API 和前端静态文件。进程以 www-data 身份运行，健康检查使用 `/api/health`；Gateway 继续压缩转发到 API 的冒险工具响应。
 
 游戏依赖链是 database → login → char → map → web-api → gateway。API 等待数据库、api-init 完成和 web-api 健康。游戏不等待 API；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
 
@@ -120,12 +120,12 @@ docker compose up -d --pull never api
 
 - 用旧版配套工具停写备份，保留旧完整包及旧 `.env`。新旧包不得同时连接同一份存档。
 - 记录 DATA_DIR、CUSTOM_DIR 的实际绝对路径及 custom 文件哈希；旧版无 custom 时使用新的专用目录。
-- 新目录复制旧 `.env`，保留 数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与四个镜像引用等明确需要变更的值。
+- 新目录复制旧 `.env`，保留数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与四个镜像引用等明确需要变更的值。
 - `DATA_DIR=./data` 等相对路径会随包目录改变，须改成原数据的绝对路径；`RESOURCE_DIR` 指向新包资源。若搬迁数据，需在停写状态复制完整结构，而非只复制数据库目录。
 - 固定容器名会冲突。备份完成后在旧包目录执行 `docker compose down`，再启动新版；bind mount 数据会保留。
 
 1. 保留新版完整包并执行 verify；先在旧部署目录停止写入并备份（见下节）。同一存档只能有一套游戏服务运行。
-2. 在新版包根目录复制旧 .env，保留 数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
+2. 在新版包根目录复制旧 .env，保留数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
 3. 将 DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），CUSTOM_DIR 指向旧的自定义目录（同样建议绝对路径），RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 或 custom/ 当成旧内容。
 4. 执行 `python3 tools/deployment/manage.py initialize-custom --directory .`：首次引入自定义功能时建立目录；后续仅补齐新版新增的模板文件，已有文件不覆盖，不合并。旧版本备份需使用旧版本配套工具恢复，不能直接交给新工具。
 5. 导入本版四类镜像，等待 database 健康，再显式执行 Admin 迁移和目录导入；成功后运行 `deploy`，由工具升级游戏会话结构并启动整栈。以下命令逐条执行，任一步失败即停止。
@@ -169,7 +169,7 @@ python3 tools/deployment/manage.py deploy --directory .
 
 restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换备份涉及的表和文件；CUSTOM_DIR 精确恢复到备份内容，移除备份中不存在的额外文件。不自动替换镜像、内置资源或密钥。覆盖已有数据前另做备份。跨数据库版本或不兼容 schema 回退，必须同时恢复配套备份。
 
-从现有 systemd 环境迁移需单独安排停服，导出三个库、storage、battle_conf.txt 并保留生成的数据库密码和控制令牌，再导入新的宿主机数据目录。工具不会自动搬迁旧主机存档。
+从现有 systemd 环境迁移需单独安排停服，导出三个库、自定义目录、battle_conf.txt 并保留生成的数据库密码和控制令牌，再导入新的宿主机数据目录。工具不会自动搬迁旧主机存档。
 
 ## 验收与当前边界
 
@@ -181,7 +181,6 @@ restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换
 
 保持登录验收应分别覆盖 HTTP/HTTPS、手机/平板/桌面：勾选后重新打开进入选角；不勾选时刷新需要重新登录；页面内断线恢复原角色及同地图镜头；主动退出、修改密码、封禁与到期使会话失效。检查空库和旧库均具备会话表及撤销触发器，在隔离环境验证 SQL 失败时不会继续启动新服务。另用 iOS/Android 真机分别验证后台冻结和页面回收；页面回收后按重新打开处理，不能承诺直接恢复原游戏画面。
 
-
 ## 服务端与资源自定义
 
 推荐将 DATA_DIR 与 CUSTOM_DIR 放在版本目录外。发行包只带 examples/custom 模板；首次 initialize 创建默认 custom/。若编辑 .env 将 CUSTOM_DIR 改到其它路径，必须执行 initialize-custom 为该位置初始化。这个命令可重复执行，只补缺少的模板，不覆盖已有文件。资源不复制原始 GRF，自定义目录初始为空。
@@ -191,7 +190,7 @@ restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换
 | CUSTOM_DIR/npc | /opt/happyro/custom/npc | Server，只读 |
 | CUSTOM_DIR/db | /opt/rathena/db/import | Server，只读 |
 | CUSTOM_DIR/resources | /opt/happyro/custom/resources | Gateway，只读 |
-| CUSTOM_DIR | /opt/happyro/custom | Admin 目录刷新任务，只读 |
+| CUSTOM_DIR | /opt/happyro/custom | API 目录刷新任务，只读 |
 
 内置 npc、db、conf 仍由镜像提供。后台战斗设置仍存放 DATA_DIR/server-settings，不增加第二份配置来源。容器只读不妨碍在宿主机编辑。
 
@@ -280,7 +279,6 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 未覆盖内容自动随镜像更新；用户覆盖始终优先，不要求文本合并，也不会自动获得该文件的新修复。脚本指令、数据库结构变化仍可能需要手动适配。回退文件不会撤销脚本已经发出的奖励或更改过的任务状态。
 
 在另一台机器按 docker-release.md 全量构建后，至少验收：空目录部署；旧存档首次引入 custom；修改原 NPC、移除覆盖恢复内置；新增脚本及重载；物品和魔物扩展及目录刷新；资源替换和删除恢复；保留用户文件升级；完整备份恢复。源码级测试不替代这组容器和游戏验收。
-
 
 ### 修改后的生效顺序与撤销
 

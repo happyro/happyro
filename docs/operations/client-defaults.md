@@ -41,65 +41,9 @@ PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js
 
 ## 配置清单
 
-以下是本次统一的 53 项客户端默认设置。
+53 项客户端配置的用途、默认值、范围与示例统一维护在[公开环境变量参考](https://happyro.kugarocks.com/deploy/environment-variables#客户端默认设置-gateway)，以 Client 的 `src/Core/ClientDefaults.schema.json` 为权威输入。本页只维护构建与运行时契约，不再复制完整参数表。
 
-| 分类 | 配置项 | 环境变量 | 内置默认值 | 允许范围 |
-|---|---|---|---|---|
-| 脚本文字 | 最低对比度目标 | `CLIENT_SCRIPT_TEXT_MIN_CONTRAST` | `4.5` | 4.5–7 |
-| 镜头 | 桌面距离 | `CLIENT_CAMERA_DESKTOP_ZOOM` | `125` | 1–325 |
-| 镜头 | 手机横屏距离 | `CLIENT_CAMERA_PHONE_LANDSCAPE_ZOOM` | `95` | 1–325 |
-| 镜头 | 手机竖屏距离 | `CLIENT_CAMERA_PHONE_PORTRAIT_ZOOM` | `170` | 1–325 |
-| 镜头 | 平板/大屏横屏距离 | `CLIENT_CAMERA_TABLET_LANDSCAPE_ZOOM` | `125` | 1–325 |
-| 镜头 | 平板/大屏竖屏距离 | `CLIENT_CAMERA_TABLET_PORTRAIT_ZOOM` | `155` | 1–325 |
-| 镜头 | 平滑移动 | `CLIENT_CAMERA_SMOOTH` | `true` | true / false |
-| 自动战斗 | 搜怪范围 | `CLIENT_AUTO_COMBAT_SEARCH_RANGE` | `20` | 1–50，整数 |
-| 自动战斗 | 活动范围 | `CLIENT_AUTO_COMBAT_ACTIVITY_RANGE` | `30` | 1–100，整数 |
-| 自动战斗 | 无目标随机瞬移 | `CLIENT_AUTO_TELEPORT_ENABLED` | `true` | true / false |
-| 自动战斗 | 无目标等待 | `CLIENT_AUTO_TELEPORT_WAIT_SECONDS` | `2` | 1–60，整数 |
-| 自动战斗 | 最短瞬移间隔 | `CLIENT_AUTO_TELEPORT_INTERVAL_SECONDS` | `2` | 1–300，整数 |
-| 自动拾取 | 开关 | `CLIENT_AUTO_PICKUP_ENABLED` | `false` | true / false |
-| 自动拾取 | 范围 | `CLIENT_AUTO_PICKUP_RANGE` | `5` | 1–15，整数 |
-| 自动拾取 | 每轮拾取时限 | `CLIENT_AUTO_PICKUP_BATCH_SECONDS` | `5` | 1–30，整数 |
-| 自动拾取 | 默认类别 | `CLIENT_AUTO_PICKUP_CATEGORIES` | `equipment,consumable,card,other` | equipment, consumable, card, other |
-| 画质 | 渲染比例 | `CLIENT_GRAPHICS_QUALITY` | `100` | 25–100 |
-| 画质 | 帧率上限 | `CLIENT_GRAPHICS_FPS_LIMIT` | `60` | -1, 30, 60, 90, 120 |
-| 画质 | 性能模式 | `CLIENT_GRAPHICS_PERFORMANCE_MODE` | `false` | true / false |
-| 画质 | 显示范围 | `CLIENT_GRAPHICS_VIEW_AREA` | `14` | 4–20 |
-| 画质 | 游戏光标 | `CLIENT_GRAPHICS_CURSOR` | `true` | true / false |
-| 画质 | 像素清晰显示 | `CLIENT_GRAPHICS_PIXEL_PERFECT_SPRITES` | `false` | true / false |
-| 高级画质 | 泛光开关 | `CLIENT_GRAPHICS_BLOOM_ENABLED` | `false` | true / false |
-| 高级画质 | 景深开关 | `CLIENT_GRAPHICS_BLUR_ENABLED` | `false` | true / false |
-| 高级画质 | 抗锯齿开关 | `CLIENT_GRAPHICS_FXAA_ENABLED` | `false` | true / false |
-| 高级画质 | 自然饱和度开关 | `CLIENT_GRAPHICS_VIBRANCE_ENABLED` | `false` | true / false |
-| 高级画质 | 卡通开关 | `CLIENT_GRAPHICS_CARTOON_ENABLED` | `false` | true / false |
-| 高级画质 | 锐化开关 | `CLIENT_GRAPHICS_CAS_ENABLED` | `false` | true / false |
-| 高级画质 | 泛光强度 | `CLIENT_GRAPHICS_BLOOM_INTENSITY` | `0.5` | 0.1–3 |
-| 高级画质 | 景深范围 | `CLIENT_GRAPHICS_BLUR_AREA` | `14` | 3–20 |
-| 高级画质 | 景深强度 | `CLIENT_GRAPHICS_BLUR_INTENSITY` | `3` | 2–10 |
-| 高级画质 | 抗锯齿边缘阈值 | `CLIENT_GRAPHICS_FXAA_EDGE_THRESHOLD` | `0.125` | 0.063–0.333 |
-| 高级画质 | 饱和强度 | `CLIENT_GRAPHICS_VIBRANCE` | `0.15` | -0.9–0.9 |
-| 高级画质 | 卡通强度 | `CLIENT_GRAPHICS_CARTOON_POWER` | `1.5` | 0.1–9.9 |
-| 高级画质 | 描边强度 | `CLIENT_GRAPHICS_CARTOON_EDGE_SLOPE` | `1.5` | 1.5–5.9 |
-| 高级画质 | 锐化对比度 | `CLIENT_GRAPHICS_CAS_CONTRAST` | `0` | 0–1 |
-| 高级画质 | 锐化强度 | `CLIENT_GRAPHICS_CAS_SHARPENING` | `1` | 0–1 |
-| 音频 | 背景音乐开关 | `CLIENT_BGM_ENABLED` | `true` | true / false |
-| 音频 | 背景音乐音量 | `CLIENT_BGM_VOLUME` | `0.5` | 0–1 |
-| 音频 | 音效开关 | `CLIENT_SOUND_ENABLED` | `true` | true / false |
-| 音频 | 音效音量 | `CLIENT_SOUND_VOLUME` | `0.5` | 0–1 |
-| 界面 | 通知显示时长 | `CLIENT_TOAST_DURATION_SECONDS` | `2` | 1–10，整数 |
-| 界面 | 紧凑布局聊天预览行数 | `CLIENT_CHAT_PREVIEW_COMPACT_LINES` | `3` | 2, 3, 4, 5, 6, 7, 8 |
-| 界面 | 宽松布局聊天预览行数 | `CLIENT_CHAT_PREVIEW_SPACIOUS_LINES` | `5` | 2, 3, 4, 5, 6, 7, 8 |
-| 界面 | 聊天预览频道标签 | `CLIENT_CHAT_PREVIEW_TABS` | `true` | true / false |
-| 地图显示 | 雾 | `CLIENT_MAP_FOG` | `false` | true / false |
-| 地图显示 | 光照贴图 | `CLIENT_MAP_LIGHTMAP` | `true` | true / false |
-| 地图显示 | 技能特效 | `CLIENT_MAP_EFFECTS` | `true` | true / false |
-| 地图显示 | 简化特效 | `CLIENT_MAP_MIN_EFFECTS` | `false` | true / false |
-| 地图显示 | 显示未命中 | `CLIENT_MAP_SHOW_MISS` | `true` | true / false |
-| 地图显示 | 名称字体样式 | `CLIENT_MAP_SHOW_NAME_STYLE` | `true` | true / false |
-| 地图显示 | 光照平滑参数 | `CLIENT_MAP_SMOOTH_LIGHT` | `0` | 0, 1, 2 |
-| 地图显示 | 光环模式 | `CLIENT_MAP_AURA` | `1` | 0, 1, 2 |
-
-自动战斗活动范围必须大于或等于搜怪范围；单独覆盖其中一项时，另一项使用同一份内置默认值参与校验。
+自动战斗活动范围必须大于或等于寻怪范围；单独覆盖一项时，另一项使用 schema 默认值参与校验。
 
 ## 脚本文字对比度
 

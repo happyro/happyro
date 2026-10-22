@@ -18,6 +18,7 @@
 
 - 根仓库：[changelog/](../changelog/README.md)
 - Client / Server：各自仓库的 `changelog/`
+- API：`repos/happyro-api/changelog/`
 - Admin：`repos/happyro-admin/changelog/`
 - Gateway：`repos/happyro-gateway/changelog/`（新记录），`CHANGELOG.md`（旧记录）
 
@@ -25,7 +26,7 @@
 
 根仓库及嵌套仓库的操作规则以仓库根 `AGENTS.md` 为准。
 
-## 当前发布准备
+## 版本与仓库入口
 
 当前正式发布版本为 [v0.5.0](../changelog/releases/v0.5.0.md)，从 v0.3.x（最近历史发布为 v0.3.2）直接跃升，跳过未发布的 v0.4.x。此次变更规模大，标志着项目达到重要里程碑，以 v0.5.0 汇总跨端体验、游戏功能和部署维护的阶段成果。日期日志记录实际变更；交付与本机验收结果见版本说明。
 
@@ -35,7 +36,8 @@
 | 客户端 UI、网络与游戏逻辑 | [Client](../repos/happyro-client/docs/README.md) |
 | 服务端规则、会话与封包 | [Server](../repos/happyro-server/docs/README.md) |
 | 资源、代理与会话 Cookie | [Gateway](../repos/happyro-gateway/docs/README.md) |
-| 账号、资料与游戏控制 | [Admin](../repos/happyro-admin/docs/README.md) |
+| 管理前端与页面行为 | [Admin](../repos/happyro-admin/docs/README.md) |
+| 账号、资料与游戏控制 API | [API](../repos/happyro-api/README.md) |
 | 构建交付与最终验收 | [发布流程](operations/docker-release.md)、[验收清单](operations/release-checklist.md) |
 
 ## 按任务查找

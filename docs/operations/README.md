@@ -8,6 +8,7 @@
 | 从源码构建与交付镜像 | [发布流程](docker-release.md) |
 | 最终包逐项验收 | [发布验收清单](release-checklist.md) |
 | Linux systemd / macOS launchd 原生开发环境 | [服务管理](services.md)、[配置](configuration.md) |
+| 环境变量与显示时区 | [统一配置参考](https://happyro.kugarocks.com/deploy/environment-variables)、[运行时默认值契约](client-defaults.md)、[日期与时区](timezones.md) |
 | 原生环境备份与通用数据一致性原则 | [备份与恢复](backup-recovery.md) |
 | 运行故障 | [排障](troubleshooting.md)，按章节注明的部署方式使用 |
 
