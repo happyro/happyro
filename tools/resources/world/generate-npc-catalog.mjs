@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import crypto from 'node:crypto';
+import { topLevelSourceLines } from './npc-script-source.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -101,8 +102,8 @@ async function collectEnabledNpcFiles() {
 		const absolutePath = path.join(serverRoot, normalized);
 		const contents = await fs.readFile(absolutePath, 'utf8');
 		configContents.set(normalized, contents);
-		for (const sourceLine of contents.split(/\r?\n/)) {
-			const line = sourceLine.replace(/\/\/.*$/, '').trim();
+		for (const sourceLine of topLevelSourceLines(contents)) {
+			const line = sourceLine.trim();
 			const directive = line.match(/^(import|npc):\s*(\S+)$/i);
 			if (!directive) continue;
 			const target = directive[2].replaceAll('\\', '/');
@@ -232,7 +233,7 @@ async function buildCatalog() {
 	for (const relativePath of enabled.npcFiles) {
 		const contents = await fs.readFile(path.join(serverRoot, relativePath), 'utf8');
 		definitionHash.update(relativePath).update('\0').update(contents);
-		contents.split(/\r?\n/).forEach((line, index) => {
+		topLevelSourceLines(contents).forEach((line, index) => {
 			const entry = parseNpcDefinition(line, relativePath, index + 1, translations, spriteIds);
 			if (!entry || entry.enabled === false) return;
 			const position = `${entry.map}:${entry.x}:${entry.y}`;

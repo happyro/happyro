@@ -4,7 +4,7 @@ HappyRO Renewal 支持两套当前新手流程，通过角色服环境变量选�
 
 | `HAPPYRO_NEW_PLAYER_START` | 新建人类角色出生及初始复活点 | 流程 |
 | --- | --- | --- |
-| `ship` | `iz_int,18,26` | 沉船、岛屿、伊兹鲁德学院 |
+| `ship` | `iz_int,18,26` | 沉船、岛屿、依斯鲁得学院 |
 | `classic`（未设置时默认） | `new_1-1,53,107` | 经典初心者修炼场 |
 
 空字符串、拼写错误和其他值会使角色服启动失败，不自动改用其他模式。Renewal 人类出生位置由此变量唯一控制；不再读取原 `start_point` 配置。杜兰角色保持独立的 `start_point_doram` 配置。
@@ -43,6 +43,8 @@ macOS 在 `local.happyro.char.plist` 的 `EnvironmentVariables` 中设置 `HAPPY
 
 ## 验证与维护入口
 
+- [出生流程 NPC 复审](npc-review.md)：经典专项覆盖、修复结果及阶段验证。
+- [NPC 与出生／转职全面复核](../npc-name-audit/comprehensive-review.md)：沉船学院、杜兰与后续转职的最终整合结果、产物验收及保留问题。
 - [修复问题与规则](fixes.md)：任务分支、问卷、九职业衔接、中文术语、地图资源与导航。
 - [实机验收记录](verification.md)：原生主线、地图与资源复核、翻译抽查及各自覆盖边界。
 - [九职业原生转职](nine-jobs.md)：九个一转终点、测试前置准备与重登验证。
