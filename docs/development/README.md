@@ -5,6 +5,7 @@
 | 主题目录 | 内容 | 常用入口 |
 | --- | --- | --- |
 | [开发流程](workflow/README.md) | 本地环境、命令、测试、Git 与文档协作 | [本地开发](workflow/local-setup.md)、[常用命令](workflow/common-commands.md) |
+| [10 月 23—24 日 Git 审查](git-review-20261023-24/README.md) | 七仓库变更、发现的回归与验证边界 | [审查结果](git-review-20261023-24/README.md) |
 | [客户端专题](client/README.md) | 移动端 UI 与性能诊断 | [移动端诊断](client/mobile-diagnostics.md)、[UI 规范](client/mobile-ui.md) |
 | [README 图片制作](readme-images/README.md) | 五张展示图的截图、合成与复用 | [截图参数](readme-images/capture.md)、[合成与预览](readme-images/composition.md) |
 | [设置审查](settings/README.md) | 设置汉化、实际效果检查、修复与暂时关闭项 | [已修复与未完成](settings/README.md) |
