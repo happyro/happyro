@@ -126,7 +126,8 @@ if rg -q '[가-힣ㄱ-ㅎㅏ-ㅣ]' "$craft_material_table"; then
 	exit 1
 fi
 for craft_target in "$runtime_client/data/metalprocessitemlist.txt" "$GATEWAY_REPO/data/metalprocessitemlist.txt"; do
-	install -D -m 0644 "$craft_material_table" "$craft_target"
+	mkdir -p "$(dirname "$craft_target")"
+	install -m 0644 "$craft_material_table" "$craft_target"
 	cmp -s "$craft_material_table" "$craft_target" || exit 1
 done
 
@@ -136,7 +137,8 @@ install -m 0600 "$card_prefix_table" "$GATEWAY_REPO/data/cardprefixnametable.txt
 for notice in sign_01 sign_02 sign_03 sign_04; do
 	notice_source_hash="$(sha256sum "$sign_notice_dir/${notice}.bmp")"
 	for notice_root in "$runtime_client/data" "$GATEWAY_REPO/data"; do
-		install -D -m 0644 "$sign_notice_dir/${notice}.bmp" \
+		mkdir -p "$notice_root/texture/유저인터페이스/illust"
+		install -m 0644 "$sign_notice_dir/${notice}.bmp" \
 			"$notice_root/texture/유저인터페이스/illust/${notice}.bmp"
 		notice_target_hash="$(sha256sum "$notice_root/texture/유저인터페이스/illust/${notice}.bmp")"
 		[[ "${notice_source_hash%% *}" == "${notice_target_hash%% *}" ]] || {
