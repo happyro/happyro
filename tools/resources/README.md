@@ -71,14 +71,13 @@ python3 tools/resources/catalog/main.py items images
 
 该命令依据 `item-assets.json` 批量转换图标与详情 BMP，从图片边缘移除连通的官方色键背景，并将完整结果原子写入 `work/game-data/items/kro-20211105/`。请求期间不再转换图片。
 
-生成客户端名称差异补丁和 UTF-8 中文卡片前缀表：
+生成 UTF-8 中文卡片前缀表：
 
 ```bash
-python3 tools/resources/catalog/generate_item_name_overrides.py --write
+python3 tools/resources/catalog/generate_card_prefixes.py --write
 ```
 
-普通物品名称继续由翻译后的 `itemInfo_true.lub` 提供；名称补丁只保留目录与 ItemInfo
-不同的审查项，卡片装备前缀由 `localization/client/data/cardprefixnametable.txt` 提供。
+物品名称统一由来源映射同步到 `itemInfo_true.lub`，不再叠加名称补丁或推导卡片名；卡片装备前缀由 `localization/client/data/cardprefixnametable.txt` 提供。来源导入、缺口与校验见 [物品名称来源](../../localization/item-names/README.md)。
 
 生成 Renewal 与 Pre-Renewal 服务端快照：
 

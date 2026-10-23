@@ -6,7 +6,8 @@
 
 | 内容 | 维护源 | 运行消费者 |
 | --- | --- | --- |
-| 技能名称与正文 | `localization/client/data/skill-description-prose.zh-CN.json`、`skill-description-labels.zh-CN.json`、生成器中的名称规则 | Client `SkillLocalizationTable.generated.js` |
+| 技能名称 | Client `src/DB/Skills/SkillNames.zh-CN.json`；依据[两站合并决策](../localization/skill-name-scans/merged/README.md)按 ID 与内部名同步 Server Description | Client `SkillLocalizationTable.generated.js` 与生成技能表、提示 |
+| 技能正文 | `localization/client/data/skill-description-prose.zh-CN.json`、`skill-description-labels.zh-CN.json` | Client `SkillLocalizationTable.generated.js` |
 | 技能基础参数 | Server `db/re/skill_db.yml` | Server 技能实现；根生成器用于补充显示参数 |
 | 技能定义、职业继承与技能树 | `skill-runtime-source.json`，含核验过的 LUB 与基础表哈希 | `SkillInfo.generated.js`、`SkillTreeView.generated.js` |
 | 状态图标与计时元数据 | `efstids.lub`、`stateiconimginfo.lub`、`stateiconinfo.lub` | `DBManager.loadStateIconInfo` |
@@ -21,6 +22,8 @@
 
 用户要求不擅自添加原文以外内容。一次尝试批量按原文重组的未提交修改已回滚；当前源码没有采用当时新增的韩文快照或条件表。不要把 stash 或 `work/` 中的审查脚本作为正式说明源，也不要声称该重组已经发布。后续若再做原文校准，应逐条对照、保留证据和译文，不根据服务端数值、技能树或推测补句。这是尚未完全满足的内容约束，而不是新的生成能力。
 
+当前名称应用另获授权：同步明确的技能名称引用，并可依据实际服务端实现修正明确错误。本次纠正 243 人工生命召回材料分支与 2268 属性转换材料数量，证据见[应用记录](../localization/skill-name-scans/merged/application.md)；不据此批量重写其他说明。
+
 ## 冷却与状态时间
 
 - `Cooldown`：同一技能再次施放的间隔，毫秒；`AfterCastActDelay`：施放后动作限制。
@@ -30,7 +33,7 @@
 - `SkillCooldowns` 在当前连接内按技能 ID 保存截止时间，使用单调时钟；全局间隔单独保存，取较晚截止。服务器缩短/清零会更新状态，断线清空，重登由服务器恢复。不能依赖快捷槽位先存在。
 - `type=0` 是被动技能，不得为使某个技能可用而默认转成自身主动技能。
 
-全力推进（5014）当前数据库配置：Lv.5 增益 30 秒、后续疲劳 10 秒、独立冷却 3000000 ms（50 分钟）。这是服务端配置事实，不是韩文说明的完整译文。
+烈火战车（5014）当前数据库配置：Lv.5 增益 30 秒、后续疲劳 10 秒、独立冷却 3000000 ms（50 分钟）。这是服务端配置事实，不是韩文说明的完整译文。
 
 ## 更新与验证
 

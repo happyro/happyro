@@ -18,7 +18,6 @@ from .storage import read_git_yaml, read_json, read_yaml, write_json, write_pret
 
 DEFAULT_CLIENT_SOURCE = Path("localization/sources/kro-20211105/merged/files/lub/itemInfo_true.json")
 DEFAULT_SERVER_CATALOG = Path("repos/happyro-api/resources/game-data/items/renewal.json")
-DEFAULT_MONSTER_CATALOG = Path("repos/happyro-api/resources/game-data/monsters/renewal.json")
 DEFAULT_GRF_MANIFEST = Path("work/grf-extract/kro-20211105/data/manifest.json")
 DEFAULT_SERVER_ROOT = Path("repos/happyro-server/db")
 DEFAULT_SERVER_REPOSITORY = Path("repos/happyro-server")
@@ -42,7 +41,6 @@ def parser() -> argparse.ArgumentParser:
     client = pipelines.add_parser("client", add_help=False)
     client.add_argument("--client-source", type=Path, default=DEFAULT_CLIENT_SOURCE)
     client.add_argument("--server-catalog", type=Path, default=DEFAULT_SERVER_CATALOG)
-    client.add_argument("--monster-catalog", type=Path, default=DEFAULT_MONSTER_CATALOG)
     client.add_argument("--grf-manifest", type=Path, default=DEFAULT_GRF_MANIFEST)
     client.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIRECTORY)
     server = pipelines.add_parser("server", add_help=False)
@@ -80,7 +78,6 @@ def run(args: argparse.Namespace) -> None:
         counts = generate_client(
             args.client_source,
             args.server_catalog,
-            args.monster_catalog,
             args.grf_manifest,
             args.output_dir,
             read_json,
@@ -124,7 +121,6 @@ def requested_help(argv: list[str], color: bool) -> str | None:
         options = [
             "--client-source PATH   客户端 itemInfo JSON",
             "--server-catalog PATH  Renewal 服务端快照",
-            "--monster-catalog PATH 魔物目录快照",
             "--grf-manifest PATH    GRF 解压清单",
             "--output-dir PATH      客户端产物输出目录",
         ] if argv[1] == "client" else [

@@ -13,6 +13,6 @@ node scripts/resources/generate-skill-localization.mjs --write
 生成卡片前缀并安装运行资源：
 
 ```bash
-python3 tools/resources/catalog/generate_item_name_overrides.py --write
+python3 tools/resources/catalog/generate_card_prefixes.py --write
 make configure-resources
 ```

@@ -76,7 +76,7 @@ HappyRO Client 对应的 DB 加载器
 GRF 提取的 CP949 原表
 work/grf-extract/kro-20211105/data/data/cardprefixnametable.txt
                     + 已审查物品中文目录
-                    ↓ generate_item_name_overrides.py --write
+                    ↓ generate_card_prefixes.py --write
 UTF-8 中文表 localization/client/data/cardprefixnametable.txt
                     ↓ configure-resources.sh 校验并安装
 repos/happyro-gateway/data/cardprefixnametable.txt

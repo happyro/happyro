@@ -474,12 +474,12 @@ if (bossTermCount !== 61 || detailedDescriptionEntries.some(([, description]) =>
 }
 const requiredDescriptionFragments = {
 	241: ['自动归自己饲养'],
-	387: ['无视敏捷下降等减速效果'],
+	387: ['无视缓速术等减速效果'],
 	495: ['使用后服用的攻速药水仍会生效'],
-	26: ['地面保护效果范围内不能使用'],
+	26: ['地元素领域效果范围内不能使用'],
 	136: ['昏迷概率受目标异常状态抗性影响'],
 	225: ['不能超过被复制技能的最高等级'],
-	233: ['召唤气泡虫', '气泡虫 HP'],
+	233: ['气泡虫召唤', '气泡虫 HP'],
 	364: ['取决于击败魔物前使用的技能'],
 	513: ['卸除武器的成功率越高'],
 	539: ['目标等级、MDEF 与 LUK'],
@@ -501,17 +501,17 @@ const requiredDescriptionFragments = {
 	2422: ['无法移动、攻击、使用物品或技能', '无法对话'],
 	2494: ['准确的物品名称和数量', '不会制作成功'],
 	2495: ['制作时必须持有对应食谱'],
-	2574: ['提高满月踢的威力', '不能与太阳之光或星之光效果叠加'],
-	2590: ['提高太阳爆发的威力', '不能与月之光或星之光效果叠加'],
-	2430: ['装备乐器或鞭子', '狂乱成功率随施法者乐理课程等级提高'],
+	2574: ['提高满月脚的威力', '不能与太阳光辉或星星光辉效果叠加'],
+	2590: ['提高太阳爆炸的威力', '不能与月亮光辉或星星光辉效果叠加'],
+	2430: ['装备乐器或鞭子', '狂乱成功率随施法者课程等级提高'],
 	2581: ['并施加沉默'],
 	3031: ['解除着火、出血、深度睡眠和睡眠'],
 	3032: ['解除冰冻、冷冻和冻结'],
 	455: ['口哨与哼唱', '伊登的苹果与为您服务'],
-	2465: ['按技能等级消耗 1 / 2 / 3 个火灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
-	2466: ['按技能等级消耗 1 / 2 / 3 个水灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
-	2467: ['按技能等级消耗 1 / 2 / 3 个风灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
-	2468: ['按技能等级消耗 1 / 2 / 3 个地灵原石', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2465: ['按技能等级消耗 1 / 2 / 3 个火灵碎片', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2466: ['按技能等级消耗 1 / 2 / 3 个水灵碎片', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2467: ['按技能等级消耗 1 / 2 / 3 个风灵碎片', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
+	2468: ['按技能等级消耗 1 / 2 / 3 个地灵碎片', '每 5 秒恢复 1% HP', '每 5 秒损失 1% HP'],
 	5064: ['倒地成员为不死属性时不会生效'],
 	5068: ['立即解除'],
 	5253: ['伤害随施法者基础等级和 POW 提高'],
@@ -799,6 +799,10 @@ const skills = database.Body.filter(skill => Number.isInteger(skill.Id) && skill
 const localizedSkillNames = new Map(skills.map(skill => [String(skill.Id), skill.Description]));
 for (const [id, name] of Object.entries(clientOnlySkills)) localizedSkillNames.set(id, name);
 for (const [id, skill] of runtimeOnlyEntries) localizedSkillNames.set(id, skill.name);
+for (const [id, skill] of Object.entries(runtimeSource.data.skills)) {
+	const reviewed = reviewedSkillNames[skill.resourceName];
+	if (reviewed) localizedSkillNames.set(id, reviewed);
+}
 
 const additionalSkillRequirements = {};
 function registerRequirement(ids, requirement) {
@@ -832,23 +836,23 @@ registerRequirement([5014], '三转职业');
 
 // These official descriptions intentionally differ from the runtime skill tree or add a visible state requirement.
 const officialRequirementOverrides = {
-	88: '冰冻术 Lv.1、冰墙术 Lv.1',
-	259: '天使之击、天使之障壁 Lv.10',
-	355: '狂击 Lv.5、怒爆 Lv.5、双手剑修炼 Lv.5',
-	369: '信仰 Lv.8、天使之障壁 Lv.3、天使之击 Lv.5',
-	399: '矛术修炼 Lv.9、骑乘大嘴鸟 Lv.1、骑兵修炼 Lv.3、创伤重击 Lv.3',
-	444: '太阳、月亮与星星之知识 Lv.9，且处于灵魂状态',
-	459: '速度激发 Lv.5，且处于灵魂状态',
-	495: '双手剑加速 Lv.10，且处于灵魂状态',
-	496: '制作药水 Lv.10，且处于灵魂状态',
-	497: '制作药水 Lv.10，且处于灵魂状态',
-	498: '制作药水 Lv.10，且处于灵魂状态',
-	499: '二连矢 Lv.10，且处于灵魂状态',
-	2338: '电气注入 Lv.1',
-	2347: '点穴·球 Lv.3',
-	2348: '点穴·球 Lv.3',
-	5493: '诡影闪光 Lv.7',
-	5494: '飞刀·扭曲 Lv.5、飞刀·旋转 Lv.5、飞刀·曲折 Lv.5'
+	88: `${reviewedSkillNames.MG_FROSTDIVER} Lv.1、${reviewedSkillNames.WZ_ICEWALL} Lv.1`,
+	259: `${reviewedSkillNames.AL_DEMONBANE}、${reviewedSkillNames.AL_ANGELUS} Lv.10`,
+	355: `${reviewedSkillNames.SM_BASH} Lv.5、${reviewedSkillNames.SM_MAGNUM} Lv.5、${reviewedSkillNames.SM_TWOHAND} Lv.5`,
+	369: `${reviewedSkillNames.CR_TRUST} Lv.8、${reviewedSkillNames.AL_ANGELUS} Lv.3、${reviewedSkillNames.AL_DEMONBANE} Lv.5`,
+	399: `${reviewedSkillNames.KN_SPEARMASTERY} Lv.9、${reviewedSkillNames.KN_RIDING} Lv.1、${reviewedSkillNames.KN_CAVALIERMASTERY} Lv.3、${reviewedSkillNames.LK_HEADCRUSH} Lv.3`,
+	444: `${reviewedSkillNames.SG_KNOWLEDGE} Lv.9，且处于灵魂状态`,
+	459: `${reviewedSkillNames.BS_ADRENALINE} Lv.5，且处于灵魂状态`,
+	495: `${reviewedSkillNames.KN_TWOHANDQUICKEN} Lv.10，且处于灵魂状态`,
+	496: `${reviewedSkillNames.AM_PHARMACY} Lv.10，且处于灵魂状态`,
+	497: `${reviewedSkillNames.AM_PHARMACY} Lv.10，且处于灵魂状态`,
+	498: `${reviewedSkillNames.AM_PHARMACY} Lv.10，且处于灵魂状态`,
+	499: `${reviewedSkillNames.AC_DOUBLE} Lv.10，且处于灵魂状态`,
+	2338: `${reviewedSkillNames.SR_POWERVELOCITY} Lv.1`,
+	2347: `${reviewedSkillNames.SR_GENTLETOUCH_ENERGYGAIN} Lv.3`,
+	2348: `${reviewedSkillNames.SR_GENTLETOUCH_ENERGYGAIN} Lv.3`,
+	5493: `${reviewedSkillNames.SS_KAGEGISSEN} Lv.7`,
+	5494: `${reviewedSkillNames.SS_KUNAIWAIKYOKU} Lv.5、${reviewedSkillNames.SS_KUNAIKAITEN} Lv.5、${reviewedSkillNames.SS_KUNAIKUSSETSU} Lv.5`
 };
 
 function describeSkillRequirement(id) {
@@ -914,6 +918,11 @@ if (missingDetailedIds.length) {
 	throw new Error(`Detailed descriptions reference missing skills: ${missingDetailedIds.join(', ')}`);
 }
 for (const [id, skill] of Object.entries(staticTable)) {
+	const reviewed = localizedSkillNames.get(id);
+	if (reviewed && skill.name !== reviewed) {
+		skill.description = reviewed + skill.description.slice(skill.name.length);
+		skill.name = reviewed;
+	}
 	if (/^施放范围：-/mu.test(skill.description)) {
 		throw new Error(`Generated skill ${id} exposes an internal signed cast range`);
 	}
@@ -949,9 +958,14 @@ const untranslatedVisibleText =
 const inconsistentVisibleText =
 	/首领|[\u3400-\u9fff]Boss|Boss[\u3400-\u9fff]|\bFlee\b|\bzeny\b|\d+z\b|\s[Xx](?=\s?\d)|受课程|按课程|施法者课程|课程和职业|教训|符咒修炼|灵道术修炼|神秘生物精通|战斗自学|独学·魔导学|自学巫术|天空精通|影子猎杀|冰闪炮|风魔手里剑－|苦无－|\(掌握等级/;
 for (const [id, skill] of localizedEntries) {
+	// Reviewed source names may legitimately contain terms used by the prose lint.
+	let proseForLint = skill.description;
+	for (const name of [...new Set(Object.values(reviewedSkillNames))].sort((a, b) => b.length - a.length)) {
+		proseForLint = proseForLint.split(name).join('');
+	}
 	if (
-		untranslatedVisibleText.test(`${skill.name}\n${skill.description}`) ||
-		inconsistentVisibleText.test(`${skill.name}\n${skill.description}`)
+		untranslatedVisibleText.test(proseForLint) ||
+		inconsistentVisibleText.test(proseForLint)
 	) {
 		throw new Error(`Generated skill ${id} still contains noncanonical visible text`);
 	}
