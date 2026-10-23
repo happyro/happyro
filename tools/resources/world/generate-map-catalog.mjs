@@ -38,7 +38,7 @@ if (command !== 'generate') {
  const {getMapChannel} = await import(pathToFileURL(path.join(client,'src/DB/Map/MapChannels.js')));
  const names = new Map();
  for (const world of worlds) for(const map of world.maps) if(!names.has(map.id)) names.set(map.id,map.name);
- for (const [file, data] of Object.entries(info)) if(!names.has(file.replace(/\.rsw$/i,''))) names.set(file.replace(/\.rsw$/i,''),data.displayName);
+ for (const [file, data] of Object.entries(info)) if(data.displayName) names.set(file.replace(/\.rsw$/i,''),data.displayName);
  const index = await fs.readFile(path.join(root,'repos/happyro-server/db/map_index.txt'),'utf8');
  const entries=[];let id=0;
  for(const line of index.split('\n')) {
