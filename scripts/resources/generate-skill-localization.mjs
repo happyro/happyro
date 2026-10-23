@@ -93,6 +93,8 @@ const elementLabels = {
 	Undead: '不死属性',
 	Poison: '毒属性'
 };
+const reviewedSkillNames = JSON.parse(fs.readFileSync(path.join(projectRoot, 'repos/happyro-client/src/DB/Skills/SkillNames.zh-CN.json'), 'utf8'));
+
 const visibleNameOverrides = {
 	AL_ANGELUS: '天使之障壁',
 	ALL_ANGEL_PROTECT: '谢谢你！',
@@ -783,6 +785,7 @@ const skills = database.Body.filter(skill => Number.isInteger(skill.Id) && skill
 	.map(skill => ({
 		...skill,
 		Description: (
+			reviewedSkillNames[skill.Name] ||
 			visibleNameOverrides[skill.Name] ||
 			(/[\u3400-\u9fff]/.test(skill.Description)
 				? skill.Description
@@ -830,9 +833,9 @@ registerRequirement([5014], '三转职业');
 // These official descriptions intentionally differ from the runtime skill tree or add a visible state requirement.
 const officialRequirementOverrides = {
 	88: '冰冻术 Lv.1、冰墙术 Lv.1',
-	259: '恶魔克星、天使之护 Lv.10',
+	259: '天使之击、天使之障壁 Lv.10',
 	355: '狂击 Lv.5、怒爆 Lv.5、双手剑修炼 Lv.5',
-	369: '信仰 Lv.8、天使之障壁 Lv.3、恶魔克星 Lv.5',
+	369: '信仰 Lv.8、天使之障壁 Lv.3、天使之击 Lv.5',
 	399: '矛术修炼 Lv.9、骑乘大嘴鸟 Lv.1、骑兵修炼 Lv.3、创伤重击 Lv.3',
 	444: '太阳、月亮与星星之知识 Lv.9，且处于灵魂状态',
 	459: '速度激发 Lv.5，且处于灵魂状态',
