@@ -38,4 +38,4 @@
 
 [九职业汇总](evidence/nine-jobs-summary.json)逐项比对真实重登记录与预期职业 ID；[数据库核验](evidence/nine-jobs-database.json)确认九个主测试角色全部为预期职业、Job 1、普通权限且已离线。修复前后复现角色独立保留，不重置已完成的九职业角色。[附加回归清理记录](evidence/nine-jobs-acothief-cleanup.json)确认复现角色亦全部离线，测试浏览器已关闭。
 
-未提交、未推送；没有重做离线包。
+本记录证明上述原生服务与浏览器验证范围，不替代离线包验收。

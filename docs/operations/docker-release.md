@@ -2,13 +2,13 @@
 
 本文件是发布端与 Agent 的执行入口。部署机器只需要完成的离线包，不需要源码。用户明确要求不构建时，只维护工具和文档，不运行 build、package 或部署。
 
-当前 VERSION 与正式发布版本均为 v0.5.0。本轮已全量无缓存双架构重建、组包、本机空库验证，并将同一批 OCI 归档推送到 Docker Hub 的 `v0.5.0` 与 `latest`。正式交付信息见[版本说明](../../changelog/releases/v0.5.0.md)。
+构建版本只读取 `deploy/docker/VERSION`。每次发布分别记录源码提交、离线包和远程镜像摘要；不能把不同日期的产物视为同一批。历史离线包与 Docker Hub 的具体交付记录见[版本摘要](../../changelog/README.md#版本摘要)。
 
 自定义功能见[实现与维护说明](../architecture/customization.md)，用户操作见[部署手册](docker-deployment.md#服务端与资源自定义)。
 
 ## 版本与交付规则
 
-- 下一次发布版本只从 `deploy/docker/VERSION` 读取。正式发布版本为 v0.5.0；历史候选包或已删除的旧 Hub 上传不能替代当前交付。
+- 发布版本只从 `deploy/docker/VERSION` 读取。修改目标版本时只修改此文件，历史产物和已删除的 Hub 上传不能替代本次交付。
 - 应用、资源、配置和镜像使用同一个版本，默认组成一个完整目录交付。用户明确要求拆分时，可从同一个已校验 ZIP 生成互补的资源包与镜像／部署文件包，提供合并说明，并验证合并后的全部文件与完整包一致；拆分包不能单独部署。
 - 资源复制、资源与模板校验清单、最终 ZIP 均排除任意层级的 `._*` 和 `.DS_Store`（包括同名目录及其内容），保留 `.env.example` 等业务文件。跨机器资源归档同样过滤这些文件，并禁用 macOS tar 自动生成 AppleDouble；不修改原始资源。旧发布包及其清单不会自动回写，后续重新准备的交付包使用此规则。
 - 拆分包统一命名为 `happyro-<VERSION>-runtimes.zip`（resources/ 运行资源）与 `happyro-<VERSION>-images.zip`（双架构镜像及其余部署文件）。两者保留完整包的同名根目录，解压到同一目录后合并使用；版本从 `deploy/docker/VERSION` 读取。
