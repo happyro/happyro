@@ -16,11 +16,22 @@ bash scripts/local/macos-services.sh stop --no-color
 
 原生服务配置与日志在 `work/runtime/native/launchd/`、`work/runtime/native/logs/`。游戏入口为 `http://127.0.0.1:3338/applications/pwa/index.html`，后台为 `http://127.0.0.1:8000`，后台内部端口为 `127.0.0.1:18081`。服务端可执行文件位于 `work/runtime/native/bin/`；编译后须在对应进程停止时更新这些文件，再启动并核对服务互联。
 
-本机 WireGuard 部署使用 `https://rodev-mm.kugarocks.com` 进入游戏，后台入口为 `https://rodev-mm.kugarocks.com:8443`。OpenResty 仅绑定 `10.8.1.39:80/443/8443`，游戏 TCP、Gateway、后台 API、后台静态站点及数据库都仅绑定 `127.0.0.1`。该 HTTPS 入口的静态产物由 OpenResty 提供。当前 Go 迁移验收另以 launchd 的 local.happyro.admin-frontend 管理 Umi :8000，local.happyro.api 管理 Go API :18081；`ADMIN_CSRF_ORIGIN_CHECK_ENABLED` 默认 `false`，允许通过不同 IP 或域名登录，仍校验 CSRF Token；设为 `true` 时，实际登录来源必须与 `APP_URL` 一致。
+HTTPS 入口和反向代理由实际主机配置决定，不固定为某台机器的 VPN 地址、域名或 launchd 标签。先检查实际进程、监听地址和 plist；不能用旧机器的域名或「服务不存在」推断当前 HTTPS 不可用。现有环境也可能由用户服务 `com.kugarocks.openresty` 代理 3338，配置与主机记录保存在未跟踪的 `work/runtime/openresty/`。
 
-OpenResty 由 `/Library/LaunchDaemons/local.happyro.openresty.plist` 管理；配置为 `work/runtime/native/nginx.conf`，证书在 `work/runtime/native/ssl/`。服务脚本启停 OpenResty 时通过 `sudo launchctl` 操作系统服务。其他应用通过 `~/Library/LaunchAgents/` 中的配置在用户登录后启动，数据库由 Docker 重启策略管理。
+`scripts/local/macos-services.sh` 按其约定管理独立数据库及 `local.happyro.*` 标签，OpenResty 分支要求系统服务 `/Library/LaunchDaemons/local.happyro.openresty.plist`。采用其他代理标签的主机，不直接用该脚本启停整套环境；分别管理实际应用和代理，不安装第二份代理来凑标签。
 
-本机 macOS 27 的 Command Line Tools 链接器无法读取随附的 27 SDK，原生构建使用已安装的 `MacOSX15.4.sdk`，数据库客户端明确链接 `mariadb-connector-c`。原生游戏服务的 launchd 环境设置 `MARIADB_TLS_DISABLE_PEER_VERIFICATION=1`，用于连接仅发布在回环地址的 Docker MariaDB 10.11；该设置只用于此本机连接。
+编译使用本机实际可用的 macOS SDK 和 MariaDB 客户端库，检查 `work/server-build/renewal-20211103/CMakeCache.txt` 的编译器、SDK、MYSQL 路径及 `PACKETVER`。例如当前已验证环境使用 `MacOSX15.4.sdk` 与 `mariadb@10.11/lib/libmariadb.dylib`；这不是所有 Mac 的固定路径。连接回环地址 Docker MariaDB 的 TLS 配置仅按本机连接条件设置，不复制到远程数据库。
+
+### 已配置 macOS 环境更新
+
+1. 记录当前源码和工作区修改，确认独立数据库健康。先构建，不把运行程序替换成未通过构建的半成品。
+2. 游戏 C++ 用 CMake 构建当前源；Client 用 `npm run build -- --all`；API 用 `go build` 写入 `work/` 下的暂存路径；Admin 用 `npm run build`。Gateway 直接运行 Node 源码，代码或环境变化需要重启。
+3. 从实际 plist 读取 `Program`／`ProgramArguments` 与 `WorkingDirectory`。游戏构建输出在 Server 仓库根目录，运行程序可能是 `work/runtime/native/bin/` 的安装副本，必须比较哈希。
+4. 按依赖顺序停止应用，确认旧进程退出后备份并安装新二进制，再按 login → char → map → web → API → Gateway → Admin 启动。用实际已配置 plist 的 `launchctl bootout`／`bootstrap`，不要并行创建第二份 Umi。单纯应用更新无需重建数据库或删除数据。
+5. 源 LUB 经编译与语义回读后安装，记录源／目标哈希和原始备份；资料目录变化后完整执行 API `catalog import`。这些步骤与重启独立，不用重启代替编译或导入。
+6. 核对本次日志、进程与监听，确认 login／char／map 互联、`/api/health`、后台登录页和游戏启动页，再执行 `bash scripts/client/refresh-client.sh verify --no-color` 核对 PWA buildId 与产物哈希。HTTP 200 和旧日志的 ready 行都不能单独证明已更新。
+
+`refresh-client.sh build` 会通过 systemd 查找 API 用户，因此只用于 Linux 编排；macOS 分别执行目录生成、导入、PWA 构建，最后使用跨平台的 `verify` 子命令。原生 API 的环境文件需由启动进程显式加载，不能直接打印文件排查凭据。
 
 下文 Makefile 和 systemd 命令适用于 Linux。
 
@@ -81,7 +92,7 @@ systemctl cat happyro-map.service
 
 | 变更 | 生效动作 | 验证 |
 | --- | --- | --- |
-| Client JS / CSS / 静态生成表 / Config | Gateway 运行时执行 `./scripts/client/refresh-client.sh build --no-color` | manifest 与 HTTP 哈希一致，再浏览器刷新 |
+| Client JS / CSS / 静态生成表 / Config | Linux 下在 Gateway 运行时执行 `./scripts/client/refresh-client.sh build --no-color` | manifest 与 HTTP 哈希一致，再浏览器刷新 |
 | Gateway 代码 / `.env` | 重启 `happyro-gateway.service`，等待 HTTP 就绪 | `make gateway-verify` |
 | 散装中文 / 运行 LUB | 配置、核对目标哈希，重启 Gateway 清文件缓存 | 资源端点和实际显示 |
 | Server C++ | `make build-server` 后重启受影响进程；common 修改影响所有程序 | 监听、服务互联、实际业务 |

@@ -20,11 +20,11 @@ HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面�
 
 ## 触屏与跨端体验
 
-电脑端采用经典桌面界面，手机和平板分别针对屏幕尺寸与触控方式进行独立 UI 优化，支持横竖屏切换。移动端的拖动移动、点按交谈与拾取、六格分页快捷栏，以及背包、技能、社交等常用窗口均针对触屏操作进行适配。手机和平板还可通过启动页「分享 → 添加到主屏幕」，实现全屏效果。
+电脑端采用经典桌面界面，手机和平板分别针对屏幕尺寸与触控方式进行独立 UI 优化，支持横竖屏切换。移动端的拖动移动、点按交谈与拾取、动作／取消入口、独立战斗设置与六格分页快捷栏，以及背包、技能、社交等常用窗口均针对触屏操作进行适配。手机和平板还可通过启动页「分享 → 添加到主屏幕」，实现全屏效果。
 
 <p><img src="docs/assets/readme/happyro-responsive-skills.png" alt="剑士狂击技能在平板横屏中的左右分栏与手机竖屏中的上下布局" width="100%"></p>
 
-操作说明见[界面与操作](https://happyro.kugarocks.com/game/controls)、[快捷键与技能](https://happyro.kugarocks.com/game/shortcuts)及[PWA 使用方法](https://happyro.kugarocks.com/game/pwa)；频道、私聊和组队见[聊天与社交](https://happyro.kugarocks.com/game/social)，物品往来见[交易与摆摊](https://happyro.kugarocks.com/game/trading)及[邮件与附件](https://happyro.kugarocks.com/game/mail)。
+操作说明见[界面与操作](https://happyro.kugarocks.com/game/controls)、[快捷键与技能](https://happyro.kugarocks.com/game/shortcuts)、[背包与装备](https://happyro.kugarocks.com/game/inventory-equipment)、[任务与目标](https://happyro.kugarocks.com/game/quests)及[PWA 使用方法](https://happyro.kugarocks.com/game/pwa)；频道、私聊和组队见[聊天与社交](https://happyro.kugarocks.com/game/social)，物品往来见[交易与摆摊](https://happyro.kugarocks.com/game/trading)及[邮件与附件](https://happyro.kugarocks.com/game/mail)。
 
 ## 图鉴与冒险工具
 
@@ -36,9 +36,9 @@ HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面�
 
 ## 自动战斗与拾取
 
-自动战斗支持指定目标魔物、攻击技能与战斗范围，并可按物品类别和排除清单设置自动拾取。桌面端与触屏端采用统一的战斗逻辑，手动移动时自动暂停攻击，停止移动后继续战斗；无可攻击目标时，还可启用随机传送。
+自动战斗支持指定目标魔物、攻击技能与战斗范围，优先从已选技能中选择克制当前魔物的技能，不可用时转为普攻；自动拾取可按物品类别和排除清单配置。桌面端与触屏端采用统一的战斗逻辑，手动移动时自动暂停攻击，停止移动后继续战斗；无可攻击目标时，还可启用随机传送。
 
-<p><img src="docs/assets/readme/happyro-combat.png" alt="自动战斗的目标、攻击技能、搜索范围与随机传送设置" width="100%"></p>
+<p><img src="docs/assets/readme/happyro-combat.png" alt="自动战斗的目标、攻击技能与搜索范围设置" width="100%"></p>
 
 配置方法见[战斗与拾取](https://happyro.kugarocks.com/game/combat)。
 
