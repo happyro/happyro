@@ -13,6 +13,13 @@ from .server import by_id, body
 CLIENT_VERSION = "kro-20211105"
 TABLE_ENTRY = re.compile(r"^\s*(\d+):\s*(['\"])(.*?)\2,?\s*$")
 
+# The English mob baseline swaps these two costumes. The same-ID entries in
+# db/re/mercenary_db.yml at 2fe6ab3dc4d8 preserve the correct titles.
+REVIEWED_ENGLISH_NAMES = {
+    3569: ("POPE_MD_H_MERC_NORMAL", "Official Pope"),
+    3570: ("POPE_MD_H_MERC_CASUAL", "Casual Pope"),
+}
+
 
 def javascript_table(source: str, label: str) -> dict[int, str]:
     result: dict[int, str] = {}
@@ -43,6 +50,10 @@ def build_catalog(current_payload: dict[str, Any], english_payload: dict[str, An
     monsters: dict[str, dict[str, Any]] = {}
     for monster_id, record in current.items():
         english_name = english[monster_id].get("Name")
+        if monster_id in REVIEWED_ENGLISH_NAMES:
+            aegis, english_name = REVIEWED_ENGLISH_NAMES[monster_id]
+            if record.get("AegisName") != aegis:
+                raise CatalogError(f"reviewed English name identity mismatch for monster {monster_id}")
         chinese_name = names.get(monster_id, record.get("Name"))
         if not isinstance(chinese_name, str) or not chinese_name.strip():
             raise CatalogError(f"missing Chinese name for monster {monster_id}")
