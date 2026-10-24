@@ -75,3 +75,9 @@ HappyRO 覆盖写在 `repos/happyro-server/conf/import/`。本机 `make configur
 ## 玩法与工具权限
 
 地图服新增 10 项 `HAPPYRO_NAVIGATION_*` / `HAPPYRO_GAME_TOOLS_*` 部署覆盖，支持导航、召怪与工具权限。配置入口同上，值留空交由文件和后台管理。非空覆盖项提交修改时由 API 明确拒绝，地图服同时校验；需更新地图服和 API。完整变量表与示例见[环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables#玩法与工具权限环境变量)。
+
+## 后台账号改密与演示环境
+
+`ADMIN_PASSWORD_CHANGE_ENABLED` 默认 `true`，控制后台头像菜单的自助改密。共享 admin 账号的演示环境设置为 `false`，API 会隐藏入口并拒绝改密请求；后台页面不能覆盖此限制，服务器 CLI `users password` 不受影响。
+
+Docker 在部署 `.env` 修改后重新创建 API 容器：`docker compose up -d --no-deps --force-recreate api`。原生环境修改实际传入 API 的环境变量后重启服务。该配置属于 API，不是 Gateway 或前端构建参数。登录限流、会话失效和部署细节见 [API 部署说明](../../repos/happyro-api/docs/deployment.md#后台账号改密)。
