@@ -47,11 +47,19 @@ test('monster and drop catalogs agree with runtime names and item catalogs', () 
 
 test('NPC navigation instances agree with the shared catalog at each position', () => {
  const entries = read(api + 'world/npc-catalog.json').entries;
- const expected = {};
+ const groups = new Map();
  for (const entry of entries) {
   if (!/[\u3400-\u9fff]/.test(entry.display_name)) continue;
   const key = `${entry.map}:${entry.x}:${entry.y}`;
-  expected[key] ||= { name: entry.display_name, sourceName: entry.source_name };
+  if (!groups.has(key)) groups.set(key, []);
+  groups.get(key).push(entry);
  }
- assert.deepEqual(read(web + 'navigation/npc-instances.json').instances, expected);
+ const actual = read(web + 'navigation/npc-instances.json').instances;
+ assert.deepEqual(Object.keys(actual).sort(), [...groups.keys()].sort());
+ for (const [key, candidates] of groups) {
+  const visible = candidates.filter(entry => entry.game_visible);
+  const illustrated = candidates.filter(entry => entry.display_sprite_id != null);
+  const eligible = visible.length ? visible : illustrated.length ? illustrated : candidates;
+  assert.ok(eligible.some(entry => actual[key].name === entry.display_name && actual[key].sourceName === entry.source_name), key);
+ }
 });
