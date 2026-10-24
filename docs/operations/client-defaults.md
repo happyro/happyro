@@ -1,6 +1,6 @@
 # 客户端默认设置
 
-Gateway 通过环境变量提供客户端部署默认值，涵盖镜头、自动战斗与瞬移、自动拾取、画质、音频、界面和地图显示。默认定义的唯一来源是 Client 仓库 `src/Core/ClientDefaults.schema.json`。完整 PWA 构建同时发布 `client-defaults.schema.json`，Gateway 使用同一份定义解析变量、校验类型和范围；非法配置会在启动时明确报错。
+Gateway 通过环境变量提供客户端部署默认值，涵盖镜头、自动战斗与瞬移、自动恢复、自动拾取、画质、音频、界面和地图显示。默认定义的唯一来源是 Client 仓库 `src/Core/ClientDefaults.schema.json`。完整 PWA 构建同时发布 `client-defaults.schema.json`，Gateway 使用同一份定义解析变量、校验类型和范围；非法配置会在启动时明确报错。
 
 ## 配置入口
 
@@ -18,6 +18,10 @@ CLIENT_AUTO_TELEPORT_WAIT_SECONDS=2
 CLIENT_AUTO_TELEPORT_INTERVAL_SECONDS=2
 CLIENT_AUTO_COMBAT_SEARCH_RANGE=20
 CLIENT_AUTO_COMBAT_ACTIVITY_RANGE=30
+CLIENT_AUTO_RECOVERY_HP_TRIGGER_PERCENT=50
+CLIENT_AUTO_RECOVERY_HP_TARGET_PERCENT=80
+CLIENT_AUTO_RECOVERY_SP_TRIGGER_PERCENT=20
+CLIENT_AUTO_RECOVERY_SP_TARGET_PERCENT=50
 CLIENT_BGM_VOLUME=0.3
 ```
 
@@ -41,7 +45,7 @@ PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js
 
 ## 配置清单
 
-53 项客户端配置的用途、默认值、范围与示例统一维护在[公开环境变量参考](https://happyro.kugarocks.com/deploy/environment-variables#客户端默认设置-gateway)，以 Client 的 `src/Core/ClientDefaults.schema.json` 为权威输入。本页只维护构建与运行时契约，不再复制完整参数表。
+57 项客户端配置的用途、默认值、范围与示例统一维护在[公开环境变量参考](https://happyro.kugarocks.com/deploy/environment-variables#客户端默认设置-gateway)，以 Client 的 `src/Core/ClientDefaults.schema.json` 为权威输入。本页只维护构建与运行时契约，不再复制完整参数表。
 
 自动战斗活动范围必须大于或等于寻怪范围；单独覆盖一项时，另一项使用 schema 默认值参与校验。
 
@@ -54,3 +58,7 @@ PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js
 ## 服务端视野
 
 服务端 `HAPPYRO_AREA_SIZE`（默认 18）与 `HAPPYRO_MAX_WALK_PATH`（默认 17）独立于客户端默认值，配置入口、生效顺序及重启要求见[地图服配置](configuration.md#地图服视野与行走)。
+
+## 自动恢复
+
+`CLIENT_AUTO_RECOVERY_HP_TRIGGER_PERCENT`、`CLIENT_AUTO_RECOVERY_HP_TARGET_PERCENT` 分别设置 HP 的触发比例和恢复目标；SP 对应 `CLIENT_AUTO_RECOVERY_SP_TRIGGER_PERCENT`、`CLIENT_AUTO_RECOVERY_SP_TARGET_PERCENT`。触发比例为 1–99 的整数，目标为 2–100 的整数，目标必须严格高于触发比例。启动时联合校验环境变量与未覆盖项的内置默认值。已保存的角色恢复设置优先；开关与道具选择不由环境变量强制修改。
