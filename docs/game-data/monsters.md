@@ -53,3 +53,11 @@ Go API 的 NPC 查询已经改为服务端分页（`catalog_npcs` 表 + 分页 A
 3. `repos/happyro-client/src/UI/Components/WorldMap/WorldMap.js`（游戏内世界地图，不是冒险工具弹窗）同样读取 `catalog.json` 的 `spawns` 字段在地图上画怪物点位。改造服务端分页时不能只考虑冒险工具这一个消费者。
 
 后续优化先测量目录下载、图集请求和交互耗时；可评估按可视区域加载图集。服务端分页属于资料模型和全部消费者的联合改造，不仅是替换前端分页控件。
+
+## 名称修正与运行链
+
+名称按 ID／AegisName 和 RO321、DVG、同 ID 第三方中文证据审定，保留未确认项。来源与决策见[魔物名称审查](../localization/monster-name-scans/application/README.md)。服务器属性仍以当前 Renewal 数据为准，不随网站译名覆盖数值或掉落。
+
+核对客户端完整名、服务端 Name／JapaneseName、默认封包短名、魔物型佣兵、普通刷怪标签及任务目标；特殊副本名与通用任务条件不按字符串批量改写。`python3 -m tools.resources.monsters.verify_application verify --no-color` 验证这条应用链。
+
+客户端任务进度只在目标 ID 与当前默认短名同时匹配时恢复全名。任务 JSON 还需 Lua 编译／语义回读和运行目录哈希验证；目录须分别生成 Client 产物及 API 快照，再完整导入管理库。

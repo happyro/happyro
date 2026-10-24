@@ -5,7 +5,7 @@
 - [概览](overview.md)：汉化方法、限制和当前维护边界。
 - [物品名称站点扫描结果](item-name-scans/README.md)：RO321 与 RO 小册子的完整独立快照、数据分片和审计证据。
 - [技能名称站点扫描结果](skill-name-scans/README.md)：两站分版本名称快照、与 HappyRO 的差异和待确认清单。
-- [魔物名称与资料扫描结果](monster-name-scans/README.md)：两站独立来源、名称合并候选、中文冲突与未决项。
+- [魔物名称与资料扫描结果](monster-name-scans/README.md)：两站独立来源、名称冲突与未决项，以及[已审名称应用](monster-name-scans/application/README.md)和跨仓库一致性验证。
 - [客户端资源](client-resources.md)：散装覆盖、ItemInfo、卡片前缀和 Gateway 生效链。
 - [技能与状态来源](../game-data/skills.md)：原文译文、服务器参数、状态 LUB 和实时冷却的区别。
 - [服务端内容](server-content.md)：NPC、数据库和 conf 中的玩家可见文本。
