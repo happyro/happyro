@@ -34,9 +34,9 @@ HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面�
 
 详细用法见[图鉴与冒险工具](https://happyro.kugarocks.com/game/adventure-tools)。
 
-## 自动战斗与拾取
+## 自动战斗、恢复与拾取
 
-自动战斗支持指定目标魔物、攻击技能与战斗范围，优先从已选技能中选择克制当前魔物的技能，不可用时转为普攻；自动拾取可按物品类别和排除清单配置。桌面端与触屏端采用统一的战斗逻辑，手动移动时自动暂停攻击，停止移动后继续战斗；无可攻击目标时，还可启用随机传送。
+自动战斗支持指定目标魔物、攻击技能与战斗范围，优先从已选技能中选择克制当前魔物的技能，不可用时转为普攻；勾选已支持的自身增益后会维持状态。自动恢复按 HP／SP 比例使用已选道具，自动拾取可按物品类别和排除清单配置。桌面端与触屏端采用统一的战斗逻辑，手动移动时自动暂停攻击，停止移动后继续战斗；无可攻击目标时，还可启用随机传送。
 
 <p><img src="docs/assets/readme/happyro-combat.png" alt="自动战斗的目标、攻击技能与搜索范围设置" width="100%"></p>
 
@@ -52,7 +52,7 @@ Web 管理后台提供账号与角色查询、物品与 Zeny 发放，以及经�
 
 ## 安装与体验
 
-当前功能变化见 [v0.5.1](https://happyro.kugarocks.com/changelog/releases/v0.5.1)：经典初心者流程、地图恢复、资源补齐、后台 GM 与配置维护。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
+当前功能变化见 [v0.5.1](https://happyro.kugarocks.com/changelog/releases/v0.5.1)：经典初心者流程、地图恢复、自动战斗与恢复、资源补齐、后台 GM 与配置维护。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
 
 首次体验可从[快速开始](https://happyro.kugarocks.com/guide/quick-start)选择入口。自行部署时，参考 [Docker 安装手册](https://happyro.kugarocks.com/deploy/docker)，下载[离线包](https://happyro.kugarocks.com/guide/downloads)，包内包含 `linux/amd64` 与 `linux/arm64` 镜像、运行资源、配置模板和配套工具。
 

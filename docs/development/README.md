@@ -6,8 +6,9 @@
 | --- | --- | --- |
 | [开发流程](workflow/README.md) | 本地环境、命令、测试、Git 与文档协作 | [本地开发](workflow/local-setup.md)、[常用命令](workflow/common-commands.md) |
 | [10 月 23—24 日 Git 审查](git-review-20261023-24/README.md) | 七仓库变更、发现的回归与验证边界 | [审查结果](git-review-20261023-24/README.md) |
+| [10 月 24—25 日提交审查](commit-review-20261025/README.md) | 后台设置、图片回调、转职与公告的修复及验证边界 | [审查结果](commit-review-20261025/README.md) |
 | [装备权限审查](equipment-permission-audit/README.md) | 转职、双持权限、背包与装备切换同步及验收边界 | [检查结果](equipment-permission-audit/README.md) |
-| [客户端专题](client/README.md) | 移动端 UI 与性能诊断 | [移动端诊断](client/mobile-diagnostics.md)、[UI 规范](client/mobile-ui.md) |
+| [客户端专题](client/README.md) | 自动战斗、恢复、技能审查、移动端 UI 与性能诊断 | [移动端诊断](client/mobile-diagnostics.md)、[UI 规范](client/mobile-ui.md) |
 | [README 图片制作](readme-images/README.md) | 五张展示图的截图、合成与复用 | [截图参数](readme-images/capture.md)、[合成与预览](readme-images/composition.md) |
 | [设置审查](settings/README.md) | 设置汉化、实际效果检查、修复与暂时关闭项 | [已修复与未完成](settings/README.md) |
 | [随行菜单实测](companion-review/README.md) | 宠物、佣兵、生命体双端已测路径、修复和未覆盖项 | [测试覆盖](companion-review/coverage.md)、[修复总结](companion-review/repair-summary.md)、[有效待办](companion-review/pending.md) |
