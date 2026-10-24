@@ -7,15 +7,13 @@ import world from '../../../repos/happyro-client/src/DB/Map/WorldMap.js';
 
 const root = path.resolve(import.meta.dirname, '../../..');
 const read = file => JSON.parse(fs.readFileSync(path.join(root, file), 'utf8'));
-const auditDir = 'docs/localization/map-name-scans/merged/data';
-const decisions = fs.readdirSync(path.join(root, auditDir)).filter(f => f.endsWith('.json')).flatMap(f => read(`${auditDir}/${f}`));
-const serverMaps = new Set(fs.readFileSync(path.join(root, 'repos/happyro-server/db/map_index.txt'), 'utf8').split(/\r?\n/).filter(line => line && !line.startsWith('//')).map(line => line.trim().split(/\s+/)[0]));
-const selected = Object.fromEntries(decisions.filter(row => row.recommendedName && (row.project || (row.externalNameConfirmed && serverMaps.has(row.map)))).map(row => [row.map, row.recommendedName]));
+const displayDecisions = read('localization/maps/display-names.json');
+const selected = Object.fromEntries(Object.entries(displayDecisions.maps).map(([id, row]) => [id, row.displayName]));
 
 test('audited map decisions reach client, native resources and shared API names', () => {
  const native = read('localization/sources/kro-20211105/merged/files/lub/mapInfo_true.json');
  const api = read('repos/happyro-api/resources/game-data/world/map-names.zh-CN.json');
- assert.equal(Object.keys(selected).length, 1205);
+ assert.equal(Object.keys(selected).length, 1229);
  for (const [id, name] of Object.entries(selected)) {
   assert.equal(maps[id + '.rsw']?.displayName, name, `client ${id}`);
   assert.equal(native[id + '.rsw']?.displayName, name, `native ${id}`);

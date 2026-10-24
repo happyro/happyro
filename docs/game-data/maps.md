@@ -3,7 +3,7 @@
 ## 权威来源
 
 - 地图实体：客户端世界地图、地图信息表，以及服务端已加载地图集。
-- 显示名：`MapTable.js`、`MapNameTranslations.js`、世界地图和导航中文目录。
+- 显示名：以 [地图显示名与搜索决策](map-display-names.md) 为准，生成 `MapTable.js`、世界地图、API 和导航中文目录；外站全称只作来源及搜索词。
 - 预览：Admin 预生成 PNG；游戏端按需读取地图图片或 GAT。
 
 `mapnametable.txt` 不是当前主要中文来源，不整表翻译。缺少图片或 GAT 只影响预览和寻路，不决定地图是否存在。

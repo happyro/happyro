@@ -36,6 +36,8 @@ if (command !== 'generate') {
   load('src/DB/Map/MapTable.js'), load('src/DB/Map/MiniMapTable.js')
  ]);
  const {getMapChannel} = await import(pathToFileURL(path.join(client,'src/DB/Map/MapChannels.js')));
+ const searchAliases = JSON.parse(await fs.readFile(path.join(admin, 'map-search-aliases.zh-CN.json'), 'utf8'));
+ const visibility = JSON.parse(await fs.readFile(path.join(root, 'localization/maps/player-visibility.json'), 'utf8'));
  const names = new Map();
  for (const world of worlds) for(const map of world.maps) if(!names.has(map.id)) names.set(map.id,map.name);
  for (const [file, data] of Object.entries(info)) if(data.displayName) names.set(file.replace(/\.rsw$/i,''),data.displayName);
@@ -61,9 +63,9 @@ if (command !== 'generate') {
    await fs.mkdir(path.join(admin,'terrain'),{recursive:true});
    await sharp(pixels,{raw:{width:w,height:h,channels:3}}).png().toFile(path.join(admin,'terrain',map+'.png'));
   }
-  entries.push({id,map,name:names.get(map)||map,supported:supported.has(map),channel:channel?.channel||null,canonical_map:channel?.canonicalMapName||map,image_map:imageMap,image_kind:imageKind});
+  entries.push({id,map,name:names.get(map)||map,aliases:searchAliases[map]||[],supported:supported.has(map),player_hidden:Object.hasOwn(visibility.hidden,map),channel:channel?.channel||null,canonical_map:channel?.canonicalMapName||map,image_map:imageMap,image_kind:imageKind});
  }
- const content=JSON.stringify(entries);const catalog={schema:'happyro-map-catalog/v1',version:crypto.createHash('sha256').update(content).digest('hex').slice(0,16),sources:['happyro-server/db/map_index.txt','happyro-client/src/DB/Map/{SupportedMapTable,WorldMap,MapTable,MiniMapTable,MapChannels}.js'],entries};
+ const content=JSON.stringify(entries);const catalog={schema:'happyro-map-catalog/v1',version:crypto.createHash('sha256').update(content).digest('hex').slice(0,16),sources:['localization/maps/player-visibility.json','happyro-api/resources/game-data/world/map-search-aliases.zh-CN.json','happyro-server/db/map_index.txt','happyro-client/src/DB/Map/{SupportedMapTable,WorldMap,MapTable,MiniMapTable,MapChannels}.js'],entries};
  for(const dest of [path.join(admin,'map-catalog.json'),path.join(client,'applications/pwa/data/navigation/map-catalog.json')]) await fs.writeFile(dest,JSON.stringify(catalog)+'\n');
  if(descriptor!==undefined)closeSync(descriptor);
  console.log(`Generated ${entries.length} maps, ${entries.filter(e=>e.supported).length} supported, ${entries.filter(e=>e.image_kind==='terrain').length} terrain previews`);
