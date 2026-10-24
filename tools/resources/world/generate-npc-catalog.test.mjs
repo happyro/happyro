@@ -144,7 +144,7 @@ test('uses translated map labels for NPC locations, including previously missing
  const names = localizedMapNames();
  assert.equal(names.prt_in, '普隆德拉内部');
  assert.equal(names.airplane, '飞空艇');
- assert.equal(names.odin_tem01, '奥丁神殿西区');
+ assert.equal(names.odin_tem01, '毁葛奥丁神殿西区');
  assert.ok(!Object.keys(names).some(name => name.endsWith('.rsw')));
 });
 
