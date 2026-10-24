@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import socket
+import shutil
 import tempfile
 import time
 import unittest
@@ -23,6 +24,9 @@ class AdminGoBackupTest(unittest.TestCase):
             custom = root / 'custom'
             for name in ('npc', 'db', 'resources'):
                 (custom / name).mkdir(parents=True)
+            templates = Path(__file__).resolve().parents[2] / 'repos/happyro-server/db/import-tmpl'
+            for name in ('item_db.yml', 'mob_db.yml'):
+                shutil.copyfile(templates / name, custom / 'db' / name)
             (custom / 'npc/scripts.conf').write_text('// backed up custom scripts\n')
             (settings / 'battle_conf.txt').write_text('base_exp_rate: 250\n')
             admin_image = os.environ['HAPPYRO_GO_API_TEST_IMAGE']
@@ -44,7 +48,10 @@ class AdminGoBackupTest(unittest.TestCase):
                         'GAME_DB_PASSWORD': 'backup-test-admin', 'APP_URL': 'http://localhost:8080',
                         'GAME_MAP_INDEX_PATH': '/opt/api/resources/map_index.txt',
                         'GAME_SERVER_BATTLE_CONFIG_PATH': '/run/happyro-settings/battle_conf.txt',
-                    }, 'volumes': [{'type': 'bind', 'source': str(settings), 'target': '/run/happyro-settings'}]},
+                    }, 'volumes': [
+                        {'type': 'bind', 'source': str(settings), 'target': '/run/happyro-settings'},
+                        {'type': 'bind', 'source': str(custom), 'target': '/opt/happyro/custom', 'read_only': True},
+                    ]},
                     # The production tool resolves the customization root from the map mount.
                     'map': {'image': admin_image, 'pull_policy': 'never', 'volumes': [
                         {'type': 'bind', 'source': str(custom / 'npc'), 'target': '/opt/happyro/custom/npc'},
@@ -65,7 +72,10 @@ class AdminGoBackupTest(unittest.TestCase):
             (root / 'release-manifest.json').write_text('{"test":"Go backup round trip"}\n')
 
             def compose(*args, check=True):
-                return subprocess.run(['docker', 'compose', '--project-directory', str(root), '-f', str(root / 'compose.yaml'), *args], capture_output=True, text=True, check=check)
+                result = subprocess.run(['docker', 'compose', '--project-directory', str(root), '-f', str(root / 'compose.yaml'), *args], capture_output=True, text=True)
+                if check and result.returncode:
+                    self.fail(f'Compose {args[0]} failed:\n{result.stdout}\n{result.stderr}')
+                return result
 
             def sql(statement):
                 return compose('exec', '-T', 'database', 'mariadb', '-uroot', '-pbackup-test-root', '-N', '-e', statement).stdout.strip()
@@ -81,13 +91,9 @@ class AdminGoBackupTest(unittest.TestCase):
                     if time.monotonic() >= deadline:
                         self.fail(compose('logs', 'database').stdout)
                     time.sleep(0.25)
-                compose('run', '--rm', '--no-deps', '-T', 'api', 'migrate', '--no-color')
-                compose('run', '--rm', '--no-deps', '-T', 'api', 'init', '--no-color')
-                compose('run', '--rm', '--no-deps', '-T', 'api', 'catalog', 'import',
-                        '--client-items', 'resources/game-data/items/client-kro-20211105.json',
-                        '--server-items', 'resources/game-data/items/renewal.json',
-                        '--monsters', 'resources/game-data/monsters/renewal.json',
-                        '--npcs', 'resources/game-data/world/npc-catalog.json', '--no-color')
+                # Exercise the actual first-install entrypoint, including the
+                # unprivileged catalog-baseline read and custom catalog refresh.
+                compose('run', '--rm', '--no-deps', '-T', 'api', 'initialize', '--no-color')
                 compose('up', '-d', 'api')
                 deadline = time.monotonic() + 30
                 while compose('exec', '-T', 'api', 'curl', '-fsS', 'http://localhost:8080/api/health', check=False).returncode != 0:

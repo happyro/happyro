@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate root changelogs and synchronize their documentation-site copies."""
 import argparse
+import json
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -107,6 +108,30 @@ def source_errors(root):
     return errors
 
 
+def redirect_only_pages(root):
+    """Allow registered redirects without treating them as release summaries."""
+    docs = root / 'repos/happyro-doc/docs'
+    registry = docs / '.vitepress/redirects.json'
+    if not registry.is_file():
+        return set()
+    destinations = {'/changelog/' + p.relative_to(root / 'changelog').with_suffix('').as_posix()
+                    for p in sources(root)}
+    allowed = set()
+    for route, entry in json.loads(registry.read_text()).items():
+        if not route.startswith('/changelog/') or entry.get('to') not in destinations:
+            continue
+        rel = Path(route.removeprefix('/changelog/') + '.md')
+        if '..' in rel.parts:
+            continue
+        page = docs / 'changelog' / rel
+        if not page.is_file():
+            continue
+        text = page.read_text()
+        if re.fullmatch(r'---\n.*?\n---\n\s*<LegacyRedirect from="' + re.escape(route) + r'"\s*/>\s*', text, re.S):
+            allowed.add(rel)
+    return allowed
+
+
 def mirror_errors(root):
     errors = []
     base = root / 'changelog'
@@ -117,7 +142,7 @@ def mirror_errors(root):
         p = target / rel
         if not p.is_file() or p.read_bytes() != (base / rel).read_bytes():
             errors.append(f'doc/{rel}: missing or differs from root')
-    for rel in sorted(actual - expected):
+    for rel in sorted(actual - expected - redirect_only_pages(root)):
         errors.append(f'doc/{rel}: unexpected page (archives stay in root only)')
     config = root / 'repos/happyro-doc/docs/.vitepress/config.js'
     match = NAV.search(config.read_text())
@@ -138,7 +163,7 @@ def sync(root):
     base = root / 'changelog'
     target = root / 'repos/happyro-doc/docs/changelog'
     expected = {p.relative_to(base) for p in sources(root)}
-    extras = {p.relative_to(target) for p in target.rglob('*.md')} - expected
+    extras = {p.relative_to(target) for p in target.rglob('*.md')} - expected - redirect_only_pages(root)
     if extras:
         raise ValueError(f'Unexpected doc pages; resolve explicitly before sync: {sorted(map(str, extras))}')
     changed = 0

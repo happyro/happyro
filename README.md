@@ -52,7 +52,7 @@ Web 管理后台提供账号与角色查询、物品与 Zeny 发放，以及经�
 
 ## 安装与体验
 
-当前功能变化见 [v0.5.1](https://happyro.kugarocks.com/changelog/releases/v0.5.1)：经典初心者流程、地图恢复、自动战斗与恢复、资源补齐、后台 GM 与配置维护。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
+当前功能变化见 [v0.6.0](https://happyro.kugarocks.com/changelog/releases/v0.6.0)：经典初心者流程、地图恢复、自动战斗与恢复、资源补齐、后台 GM 与配置维护。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
 
 首次体验可从[快速开始](https://happyro.kugarocks.com/guide/quick-start)选择入口。自行部署时，参考 [Docker 安装手册](https://happyro.kugarocks.com/deploy/docker)，下载[离线包](https://happyro.kugarocks.com/guide/downloads)，包内包含 `linux/amd64` 与 `linux/arm64` 镜像、运行资源、配置模板和配套工具。
 
@@ -100,7 +100,7 @@ HappyRO 由根仓库、五个应用仓库和一个公开文档仓库组成，共
 - [环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables)：各服务默认值、允许范围、配置入口与生效方式。
 
 - [项目站点](https://happyro.kugarocks.com) · [GitHub Pages](https://happyro.org)
-- [更新日志](changelog/README.md) · [v0.5.1 版本摘要](changelog/releases/v0.5.1.md)
+- [更新日志](changelog/README.md) · [v0.6.0 版本摘要](changelog/releases/v0.6.0.md)
 - [贡献指南](https://happyro.kugarocks.com/development/contributing) · [联系与反馈](https://happyro.kugarocks.com/community/contact)
 - QQ 群：`662191549`（HappyRO）
 

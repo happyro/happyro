@@ -1,5 +1,6 @@
 """Exercise synchronization against isolated repositories, including rejection paths."""
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -76,6 +77,24 @@ class ChangelogTest(unittest.TestCase):
         self.assertEqual(manage.source_errors(self.root), [])
         self.daily.write_text(compact.replace('。\n- ', '。\n\n- '))
         self.assertTrue(any('compact list' in e for e in manage.source_errors(self.root)))
+
+    def test_registered_redirect_is_preserved_but_duplicate_body_is_rejected(self):
+        page = self.root / 'repos/happyro-doc/docs/changelog/releases/v0.3.1.md'
+        page.parent.mkdir(parents=True)
+        page.write_text('---\nlayout: page\n---\n\n<LegacyRedirect from="/changelog/releases/v0.3.1" />\n')
+        registry = self.config.with_name('redirects.json')
+        registry.write_text(json.dumps({'/changelog/releases/v0.3.1': {'to': '/changelog/releases/v0.3.2'}}))
+        original = page.read_bytes()
+        manage.sync(self.root)
+        self.assertEqual(page.read_bytes(), original)
+        self.assertEqual(manage.mirror_errors(self.root), [])
+        self.assertNotIn('v0.3.1', manage.navigation(self.root))
+        page.write_text(page.read_text() + '\nDuplicate release body\n')
+        with self.assertRaisesRegex(ValueError, 'Unexpected doc pages'):
+            manage.sync(self.root)
+        page.write_bytes(original)
+        registry.write_text(json.dumps({'/changelog/releases/v0.3.1': {'to': '/changelog/releases/missing'}}))
+        self.assertTrue(manage.mirror_errors(self.root))
 
     def test_no_command_only_prints_help(self):
         script = Path(manage.__file__).resolve()
