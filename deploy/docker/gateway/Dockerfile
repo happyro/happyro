@@ -7,6 +7,7 @@ COPY repos/happyro-server/npc/ ./repos/happyro-server/npc/
 COPY repos/happyro-server/conf/ ./repos/happyro-server/conf/
 COPY repos/happyro-server/db/ ./repos/happyro-server/db/
 COPY repos/happyro-server/src/map/ ./repos/happyro-server/src/map/
+COPY repos/happyro-server/src/common/mmo.hpp ./repos/happyro-server/src/common/mmo.hpp
 COPY repos/happyro-client/src/DB/Map/SupportedMapTable.js ./repos/happyro-client/src/DB/Map/SupportedMapTable.js
 COPY repos/happyro-client/src/DB/Navigation/NaviTargets.json ./repos/happyro-client/src/DB/Navigation/NaviTargets.json
 RUN python3 tools/navi-review/review.py check --root /workspace --no-color

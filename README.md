@@ -32,7 +32,7 @@ HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面�
 
 <p><img src="docs/assets/readme/happyro-codex.png" alt="魔物图鉴中的中文资料、掉落物品与出现地图" width="100%"></p>
 
-详细用法见[图鉴与冒险工具](https://happyro.kugarocks.com/game/adventure-tools)。
+详细用法见[图鉴与冒险工具](https://happyro.kugarocks.com/game/adventure-tools)，说明中的地图、帮助与物品引用见[说明链接与帮助](https://happyro.kugarocks.com/game/text-links/)。
 
 ## 自动战斗、恢复与拾取
 
@@ -40,7 +40,7 @@ HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面�
 
 <p><img src="docs/assets/readme/happyro-combat.png" alt="自动战斗的目标、攻击技能与搜索范围设置" width="100%"></p>
 
-配置方法见[战斗与拾取](https://happyro.kugarocks.com/game/combat)。
+配置方法见[自动战斗与拾取](https://happyro.kugarocks.com/game/combat)。
 
 ## 管理后台
 
@@ -52,7 +52,7 @@ Web 管理后台提供账号与角色查询、物品与 Zeny 发放，以及经�
 
 ## 安装与体验
 
-当前功能变化见 [v0.6.0](https://happyro.kugarocks.com/changelog/releases/v0.6.0)：经典初心者流程、地图恢复、自动战斗与恢复、资源补齐、后台 GM 与配置维护。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
+当前功能变化见 [v0.6.0](https://happyro.kugarocks.com/changelog/releases/v0.6.0)：经典初心者流程、地图恢复、自动战斗与恢复、说明链接与帮助阅读器、资源补齐、后台 GM 与配置维护。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
 
 首次体验可从[快速开始](https://happyro.kugarocks.com/guide/quick-start)选择入口。自行部署时，参考 [Docker 安装手册](https://happyro.kugarocks.com/deploy/docker)，下载[离线包](https://happyro.kugarocks.com/guide/downloads)，包内包含 `linux/amd64` 与 `linux/arm64` 镜像、运行资源、配置模板和配套工具。
 
