@@ -16,8 +16,8 @@ CLIENT_CAMERA_PHONE_PORTRAIT_ZOOM=170
 CLIENT_AUTO_TELEPORT_ENABLED=true
 CLIENT_AUTO_TELEPORT_WAIT_SECONDS=2
 CLIENT_AUTO_TELEPORT_INTERVAL_SECONDS=2
-CLIENT_AUTO_COMBAT_SEARCH_RANGE=40
-CLIENT_AUTO_COMBAT_ACTIVITY_RANGE=50
+CLIENT_AUTO_COMBAT_SEARCH_RANGE=14
+CLIENT_AUTO_COMBAT_ACTIVITY_RANGE=30
 CLIENT_AUTO_RECOVERY_HP_TRIGGER_PERCENT=50
 CLIENT_AUTO_RECOVERY_HP_TARGET_PERCENT=80
 CLIENT_AUTO_RECOVERY_SP_TRIGGER_PERCENT=20
@@ -57,8 +57,14 @@ PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js
 
 ## 服务端视野
 
-服务端 `HAPPYRO_AREA_SIZE`（默认 18）与 `HAPPYRO_MAX_WALK_PATH`（默认 17）独立于客户端默认值，配置入口、生效顺序及重启要求见[地图服配置](configuration.md#地图服视野与行走)。
+服务端 `HAPPYRO_AREA_SIZE`（默认 14）与 `HAPPYRO_MAX_WALK_PATH`（默认 17）独立于客户端默认值，配置入口、生效顺序及重启要求见[地图服配置](configuration.md#地图服视野与行走)。
 
 ## 自动恢复
 
 `CLIENT_AUTO_RECOVERY_HP_TRIGGER_PERCENT`、`CLIENT_AUTO_RECOVERY_HP_TARGET_PERCENT` 分别设置 HP 的触发比例和恢复目标；SP 对应 `CLIENT_AUTO_RECOVERY_SP_TRIGGER_PERCENT`、`CLIENT_AUTO_RECOVERY_SP_TARGET_PERCENT`。触发比例为 1–99 的整数，目标为 2–100 的整数，目标必须严格高于触发比例。启动时联合校验环境变量与未覆盖项的内置默认值。已保存的角色恢复设置优先；开关与道具选择不由环境变量强制修改。
+
+### 搜怪范围与服务端同步范围
+
+服务端实体同步范围默认 14 格，客户端默认搜怪 14 格、活动 30 格。地图服务在登录、换图和范围配置变更时下发实际同步范围；搜怪步进上限随之更新（客户端支持上限 50），环境默认值与已保存值超出时按实际服务端上限执行和显示。活动范围独立，允许至 100 格，且不小于搜怪范围。
+
+尚未收到服务端范围时显示“正在获取范围”，禁用搜怪调整并等待后再自动战斗；断线清除上一连接的范围。自动限制不会清空技能、目标和活动范围等已保存设置。
