@@ -24,6 +24,7 @@ def inspect(reference):
 
 def build(args):
     root, output = args.workspace.resolve(), args.output.resolve()
+    run(sys.executable, str(root / 'tools/navi-review/review.py'), 'check', '--root', str(root), '--no-color')
     state = {'version': version(root), 'commits': commits(root), 'images': {}}
     run('skopeo', '--version')
     run('docker', 'buildx', 'inspect')
