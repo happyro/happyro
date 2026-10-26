@@ -41,7 +41,7 @@ happyro-版本/
     └── control-socket/
 ```
 
-首次初始化在本机生成保密的 .env。所有持久化使用宿主机目录 bind mount，不使用 named volume；resources/ 只读。data/control-socket 是运行状态，无需备份。升级不得删除 data/ 或 CUSTOM_DIR。custom/ 由用户维护，不参与发行文件哈希校验，正式 ZIP 禁止包含这个实际运行目录。
+首次初始化在本机生成保密的 .env。所有持久化使用宿主机目录 bind mount，不使用 named volume；resources/ 只读。data/control-socket 是运行状态，无需备份。升级不得删除 data/ 或 HAPPYRO_CUSTOM_DIR。custom/ 由用户维护，不参与发行文件哈希校验，正式 ZIP 禁止包含这个实际运行目录。
 
 在 Mac 上将整个包放在 Docker Desktop 允许文件共享的本地目录。镜像归档导入后还会占用 Docker 虚拟磁盘空间，需同时容纳包、解压资源、导入镜像及数据库。不要直接把远程主机路径写作本机挂载路径；先复制完整包到本地。
 
@@ -67,16 +67,16 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 
 编辑 .env：
 
-- GAME_PUBLIC_URL：默认 `http://127.0.0.1:3338`，局域网访问时改为主机 IP。
-- ADMIN_CSRF_ORIGIN_CHECK_ENABLED：默认 `false`，关闭来源校验但保留 CSRF Token 校验；设为 `true` 时仅信任 ADMIN_PUBLIC_URL 对应来源。
-- ADMIN_PUBLIC_URL：默认 `http://127.0.0.1:8000`，局域网访问时改为主机 IP。
-- SOCKET_PROXY_URL：默认留空并使用当前页面同源的 `/ws/`；WebSocket 使用独立域名时填写完整前缀，例如 `wss://happyro-ws.example.com/ws/`。
-- GATEWAY_PORT、ADMIN_PORT：默认 3338、8000，在宿主机所有接口发布端口。支持 `宿主机地址:端口`；仅本机访问时，在 `.env` 设置 `GATEWAY_PORT=127.0.0.1:3338`、`ADMIN_PORT=127.0.0.1:8000`，然后重新创建对应容器。公开 URL 不限制监听范围；修改端口时同步 URL。不要直接修改受哈希校验的 `compose.yaml`。
-- RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
-- CUSTOM_DIR：默认 ./custom，建议改为版本目录外的专用绝对路径，例如 `/srv/happyro/custom`；修改后运行 `python3 tools/deployment/manage.py initialize-custom --directory .`。只填宿主机路径，不填容器内 `/opt/happyro/custom`。
-- 本模板默认局域网 HTTP。Admin 后台使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
+- HAPPYRO_GAME_PUBLIC_URL：默认 `http://127.0.0.1:3338`，局域网访问时改为主机 IP。
+- HAPPYRO_ADMIN_CSRF_ORIGIN_CHECK_ENABLED：默认 `false`，关闭来源校验但保留 CSRF Token 校验；设为 `true` 时仅信任 HAPPYRO_ADMIN_PUBLIC_URL 对应来源。
+- HAPPYRO_ADMIN_PUBLIC_URL：默认 `http://127.0.0.1:8000`，局域网访问时改为主机 IP。
+- HAPPYRO_CLIENT_SOCKET_PROXY_URL：默认留空并使用当前页面同源的 `/ws/`；WebSocket 使用独立域名时填写完整前缀，例如 `wss://happyro-ws.example.com/ws/`。
+- HAPPYRO_GATEWAY_PUBLISH_ADDRESS、HAPPYRO_ADMIN_PUBLISH_ADDRESS：默认 3338、8000，在宿主机所有接口发布端口。支持 `宿主机地址:端口`；仅本机访问时，在 `.env` 设置 `HAPPYRO_GATEWAY_PUBLISH_ADDRESS=127.0.0.1:3338`、`HAPPYRO_ADMIN_PUBLISH_ADDRESS=127.0.0.1:8000`，然后重新创建对应容器。公开 URL 不限制监听范围；修改端口时同步 URL。不要直接修改受哈希校验的 `compose.yaml`。
+- HAPPYRO_RESOURCE_DIR、HAPPYRO_DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
+- HAPPYRO_CUSTOM_DIR：默认 ./custom，建议改为版本目录外的专用绝对路径，例如 `/srv/happyro/custom`；修改后运行 `python3 tools/deployment/manage.py initialize-custom --directory .`。只填宿主机路径，不填容器内 `/opt/happyro/custom`。
+- 本模板默认局域网 HTTP。Admin 后台使用 HTTPS 时设置 HAPPYRO_ADMIN_SESSION_SECURE_COOKIE_ENABLED=true，并确保反向代理传递原始协议。
 
-游戏的“保持登录”在 HTTP 与 HTTPS 均可使用，不由 `SESSION_SECURE_COOKIE` 控制。该变量仅用于 Admin 后台；游戏由 Gateway 根据请求 Origin 的协议选择 Cookie，HTTPS 设置 Secure，HTTP 使用独立名称且不设置 Secure。HTTP 与 HTTPS、不同主机入口需要分别首次登录。
+游戏的“保持登录”在 HTTP 与 HTTPS 均可使用，不由 `HAPPYRO_ADMIN_SESSION_SECURE_COOKIE_ENABLED` 控制。该变量仅用于 Admin 后台；游戏由 Gateway 根据请求 Origin 的协议选择 Cookie，HTTPS 设置 Secure，HTTP 使用独立名称且不设置 Secure。HTTP 与 HTTPS、不同主机入口需要分别首次登录。
 
 反向代理须将 `/api/game-session/*` 原路径转发到 Gateway，保留浏览器的 Host（包括非默认端口）、Origin、Cookie 和 Set-Cookie，不缓存该接口响应；Gateway 会返回 `Cache-Control: no-store`。Nginx 可用 `proxy_set_header Host $http_host;` 保留 Host，并传递原始协议供后台使用。仅设置 X-Forwarded-Host、把 Host 改成内部容器名，会使游戏会话接口因 Origin/Host 不匹配返回 403。独立 WebSocket 域名只影响 `/ws/`，游戏会话 API 仍走页面同源入口。
 
@@ -96,7 +96,7 @@ v0.5.0 首次空库初始化还会为 `happyro` 创建第一角色位“罗安�
 
 api-init 依次执行 Go 管理库迁移（`migrate`）、初始账号创建（`init`）、自定义资料刷新及四份目录的原子导入（`catalog import`）。任一步骤失败即停止，不启动 API 服务。
 
-游戏入口：GAME_PUBLIC_URL/applications/pwa/index.html，应先显示启动页。后台入口为 ADMIN_PUBLIC_URL。
+游戏入口：HAPPYRO_GAME_PUBLIC_URL/applications/pwa/index.html，应先显示启动页。后台入口为 HAPPYRO_ADMIN_PUBLIC_URL。
 
 ## 服务与后台维护
 
@@ -128,21 +128,21 @@ docker compose up -d --pull never api
 
 后台初始化失败时，整栈启动可能报错；检查 ps -a 和 logs，只有确认本轮 deploy 已成功执行会话 SQL 后，才可单独启动游戏链：docker compose up -d --pull never --no-build gateway；会话 SQL 失败时先修复并重新运行 deploy。停止 Admin 不要停止共享数据库。API 和 Server 共享 data/server-settings，battle_conf.txt 的运营变更须备份；不能改成单文件挂载。
 
-Docker 为 Admin 与 API 建立专用 `admin-proxy` 网络；`ADMIN_PROXY_SUBNET` 默认 `172.30.81.0/29`，`ADMIN_PROXY_DYNAMIC_RANGE` 默认 `172.30.81.4/30`，`ADMIN_PROXY_IP` 默认 `172.30.81.2`。动态地址池用于 API 等临时端点，不包含 Admin 固定地址，避免 API 先启动时占用该地址。API 的 `HTTP_TRUSTED_PROXIES` 只信任该 Admin 地址，Nginx 覆盖客户端传入的转发头，使登录限流、登录记录和操作审计使用代理收到的来源 IP。若与宿主机路由或已有 Docker 网段冲突，须同时调整子网、子网内的动态地址池和池外可用的 Admin 固定地址，并重新创建网络和容器。外层反向代理的真实 IP 信任链须另行配置，默认不会信任外部传入的转发头。
+Docker 为 Admin 与 API 建立专用 `admin-proxy` 网络；`HAPPYRO_ADMIN_PROXY_SUBNET` 默认 `172.30.81.0/29`，`HAPPYRO_ADMIN_PROXY_DYNAMIC_RANGE` 默认 `172.30.81.4/30`，`HAPPYRO_ADMIN_PROXY_IP` 默认 `172.30.81.2`。动态地址池用于 API 等临时端点，不包含 Admin 固定地址，避免 API 先启动时占用该地址。API 的 `HAPPYRO_API_TRUSTED_PROXIES` 只信任该 Admin 地址，Nginx 覆盖客户端传入的转发头，使登录限流、登录记录和操作审计使用代理收到的来源 IP。若与宿主机路由或已有 Docker 网段冲突，须同时调整子网、子网内的动态地址池和池外可用的 Admin 固定地址，并重新创建网络和容器。外层反向代理的真实 IP 信任链须另行配置，默认不会信任外部传入的转发头。
 
 ## 升级
 
 包含 custom 和登录会话升级的版本应使用完整新版包，不能沿用旧 Compose/工具而只替换镜像。运行前先完成以下准备：
 
 - 用旧版配套工具停写备份，保留旧完整包及旧 `.env`。新旧包不得同时连接同一份存档。
-- 记录 DATA_DIR、CUSTOM_DIR 的实际绝对路径及 custom 文件哈希；旧版无 custom 时使用新的专用目录。
-- 新目录复制旧 `.env`，保留数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与五个镜像引用等明确需要变更的值。新增 `ADMIN_IMAGE` 指向本版独立后台镜像，不再设置 `FRONTEND_DIR`。
-- `DATA_DIR=./data` 等相对路径会随包目录改变，须改成原数据的绝对路径；`RESOURCE_DIR` 指向新包资源。若搬迁数据，需在停写状态复制完整结构，而非只复制数据库目录。
+- 记录 HAPPYRO_DATA_DIR、HAPPYRO_CUSTOM_DIR 的实际绝对路径及 custom 文件哈希；旧版无 custom 时使用新的专用目录。
+- 新目录复制旧 `.env`，保留数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与五个镜像引用等明确需要变更的值。新增 `HAPPYRO_ADMIN_IMAGE` 指向本版独立后台镜像，不再设置 `FRONTEND_DIR`。
+- `HAPPYRO_DATA_DIR=./data` 等相对路径会随包目录改变，须改成原数据的绝对路径；`HAPPYRO_RESOURCE_DIR` 指向新包资源。若搬迁数据，需在停写状态复制完整结构，而非只复制数据库目录。
 - 固定容器名会冲突。备份完成后在旧包目录执行 `docker compose down`，再启动新版；bind mount 数据会保留。
 
 1. 保留新版完整包并执行 verify；先在旧部署目录停止写入并备份（见下节）。同一存档只能有一套游戏服务运行。
-2. 在新版包根目录复制旧 .env，保留数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和五个 IMAGE 变量。
-3. 将 DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），CUSTOM_DIR 指向旧的自定义目录（同样建议绝对路径），RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 或 custom/ 当成旧内容。
+2. 在新版包根目录复制旧 .env，保留数据库密码和控制令牌；从新版 .env.example 更新 HAPPYRO_RELEASE_VERSION 和五个 IMAGE 变量。
+3. 将 HAPPYRO_DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），HAPPYRO_CUSTOM_DIR 指向旧的自定义目录（同样建议绝对路径），HAPPYRO_RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 或 custom/ 当成旧内容。
 4. 执行 `python3 tools/deployment/manage.py initialize-custom --directory .`：首次引入自定义功能时建立目录；后续仅补齐新版新增的模板文件，已有文件不覆盖，不合并。旧版本备份需使用旧版本配套工具恢复，不能直接交给新工具。
 5. 导入本版五类镜像，等待 database 健康，再显式执行 Admin 迁移和目录导入；成功后运行 `deploy`，由工具升级游戏会话结构并启动整栈。以下命令逐条执行，任一步失败即停止。
 
@@ -186,11 +186,11 @@ docker compose stop gateway admin api web-api map char login
 python3 tools/deployment/manage.py backup --directory . --output ../backups/before-upgrade
 ```
 
-普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、server-settings、整个 CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。备份输出目录必须不存在，示例路径用过后须换新目录。完整离线包另行保存，备份不会重复复制镜像和资源。
+普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、server-settings、整个 HAPPYRO_CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。备份输出目录必须不存在，示例路径用过后须换新目录。完整离线包另行保存，备份不会重复复制镜像和资源。
 
-恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 DATA_DIR、CUSTOM_DIR、资源路径和地址，保留原数据库密码和控制令牌，不重新 initialize。`initialize-custom` 只准备 `CUSTOM_DIR`，不会创建 `DATA_DIR`。若使用新建的外部数据目录，先在 `.env` 设置其实际路径，再创建全部五个数据子目录；Compose 的 bind mount 不会自动创建缺失路径。
+恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 HAPPYRO_DATA_DIR、HAPPYRO_CUSTOM_DIR、资源路径和地址，保留原数据库密码和控制令牌，不重新 initialize。`initialize-custom` 只准备 `HAPPYRO_CUSTOM_DIR`，不会创建 `HAPPYRO_DATA_DIR`。若使用新建的外部数据目录，先在 `.env` 设置其实际路径，再创建全部五个数据子目录；Compose 的 bind mount 不会自动创建缺失路径。
 
-以下示例中的 `/srv/happyro/restore-data` 必须替换为 `.env` 中 `DATA_DIR` 指定的同一目录。使用全新解压包自带的 `./data` 时，这五个空子目录已包含在包中。
+以下示例中的 `/srv/happyro/restore-data` 必须替换为 `.env` 中 `HAPPYRO_DATA_DIR` 指定的同一目录。使用全新解压包自带的 `./data` 时，这五个空子目录已包含在包中。
 
 ```bash
 restore_data_dir=/srv/happyro/restore-data
@@ -222,7 +222,7 @@ python3 tools/deployment/manage.py restore --directory . --backup ../backups/bef
 python3 tools/deployment/manage.py deploy --directory .
 ```
 
-restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换备份涉及的表和文件；CUSTOM_DIR 精确恢复到备份内容，移除备份中不存在的额外文件。不自动替换镜像、内置资源或密钥。覆盖已有数据前另做备份。跨数据库版本或不兼容 schema 回退，必须同时恢复配套备份。
+restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换备份涉及的表和文件；HAPPYRO_CUSTOM_DIR 精确恢复到备份内容，移除备份中不存在的额外文件。不自动替换镜像、内置资源或密钥。覆盖已有数据前另做备份。跨数据库版本或不兼容 schema 回退，必须同时恢复配套备份。
 
 从现有 systemd 环境迁移需单独安排停服，导出三个库、自定义目录、battle_conf.txt 并保留生成的数据库密码和控制令牌，再导入新的宿主机数据目录。工具不会自动搬迁旧主机存档。
 
@@ -238,24 +238,24 @@ restore 校验备份哈希，并拒绝其它服务仍运行的环境；它替换
 
 ## 服务端与资源自定义
 
-推荐将 DATA_DIR 与 CUSTOM_DIR 放在版本目录外。发行包只带 examples/custom 模板；首次 initialize 创建默认 custom/。若编辑 .env 将 CUSTOM_DIR 改到其它路径，必须执行 initialize-custom 为该位置初始化。这个命令可重复执行，只补缺少的模板，不覆盖已有文件。资源不复制原始 GRF，自定义目录初始为空。
+推荐将 HAPPYRO_DATA_DIR 与 HAPPYRO_CUSTOM_DIR 放在版本目录外。发行包只带 examples/custom 模板；首次 initialize 创建默认 custom/。若编辑 .env 将 HAPPYRO_CUSTOM_DIR 改到其它路径，必须执行 initialize-custom 为该位置初始化。这个命令可重复执行，只补缺少的模板，不覆盖已有文件。资源不复制原始 GRF，自定义目录初始为空。
 
 | 宿主机 | 容器 | 使用方 |
 |---|---|---|
-| CUSTOM_DIR/npc | /opt/happyro/custom/npc | Server，只读 |
-| CUSTOM_DIR/db | /opt/rathena/db/import | Server，只读 |
-| CUSTOM_DIR/resources | /opt/happyro/custom/resources | Gateway，只读 |
-| CUSTOM_DIR | /opt/happyro/custom | API 目录刷新任务，只读 |
+| HAPPYRO_CUSTOM_DIR/npc | /opt/happyro/custom/npc | Server，只读 |
+| HAPPYRO_CUSTOM_DIR/db | /opt/rathena/db/import | Server，只读 |
+| HAPPYRO_CUSTOM_DIR/resources | /opt/happyro/custom/resources | Gateway，只读 |
+| HAPPYRO_CUSTOM_DIR | /opt/happyro/custom | API 目录刷新任务，只读 |
 
-内置 npc、db、conf 仍由镜像提供。后台战斗设置仍存放 DATA_DIR/server-settings，不增加第二份配置来源。容器只读不妨碍在宿主机编辑。
+内置 npc、db、conf 仍由镜像提供。后台战斗设置仍存放 HAPPYRO_DATA_DIR/server-settings，不增加第二份配置来源。容器只读不妨碍在宿主机编辑。
 
 ### 新增及覆盖 NPC
 
-已部署配套 v0.5.0 镜像、工具和挂载配置后，修改 `CUSTOM_DIR/npc` 中的脚本不需要重新构建镜像或离线包。使用现有脚本指令、数据库内容和客户端资源即可新增对话、商店、兑换、治疗、仓库等 NPC；如果需要新增服务端脚本指令或修改引擎代码，则需要更新 Server 镜像，正式版本仍按完整发布流程构建。
+已部署配套 v0.5.0 镜像、工具和挂载配置后，修改 `HAPPYRO_CUSTOM_DIR/npc` 中的脚本不需要重新构建镜像或离线包。使用现有脚本指令、数据库内容和客户端资源即可新增对话、商店、兑换、治疗、仓库等 NPC；如果需要新增服务端脚本指令或修改引擎代码，则需要更新 Server 镜像，正式版本仍按完整发布流程构建。
 
 操作顺序：在宿主机编辑脚本 → 新增脚本登记清单 → 执行 `@reloadscript` 或维护时重启 map → 在游戏中验证。需要后台或冒险工具同步名称、坐标等资料时，再执行 `refresh-custom-catalogs`；目录刷新不能代替游戏重载。保存文件本身不会自动重载。
 
-以下 `custom/` 指 `.env` 的实际 CUSTOM_DIR。例如在 `npc/additions/review.txt` 写入测试脚本（声明行各字段之间必须使用 Tab）：
+以下 `custom/` 指 `.env` 的实际 HAPPYRO_CUSTOM_DIR。例如在 `npc/additions/review.txt` 写入测试脚本（声明行各字段之间必须使用 Tab）：
 
 ```text
 prontera,150,176,4	script	ReviewCustom	100,{
@@ -342,7 +342,7 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 | NPC additions / overrides | GM `@reloadscript` 或维护重启 map | `refresh-custom-catalogs` |
 | item_db / mob_db | 相应原生数据库重载或维护重启 map | `refresh-custom-catalogs` |
 | resources | 后续 HTTP 请求读取新文件；游戏内已解码图片需重新进入游戏 | 不自动生成缩略图或外观映射 |
-| 后台战斗设置 | 通过后台保存与现有应用流程 | 唯一持久来源为 DATA_DIR/server-settings |
+| 后台战斗设置 | 通过后台保存与现有应用流程 | 唯一持久来源为 HAPPYRO_DATA_DIR/server-settings |
 
 重启 map 的命令是 `docker compose restart map`，会中断地图连接，应安排维护时间。`refresh-custom-catalogs` 不重载游戏，也不执行 NPC 动态脚本。先确保自定义文件合法，再分别完成游戏重载和目录刷新，最后核对结果。
 
@@ -359,12 +359,12 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 
 ### 登录页初始凭据提示
 
-在部署目录 `.env` 设置 `SHOW_DEFAULT_CREDENTIALS=true` 后运行 `docker compose up -d --no-deps --force-recreate api`，登录页显示初始账号密码 `admin/admin`。默认关闭，设为 `false` 隐藏。切换无需重新构建镜像；此开关不修改账号密码。
+在部署目录 `.env` 设置 `HAPPYRO_ADMIN_DEFAULT_CREDENTIALS_HINT_ENABLED=true` 后运行 `docker compose up -d --no-deps --force-recreate api`，登录页显示初始账号密码 `admin/admin`。默认关闭，设为 `false` 隐藏。切换无需重新构建镜像；此开关不修改账号密码。
 
 ### 初始管理员账号
 
-部署目录 `.env` 中的 `ADMIN_INITIAL_USERNAME` 和 `ADMIN_INITIAL_PASSWORD` 指定初始管理员，默认均为 `admin`。首次初始化只在管理库没有任何账号时创建超级管理员；已有账号时直接跳过，不覆盖密码、角色或状态。修改变量不会重置已有账号。用户名沿用小写字母、数字、下划线、点及短横线规则，密码为 5–255 个字符。
+部署目录 `.env` 中的 `HAPPYRO_ADMIN_INITIAL_USERNAME` 和 `HAPPYRO_ADMIN_INITIAL_PASSWORD` 指定初始管理员，默认均为 `admin`。首次初始化只在管理库没有任何账号时创建超级管理员；已有账号时直接跳过，不覆盖密码、角色或状态。修改变量不会重置已有账号。用户名沿用小写字母、数字、下划线、点及短横线规则，密码为 5–255 个字符。
 
-使用自定义账号或密码时，登录页隐藏默认凭据提示，即使 `SHOW_DEFAULT_CREDENTIALS=true`；公开配置接口不返回自定义凭据。直接部署使用 `happyro-api init --no-color`。
+使用自定义账号或密码时，登录页隐藏默认凭据提示，即使 `HAPPYRO_ADMIN_DEFAULT_CREDENTIALS_HINT_ENABLED=true`；公开配置接口不返回自定义凭据。直接部署使用 `happyro-api init --no-color`。
 
-提示是固定的 `admin/admin` 文案，不读取真实密码。初始化配置仍为默认值但实际密码已经修改时，应设置 `SHOW_DEFAULT_CREDENTIALS=false` 隐藏提示。
+提示是固定的 `admin/admin` 文案，不读取真实密码。初始化配置仍为默认值但实际密码已经修改时，应设置 `HAPPYRO_ADMIN_DEFAULT_CREDENTIALS_HINT_ENABLED=false` 隐藏提示。

@@ -73,7 +73,7 @@ def check(batch, timeout=300, browser_path=None):
             # URLs must derive from the protected environment, not arbitrary report input.
             values = dict(line.split('=', 1) for line in (batch.bundle / '.env').read_text().splitlines()
                           if '=' in line and not line.startswith('#'))
-            for name, key in [('gateway_url', 'GAME_PUBLIC_URL'), ('admin_url', 'ADMIN_PUBLIC_URL')]:
+            for name, key in [('gateway_url', 'HAPPYRO_GAME_PUBLIC_URL'), ('admin_url', 'HAPPYRO_ADMIN_PUBLIC_URL')]:
                 if state[name] != values[key] or not state[name].startswith('http://127.0.0.1:'):
                     raise ValueError('Acceptance URL is not the registered loopback address')
             batch.run_tool('verify')

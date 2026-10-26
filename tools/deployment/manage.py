@@ -38,9 +38,9 @@ def initialize(args):
     verify(args)
     target = args.directory.resolve() / '.env'
     template = target.with_name('.env.example').read_text()
-    values = {key: secrets.token_hex(24) for key in ['DB_PASSWORD', 'ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'INTERSERVER_PASSWORD', 'GAME_CONTROL_TOKEN']}
+    values = {key: secrets.token_hex(24) for key in ['HAPPYRO_SERVER_DB_PASSWORD', 'HAPPYRO_API_ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'HAPPYRO_SERVER_INTERSERVER_PASSWORD', 'HAPPYRO_GAME_CONTROL_TOKEN']}
     # rAthena inter-server authentication stores passwords in a 24-byte buffer.
-    values['INTERSERVER_PASSWORD'] = secrets.token_hex(10)
+    values['HAPPYRO_SERVER_INTERSERVER_PASSWORD'] = secrets.token_hex(10)
     for key, value in values.items():
         template = re.sub(rf'^{key}=.*$', f'{key}={value}', template, flags=re.M)
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

@@ -67,7 +67,7 @@ python3 tools/deployment/manage.py initialize --directory .
 ```
 
 - [ ] 检查自动生成的 `.env`，配置新机器实际地址、端口。手机和平板使用可访问的机器地址，不能使用它们自己的 localhost。
-- [ ] 推荐将 `CUSTOM_DIR` 设为版本目录外的持久化绝对路径；修改后执行下方 initialize-custom。若调整 `DATA_DIR`，也必须准备 Compose 要求的完整数据目录结构。
+- [ ] 推荐将 `HAPPYRO_CUSTOM_DIR` 设为版本目录外的持久化绝对路径；修改后执行下方 initialize-custom。若调整 `HAPPYRO_DATA_DIR`，也必须准备 Compose 要求的完整数据目录结构。
 
 ```bash
 python3 tools/deployment/manage.py initialize-custom --directory .
@@ -96,18 +96,18 @@ docker compose logs map gateway
 
 | 宿主机目录 | 容器目标 | 使用方 |
 | --- | --- | --- |
-| `CUSTOM_DIR/npc` | `/opt/happyro/custom/npc` | Server |
-| `CUSTOM_DIR/db` | `/opt/rathena/db/import` | Server |
-| `CUSTOM_DIR/resources` | `/opt/happyro/custom/resources` | Gateway |
-| `CUSTOM_DIR` | `/opt/happyro/custom` | API |
+| `HAPPYRO_CUSTOM_DIR/npc` | `/opt/happyro/custom/npc` | Server |
+| `HAPPYRO_CUSTOM_DIR/db` | `/opt/rathena/db/import` | Server |
+| `HAPPYRO_CUSTOM_DIR/resources` | `/opt/happyro/custom/resources` | Gateway |
+| `HAPPYRO_CUSTOM_DIR` | `/opt/happyro/custom` | API |
 
 - [ ] 游戏 `/applications/pwa/index.html` 显示启动页和查看器入口；能登录、选角、进入地图，地图、音效、中文正常。
 - [ ] 后台能登录，冒险工具的物品、魔物、NPC 查询正常；空 custom 不改变原有数据和行为。
-- [ ] 修改一项后台战斗设置并重启，确认仍保存在 `DATA_DIR/server-settings/`，没有第二份配置来源。
+- [ ] 修改一项后台战斗设置并重启，确认仍保存在 `HAPPYRO_DATA_DIR/server-settings/`，没有第二份配置来源。
 
 ## 4. 新增及覆盖 NPC
 
-下文 `custom/` 指实际 `CUSTOM_DIR`。使用独立测试角色和测试地图位置，记录每个测试脚本及原始文件，测试后清理。
+下文 `custom/` 指实际 `HAPPYRO_CUSTOM_DIR`。使用独立测试角色和测试地图位置，记录每个测试脚本及原始文件，测试后清理。
 
 - [ ] 在 `custom/npc/additions/review.txt` 添加合法测试 NPC，使用确认可用的地图、坐标和现有外观。在 `custom/npc/scripts.conf` 登记 `npc: additions/review.txt`。
 - [ ] 保存文件后不会自动出现；执行有权限的 `@reloadscript` 或维护重启 map 后出现，能完成对话且只出现一次。
@@ -205,7 +205,7 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 - [ ] 保留旧完整包及配套工具，停止旧服务写入并备份；旧版备份用旧版工具恢复。
 - [ ] 记录用户自定义文件的路径和 SHA-256，以及角色/仓库/后台设置的验收值。
 - [ ] 解压并 verify 新包；复制旧 `.env`，保留密码、令牌和 Compose 项目名；首次部署使用独立空管理库，并完成管理员初始化。
-- [ ] 从新版 `.env.example` 更新 `RELEASE_VERSION` 和五个 IMAGE 变量；`DATA_DIR`、`CUSTOM_DIR` 指向旧数据的绝对路径，`RESOURCE_DIR` 使用新包资源。
+- [ ] 从新版 `.env.example` 更新 `HAPPYRO_RELEASE_VERSION` 和五个 IMAGE 变量；`HAPPYRO_DATA_DIR`、`HAPPYRO_CUSTOM_DIR` 指向旧数据的绝对路径，`HAPPYRO_RESOURCE_DIR` 使用新包资源。
 - [ ] 不重新 initialize 已有环境；只运行 initialize-custom。旧版没有 custom 时建立新目录，已有 custom 只补缺少模板。
 
 ```bash
@@ -248,7 +248,7 @@ python3 tools/deployment/manage.py backup --directory . --output ../backups/cust
 
 - [ ] 备份包含数据库、服务端设置、`custom-files.tar`、`.env`、部署清单和 `checksums.json`。妥善保管密钥，不提交到 Git。
 - [ ] 保留匹配版本完整包。在隔离恢复环境准备数据目录，复制备份 `.env` 并修正目录和地址，保留原数据库凭据与游戏控制令牌，不重新 initialize。
-- [ ] 在实际 `DATA_DIR` 下准备 `database`、`control-socket`、`server-settings`、`server-logs`、`gateway-logs` 五个目录；包内 `./data` 已包含这些空目录，外部新目录须另行创建。`initialize-custom` 只建立 `CUSTOM_DIR`；随后导入匹配镜像，仅启动 database，再恢复：
+- [ ] 在实际 `HAPPYRO_DATA_DIR` 下准备 `database`、`control-socket`、`server-settings`、`server-logs`、`gateway-logs` 五个目录；包内 `./data` 已包含这些空目录，外部新目录须另行创建。`initialize-custom` 只建立 `HAPPYRO_CUSTOM_DIR`；随后导入匹配镜像，仅启动 database，再恢复：
 
 ```bash
 python3 tools/deployment/manage.py initialize-custom --directory .

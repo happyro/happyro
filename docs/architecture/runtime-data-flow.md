@@ -21,7 +21,7 @@ PWA (dist/Web)
 未配置自定义资源时，Gateway 处理 `/data/...` 的顺序为：
 
 1. Gateway 仓库内同路径的本地文件，例如 `repos/happyro-gateway/data/...`。
-2. `DATA_OVERRIDE_PATH` 中按顺序配置的目录。当前为已审查运行目录，然后是 `localization/client/data/`。
+2. `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` 中按顺序配置的目录。当前为已审查运行目录，然后是 `localization/client/data/`。
 3. 官方 `data.grf`。
 
 命中结果会进入 Gateway 文件缓存。修改覆盖文件或 GRF 后必须重新配置资源并重启 Gateway，只改源文件不会生效。完整路径见 [客户端资源](../localization/client-resources.md)。
@@ -74,4 +74,4 @@ GameTools（客户端）
 
 魔物图鉴不经过这条链路：`GameTools` 直接向 Gateway 请求客户端 PWA 内的静态文件（`applications/pwa/data/monsters/catalog.json`），不经 Go API，分页在浏览器内完成——原因见 [魔物·架构决策](../game-data/monsters.md#架构决策冒险工具魔物图鉴为什么不做服务端分页)。
 
-配置 `CUSTOM_RESOURCE_PATH` 时，用户资源先于内置来源和缓存读取；删除回退及缓存规则见[自定义设计](customization.md#资源与资料刷新)。
+配置 `HAPPYRO_GATEWAY_CUSTOM_RESOURCE_DIR` 时，用户资源先于内置来源和缓存读取；删除回退及缓存规则见[自定义设计](customization.md#资源与资料刷新)。

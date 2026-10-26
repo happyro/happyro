@@ -13,11 +13,11 @@ def release_compose():
     release_version = (root / 'deploy/docker/VERSION').read_text().strip()
     values = {key: value.replace('@VERSION@', release_version)
               for key, value in values.items()}
-    for key in ('DB_PASSWORD', 'ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD',
-                'INTERSERVER_PASSWORD', 'GAME_CONTROL_TOKEN'):
+    for key in ('HAPPYRO_SERVER_DB_PASSWORD', 'HAPPYRO_API_ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD',
+                'HAPPYRO_SERVER_INTERSERVER_PASSWORD', 'HAPPYRO_GAME_CONTROL_TOKEN'):
         values[key] = 'isolated-test-placeholder'
     # Allow isolated test subnets on hosts already running the production stack.
-    for key in ('ADMIN_PROXY_SUBNET', 'ADMIN_PROXY_DYNAMIC_RANGE', 'ADMIN_PROXY_IP'):
+    for key in ('HAPPYRO_ADMIN_PROXY_SUBNET', 'HAPPYRO_ADMIN_PROXY_DYNAMIC_RANGE', 'HAPPYRO_ADMIN_PROXY_IP'):
         values[key] = os.environ.get('HAPPYRO_TEST_' + key, values[key])
     return json.loads(subprocess.check_output([
         'docker', 'compose', '--env-file', os.devnull,
@@ -32,5 +32,5 @@ def add_proxy_topology(config, release):
     config['networks'] = {'default': {}, 'admin-proxy': network}
     for name in ('api', 'admin'):
         config['services'][name]['networks'] = release['services'][name]['networks']
-    config['services']['api'].setdefault('environment', {})['HTTP_TRUSTED_PROXIES'] = (
-        release['services']['api']['environment']['HTTP_TRUSTED_PROXIES'])
+    config['services']['api'].setdefault('environment', {})['HAPPYRO_API_TRUSTED_PROXIES'] = (
+        release['services']['api']['environment']['HAPPYRO_API_TRUSTED_PROXIES'])

@@ -2,7 +2,7 @@
 
 ## 出生模式与旧迁移 NPC 冲突
 
-原 Renewal 只启用学院流程，经典地图中的迁移 NPC 与经典教官位置重叠，并会删除 7117～7127 任务、强制送回沉船。现在将沉船和经典教学作为两套当前流程同时启用，删除这些迁移 NPC 以及经典脚本中针对历史进度的兼容段。角色服启动时严格读取 `HAPPYRO_NEW_PLAYER_START`，以同一地点初始化出生与复活点；切换不改写已有角色。
+原 Renewal 只启用学院流程，经典地图中的迁移 NPC 与经典教官位置重叠，并会删除 7117～7127 任务、强制送回沉船。现在将沉船和经典教学作为两套当前流程同时启用，删除这些迁移 NPC 以及经典脚本中针对历史进度的兼容段。角色服启动时严格读取 `HAPPYRO_CHARACTER_START_MODE`，以同一地点初始化出生与复活点；切换不改写已有角色。
 
 主要文件：`repos/happyro-server/src/char/new_player_start.hpp`、`src/char/char.cpp`、`npc/re/scripts_jobs.conf`、`npc/re/jobs/novice/academy.txt`、`npc/re/jobs/novice/novice.txt`。Docker Compose、本机 profile 和 systemd 模板同步传入环境变量。
 

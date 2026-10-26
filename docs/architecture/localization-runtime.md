@@ -12,7 +12,7 @@ inputs/runtime/...        允许写入已校验 LUB / 文本
 localization/client/data  UTF-8 散装覆盖
 localization/sources/...  回编译仍使用的 JSON / 文本源
         ↓
-Gateway 查找顺序：本地文件 → DATA_OVERRIDE_PATH → GRF
+Gateway 查找顺序：本地文件 → HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS → GRF
         ↓
 Client DB 加载器 / Lua 运行时
 ```

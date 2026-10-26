@@ -48,7 +48,7 @@ class ProxyNetworkTest(unittest.TestCase):
             try:
                 compose('up', '-d', '--wait', '--wait-timeout', '20')
                 pool = ipaddress.ip_network(config['networks']['admin-proxy']['ipam']['config'][0]['ip_range'])
-                expected = config['services']['api']['environment']['HTTP_TRUSTED_PROXIES']
+                expected = config['services']['api']['environment']['HAPPYRO_API_TRUSTED_PROXIES']
                 for recreate in (False, True):
                     if recreate:
                         compose('up', '-d', '--no-deps', '--force-recreate', '--wait', '--wait-timeout', '20', 'api')

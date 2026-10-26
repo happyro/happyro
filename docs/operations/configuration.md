@@ -21,19 +21,19 @@
 | 变量 | 当前值 | 作用 |
 | --- | --- | --- |
 | `PORT` | `3338` | HTTP / WebSocket 端口 |
-| `ROBROWSER_PATH` | Client `dist/Web` | PWA 静态根 |
-| `ROBROWSER_PUBLIC_PATH` | `/applications/pwa` | 浏览器路径前缀 |
-| `WS_ALLOWED_TARGETS` | `127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121` | 每一项必须是完整 host:port |
-| `REMOTE_CLIENT_URL` / `SOCKET_PROXY_URL` | 空 | 使用当前页面同源资源和 `/ws/`；非空时覆盖对应浏览器入口 |
-| `HAPPYRO_API_URL` | 代码默认 `http://127.0.0.1:18081` | `/api/adventure-tools` 同源代理目标，样例未显式设置 |
-| `WS_TARGET_REDIRECTS` | 本机不设置 | Docker 将允许的客户端目标映射到容器服务名 |
-| `RATHENA_WEB_API_URL` | `http://127.0.0.1:8889` | Web API 反向代理 |
-| `DATA_OVERRIDE_PATH` | 运行目录 + `localization/client/data` | 散装资源覆盖 |
-| `ENABLE_WSPROXY` | `true` | 内嵌 WebSocket 代理 |
-| `ENABLE_STATIC_SERVE` | `true` | 内嵌 PWA 静态服务 |
-| `ESRGAN_ENABLED` | `false` | 禁止外部放大插件 |
+| `HAPPYRO_GATEWAY_PWA_DIR` | Client `dist/Web` | PWA 静态根 |
+| `HAPPYRO_GATEWAY_PWA_PUBLIC_PATH` | `/applications/pwa` | 浏览器路径前缀 |
+| `HAPPYRO_GATEWAY_WS_ALLOWED_TARGETS` | `127.0.0.1:6900,127.0.0.1:6121,127.0.0.1:5121` | 每一项必须是完整 host:port |
+| `HAPPYRO_CLIENT_RESOURCE_URL` / `HAPPYRO_CLIENT_SOCKET_PROXY_URL` | 空 | 使用当前页面同源资源和 `/ws/`；非空时覆盖对应浏览器入口 |
+| `HAPPYRO_GATEWAY_API_UPSTREAM_URL` | 代码默认 `http://127.0.0.1:18081` | `/api/adventure-tools` 同源代理目标，样例未显式设置 |
+| `HAPPYRO_GATEWAY_WS_TARGET_REDIRECTS` | 本机不设置 | Docker 将允许的客户端目标映射到容器服务名 |
+| `HAPPYRO_GATEWAY_GAME_WEB_UPSTREAM_URL` | `http://127.0.0.1:8889` | Web API 反向代理 |
+| `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` | 运行目录 + `localization/client/data` | 散装资源覆盖 |
+| `HAPPYRO_GATEWAY_WS_PROXY_ENABLED` | `true` | 内嵌 WebSocket 代理 |
+| `HAPPYRO_GATEWAY_STATIC_SERVE_ENABLED` | `true` | 内嵌 PWA 静态服务 |
+| `HAPPYRO_GATEWAY_ESRGAN_ENABLED` | `false` | 禁止外部放大插件 |
 
-`DATA_OVERRIDE_PATH` 使用系统路径分隔符。Gateway 按列出顺序查找，先命中先返回。
+`HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` 使用系统路径分隔符。Gateway 按列出顺序查找，先命中先返回。
 
 以上是仓库样例/代码默认值，不代表运行进程的实际环境。`configure-gateway.sh apply` 只在 `.env` 缺失时创建，已有文件不会被新样例覆盖。修改前对照已有配置；不要把含密码的完整环境输出到日志。
 
@@ -58,8 +58,8 @@ HappyRO 覆盖写在 `repos/happyro-server/conf/import/`。本机 `make configur
 
 | 环境变量 | 默认值 | 允许范围 |
 | --- | --- | --- |
-| `HAPPYRO_AREA_SIZE` | 14 格 | 5–50，整数 |
-| `HAPPYRO_MAX_WALK_PATH` | 17 格 | 1–32，整数 |
+| `HAPPYRO_GAME_ENTITY_SYNC_RANGE_CELLS` | 14 格 | 5–50，整数 |
+| `HAPPYRO_GAME_MAX_WALK_PATH_CELLS` | 17 格 | 1–32，整数 |
 
 空值或未设置时使用服务端 battle 文件配置；非空环境变量在所有导入文件加载后覆盖对应值，非法值导致地图服报错退出。修改变量需要重启进程，单独重载配置不会读取已修改的外部环境文件。重载 battle 配置仍会重新应用当前进程中的环境变量。
 
@@ -68,22 +68,24 @@ HappyRO 覆盖写在 `repos/happyro-server/conf/import/`。本机 `make configur
 - Docker：编辑部署目录 `.env`，重新创建 map 容器。Compose 将这两个变量注入服务端进程。
 - 独立 systemd 服务：通过 `systemctl edit happyro-map-server` 的 `[Service] Environment=` 设置并重启。
 
-例：`HAPPYRO_AREA_SIZE=14`、`HAPPYRO_MAX_WALK_PATH=17`。留空可继续通过管理后台维护对应 battle 文件值；配置非空环境变量后，后台修改同名文件值不会在重载时覆盖环境变量。
+例：`HAPPYRO_GAME_ENTITY_SYNC_RANGE_CELLS=14`、`HAPPYRO_GAME_MAX_WALK_PATH_CELLS=17`。留空可继续通过管理后台维护对应 battle 文件值；配置非空环境变量后，后台修改同名文件值不会在重载时覆盖环境变量。
 
 首次使用需要更新地图服二进制。客户端默认搜怪 14、活动 30；搜怪上限随服务端实际视野同步，旧超限值按实际范围生效，活动范围及瞬移设置保持独立。更大视野不等于可无限距离追击：行走路径仍受上限约束，详细语义见[服务端说明](../../repos/happyro-server/docs/battle-environment.md)。
 
 ## 玩法与工具权限
 
-地图服新增 10 项 `HAPPYRO_NAVIGATION_*` / `HAPPYRO_GAME_TOOLS_*` 部署覆盖，支持导航、召怪与工具权限。配置入口同上，值留空交由文件和后台管理。非空覆盖项提交修改时由 API 明确拒绝，地图服同时校验；需更新地图服和 API。完整变量表与示例见[环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables#玩法与工具权限环境变量)。
+地图服统一提供 32 项 `HAPPYRO_GAME_*` 部署覆盖，支持同步范围、导航、召怪、工具权限、经验、掉落和精炼。布尔值为 true/false，倍率为百分整数（100=1倍）。配置入口同上，值留空交由文件和后台管理。非空覆盖项提交修改时由 API 明确拒绝，地图服同时校验；需更新地图服和 API。完整变量表与示例见[环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables#玩法与工具权限环境变量)。
 
 ## 后台账号改密与演示环境
 
-`ADMIN_PASSWORD_CHANGE_ENABLED` 默认 `true`，控制后台头像菜单的自助改密。共享 admin 账号的演示环境设置为 `false`，API 会隐藏入口并拒绝改密请求；后台页面不能覆盖此限制，服务器 CLI `users password` 不受影响。
+`HAPPYRO_ADMIN_PASSWORD_CHANGE_ENABLED` 默认 `true`，控制后台头像菜单的自助改密。共享 admin 账号的演示环境设置为 `false`，API 会隐藏入口并拒绝改密请求；后台页面不能覆盖此限制，服务器 CLI `users password` 不受影响。
 
 Docker 在部署 `.env` 修改后重新创建 API 容器：`docker compose up -d --no-deps --force-recreate api`。原生环境修改实际传入 API 的环境变量后重启服务。该配置属于 API，不是 Gateway 或前端构建参数。登录限流、会话失效和部署细节见 [API 部署说明](../../repos/happyro-api/docs/deployment.md#后台账号改密)。
 
 ## 注册默认权限组锁
 
-API 环境变量 `REGISTRATION_SETTINGS_EDITABLE` 默认 `false`，锁定后台「游戏设置 → 账号注册」的默认权限组选择和保存，同时拒绝直接 API 修改。设为 `true` 并重启 API 后可保存「普通玩家 / GM」，演示部署保存后恢复 `false`；锁定保留当前策略。Compose 已透传该变量。
+`HAPPYRO_REGISTRATION_DEFAULT_GROUP_EDITABLE` 默认 `true`，允许后台修改注册默认权限组；设为 `false` 并重启 API 后禁用选择并拒绝修改请求，保存按钮仍可点击，无修改时提示“没有需要保存的修改”。该开关不影响启动默认组的应用；Docker 修改环境后需重新创建 API 容器。
 
 先执行服务端 `sql-files/happyro-admin.sql` 初始化共享策略表，再更新登录服和 API。详见 [API 部署说明](../../repos/happyro-api/docs/deployment.md#新注册账号默认权限组)。
+
+`HAPPYRO_REGISTRATION_DEFAULT_GROUP_ID` 留空保留数据库策略，设为 `0`（普通玩家）或 `99`（GM）时在每次 API 启动应用；只影响之后新注册的账号，不修改已有账号。`HAPPYRO_REGISTRATION_DEFAULT_GROUP_EDITABLE` 独立控制后台编辑，设为 `true` 时即使配置了启动默认组也允许修改；下次 API 重启仍会重新应用非空的启动默认组。

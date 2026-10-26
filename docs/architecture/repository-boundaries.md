@@ -34,7 +34,7 @@
 
 - `inputs/official/`：经过核验的官方 kRO 2021-11-05 文件，不可修改。
 - `inputs/runtime/kro-20211105/`：运行目录。允许用已审查、已编译并通过语义校验的翻译产物覆盖对应文件，覆盖后必须校验目标哈希并记录来源。
-- `localization/client/data/`：UTF-8 散装中文覆盖，由 Gateway `DATA_OVERRIDE_PATH` 提供。
+- `localization/client/data/`：UTF-8 散装中文覆盖，由 Gateway `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` 提供。
 - `localization/sources/kro-20211105/`：当前 LUB / 文本回编译仍读取的已审查 JSON 与文本源。
 - `work/`：GRF 解压、图片转换、翻译临时合并、本机 MariaDB 数据等，不提交。
 - `work/runtime/mariadb-10.11/` 包含数据库与凭据，不是可随意清理的缓存。Docker 数据卷也可能位于 `work/runtime/docker-mariadb/`；以实际挂载为准。恢复流程见[备份与恢复](../operations/backup-recovery.md)。

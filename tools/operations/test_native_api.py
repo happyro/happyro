@@ -16,10 +16,10 @@ class NativeAdminTest(unittest.TestCase):
             backend.mkdir(parents=True)
             (backend / 'go.mod').write_text('module test\n')
             binary = root / 'go api'
-            binary.write_text('#!/bin/sh\n[ "$1" = serve ] && [ "$HTTP_LISTEN" = "127.0.0.1:18081" ] && [ "$TEST_VALUE" = "a b" ]\n')
+            binary.write_text('#!/bin/sh\n[ "$1" = serve ] && [ "$HAPPYRO_API_LISTEN_ADDRESS" = "127.0.0.1:18081" ] && [ "$TEST_VALUE" = "a b" ]\n')
             binary.chmod(0o755)
             environment = root / 'go environment'
-            environment.write_text("HTTP_LISTEN=127.0.0.1:18081\nTEST_VALUE='a b'\n")
+            environment.write_text("HAPPYRO_API_LISTEN_ADDRESS=127.0.0.1:18081\nTEST_VALUE='a b'\n")
             output = root / 'service.plist'
             native_api.prepare(root, binary, environment, output)
             config = plistlib.loads(output.read_bytes())

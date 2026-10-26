@@ -6,7 +6,7 @@ v0.5.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使
 
 | 层 | 实现位置 | 作用 |
 | --- | --- | --- |
-| 目录和挂载 | 根仓库 `deploy/docker/.env.example`、`compose.yml`、`custom-templates/` | 增加 CUSTOM_DIR；Server 挂载 npc/db，Gateway 挂载 resources，Admin 挂载整个 custom，全部只读 |
+| 目录和挂载 | 根仓库 `deploy/docker/.env.example`、`compose.yml`、`custom-templates/` | 增加 HAPPYRO_CUSTOM_DIR；Server 挂载 npc/db，Gateway 挂载 resources，Admin 挂载整个 custom，全部只读 |
 | 生命周期 | 根仓库 `tools/deployment/custom.py`、`manage.py` | 初始化只补缺少文件，校验目录，备份 custom-files.tar，恢复精确替换 |
 | 服务端 NPC | Server 的 `src/map/npc_custom.hpp`、`npc.cpp`、`map.cpp` | 新增清单加载，按内置相对路径重定向 .txt 读取，保留原脚本身份 |
 | 数据库 | Server 原生 db/import | 挂载用户 db 目录，沿用原生 YAML 合并、脚本及重载语义 |
@@ -20,7 +20,7 @@ v0.5.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使
 
 ```mermaid
 flowchart LR
-  U[宿主机 CUSTOM_DIR] --> N[npc additions 与 overrides]
+  U[宿主机 HAPPYRO_CUSTOM_DIR] --> N[npc additions 与 overrides]
   U --> D[db 原生扩展]
   U --> R[resources 原路径文件]
   N --> S[Server 启动或重载]
@@ -39,7 +39,7 @@ flowchart LR
 
 NPC 定制通过宿主机文件挂载接入，不写回镜像。配套版本部署完成后，使用已有脚本能力的新增、修改和撤销只需更新文件及加载清单，再重载游戏；资料目录独立刷新，无需重建镜像或离线包。新增引擎能力或修改服务端代码仍需构建镜像；正式版本发布遵循全量构建规则。具体步骤见[新增及覆盖 NPC](../operations/docker-deployment.md#新增及覆盖-npc)。
 
-HAPPYRO_CUSTOM_NPC_PATH 指向 `/opt/happyro/custom/npc`。新增脚本只从 scripts.conf 显式登记，支持 `npc: additions/xxx.txt` 和 `import: additions/xxx.conf`；子清单仍以 custom/npc 为根，不递归扫描任意文件。路径校验拒绝越界、符号链接和循环 import。
+HAPPYRO_SERVER_CUSTOM_NPC_DIR 指向 `/opt/happyro/custom/npc`。新增脚本只从 scripts.conf 显式登记，支持 `npc: additions/xxx.txt` 和 `import: additions/xxx.conf`；子清单仍以 custom/npc 为根，不递归扫描任意文件。路径校验拒绝越界、符号链接和循环 import。
 
 内置 `npc/cities/prontera.txt` 的候选覆盖是 `overrides/cities/prontera.txt`。加载时替换读取源，但保留原逻辑文件名，因此启动、`@reloadscript`、`@loadnpc` 一致，`@unloadnpcfile` 仍按原文件定位；`@unloadnpc` 接受 NPC 名称。覆盖不是再加载一遍同名 NPC。仅注释文件可停用定义，删除覆盖恢复当前镜像版本；未被内置清单引用的旧覆盖不会自动启用。
 
@@ -47,7 +47,7 @@ HAPPYRO_CUSTOM_NPC_PATH 指向 `/opt/happyro/custom/npc`。新增脚本只从 sc
 
 ## 资源与资料刷新
 
-Gateway 的 CUSTOM_RESOURCE_PATH 指向 resources 挂载。相对路径对应客户端 data/ 下的原路径，不能额外嵌套 data/。自定义读取发生在进程缓存和原资源读取之前；启用 custom 的 data 响应使用 no-store，更新产生新 ETag，删除回退内置来源。路径和链接错误返回错误，不读取挂载外文件。浏览器已缓存或游戏已解码的图片仍需重新加载。
+Gateway 的 HAPPYRO_GATEWAY_CUSTOM_RESOURCE_DIR 指向 resources 挂载。相对路径对应客户端 data/ 下的原路径，不能额外嵌套 data/。自定义读取发生在进程缓存和原资源读取之前；启用 custom 的 data 响应使用 no-store，更新产生新 ETag，删除回退内置来源。路径和链接错误返回错误，不读取挂载外文件。浏览器已缓存或游戏已解码的图片仍需重新加载。
 
 API 镜像保留物品/魔物/NPC 基线和 Server 的 npc/conf 快照。catalogs.py 按有效清单筛选静态 NPC，对覆盖文件重新解析声明；新 NPC 只有坐标寻路能力，不凭空生成官方导航 ID。物品/魔物读取 item_db.yml、mob_db.yml 及 Renewal Imports；全部解析成功后才写快照，再通过一次 catalog import 校验并原子发布完整数据库快照；导入失败时保留上一代已发布资料。
 
@@ -63,8 +63,8 @@ API 镜像保留物品/魔物/NPC 基线和 Server 的 npc/conf 快照。catalog
 
 - prepare 只复制发行模板和 Server import-tmpl，不读取用户 custom；package 拒绝 .env、实际 custom/、非空 data/ 和符号链接。
 - initialize-custom 不合并、不改写已有文件。新版模板不会自动改变用户已有模板，需要按升级说明审查 Header、语法和依赖。
-- 升级复用 DATA_DIR/CUSTOM_DIR 的持久绝对路径，替换整套发行包。未覆盖内容随镜像更新，覆盖文件仍使用用户版本，也不会自动获得上游修复。
-- 后台战斗设置只保存在 DATA_DIR/server-settings，不引入第二份配置来源。
+- 升级复用 HAPPYRO_DATA_DIR/HAPPYRO_CUSTOM_DIR 的持久绝对路径，替换整套发行包。未覆盖内容随镜像更新，覆盖文件仍使用用户版本，也不会自动获得上游修复。
+- 后台战斗设置只保存在 HAPPYRO_DATA_DIR/server-settings，不引入第二份配置来源。
 - 备份先停写；restore 校验备份，再恢复数据库、后台文件、custom。custom 会移除备份以外文件，但整个恢复流程不是原子事务；中途失败应保持停服，用匹配包和完整备份恢复。
 
 ## 后续维护

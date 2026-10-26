@@ -27,16 +27,16 @@ class NativeServiceEnvironmentTest(unittest.TestCase):
     def test_character_server_uses_selected_birth_mode(self):
         for mode in ('classic', 'ship'):
             with self.subTest(mode=mode):
-                self.assertEqual(self.publish('char', f'HAPPYRO_NEW_PLAYER_START={mode}\n'),
-                                 {'HAPPYRO_NEW_PLAYER_START': mode, 'KEEP': 'unchanged'})
+                self.assertEqual(self.publish('char', f'HAPPYRO_CHARACTER_START_MODE={mode}\n'),
+                                 {'HAPPYRO_CHARACTER_START_MODE': mode, 'KEEP': 'unchanged'})
 
     def test_empty_birth_mode_uses_classic(self):
-        self.assertEqual(self.publish('char', 'HAPPYRO_NEW_PLAYER_START=\n')['HAPPYRO_NEW_PLAYER_START'], 'classic')
+        self.assertEqual(self.publish('char', 'HAPPYRO_CHARACTER_START_MODE=\n')['HAPPYRO_CHARACTER_START_MODE'], 'classic')
 
     def test_map_overrides_preserve_empty_and_explicit_values(self):
-        env = self.publish('map', 'HAPPYRO_AREA_SIZE=23\nHAPPYRO_NAVIGATION_TELEPORT_POLICY=0\n')
-        self.assertEqual(env['HAPPYRO_AREA_SIZE'], '23')
-        self.assertEqual(env['HAPPYRO_NAVIGATION_TELEPORT_POLICY'], '0')
-        self.assertEqual(env['HAPPYRO_MAX_WALK_PATH'], '')
+        env = self.publish('map', 'HAPPYRO_GAME_ENTITY_SYNC_RANGE_CELLS=23\nHAPPYRO_GAME_NAVIGATION_TELEPORT_POLICY=0\n')
+        self.assertEqual(env['HAPPYRO_GAME_ENTITY_SYNC_RANGE_CELLS'], '23')
+        self.assertEqual(env['HAPPYRO_GAME_NAVIGATION_TELEPORT_POLICY'], '0')
+        self.assertEqual(env['HAPPYRO_GAME_MAX_WALK_PATH_CELLS'], '')
         self.assertEqual(env['KEEP'], 'unchanged')
-        self.assertNotIn('HAPPYRO_NEW_PLAYER_START', env)
+        self.assertNotIn('HAPPYRO_CHARACTER_START_MODE', env)

@@ -152,9 +152,9 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_shell_environment_cannot_redirect_compose(self):
         self.batch.bundle.mkdir()
-        (self.batch.bundle / '.env.example').write_text('CUSTOM_DIR=./custom\n')
-        with patch.dict(os.environ, {'CUSTOM_DIR': '/production', 'COMPOSE_PROJECT_NAME': 'production'}):
-            self.assertNotIn('CUSTOM_DIR', self.batch.env())
+        (self.batch.bundle / '.env.example').write_text('HAPPYRO_CUSTOM_DIR=./custom\n')
+        with patch.dict(os.environ, {'HAPPYRO_CUSTOM_DIR': '/production', 'COMPOSE_PROJECT_NAME': 'production'}):
+            self.assertNotIn('HAPPYRO_CUSTOM_DIR', self.batch.env())
             self.assertNotIn('COMPOSE_PROJECT_NAME', self.batch.env())
 
     def test_unknown_containers_refuse_operation(self):
@@ -185,7 +185,7 @@ class EnvironmentTests(unittest.TestCase):
 
     def test_failed_check_overwrites_old_success_report(self):
         self.batch.bundle.mkdir()
-        (self.batch.bundle / '.env').write_text('GAME_PUBLIC_URL=http://127.0.0.1:33381\nADMIN_PUBLIC_URL=http://127.0.0.1:33382\n')
+        (self.batch.bundle / '.env').write_text('HAPPYRO_GAME_PUBLIC_URL=http://127.0.0.1:33381\nHAPPYRO_ADMIN_PUBLIC_URL=http://127.0.0.1:33382\n')
         self.state.update(gateway_url='http://127.0.0.1:33381', admin_url='http://127.0.0.1:33382')
         self.batch.save(self.state)
         (self.batch.root / 'report.json').write_text('{"status":"passed"}')
@@ -218,7 +218,7 @@ class EnvironmentTests(unittest.TestCase):
         def initialize(action):
             self.assertEqual(action, 'initialize')
             text = template
-            for key in ('DB_PASSWORD', 'ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'INTERSERVER_PASSWORD', 'GAME_CONTROL_TOKEN'):
+            for key in ('HAPPYRO_SERVER_DB_PASSWORD', 'HAPPYRO_API_ADMIN_DB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'HAPPYRO_SERVER_INTERSERVER_PASSWORD', 'HAPPYRO_GAME_CONTROL_TOKEN'):
                 text = text.replace(key + '=\n', key + '=fixture\n')
             (self.batch.bundle / '.env').write_text(text)
         import ipaddress
@@ -230,7 +230,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(config['name'], self.batch.project)
         self.assertEqual(config['services']['gateway']['ports'][0]['host_ip'], '127.0.0.1')
         self.assertEqual(config['services']['admin']['networks']['admin-proxy']['ipv4_address'], '172.31.5.2')
-        self.assertEqual(config['services']['api']['environment']['HTTP_TRUSTED_PROXIES'], '172.31.5.2')
+        self.assertEqual(config['services']['api']['environment']['HAPPYRO_API_TRUSTED_PROXIES'], '172.31.5.2')
         self.batch.check_config(self.state)
 
     def test_http_200_with_error_status_is_not_healthy(self):

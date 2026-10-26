@@ -29,16 +29,16 @@ rg -q '<script type="text/javascript" src="Config\.happyro\.js"></script>' \
 rg -q 'window\.ROConfigHappyRO' "$CLIENT_REPO/applications/pwa/index.html"
 rg -q '^#undef PACKET_OBFUSCATION$' "$SERVER_REPO/src/custom/defines_post.hpp"
 ! rg -q '@chicowall/robrowser-esrgan' "$GATEWAY_REPO/package.json"
-rg -q '^WS_ALLOWED_TARGETS=127\.0\.0\.1:6900,127\.0\.0\.1:6121,127\.0\.0\.1:5121$' \
+rg -q '^HAPPYRO_GATEWAY_WS_ALLOWED_TARGETS=127\.0\.0\.1:6900,127\.0\.0\.1:6121,127\.0\.0\.1:5121$' \
 	"$PROJECT_ROOT/deploy/remote-client/.env.example"
-rg -q '^RATHENA_WEB_API_URL=http://127\.0\.0\.1:8889$' \
+rg -q '^HAPPYRO_GATEWAY_GAME_WEB_UPSTREAM_URL=http://127\.0\.0\.1:8889$' \
 	"$PROJECT_ROOT/deploy/remote-client/.env.example"
 rg -q '^MARIADB_IMAGE=mariadb:10\.11@sha256:[0-9a-f]{64}$' "$MARIADB_PROFILE"
-rg -q '^DB_BIND_IP=127\.0\.0\.1$' "$MARIADB_PROFILE"
-rg -q '^DB_PORT=33062$' "$MARIADB_PROFILE"
-rg -q '^SERVER_LAN_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
-rg -q '^WEB_BIND_IP=127\.0\.0\.1$' "$RATHENA_PROFILE"
-rg -q '^WEB_PORT=8889$' "$RATHENA_PROFILE"
+rg -q '^HAPPYRO_DATABASE_PUBLISH_HOST=127\.0\.0\.1$' "$MARIADB_PROFILE"
+rg -q '^HAPPYRO_SERVER_DB_PORT=33062$' "$MARIADB_PROFILE"
+rg -q '^HAPPYRO_SERVER_PUBLIC_HOST=127\.0\.0\.1$' "$RATHENA_PROFILE"
+rg -q '^HAPPYRO_SERVER_WEB_LISTEN_HOST=127\.0\.0\.1$' "$RATHENA_PROFILE"
+rg -q '^HAPPYRO_SERVER_WEB_PORT=8889$' "$RATHENA_PROFILE"
 rg -q '^pincode_enabled: no$' "$SERVER_REPO/conf/import/char_conf.txt"
 rg -q '^char_name_option: 0$' "$SERVER_REPO/conf/import/char_conf.txt"
 bash -n \

@@ -80,4 +80,4 @@ Docker 离线包的配置见[离线部署](docker-deployment.md)。当前源码�
 
 ## 保持登录或恢复失败
 
-检查 `/api/game-session/*` 的响应：403 时核对 Origin 与代理保留的外部 Host（含端口），503 时核对 Gateway 到 Web API 的连接及会话 SQL。HTTP/HTTPS 使用独立游戏 Cookie，Admin 的 SESSION_SECURE_COOKIE 不控制游戏会话。先确认客户端、Gateway、Login、Web 和会话表/撤销触发器来自配套版本；部署步骤见[升级](docker-deployment.md#升级)。刷新或系统回收页面后，持久登录进入选角，未勾选时需密码；页面内意外断线才尝试恢复原角色。
+检查 `/api/game-session/*` 的响应：403 时核对 Origin 与代理保留的外部 Host（含端口），503 时核对 Gateway 到 Web API 的连接及会话 SQL。HTTP/HTTPS 使用独立游戏 Cookie，Admin 的 HAPPYRO_ADMIN_SESSION_SECURE_COOKIE_ENABLED 不控制游戏会话。先确认客户端、Gateway、Login、Web 和会话表/撤销触发器来自配套版本；部署步骤见[升级](docker-deployment.md#升级)。刷新或系统回收页面后，持久登录进入选角，未勾选时需密码；页面内意外断线才尝试恢复原角色。

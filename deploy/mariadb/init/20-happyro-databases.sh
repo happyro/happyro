@@ -4,9 +4,9 @@ set -euo pipefail
 mariadb_root=(mariadb --protocol=socket --user=root "--password=$MARIADB_ROOT_PASSWORD")
 
 "${mariadb_root[@]}" <<SQL
-CREATE DATABASE IF NOT EXISTS \`$HAPPYRO_LOG_DATABASE\`
+CREATE DATABASE IF NOT EXISTS \`$HAPPYRO_SERVER_LOG_DB_NAME\`
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-GRANT ALL PRIVILEGES ON \`$HAPPYRO_LOG_DATABASE\`.* TO '$MARIADB_USER'@'%';
+GRANT ALL PRIVILEGES ON \`$HAPPYRO_SERVER_LOG_DB_NAME\`.* TO '$MARIADB_USER'@'%';
 FLUSH PRIVILEGES;
 SQL
 
@@ -14,12 +14,12 @@ SQL
 "${mariadb_root[@]}" "$MARIADB_DATABASE" < /opt/rathena/sql/web.sql
 "${mariadb_root[@]}" "$MARIADB_DATABASE" < /opt/rathena/sql/upgrades/upgrade_20261012_sessions.sql
 "${mariadb_root[@]}" "$MARIADB_DATABASE" < /opt/rathena/sql/roulette_default_data.sql
-"${mariadb_root[@]}" "$HAPPYRO_LOG_DATABASE" < /opt/rathena/sql/logs.sql
+"${mariadb_root[@]}" "$HAPPYRO_SERVER_LOG_DB_NAME" < /opt/rathena/sql/logs.sql
 
 "${mariadb_root[@]}" "$MARIADB_DATABASE" <<SQL
 UPDATE login
-SET userid = '$HAPPYRO_INTERSERVER_USER',
-    user_pass = '$HAPPYRO_INTERSERVER_PASSWORD',
+SET userid = '$HAPPYRO_SERVER_INTERSERVER_USERNAME',
+    user_pass = '$HAPPYRO_SERVER_INTERSERVER_PASSWORD',
     sex = 'S'
 WHERE account_id = 1;
 SQL

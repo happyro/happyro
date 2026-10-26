@@ -29,12 +29,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends gosu \
     && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production \
-    PORT=3338 \
-    ENABLE_WSPROXY=true \
-    ENABLE_STATIC_SERVE=true \
-    ROBROWSER_PATH=/opt/robrowser \
-    ROBROWSER_PUBLIC_PATH=/applications/pwa \
-    DATA_OVERRIDE_PATH=/opt/overrides
+    HAPPYRO_GATEWAY_LISTEN_PORT=3338 \
+    HAPPYRO_GATEWAY_WS_PROXY_ENABLED=true \
+    HAPPYRO_GATEWAY_STATIC_SERVE_ENABLED=true \
+    HAPPYRO_GATEWAY_PWA_DIR=/opt/robrowser \
+    HAPPYRO_GATEWAY_PWA_PUBLIC_PATH=/applications/pwa \
+    HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS=/opt/overrides
 
 WORKDIR /opt/gateway
 COPY repos/happyro-gateway/package.json ./

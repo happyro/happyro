@@ -15,7 +15,7 @@ work/diagnostics/client/YYYY-MM-DD/<会话UUID>.jsonl
 Gateway 的 `.env` 配置如下；相对目录基于 Gateway 进程工作目录解析：
 
 ```dotenv
-CLIENT_DIAGNOSTICS_DIR=../../work/diagnostics/client
+HAPPYRO_GATEWAY_CLIENT_DIAGNOSTICS_DIR=../../work/diagnostics/client
 ```
 
 空值或未配置时，接收接口返回 404。配置后重启 Gateway。手机需要显式使用 `?debug=1`，普通入口不开启采集。所有日志只回传到当前页面同源的 Gateway，不提供公开下载日志的接口。

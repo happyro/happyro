@@ -11,18 +11,18 @@ Gateway 通过环境变量提供客户端部署默认值，涵盖镜头、自动
 例如：
 
 ```dotenv
-CLIENT_CAMERA_PHONE_LANDSCAPE_ZOOM=95
-CLIENT_CAMERA_PHONE_PORTRAIT_ZOOM=170
-CLIENT_AUTO_TELEPORT_ENABLED=true
-CLIENT_AUTO_TELEPORT_WAIT_SECONDS=2
-CLIENT_AUTO_TELEPORT_INTERVAL_SECONDS=2
-CLIENT_AUTO_COMBAT_SEARCH_RANGE=14
-CLIENT_AUTO_COMBAT_ACTIVITY_RANGE=30
-CLIENT_AUTO_RECOVERY_HP_TRIGGER_PERCENT=50
-CLIENT_AUTO_RECOVERY_HP_TARGET_PERCENT=80
-CLIENT_AUTO_RECOVERY_SP_TRIGGER_PERCENT=20
-CLIENT_AUTO_RECOVERY_SP_TARGET_PERCENT=50
-CLIENT_BGM_VOLUME=0.3
+HAPPYRO_CLIENT_DEFAULT_CAMERA_PHONE_LANDSCAPE_ZOOM=95
+HAPPYRO_CLIENT_DEFAULT_CAMERA_PHONE_PORTRAIT_ZOOM=170
+HAPPYRO_CLIENT_DEFAULT_AUTO_TELEPORT_ENABLED=true
+HAPPYRO_CLIENT_DEFAULT_AUTO_TELEPORT_WAIT_SECONDS=2
+HAPPYRO_CLIENT_DEFAULT_AUTO_TELEPORT_INTERVAL_SECONDS=2
+HAPPYRO_CLIENT_DEFAULT_AUTO_COMBAT_SEARCH_RANGE=14
+HAPPYRO_CLIENT_DEFAULT_AUTO_COMBAT_ACTIVITY_RANGE=30
+HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_HP_TRIGGER_PERCENT=50
+HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_HP_TARGET_PERCENT=80
+HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_SP_TRIGGER_PERCENT=20
+HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_SP_TARGET_PERCENT=50
+HAPPYRO_CLIENT_DEFAULT_BGM_VOLUME=0.3
 ```
 
 修改已支持的变量不需要重新构建前端。原生部署重启 Gateway，Docker 重新创建 Gateway 容器后，刷新游戏页面即可获取新配置。Gateway 重启会断开它承载的 WebSocket 游戏连接，客户端随后按现有恢复逻辑重连。新增配置项或修改内置定义时，仍需更新代码并完整构建 PWA。
@@ -39,7 +39,7 @@ CLIENT_BGM_VOLUME=0.3
 
 ## 运行时配置生命周期
 
-Gateway 在启动时读取 PWA 的默认定义和环境变量，通过 `<ROBROWSER_PUBLIC_PATH>/Config.runtime.js` 动态返回 `window.ROConfigRuntime`，带 `Cache-Control: no-store`。该路由优先于静态文件服务，不再把运行时配置写入 dist/Web；因此重建 PWA 复制空模板不会抹掉正在提供的部署配置。静态模板只供没有 Gateway 的客户端使用内置默认值。
+Gateway 在启动时读取 PWA 的默认定义和环境变量，通过 `<HAPPYRO_GATEWAY_PWA_PUBLIC_PATH>/Config.runtime.js` 动态返回 `window.ROConfigRuntime`，带 `Cache-Control: no-store`。该路由优先于静态文件服务，不再把运行时配置写入 dist/Web；因此重建 PWA 复制空模板不会抹掉正在提供的部署配置。静态模板只供没有 Gateway 的客户端使用内置默认值。
 
 PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js` 不作为静态构建产物计算哈希。启动缺少默认定义的新 Gateway 会失败，应先完成新版 PWA 构建，不能只更新 Gateway 源码。更新内置默认定义后需重新加载 Gateway，确保运行时与新 PWA 使用同一版本的定义。
 
@@ -51,17 +51,17 @@ PWA 清单校验包含 `client-defaults.schema.json`，动态 `Config.runtime.js
 
 ## 脚本文字对比度
 
-`CLIENT_SCRIPT_TEXT_MIN_CONTRAST` 默认 4.5，接受 4.5–7 的小数。颜色自动修正始终开启，作用于桌面 NPC 对话和选项、移动端 NPC 对话，以及共用可读性处理的任务说明。颜色与实际背景的对比度已达到目标时保留原色，否则向黑色或白色调整；若背景无法达到设定目标，使用两者中对比度更高的端点。
+`HAPPYRO_CLIENT_DEFAULT_SCRIPT_TEXT_MIN_CONTRAST` 默认 4.5，接受 4.5–7 的小数。颜色自动修正始终开启，作用于桌面 NPC 对话和选项、移动端 NPC 对话，以及共用可读性处理的任务说明。颜色与实际背景的对比度已达到目标时保留原色，否则向黑色或白色调整；若背景无法达到设定目标，使用两者中对比度更高的端点。
 
 此项是部署显示策略，不写入玩家 localStorage。改变配置后重启 Gateway 并刷新游戏页面；值越高，颜色可能偏离原始颜色越多。
 
 ## 服务端视野
 
-服务端 `HAPPYRO_AREA_SIZE`（默认 14）与 `HAPPYRO_MAX_WALK_PATH`（默认 17）独立于客户端默认值，配置入口、生效顺序及重启要求见[地图服配置](configuration.md#地图服视野与行走)。
+服务端 `HAPPYRO_GAME_ENTITY_SYNC_RANGE_CELLS`（默认 14）与 `HAPPYRO_GAME_MAX_WALK_PATH_CELLS`（默认 17）独立于客户端默认值，配置入口、生效顺序及重启要求见[地图服配置](configuration.md#地图服视野与行走)。
 
 ## 自动恢复
 
-`CLIENT_AUTO_RECOVERY_HP_TRIGGER_PERCENT`、`CLIENT_AUTO_RECOVERY_HP_TARGET_PERCENT` 分别设置 HP 的触发比例和恢复目标；SP 对应 `CLIENT_AUTO_RECOVERY_SP_TRIGGER_PERCENT`、`CLIENT_AUTO_RECOVERY_SP_TARGET_PERCENT`。触发比例为 1–99 的整数，目标为 2–100 的整数，目标必须严格高于触发比例。启动时联合校验环境变量与未覆盖项的内置默认值。已保存的角色恢复设置优先；开关与道具选择不由环境变量强制修改。
+`HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_HP_TRIGGER_PERCENT`、`HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_HP_TARGET_PERCENT` 分别设置 HP 的触发比例和恢复目标；SP 对应 `HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_SP_TRIGGER_PERCENT`、`HAPPYRO_CLIENT_DEFAULT_AUTO_RECOVERY_SP_TARGET_PERCENT`。触发比例为 1–99 的整数，目标为 2–100 的整数，目标必须严格高于触发比例。启动时联合校验环境变量与未覆盖项的内置默认值。已保存的角色恢复设置优先；开关与道具选择不由环境变量强制修改。
 
 ### 搜怪范围与服务端同步范围
 

@@ -25,7 +25,7 @@ def custom_root(config):
         raise ValueError('Missing custom NPC mount in Compose')
     root = Path(source).absolute().parent
     if root == Path(root.anchor) or root.is_symlink():
-        raise ValueError('CUSTOM_DIR must be a dedicated directory, not a filesystem root or symlink')
+        raise ValueError('HAPPYRO_CUSTOM_DIR must be a dedicated directory, not a filesystem root or symlink')
     return root
 
 
@@ -45,7 +45,7 @@ def initialize(root, templates):
 
 def validate(root):
     if not root.is_dir():
-        raise ValueError('Missing CUSTOM_DIR; run initialize-custom first')
+        raise ValueError('Missing HAPPYRO_CUSTOM_DIR; run initialize-custom first')
     list(checked_files(root))
     for name in DIRECTORIES:
         if not (root / name).is_dir():

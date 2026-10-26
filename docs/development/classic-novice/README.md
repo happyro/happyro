@@ -2,7 +2,7 @@
 
 HappyRO Renewal 支持两套当前新手流程，通过角色服环境变量选择新建人类角色的出生地点。两套 NPC 同时启用，切换出生模式不会删除已创建角色的任务或改变其位置。
 
-| `HAPPYRO_NEW_PLAYER_START` | 新建人类角色出生及初始复活点 | 流程 |
+| `HAPPYRO_CHARACTER_START_MODE` | 新建人类角色出生及初始复活点 | 流程 |
 | --- | --- | --- |
 | `ship` | `iz_int,18,26` | 沉船、岛屿、依斯鲁得学院 |
 | `classic`（未设置时默认） | `new_1-1,53,107` | 经典初心者修炼场 |
@@ -14,14 +14,14 @@ HappyRO Renewal 支持两套当前新手流程，通过角色服环境变量选�
 Docker 部署在根部署 `.env` 中设置：
 
 ```dotenv
-HAPPYRO_NEW_PLAYER_START=classic
+HAPPYRO_CHARACTER_START_MODE=classic
 ```
 
 Compose 将其传给游戏服务。变量由 char-server 在启动时读取，变更后需重新创建角色服容器并核对与登录服、地图服的连接。升级到包含此实现的服务端程序是前提；仅修改旧程序的环境不会生效。
 
-Linux 本地脚本使用 `deploy/rathena/profile.env`，`scripts/server/server.sh` 启动的 systemd 服务显式传入该值。长期 systemd 单元在 `happyro-char-server.service` 中提供默认值，可用服务 override 设置 `Environment=HAPPYRO_NEW_PLAYER_START=classic`，重新载入并重启角色服。
+Linux 本地脚本使用 `deploy/rathena/profile.env`，`scripts/server/server.sh` 启动的 systemd 服务显式传入该值。长期 systemd 单元在 `happyro-char-server.service` 中提供默认值，可用服务 override 设置 `Environment=HAPPYRO_CHARACTER_START_MODE=classic`，重新载入并重启角色服。
 
-macOS 在 `local.happyro.char.plist` 的 `EnvironmentVariables` 中设置 `HAPPYRO_NEW_PLAYER_START`，将运行配置和安装的 LaunchAgent 保持一致，再按[服务手册](../../operations/services.md)停止并重新加载角色服及相连地图进程。不要另起第二份服务。环境变更只影响之后新建的人类角色。
+macOS 在 `local.happyro.char.plist` 的 `EnvironmentVariables` 中设置 `HAPPYRO_CHARACTER_START_MODE`，将运行配置和安装的 LaunchAgent 保持一致，再按[服务手册](../../operations/services.md)停止并重新加载角色服及相连地图进程。不要另起第二份服务。环境变更只影响之后新建的人类角色。
 
 ## 经典流程
 

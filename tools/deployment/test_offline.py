@@ -37,8 +37,8 @@ class OfflineTests(unittest.TestCase):
         repository = Path(__file__).resolve().parents[2]
         environment = (repository / 'deploy/docker/.env.example').read_text()
         compose = (repository / 'deploy/docker/compose.yml').read_text()
-        self.assertIn('\nSOCKET_PROXY_URL=\n', environment)
-        self.assertIn('SOCKET_PROXY_URL: ${SOCKET_PROXY_URL:-}', compose)
+        self.assertIn('\nHAPPYRO_CLIENT_SOCKET_PROXY_URL=\n', environment)
+        self.assertIn('HAPPYRO_CLIENT_SOCKET_PROXY_URL: ${HAPPYRO_CLIENT_SOCKET_PROXY_URL:-}', compose)
 
     def bundle(self):
         release = {'schema': 2, 'version': 'v9.0.0', 'status': 'offline-ready', 'images': {}, 'files': {}}

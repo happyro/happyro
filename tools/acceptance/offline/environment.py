@@ -229,12 +229,12 @@ def configure(batch, state, gateway_port=None, admin_port=None):
             listener.bind(('127.0.0.1', port))
     default, proxy = available_networks()
     values = {
-        'COMPOSE_PROJECT_NAME': batch.project, 'GATEWAY_PORT': f'127.0.0.1:{ports[0]}',
-        'ADMIN_PORT': f'127.0.0.1:{ports[1]}', 'GAME_PUBLIC_URL': f'http://127.0.0.1:{ports[0]}',
-        'ADMIN_PUBLIC_URL': f'http://127.0.0.1:{ports[1]}', 'RESOURCE_DIR': './resources',
-        'DATA_DIR': './data', 'CUSTOM_DIR': './custom', 'ADMIN_PROXY_SUBNET': str(proxy),
-        'ADMIN_PROXY_DYNAMIC_RANGE': str(list(proxy.subnets(new_prefix=30))[1]),
-        'ADMIN_PROXY_IP': str(proxy.network_address + 2),
+        'COMPOSE_PROJECT_NAME': batch.project, 'HAPPYRO_GATEWAY_PUBLISH_ADDRESS': f'127.0.0.1:{ports[0]}',
+        'HAPPYRO_ADMIN_PUBLISH_ADDRESS': f'127.0.0.1:{ports[1]}', 'HAPPYRO_GAME_PUBLIC_URL': f'http://127.0.0.1:{ports[0]}',
+        'HAPPYRO_ADMIN_PUBLIC_URL': f'http://127.0.0.1:{ports[1]}', 'HAPPYRO_RESOURCE_DIR': './resources',
+        'HAPPYRO_DATA_DIR': './data', 'HAPPYRO_CUSTOM_DIR': './custom', 'HAPPYRO_ADMIN_PROXY_SUBNET': str(proxy),
+        'HAPPYRO_ADMIN_PROXY_DYNAMIC_RANGE': str(list(proxy.subnets(new_prefix=30))[1]),
+        'HAPPYRO_ADMIN_PROXY_IP': str(proxy.network_address + 2),
     }
     override = {'name': batch.project, 'services': {name: {'container_name': f'{batch.project}-{name}'} for name in SERVICES},
                 'networks': {'default': {'ipam': {'config': [{'subnet': str(default)}]}}}}
@@ -244,7 +244,7 @@ def configure(batch, state, gateway_port=None, admin_port=None):
     template = dict(line.split('=', 1) for line in (batch.bundle / '.env.example').read_text().splitlines()
                     if '=' in line and not line.startswith('#'))
     if any(template.get(key) != value for key, value in
-           {'RESOURCE_DIR': './resources', 'DATA_DIR': './data', 'CUSTOM_DIR': './custom'}.items()):
+           {'HAPPYRO_RESOURCE_DIR': './resources', 'HAPPYRO_DATA_DIR': './data', 'HAPPYRO_CUSTOM_DIR': './custom'}.items()):
         raise ValueError('Package must initialize data/custom inside its own directory')
     batch.run_tool('initialize')
     env_path = batch.bundle / '.env'
@@ -253,7 +253,7 @@ def configure(batch, state, gateway_port=None, admin_port=None):
     if not values.keys() <= keys:
         raise ValueError('Package environment template lacks required isolation fields')
     env_path.write_text('\n'.join(f'{key}={values[key]}' if (key := line.split('=', 1)[0]) in values else line for line in lines) + '\n')
-    state.update(gateway_url=values['GAME_PUBLIC_URL'], admin_url=values['ADMIN_PUBLIC_URL'],
+    state.update(gateway_url=values['HAPPYRO_GAME_PUBLIC_URL'], admin_url=values['HAPPYRO_ADMIN_PUBLIC_URL'],
                  env_sha256=digest(env_path), override_sha256=digest(batch.override),
                  compose_sha256=digest(batch.bundle / 'compose.yaml'))
     batch.save(state)

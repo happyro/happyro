@@ -40,17 +40,17 @@ class AdminGoBackupTest(unittest.TestCase):
                     'database': {'image': db_image, 'pull_policy': 'never', 'tmpfs': ['/var/lib/mysql'], 'environment': {
                         'MARIADB_ROOT_PASSWORD': 'backup-test-root', 'MARIADB_DATABASE': 'happyro',
                         'MARIADB_USER': 'happyro', 'MARIADB_PASSWORD': 'backup-test-game',
-                        'HAPPYRO_LOG_DATABASE': 'happyro_log', 'HAPPYRO_ADMIN_PASSWORD': 'backup-test-admin',
-                        'HAPPYRO_INTERSERVER_USER': 'interserver', 'HAPPYRO_INTERSERVER_PASSWORD': 'backuptestserver',
+                        'HAPPYRO_SERVER_LOG_DB_NAME': 'happyro_log', 'HAPPYRO_API_ADMIN_DB_PASSWORD': 'backup-test-admin',
+                        'HAPPYRO_SERVER_INTERSERVER_USERNAME': 'interserver', 'HAPPYRO_SERVER_INTERSERVER_PASSWORD': 'backuptestserver',
                     }},
                     'api': {'image': api_image, 'pull_policy': 'never', 'environment': {
-                        'DB_HOST': 'database', 'DB_DATABASE': 'happyro_admin',
-                        'DB_USERNAME': 'happyro_admin', 'DB_PASSWORD': 'backup-test-admin',
-                        'GAME_DB_HOST': 'database', 'GAME_DB_DATABASE': 'happyro',
-                        'GAME_LOG_DB_DATABASE': 'happyro_log', 'GAME_DB_USERNAME': 'happyro_admin',
-                        'GAME_DB_PASSWORD': 'backup-test-admin', 'APP_URL': 'http://localhost:8080',
-                        'GAME_MAP_INDEX_PATH': '/opt/api/resources/map_index.txt',
-                        'GAME_SERVER_BATTLE_CONFIG_PATH': '/run/happyro-settings/battle_conf.txt',
+                        'HAPPYRO_API_ADMIN_DB_HOST': 'database', 'HAPPYRO_API_ADMIN_DB_NAME': 'happyro_admin',
+                        'HAPPYRO_API_ADMIN_DB_USERNAME': 'happyro_admin', 'HAPPYRO_API_ADMIN_DB_PASSWORD': 'backup-test-admin',
+                        'HAPPYRO_API_GAME_DB_HOST': 'database', 'HAPPYRO_API_GAME_DB_NAME': 'happyro',
+                        'HAPPYRO_API_GAME_LOG_DB_NAME': 'happyro_log', 'HAPPYRO_API_GAME_DB_USERNAME': 'happyro_admin',
+                        'HAPPYRO_API_GAME_DB_PASSWORD': 'backup-test-admin', 'HAPPYRO_ADMIN_PUBLIC_URL': 'http://localhost:8080',
+                        'HAPPYRO_API_MAP_INDEX_PATH': '/opt/api/resources/map_index.txt',
+                        'HAPPYRO_API_BATTLE_CONFIG_PATH': '/run/happyro-settings/battle_conf.txt',
                     }, 'volumes': [
                         {'type': 'bind', 'source': str(settings), 'target': '/run/happyro-settings'},
                         {'type': 'bind', 'source': str(custom), 'target': '/opt/happyro/custom', 'read_only': True},
@@ -79,7 +79,7 @@ class AdminGoBackupTest(unittest.TestCase):
                     port = listener.getsockname()[1]
                 browser_url = f'http://127.0.0.1:{port}'
                 config['services']['admin']['ports'] = [f'127.0.0.1:{port}:8080']
-                config['services']['api']['environment']['APP_URL'] = browser_url
+                config['services']['api']['environment']['HAPPYRO_ADMIN_PUBLIC_URL'] = browser_url
             (root / 'compose.yaml').write_text(json.dumps(config))
             (root / '.env').write_text('# isolated round-trip environment\n')
             (root / 'release-manifest.json').write_text('{"test":"Go backup round trip"}\n')
@@ -123,7 +123,7 @@ with client.open(request) as r: assert r.status==200
 with client.open(base+'/api/auth/user') as r: assert 'admin' in json.dumps(json.load(r))
 with client.open(base+'/api/game-data/items?perPage=1') as r: assert len(json.load(r)['data']) == 1
 '''
-                probe = 'origin=' + repr(config['services']['api']['environment']['APP_URL']) + '\n' + probe
+                probe = 'origin=' + repr(config['services']['api']['environment']['HAPPYRO_ADMIN_PUBLIC_URL']) + '\n' + probe
                 compose('exec', '-T', 'api', 'python3', '-c', "base='http://localhost:8080'\n" + probe)
                 compose('up', '-d', '--wait', '--wait-timeout', '45', 'admin')
                 identifier = compose('ps', '-q', 'api').stdout.strip()

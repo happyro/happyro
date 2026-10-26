@@ -48,21 +48,21 @@ if [[ ! "$TEST_ACCOUNT_PASSWORD" =~ ^[A-Za-z0-9]{6,23}$ ]]; then
 fi
 
 sql="
-INSERT INTO \`$DB_MAIN_DATABASE\`.login (userid, user_pass, sex, email)
+INSERT INTO \`$HAPPYRO_SERVER_DB_NAME\`.login (userid, user_pass, sex, email)
 SELECT '$TEST_ACCOUNT_USER', '$TEST_ACCOUNT_PASSWORD', '$TEST_ACCOUNT_SEX', 'happytest@localhost'
 WHERE NOT EXISTS (
-  SELECT 1 FROM \`$DB_MAIN_DATABASE\`.login WHERE userid='$TEST_ACCOUNT_USER'
+  SELECT 1 FROM \`$HAPPYRO_SERVER_DB_NAME\`.login WHERE userid='$TEST_ACCOUNT_USER'
 );
-UPDATE \`$DB_MAIN_DATABASE\`.login
+UPDATE \`$HAPPYRO_SERVER_DB_NAME\`.login
 SET user_pass='$TEST_ACCOUNT_PASSWORD', sex='$TEST_ACCOUNT_SEX', state=0, unban_time=0, expiration_time=0
 WHERE userid='$TEST_ACCOUNT_USER';
 SELECT account_id, userid, sex, group_id, state
-FROM \`$DB_MAIN_DATABASE\`.login
+FROM \`$HAPPYRO_SERVER_DB_NAME\`.login
 WHERE userid='$TEST_ACCOUNT_USER';
 "
 
-result="$(docker exec --env "MYSQL_PWD=$DB_PASSWORD" happyro-mariadb \
-	mariadb --batch --skip-column-names --user="$DB_USER" --execute="$sql")"
+result="$(docker exec --env "MYSQL_PWD=$HAPPYRO_SERVER_DB_PASSWORD" happyro-mariadb \
+	mariadb --batch --skip-column-names --user="$HAPPYRO_SERVER_DB_USERNAME" --execute="$sql")"
 [[ "$(wc -l <<<"$result")" -eq 1 ]] || fail "expected exactly one test account"
 
 printf 'test-account: %s\n' "$result"

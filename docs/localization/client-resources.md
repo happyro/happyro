@@ -13,7 +13,7 @@
                     ↓ 生成或整理
 localization/client/data/<资源文件>
                     ↓ scripts/resources/configure-resources.sh
-Gateway 本地 data/ 或 DATA_OVERRIDE_PATH
+Gateway 本地 data/ 或 HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS
                     ↓ HTTP /data/<资源文件>
 HappyRO Client 对应的 DB 加载器
                     ↓
@@ -25,7 +25,7 @@ HappyRO Client 对应的 DB 加载器
 未配置自定义资源时，Gateway 收到 `/data/...` 请求后的查找顺序为：
 
 1. Gateway 仓库内同路径的本地文件，例如 `repos/happyro-gateway/data/...`。
-2. `DATA_OVERRIDE_PATH` 中按顺序配置的目录；当前依次为已审查运行目录和中文散装目录。
+2. `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` 中按顺序配置的目录；当前依次为已审查运行目录和中文散装目录。
 3. 官方 `data.grf`。
 
 本地文件或覆盖目录中的同路径文件会替代 GRF 版本；不存在同路径覆盖时，仍读取官方 GRF。Gateway 会缓存已经读取的内容，变更资源后必须重新执行资源配置并重启 Gateway，不能只修改源文件。
@@ -36,10 +36,10 @@ HappyRO Client 对应的 DB 加载器
 | --- | --- | --- | --- | --- |
 | `metalprocessitemlist.txt` | `localization/client/data/`，按官方材料表翻译的 75 条制作配方 | 校验后安装到运行目录及 Gateway `data/` | `DBManager.loadTable` 以 UTF-8 读取 | 锻造／制药窗口的材料说明 |
 | `cardprefixnametable.txt` | `localization/client/data/`，由物品本地化生成器生成 | 校验后安装到 Gateway `data/` | `DBManager.loadTable` 以 UTF-8 读取 | 插卡装备的中文前缀 |
-| `msgstringtable.txt` | `localization/client/data/` | `DATA_OVERRIDE_PATH` | `DBManager.loadTable` 按客户端字符集读取 | 系统消息 |
-| `skillnametable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 可访问的散装输出；当前主要 UI 读取生成 JS | 技能名称 |
-| `skilldesctable.txt` | `localization/client/data/`，由技能生成器生成 | `DATA_OVERRIDE_PATH` | 可访问的散装输出；当前 `DB.getSkillDescription` 读取生成 JS | 技能说明 |
-| `titletable.json` | `localization/client/data/` | `DATA_OVERRIDE_PATH` | 官方称号表加载后由 `loadTitleTable` 合并 | 中文称号 |
+| `msgstringtable.txt` | `localization/client/data/` | `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` | `DBManager.loadTable` 按客户端字符集读取 | 系统消息 |
+| `skillnametable.txt` | `localization/client/data/`，由技能生成器生成 | `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` | 可访问的散装输出；当前主要 UI 读取生成 JS | 技能名称 |
+| `skilldesctable.txt` | `localization/client/data/`，由技能生成器生成 | `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` | 可访问的散装输出；当前 `DB.getSkillDescription` 读取生成 JS | 技能说明 |
+| `titletable.json` | `localization/client/data/` | `HAPPYRO_GATEWAY_RESOURCE_OVERRIDE_DIRS` | 官方称号表加载后由 `loadTitleTable` 合并 | 中文称号 |
 | `itemInfo_true.lub` | `inputs/runtime/kro-20211105/client/System/`，由翻译 JSON 编译 | 运行目录覆盖 | `loadItemInfo` 通过 Lua 运行时加载 | 物品名称、说明、资源名、洞数和 ClassNum |
 | `OngoingQuestInfoList_True.lub` | `inputs/runtime/kro-20211105/client/System/`，由翻译 JSON 编译 | 运行目录覆盖 | `loadQuestInfo` 通过 Lua 运行时加载 | 完整任务标题、摘要、说明、导航与奖励；含后续 EP |
 
@@ -98,7 +98,7 @@ ItemTable[卡片 ID].prefixName
 
 资源配置脚本会验证本地化覆盖资源，客户端变更由 Vitest 测试套件覆盖。
 
-配置用户自定义资源时，`CUSTOM_RESOURCE_PATH` 优先于内置来源及缓存；更新／删除行为见[自定义资源设计](../architecture/customization.md#资源与资料刷新)。
+配置用户自定义资源时，`HAPPYRO_GATEWAY_CUSTOM_RESOURCE_DIR` 优先于内置来源及缓存；更新／删除行为见[自定义资源设计](../architecture/customization.md#资源与资料刷新)。
 
 ## 氏族与公会术语
 
