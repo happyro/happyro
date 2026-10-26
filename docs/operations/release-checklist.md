@@ -2,7 +2,7 @@
 
 本清单用于当前代码的完整构建、离线部署、自定义功能、保持登录与断线恢复验收。第 10 节记录当前下载包、历史交付与工具验收。各批次按文件摘要和源码记录区分，验收结果只适用于对应产物。清单包含真机和完整回归要求，未验证项保持未勾选；源码测试不能替代容器与游戏验收。
 
-操作依据：[镜像构建与交付](docker-release.md)、[部署与升级](docker-deployment.md)。构建命令在源码根目录执行，部署命令在独立解压后的包根目录执行；命令逐条执行，失败停止后续步骤。
+操作依据：[镜像构建与交付](docker-release.md)、[全新部署](docker-deployment.md)。构建命令在源码根目录执行，部署命令在独立解压后的包根目录执行；命令逐条执行，失败停止后续步骤。
 
 ## 1. 搬迁和构建前准备
 
@@ -175,7 +175,7 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 
 以下项目须在最终离线包部署后执行，HTTP 与 HTTPS、手机/平板/桌面分别记录；已有源码测试和开发环境浏览器联调只作参考。
 
-- [ ] 空库初始化、v0.3.2 旧库及已交付 v0.5.0 存档升级均创建 happyro_sessions 表及账号变更撤销触发器；重复 deploy 成功且保留原账号、角色、物品、仓库与设置。
+- [ ] 空库初始化创建 happyro_sessions 表及账号变更撤销触发器；重复 deploy 成功且保留原账号、角色、物品、仓库与设置。
 - [ ] 在隔离验收环境制造会话 SQL 执行失败，确认 deploy 返回失败且不继续启动新版 login/web/Gateway；修复后重试通过，不改发行包文件绕过校验。
 - [ ] 默认不勾选保持登录；勾选后关闭页面、关闭浏览器再打开均进入选角；不勾选时刷新或重新打开要求密码。
 - [ ] 两种登录方式在当前页面断线后均可恢复原角色，遵守 PIN；同地图恢复镜头，地图、位置、血量和物品以服务端为准，不重放交易或技能操作。
@@ -198,41 +198,12 @@ python3 tools/deployment/manage.py refresh-custom-catalogs --directory .
 - [ ] HP／SP 默认比例、环境覆盖和已保存个人配置优先级正确；选择弹窗每页 10 项，缺货、失败和回执超时不会阻塞战斗或重复消耗道具。
 - [ ] 冒险工具仅按当前地图显示名称搜索，地图／NPC 滚动可到魔物区；无刷新记录时「地图魔物 ↓」置灰。分别检查桌面、平板横竖屏和手机。
 
-## 8. 保留定制的升级验收
+## 8. 全新环境隔离验收
 
-使用独立旧版本测试存档；同一存档只能运行一套服务，固定容器名也不能在同一 Docker 环境直接并行部署两套。
-
-- [ ] 保留旧完整包及配套工具，停止旧服务写入并备份；旧版备份用旧版工具恢复。
-- [ ] 记录用户自定义文件的路径和 SHA-256，以及角色/仓库/后台设置的验收值。
-- [ ] 解压并 verify 新包；复制旧 `.env`，保留密码、令牌和 Compose 项目名；首次部署使用独立空管理库，并完成管理员初始化。
-- [ ] 从新版 `.env.example` 更新 `HAPPYRO_RELEASE_VERSION` 和五个 IMAGE 变量；`HAPPYRO_DATA_DIR`、`HAPPYRO_CUSTOM_DIR` 指向旧数据的绝对路径，`HAPPYRO_RESOURCE_DIR` 使用新包资源。
-- [ ] 不重新 initialize 已有环境；只运行 initialize-custom。旧版没有 custom 时建立新目录，已有 custom 只补缺少模板。
-
-```bash
-python3 tools/deployment/manage.py initialize-custom --directory .
-```
-
-```bash
-python3 tools/deployment/manage.py import-images --directory .
-```
-
-```bash
-docker compose up -d --wait --pull never --no-build database
-```
-
-```bash
-docker compose run --rm --no-deps --pull never api-init
-```
-
-```bash
-python3 tools/deployment/manage.py deploy --directory .
-```
-
-- [ ] 确认 deploy 在旧服务停写后执行 upgrade_20261012_sessions.sql，创建会话表及撤销触发器，成功后才启动整栈；使用本版 Database 镜像，不批量执行历史脚本。
-- [ ] 用户原有文件哈希不变，存档不丢失，目录刷新成功，未定制功能正常。
-- [ ] 有真实新旧差异的内置 NPC 随镜像升级；同路径覆盖仍使用用户版本；删除覆盖后使用新版内置文件。
-- [ ] 升级不要求手工合并整个 npc/db/resources；同时明确覆盖文件不会自动获得上游修复，自定义语法和依赖仍需验收。
-- [ ] 若只用同一版本重复部署，记录为“升级流程演练”，不要勾选真实跨版本内容验证。
+- [ ] 使用当次完整包、新 `.env`、空数据库以及独立的新 data/custom 目录。
+- [ ] 不复用旧环境密钥、存档、配置或自定义文件，不执行兼容升级或历史数据迁移。
+- [ ] 完成 initialize 和 api-init，验证默认账号、罗安及资料初始化成功。
+- [ ] 同一完整包的重启保留该环境数据；备份只恢复到同一完整包的隔离环境。
 
 ## 9. 备份、恢复和失败处理
 
@@ -273,7 +244,7 @@ python3 tools/deployment/manage.py deploy --directory .
 - [ ] 恢复后角色、背包、仓库、后台设置与备份一致，所有 custom 文件哈希一致。
 - [ ] 在恢复目标预先添加一个备份中没有的测试文件，确认恢复会移除它，custom 精确恢复而非只追加覆盖。
 - [ ] 使用备份副本测试哈希损坏/缺少归档，恢复明确拒绝；不要破坏唯一备份。
-- [ ] 记录失败回退步骤：使用旧完整包及匹配备份，不能只换旧镜像却保留不兼容的新数据库。
+- [ ] 记录同一完整包恢复失败的处理步骤，不通过更换版本尝试恢复。
 
 ## 10. 验收记录和完成条件
 
@@ -288,7 +259,7 @@ python3 tools/deployment/manage.py deploy --directory .
 - [ ] 文档站截图对应当前 UI，来源、视口与哈希已记录；截图操作不充当最终发行包的功能验收。
 - [ ] 版本摘要按当前生产功能维护，不添加工作流状态标签；只在交付和验收完成后填写发布日期、下载地址与 SHA-256，并同步资源下载页、快速开始、根 README 及 AGENTS 的已发布版本记录；Docker Hub 仅在实际推送并核对远端摘要后记录成功。
 
-当前公开离线包：[happyro-v0.6.0.zip](https://pan.baidu.com/s/1oCxWHoHVXM4NittJSZZj_A?pwd=e5ni)，提取码 `e5ni`。本地文件为 `artifacts/releases/v0.6.0/happyro-v0.6.0.zip`，4,254,547,071 字节，SHA-256：`cadc6cca75398d01dbb94150b93d50692d04f2775af8acc8fcfcd9dee8a273db`。包内包含 Gateway、Server、API、Admin、Database 五组双架构镜像；来源见包内 `release-manifest.json`。下方历史验收及 Docker Hub 记录不作为当前包的验收或推送凭据。
+当前公开离线包：[happyro-v0.6.0.zip](https://pan.baidu.com/s/1p2m0YHljHGjb_n0-QEWG2g?pwd=59p4)，提取码 `59p4`。本地文件为 `artifacts/releases/v0.6.0/happyro-v0.6.0.zip`，4,254,554,420 字节，SHA-256：`3e09911db25b4d80ce6b8ec4c3fe299728d8c1475ef694da3e33001e8d274ab7`。包内包含 Gateway、Server、API、Admin、Database 五组双架构镜像；来源见包内 `release-manifest.json`。本次离线包验收通过。下方历史验收及 Docker Hub 记录不作为当前包的验收或推送凭据。
 
 ### 历史交付记录（2026-10-26 较早批次）
 
@@ -322,4 +293,4 @@ python3 tools/deployment/manage.py deploy --directory .
 
 - [ ] 最终离线包空库初始化后，`happyro/happyro` 第一角色位为罗安（男剑士 99/50、10,000 Zeny），技能、装备、各 100 瓶红蓝药水和六个快捷栏正确。
 - [ ] 波利蛋能正常孵化和收回；初始未召唤，没有截图临时好友、邮件、队伍或公会记录。
-- [ ] 重启及已有库升级不会覆盖角色或补发物品；桌面、平板、手机登录并选择罗安进入游戏正常。
+- [ ] 同一完整包重启不会覆盖角色或补发物品；桌面、平板、手机登录并选择罗安进入游戏正常。

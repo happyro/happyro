@@ -18,6 +18,14 @@
 - 镜像发布目标为 docker.io/kugarocks/happyro-{gateway,server,api,admin,database}。用户要求推送时，全部构建、离线包及 OCI 校验成功后才从同一批归档推送双架构镜像；Docker Hub 的 latest 指向同一版本，离线部署不使用 latest。Compose 使用本地版本标签且 pull_policy=never；归档 SHA-256、镜像 ID 和架构均记录到发布清单。
 - 发布成功后更新已发布版本记录；下一次发版只修改 VERSION，环境模板、工具不再硬编码应用版本。
 
+## 源码、下载记录与 Git 标签
+
+先完善功能说明、部署模板及包内 README，提交源码后构建并验收最终 ZIP。构建不要求 Git 标签存在；正式发布使用已提交源码，便于标签准确标识包内 `release-manifest.json` 的来源。
+
+上传验收后的包，再更新资源下载页和版本摘要中的链接、大小、SHA-256 与实际验收范围，提交这些交付记录。上传前保留原下载包的链接和摘要，不用新源码的验收结论描述旧包。包内 README 使用固定资源下载页，不嵌入该 ZIP 自身的哈希或网盘地址；补写站点交付记录无需重新构建。
+
+最后按包内清单为根仓库和五个应用的实际构建提交创建版本标签；文档仓库标记补齐交付记录后的提交。根仓库 main 可以比构建标签多出交付文档提交。源码或包内文件修改必须重新构建及验收，不能仅移动标签表示新包。
+
 ## 一键与拆分入口
 
 完成本文要求的源码、资源及构建能力准备后，可使用 `python3 tools/release/release.py offline create` 自动编排准备、五类双架构全量无缓存构建和完整 ZIP 校验。加 `--split` 同时从该完整包生成资源包与镜像／部署文件包，不跳过任何构建阶段。
@@ -164,7 +172,7 @@ images/
 
 offline-ready 表示目录的资源和镜像已通过校验，不代表 ZIP 已生成，更不代表运行验收通过；必须等待 package 成功退出，并按下方清单验收最终 ZIP。
 
-全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-<VERSION>.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、examples/custom/ 模板、配置及空 data/ 目录。禁止包含实际用户 custom/；自定义目录由部署端初始化，升级保留 HAPPYRO_CUSTOM_DIR。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，保留在 artifacts/releases/<版本>/images/，不需要重复放入最终包。
+全部目录校验通过后，package 根据 VERSION 自动生成唯一的外层交付产物 `happyro-<VERSION>.zip`，ZIP 内的根目录固定为 `happyro-版本/`，不再生成 `.tar.gz` 或外层 SHA-256 文件。工具拒绝已有目标文件、`.env`、非空 data/ 和符号链接。ZIP 必须包含 images/、resources/、tools/、examples/custom/ 模板、配置及空 data/ 目录。禁止包含实际用户 custom/；自定义目录由部署端初始化，每次安装使用新的 HAPPYRO_CUSTOM_DIR。不要在交付目录初始化密钥或运行游戏，以免把密钥和存档分发出去。built.json 和双架构 OCI 是构建端中间产物，保留在 artifacts/releases/<版本>/images/，不需要重复放入最终包。
 
 ## 验收
 
@@ -175,13 +183,13 @@ offline-ready 表示目录的资源和镜像已通过校验，不代表 ZIP 已�
 3. 核对 ZIP 的 examples/custom/npc/scripts.conf、Server 当前 db 模板和包内 custom.py。catalogs.py 在 API 镜像内，部署端不需要安装 PyYAML。
 4. ZIP 不含用户 custom、密钥和存档。独立解压后才 initialize；定制测试文件不混入发行模板。
 5. 空库验收检查八服务健康、api-init 退出 0、三类导入；再检查 NPC、数据库目录、资源更新/删除、重复初始化及精确备份恢复。
-6. 升级使用新版整包、旧持久目录及原密钥。涉及新挂载或工具时不能沿用仅换镜像的旧方式；真实跨版本验收须保留旧完整包及旧工具生成的备份。
+6. 每次使用新配置、空数据库及独立的新持久目录验收，不复用旧存档，不验收兼容升级或跨版本迁移。
 
 文档修改不会回写已生成 ZIP，包内 README、模板和工具受清单校验。不要直接改包内文件或手工更新哈希冒充原包。下一次完整发布自动携带新源文档；已交付包的勘误单独说明，保留原 ZIP 摘要。
 
-### 保持登录与会话升级
+### 保持登录与会话初始化
 
-当前版本需配套更新客户端、Gateway、login-server、web-server 和 Database 镜像中的会话 SQL。确认空库初始化及保留旧库的 deploy 都执行 `upgrade_20261012_sessions.sql`，创建会话表和账号变更撤销触发器；部署工具等待数据库健康后执行该 SQL，失败停止后续整栈启动。升级前先停止旧服务，失败停止不等于自动关闭此前运行的服务。
+当前版本需配套更新客户端、Gateway、login-server、web-server 和 Database 镜像中的会话 SQL。确认空库初始化和 deploy 执行 `upgrade_20261012_sessions.sql`，创建会话表和账号变更撤销触发器；部署工具等待数据库健康后执行该 SQL，失败停止后续整栈启动。使用独立的新环境，避免端口或项目名与已有服务冲突。
 
 最终包须验证 HTTP/HTTPS 的持久登录、页面内临时会话、重新打开进入选角、断线原角色与同地图镜头恢复、PIN、主动退出及账号变更撤销、会话和票据到期、服务重启与代理 Host。三端视口及 iOS/Android 真机后台冻结、页面回收分别记录；源码联调不能替代容器和真机验收。逐项标准见[当前验收清单](release-checklist.md#保持登录与断线恢复)。
 
@@ -193,7 +201,7 @@ offline-ready 表示目录的资源和镜像已通过校验，不代表 ZIP 已�
 
 包内 README 来自 docker-deployment.md，部署者无需引用源码文档。部署工具根据 Docker daemon 架构选择镜像，而非根据运行 Python 的架构判断。使用 Rosetta 也不能改变目标 Docker 架构。
 
-每次发布须针对最终包验证双架构构建与运行、空库初始化、已有库升级、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替运行验收，历史候选包的通过项不能直接沿用。逐项记录使用[当前验收清单](release-checklist.md)，未完成项明确列出。
+每次发布须针对最终包验证双架构构建与运行、空库初始化、登录选角、地图和音效、后台与冒险工具、重启持久化、备份恢复。自动校验不能代替运行验收，历史候选包的通过项不能直接沿用。逐项记录使用[当前验收清单](release-checklist.md)，未完成项明确列出。
 
 ## Docker Hub 发布
 
