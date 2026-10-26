@@ -81,3 +81,9 @@ HappyRO 覆盖写在 `repos/happyro-server/conf/import/`。本机 `make configur
 `ADMIN_PASSWORD_CHANGE_ENABLED` 默认 `true`，控制后台头像菜单的自助改密。共享 admin 账号的演示环境设置为 `false`，API 会隐藏入口并拒绝改密请求；后台页面不能覆盖此限制，服务器 CLI `users password` 不受影响。
 
 Docker 在部署 `.env` 修改后重新创建 API 容器：`docker compose up -d --no-deps --force-recreate api`。原生环境修改实际传入 API 的环境变量后重启服务。该配置属于 API，不是 Gateway 或前端构建参数。登录限流、会话失效和部署细节见 [API 部署说明](../../repos/happyro-api/docs/deployment.md#后台账号改密)。
+
+## 注册默认权限组锁
+
+API 环境变量 `REGISTRATION_SETTINGS_EDITABLE` 默认 `false`，锁定后台「游戏设置 → 账号注册」的默认权限组选择和保存，同时拒绝直接 API 修改。设为 `true` 并重启 API 后可保存「普通玩家 / GM」，演示部署保存后恢复 `false`；锁定保留当前策略。Compose 已透传该变量。
+
+先执行服务端 `sql-files/happyro-admin.sql` 初始化共享策略表，再更新登录服和 API。详见 [API 部署说明](../../repos/happyro-api/docs/deployment.md#新注册账号默认权限组)。
