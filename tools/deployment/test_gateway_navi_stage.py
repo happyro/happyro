@@ -24,7 +24,7 @@ class GatewayNaviStageTest(unittest.TestCase):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.symlink_to(ROOT / source, target_is_directory=(ROOT / source).is_dir())
             result = subprocess.run([
-                sys.executable, str(workspace / 'tools/navi-review/review.py'),
+                sys.executable, str(workspace / 'tools/resources/navigation/review.py'),
                 'check', '--root', str(workspace), '--no-color',
             ], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

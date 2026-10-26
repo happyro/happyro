@@ -1,10 +1,11 @@
 """Exercise deletion against session-local copies of the installed schema."""
 import contextlib
 import io
+import os
 import unittest
 from unittest.mock import patch
 
-import manage
+from tools.operations import manage
 
 
 class OperationsTests(unittest.TestCase):
@@ -22,7 +23,11 @@ class OperationsTests(unittest.TestCase):
             self.assertEqual(manage.main(['reset-characters', '--account', 'happyro']), 0)
             self.assertFalse(reset.call_args.args[0].execute)
 
+    @unittest.skipUnless(os.environ.get('HAPPYRO_OPERATIONS_TEST_DATABASE'), 'requires an explicit isolated test database container')
     def test_delete_isolates_account_and_cleans_dependencies(self):
+        database = patch.object(manage, 'DATABASE', os.environ['HAPPYRO_OPERATIONS_TEST_DATABASE'])
+        database.start()
+        self.addCleanup(database.stop)
         tables = set(manage.OWNED_TABLES) | {
             'char', 'mail', 'mail_attachments', 'skill_homunculus',
             'skillcooldown_homunculus', 'skillcooldown_mercenary',

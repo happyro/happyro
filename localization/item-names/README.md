@@ -17,16 +17,16 @@
 
 ```bash
 # 公开资料缓存与每页哈希保存在 work/，遇到拒绝访问停止获取。
-python3 tools/resources/catalog/item_names.py fetch --source dvg --output work/item-name-sources
+python3 tools/localization/items/item_names.py fetch --source dvg --output work/item-name-sources
 # RO321 按明确的 ID 列表查询；ids.json 是数字 ID 数组。
-python3 tools/resources/catalog/item_names.py fetch --source ro321 --ids work/item-name-sources/ids.json --output work/item-name-sources --limit 20 --interval 8
-python3 tools/resources/catalog/build_item_names.py build --references docs/localization/item-name-scans
-python3 tools/resources/catalog/sync_item_names.py apply
+python3 tools/localization/items/item_names.py fetch --source ro321 --ids work/item-name-sources/ids.json --output work/item-name-sources --limit 20 --interval 8
+python3 tools/localization/items/build_item_names.py build --references docs/localization/item-name-scans
+python3 tools/localization/items/sync_item_names.py apply
 python3 tools/resources/catalog/main.py items server
 python3 tools/resources/catalog/main.py items client
 python3 tools/resources/catalog/generate_card_prefixes.py --write
 python3 tools/resources/catalog/generate-item-services.py generate --no-color
-python3 tools/resources/catalog/sync_item_names.py check --no-color
+python3 tools/localization/items/sync_item_names.py check --no-color
 ```
 
 `items client` 需要 GRF 提取清单。若仅改名称、原提取目录已经删除，应先证明物品资源路径及全部数值字段与 Git 基线一致，再使用 `client.build_catalog` 与 `assets.descriptions` 更新名称／说明快照；不得伪造提取清单或改动既有图片映射。
@@ -79,7 +79,7 @@ RO321 补查采用单线程，默认每次至多 20 条、请求间隔至少 5 �
 完整扫描入口：
 
 ```bash
-python3 tools/resources/catalog/ro321_scan.py scan --output work/item-name-sources --interval 8 --no-color
+python3 tools/localization/items/ro321_scan.py scan --output work/item-name-sources --interval 8 --no-color
 ```
 
 2026-10-24 追加检查公开分类导航，确认包括之前遗漏的租赁物品（18）和认养宠物之物品（91）。13 个分类合计 2,421 页；不同分类可能重复收录同一 ID，合并时同时核对原始名称与内部标识，冲突立即停止。扫描复用已验证缓存、单线程限速、各分类轮流补缺，每页原子保存名称快照和进度；分页变化、未识别响应或拒绝访问均停止。进程互斥防止重复启动同一个列表扫描。
@@ -95,7 +95,7 @@ python3 tools/resources/catalog/ro321_scan.py scan --output work/item-name-sourc
 最终扫描完成必须运行独立缓存审计：
 
 ```bash
-python3 tools/resources/catalog/audit_ro321.py check --references work/item-name-sources --require-complete --no-color
+python3 tools/localization/items/audit_ro321.py check --references work/item-name-sources --require-complete --no-color
 ```
 
 审计逐分类检查全部页码、URL、原页哈希格式、每页行数、分类内重复 ID、跨分类身份冲突、补查记录与最终快照的一致性；仅有进程成功或状态文件的 complete 标志不算完成。报告写入 `ro321-cache-audit.json`。接近末页时网站隐藏“最后”按钮，解析器现从全部数字分页链接计算末页；旧缓存中受影响的 15 页重新获取，并核对物品行保持一致后更新分页元数据与页面哈希。

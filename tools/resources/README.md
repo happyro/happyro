@@ -6,7 +6,10 @@
 | --- | --- |
 | `catalog/` | 物品、魔物资料与图片，附魔/改造目录 |
 | [world/](world/README.md) | NPC 与地图规范目录、地形预览 |
-| `install-*.mjs` | 按来源清单安装资源并校验哈希 |
+| `install.mjs` | 按资源集安装和校验，保留图标/特效/地图各自的格式规则 |
+| [appearance/](appearance/README.md) | 三仓职业外观配置生成 |
+| [navigation/](navigation/README.md) | NAVI 静态决策审查 |
+| [help/](help/README.md) | TIPBOX 审查与数据生成 |
 | `audit-*.mjs` | 资源与引用关系检查 |
 
 ## 附魔与改造
@@ -44,7 +47,7 @@ catalog/
 安装固定版本的 Python 依赖：
 
 ```bash
-python3 -m pip install -r tools/resources/catalog/requirements.txt
+python3 -m pip install -r tools/requirements.txt
 ```
 
 不带参数运行只显示帮助：
@@ -100,3 +103,13 @@ python3 tools/resources/catalog/main.py monsters
 ```bash
 python3 -m unittest discover tools/resources/catalog/tests
 ```
+
+名称来源采集和受控改名位于 [tools/localization](../localization/README.md)，不再与运行目录生成混放。统一依赖与检查见 [tools](../README.md)。
+
+```bash
+node tools/resources/install.mjs verify --set fourth-job-icons
+node tools/resources/install.mjs verify --set fourth-job-effects
+node tools/resources/install.mjs install --set training-maps --source artifacts/resources/training-maps
+```
+
+资源安装先验证整组来源和已有目标，再创建缺失文件；不覆盖内容不同的目标。`verify` 只读，不隐式写报告，调用方可把标准输出保存到 work/。

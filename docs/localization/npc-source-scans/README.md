@@ -23,10 +23,10 @@
 
 - 原始响应与逐页进度：`work/npc-source-scan/<site>/`。
 - 日志：`work/npc-source-audit/scan.log`；恢复日志另列于该工作目录。
-- 扫描：`python3 tools/resources/npcs/scan_sources.py scan --site ro321 --workers 4 --interval 2 --no-color`。
-- 导出：`python3 tools/resources/npcs/export_sources.py export --no-color`。
-- 中途校验：`python3 tools/resources/npcs/verify_sources.py verify --allow-partial --no-color`；最终去掉 `--allow-partial`。
-- 测试：`python3 -m unittest discover -s tools/resources/npcs/tests -v`。
+- 扫描：`python3 tools/localization/npcs/scan_sources.py scan --site ro321 --workers 4 --interval 2 --no-color`。
+- 导出：`python3 tools/localization/npcs/export_sources.py export --no-color`。
+- 中途校验：`python3 tools/localization/npcs/verify_sources.py verify --allow-partial --no-color`；最终去掉 `--allow-partial`。
+- 测试：`python3 -m unittest discover -s tools/localization/npcs/tests -v`。
 
 初始每站并发 2、间隔 2 秒；用户要求提速后使用每站并发 4、间隔 0.5 秒。RO321 随后出现 4 个 403，已停止该站请求并保留缓存，恢复时降低到间隔 2 秒；DVG 名称目录已完成，不再继续详情请求。遇到 403、429 或连续失败停止该站，不绕过访问验证。
 

@@ -66,7 +66,7 @@
 - `work/item-name-sources/dvg-grid-scan.log`：抓取日志，末尾记录 Complete。
 
 ```bash
-python3 tools/resources/catalog/dvg_items_scan.py scan --view grid --output work/item-name-sources/dvg-grid --workers 4 --interval 1 --no-color
+python3 tools/localization/items/dvg_items_scan.py scan --view grid --output work/item-name-sources/dvg-grid --workers 4 --interval 1 --no-color
 python3 work/item-name-sources/audit_dvg_items_full.py
 ```
 

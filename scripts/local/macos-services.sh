@@ -36,7 +36,7 @@ if not path.is_file():
     raise SystemExit(f'Missing API service configuration: {path}')
 arguments = plistlib.loads(path.read_bytes()).get('ProgramArguments', [])
 if 'artisan' in arguments or any(Path(value).name.startswith('php') for value in arguments if isinstance(value, str)):
-    raise SystemExit('API launchd still uses PHP. Prepare and install the Go configuration with tools/deployment/native_api.py before starting services.')
+    raise SystemExit('API launchd still uses PHP. Prepare and install the Go configuration with tools/operations/native_api.py before starting services.')
 PYTHON
 fi
 domain="gui/$(id -u)"

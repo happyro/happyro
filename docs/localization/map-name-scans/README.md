@@ -32,14 +32,14 @@
 
 ## 采集与复现
 
-扫描入口：`tools/resources/maps/scan_names.py`。原始 HTML、抓取时间、页面哈希和可恢复进度保存在 `work/map-name-sources/`；文档数据按每 250 条拆分。
+扫描入口：`tools/localization/maps/scan_names.py`。原始 HTML、抓取时间、页面哈希和可恢复进度保存在 `work/map-name-sources/`；文档数据按每 250 条拆分。
 
 ```sh
-python3 tools/resources/maps/scan_names.py scan --site dvg --output work/map-name-sources
-python3 tools/resources/maps/scan_names.py scan --site ro321 --output work/map-name-sources --interval 1 \
+python3 tools/localization/maps/scan_names.py scan --site dvg --output work/map-name-sources
+python3 tools/localization/maps/scan_names.py scan --site ro321 --output work/map-name-sources --interval 1 \
   --verify-map treasure01 --verify-map kh_kiehl01 --verify-map iz_ac01 --verify-map bat_a01 \
   --verify-map que_thor --verify-map int_land --verify-map bossnia_01 --verify-map lhz_dun_n
-python3 tools/resources/maps/export_names.py export --input work/map-name-sources --output docs/localization/map-name-scans
+python3 tools/localization/maps/export_names.py export --input work/map-name-sources --output docs/localization/map-name-scans
 ```
 
 RO321 抽查 `treasure01`、`kh_kiehl01`、`iz_ac01`、`bat_a01` 等区域页明确给出的名称与详情页一致；`lhz_dun_n` 的区域标签与详情名不同，证明不能把只有区域标签的标题当作单张地图名称。

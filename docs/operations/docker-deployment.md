@@ -18,8 +18,8 @@ happyro-版本/
 ├── .env.example
 ├── release-manifest.json
 ├── images/
-│   ├── amd64/                 # gateway/server/api/database.tar
-│   └── arm64/                 # gateway/server/api/database.tar
+│   ├── amd64/                 # gateway/server/api/admin/database.tar
+│   └── arm64/                 # gateway/server/api/admin/database.tar
 ├── resources/
 │   ├── manifest.json
 │   ├── kro-20211105/          # DATA.INI、GRF、AI、BGM、System、data
@@ -53,11 +53,17 @@ Gateway 日志权限：v0.5.0 镜像会以 root 初始化 `data/gateway-logs` �
 
 ```bash
 python3 tools/deployment/manage.py verify --directory .
+```
+
+```bash
 python3 tools/deployment/manage.py import-images --directory .
+```
+
+```bash
 python3 tools/deployment/manage.py initialize --directory .
 ```
 
-verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜像归档。缺失镜像的 prepared-not-built 准备包会被拒绝。import-images 根据 Docker daemon 的 Linux 架构导入对应四个镜像，并核对镜像 ID；Apple Silicon 通常为 arm64，Intel 为 amd64。它不会启动容器。
+verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜像归档。缺失镜像的 prepared-not-built 准备包会被拒绝。import-images 根据 Docker daemon 的 Linux 架构导入对应五个镜像，并核对镜像 ID；Apple Silicon 通常为 arm64，Intel 为 amd64。它不会启动容器。
 
 编辑 .env：
 
@@ -65,7 +71,7 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 - ADMIN_CSRF_ORIGIN_CHECK_ENABLED：默认 `false`，关闭来源校验但保留 CSRF Token 校验；设为 `true` 时仅信任 ADMIN_PUBLIC_URL 对应来源。
 - ADMIN_PUBLIC_URL：默认 `http://127.0.0.1:8000`，局域网访问时改为主机 IP。
 - SOCKET_PROXY_URL：默认留空并使用当前页面同源的 `/ws/`；WebSocket 使用独立域名时填写完整前缀，例如 `wss://happyro-ws.example.com/ws/`。
-- GATEWAY_PORT、ADMIN_PORT：默认 3338、8000。修改端口时同步 URL。
+- GATEWAY_PORT、ADMIN_PORT：默认 3338、8000，在宿主机所有接口发布端口。支持 `宿主机地址:端口`；仅本机访问时，在 `.env` 设置 `GATEWAY_PORT=127.0.0.1:3338`、`ADMIN_PORT=127.0.0.1:8000`，然后重新创建对应容器。公开 URL 不限制监听范围；修改端口时同步 URL。不要直接修改受哈希校验的 `compose.yaml`。
 - RESOURCE_DIR、DATA_DIR：默认 ./resources、./data。自定义时先复制资源、创建 data/ 中所有子目录，挂载不自动创建缺失路径。
 - CUSTOM_DIR：默认 ./custom，建议改为版本目录外的专用绝对路径，例如 `/srv/happyro/custom`；修改后运行 `python3 tools/deployment/manage.py initialize-custom --directory .`。只填宿主机路径，不填容器内 `/opt/happyro/custom`。
 - 本模板默认局域网 HTTP。Admin 后台使用 HTTPS 时设置 SESSION_SECURE_COOKIE=true，并确保反向代理传递原始协议。
@@ -78,6 +84,9 @@ verify 要求 offline-ready 状态，检查配置、资源和两种架构的镜�
 
 ```bash
 python3 tools/deployment/manage.py deploy --directory .
+```
+
+```bash
 docker compose ps -a
 ```
 
@@ -91,7 +100,7 @@ api-init 依次执行 Go 管理库迁移（`migrate`）、初始账号创建（`
 
 ## 服务与后台维护
 
-正常运行七个服务容器和一个完成后退出的 api-init：
+正常运行八个服务容器和一个完成后退出的 api-init：
 
 Compose 已为服务设置固定容器名（如 `happyro-api`、`happyro-gateway`、`happyro-map`），不会再追加默认的 `-1` 序号。固定容器名意味着同一台主机不能同时运行两个相同部署包实例；如需并行实例，应修改 Compose 中的容器名前缀。
 
@@ -99,21 +108,27 @@ Compose 已为服务设置固定容器名（如 `happyro-api`、`happyro-gateway
 | --- | --- |
 | Gateway（含全量 PWA 和中文覆盖） | gateway |
 | Server（PACKETVER=20211103、Renewal） | login、char、map、web-api |
-| API（含 Admin 前端） | api、api-init |
+| API（Go 接口与初始化） | api、api-init |
+| Admin（Nginx 后台前端与同源代理） | admin |
 | Database（MariaDB 10.11） | database |
 
-后台默认宿主机 8000 → 容器 8080；游戏 3338 → 3338，其余端口只在 Docker 网络内。后台资料版本固定在配置中（kro-20211105、2fe6ab3dc4d8），不是应用发布版本，不在页面修改。
+后台默认宿主机 8000 → Admin 容器 8080；游戏 3338 → 3338，其余端口只在 Docker 网络内。后台资料版本固定在配置中（kro-20211105、2fe6ab3dc4d8），不是应用发布版本，不在页面修改。
 
-API 容器由 Go 进程同时提供 API 和前端静态文件。进程以 www-data 身份运行，健康检查使用 `/api/health`；Gateway 继续压缩转发到 API 的冒险工具响应。
+Admin 容器以非 root Nginx 提供后台页面及同源 `/api` 代理，根文件系统只读，临时文件位于 `/tmp`，健康检查使用 `/healthz`。API 容器仅运行 Go 接口与初始化，进程以 www-data 身份运行，健康检查使用 `/api/health`；API 不映射宿主机端口。Gateway 继续转发冒险工具响应，Admin 与游戏入口独立。
 
-游戏依赖链是 database → login → char → map → web-api → gateway。API 等待数据库、api-init 完成和 web-api 健康。游戏不等待 API；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
+游戏依赖链是 database → login → char → map → web-api → gateway。API 等待数据库、api-init 完成和 web-api 健康，Admin 等待 API 健康。游戏不等待 API；后台停机时，依赖后台能力的冒险工具标签不可用或不显示，登录、战斗和 NPC 不依赖后台。
 
 ```bash
 docker compose stop api
+```
+
+```bash
 docker compose up -d --pull never api
 ```
 
 后台初始化失败时，整栈启动可能报错；检查 ps -a 和 logs，只有确认本轮 deploy 已成功执行会话 SQL 后，才可单独启动游戏链：docker compose up -d --pull never --no-build gateway；会话 SQL 失败时先修复并重新运行 deploy。停止 Admin 不要停止共享数据库。API 和 Server 共享 data/server-settings，battle_conf.txt 的运营变更须备份；不能改成单文件挂载。
+
+Docker 为 Admin 与 API 建立专用 `admin-proxy` 网络；`ADMIN_PROXY_SUBNET` 默认 `172.30.81.0/29`，`ADMIN_PROXY_DYNAMIC_RANGE` 默认 `172.30.81.4/30`，`ADMIN_PROXY_IP` 默认 `172.30.81.2`。动态地址池用于 API 等临时端点，不包含 Admin 固定地址，避免 API 先启动时占用该地址。API 的 `HTTP_TRUSTED_PROXIES` 只信任该 Admin 地址，Nginx 覆盖客户端传入的转发头，使登录限流、登录记录和操作审计使用代理收到的来源 IP。若与宿主机路由或已有 Docker 网段冲突，须同时调整子网、子网内的动态地址池和池外可用的 Admin 固定地址，并重新创建网络和容器。外层反向代理的真实 IP 信任链须另行配置，默认不会信任外部传入的转发头。
 
 ## 升级
 
@@ -121,21 +136,33 @@ docker compose up -d --pull never api
 
 - 用旧版配套工具停写备份，保留旧完整包及旧 `.env`。新旧包不得同时连接同一份存档。
 - 记录 DATA_DIR、CUSTOM_DIR 的实际绝对路径及 custom 文件哈希；旧版无 custom 时使用新的专用目录。
-- 新目录复制旧 `.env`，保留数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与四个镜像引用等明确需要变更的值。
+- 新目录复制旧 `.env`，保留数据库密码、令牌、公开 URL 和 Compose 项目名；按新版 `.env.example` 核对新增变量，仅更新版本与五个镜像引用等明确需要变更的值。新增 `ADMIN_IMAGE` 指向本版独立后台镜像，不再设置 `FRONTEND_DIR`。
 - `DATA_DIR=./data` 等相对路径会随包目录改变，须改成原数据的绝对路径；`RESOURCE_DIR` 指向新包资源。若搬迁数据，需在停写状态复制完整结构，而非只复制数据库目录。
 - 固定容器名会冲突。备份完成后在旧包目录执行 `docker compose down`，再启动新版；bind mount 数据会保留。
 
 1. 保留新版完整包并执行 verify；先在旧部署目录停止写入并备份（见下节）。同一存档只能有一套游戏服务运行。
-2. 在新版包根目录复制旧 .env，保留数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和四个 IMAGE 变量。
+2. 在新版包根目录复制旧 .env，保留数据库密码和控制令牌；从新版 .env.example 更新 RELEASE_VERSION 和五个 IMAGE 变量。
 3. 将 DATA_DIR 指向旧部署已停止写入的数据目录（建议绝对路径），CUSTOM_DIR 指向旧的自定义目录（同样建议绝对路径），RESOURCE_DIR 使用新版包内资源。不要把新的空 data/ 或 custom/ 当成旧内容。
 4. 执行 `python3 tools/deployment/manage.py initialize-custom --directory .`：首次引入自定义功能时建立目录；后续仅补齐新版新增的模板文件，已有文件不覆盖，不合并。旧版本备份需使用旧版本配套工具恢复，不能直接交给新工具。
-5. 导入本版四类镜像，等待 database 健康，再显式执行 Admin 迁移和目录导入；成功后运行 `deploy`，由工具升级游戏会话结构并启动整栈。以下命令逐条执行，任一步失败即停止。
+5. 导入本版五类镜像，等待 database 健康，再显式执行 Admin 迁移和目录导入；成功后运行 `deploy`，由工具升级游戏会话结构并启动整栈。以下命令逐条执行，任一步失败即停止。
 
 ```bash
 python3 tools/deployment/manage.py initialize-custom --directory .
+```
+
+```bash
 python3 tools/deployment/manage.py import-images --directory .
+```
+
+```bash
 docker compose up -d --wait --pull never --no-build database
+```
+
+```bash
 docker compose run --rm --no-deps --pull never api-init
+```
+
+```bash
 python3 tools/deployment/manage.py deploy --directory .
 ```
 
@@ -143,7 +170,7 @@ python3 tools/deployment/manage.py deploy --directory .
 
 保持登录需要客户端、Gateway、login-server、web-server 与会话数据库结构配套更新，`PACKETVER` 保持 `20211103`。必须导入本版 Database 镜像，不能仅替换 Server/Gateway 镜像。升级前按上文停止旧服务；`deploy` 的失败停止机制不会替你关闭此前已运行的旧服务。
 
-已有环境不要重新运行 `initialize`，只运行 `initialize-custom` 补齐模板。升级后核对七服务健康、api-init 退出 0、角色/仓库数据、后台设置及 custom 哈希，再分别检查未覆盖 NPC 随镜像更新、覆盖文件仍优先、删除覆盖后恢复新版内置文件。只重部署同一版本应记录为流程演练。
+已有环境不要重新运行 `initialize`，只运行 `initialize-custom` 补齐模板。升级后核对八服务健康、api-init 退出 0、角色/仓库数据、后台设置及 custom 哈希，再分别检查未覆盖 NPC 随镜像更新、覆盖文件仍优先、删除覆盖后恢复新版内置文件。只重部署同一版本应记录为流程演练。
 
 上述流程显式运行 `api-init`：执行 Go 管理库迁移、初始账号创建和完整资料的原子导入。不要只凭已存在的退出容器判断本轮导入已完成。需要单独刷新自定义资料时执行容器命令 `refresh-custom-catalogs`。
 
@@ -152,19 +179,46 @@ python3 tools/deployment/manage.py deploy --directory .
 先确认 api-init 已完成，再停止游戏及后台写入，并暂停宿主机 custom 文件编辑，仅保留 database 运行。数据库含非事务表，不能在有写入时仅凭 single-transaction 获得一致备份。
 
 ```bash
-docker compose stop gateway api web-api map char login
+docker compose stop gateway admin api web-api map char login
+```
+
+```bash
 python3 tools/deployment/manage.py backup --directory . --output ../backups/before-upgrade
 ```
 
 普通备份完成后可运行 deploy 恢复服务；准备升级时保持停写。备份包含三个数据库（happyro、happyro_log、happyro_admin）、server-settings、整个 CUSTOM_DIR（脚本、数据库扩展、资源）、.env 和部署清单。备份含密钥，应复制到异机；无 checksums.json 的部分备份不可恢复。备份输出目录必须不存在，示例路径用过后须换新目录。完整离线包另行保存，备份不会重复复制镜像和资源。
 
-恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 DATA_DIR、CUSTOM_DIR、资源路径和地址，保留原数据库密码和控制令牌，不重新 initialize。先执行 initialize-custom 建立容器需要的挂载目录，再恢复：
+恢复优先使用匹配版本的完整包及新的宿主机数据目录。复制备份 .env、核对 DATA_DIR、CUSTOM_DIR、资源路径和地址，保留原数据库密码和控制令牌，不重新 initialize。`initialize-custom` 只准备 `CUSTOM_DIR`，不会创建 `DATA_DIR`。若使用新建的外部数据目录，先在 `.env` 设置其实际路径，再创建全部五个数据子目录；Compose 的 bind mount 不会自动创建缺失路径。
+
+以下示例中的 `/srv/happyro/restore-data` 必须替换为 `.env` 中 `DATA_DIR` 指定的同一目录。使用全新解压包自带的 `./data` 时，这五个空子目录已包含在包中。
+
+```bash
+restore_data_dir=/srv/happyro/restore-data
+```
+
+```bash
+mkdir -p "${restore_data_dir}/database" "${restore_data_dir}/control-socket"  "${restore_data_dir}/server-settings" "${restore_data_dir}/server-logs"  "${restore_data_dir}/gateway-logs"
+```
+
+目录准备完成后，初始化自定义目录、导入镜像并恢复：
 
 ```bash
 python3 tools/deployment/manage.py initialize-custom --directory .
+```
+
+```bash
 python3 tools/deployment/manage.py import-images --directory .
+```
+
+```bash
 docker compose up -d --wait --pull never --no-build database
+```
+
+```bash
 python3 tools/deployment/manage.py restore --directory . --backup ../backups/before-upgrade --confirm-replace
+```
+
+```bash
 python3 tools/deployment/manage.py deploy --directory .
 ```
 

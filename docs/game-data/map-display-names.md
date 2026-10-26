@@ -11,7 +11,7 @@
 - 分线仍按 MapChannels 维护真实关系；不从地图后缀推断新频道或副本模式。
 
 ```bash
-node tools/resources/maps/apply_display_names.mjs generate --no-color
+node tools/localization/maps/apply_display_names.mjs generate --no-color
 node tools/resources/world/generate-npc-catalog.mjs generate --no-color
 node scripts/resources/generate-navigation-data.mjs --write
 # 导航名称变化后同步 NPC 目录的导航来源指纹
@@ -159,8 +159,8 @@ node tools/resources/world/generate-map-catalog.mjs generate --no-color
 ## 验证与维护
 
 ```bash
-node tools/resources/maps/apply_display_names.mjs check --no-color
-node --test tools/resources/maps/display_names.test.mjs tools/resources/world/map-name-application.test.mjs tools/resources/world/catalog-names.test.mjs
+node tools/localization/maps/apply_display_names.mjs check --no-color
+node --test tools/localization/maps/display_names.test.mjs tools/resources/world/map-name-application.test.mjs tools/resources/world/catalog-names.test.mjs
 node tools/resources/world/generate-npc-catalog.mjs check --no-color
 node scripts/resources/generate-navigation-data.mjs --check
 ```

@@ -19,7 +19,7 @@ if (!args.includes('audit')) {
 	process.exit(0);
 }
 if (args.some(arg => !['audit', '--no-color'].includes(arg))) throw new Error('Unknown argument');
-const require = createRequire(path.join(root, 'repos/happyro-client/package.json'));
+const require = createRequire(import.meta.url);
 const yaml = require('js-yaml');
 const load = async name => yaml.load(await fs.readFile(path.join(root, 'repos/happyro-server/db/re', name), 'utf8')).Body;
 const [trees, db, exp] = await Promise.all(['skill_tree.yml', 'skill_db.yml', 'job_exp.yml'].map(load));

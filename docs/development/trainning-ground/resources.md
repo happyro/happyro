@@ -73,9 +73,9 @@ PY
 以下命令在根仓库执行。安装器先验证全部源文件，再向运行目录新增文件；同名不同内容会报错，安装后回读校验。重复执行时已存在且哈希一致的文件会复用。
 
 ```bash
-node tools/resources/install-training-maps.mjs install \
+node tools/resources/install.mjs install --set training-maps \
   --source docs/development/trainning-ground/assets/originals --no-color
-node tools/resources/install-training-maps.mjs verify --no-color
+node tools/resources/install.mjs verify --set training-maps --no-color
 
 node tools/resources/world/generate-map-resources.mjs generate --no-color
 node tools/resources/world/generate-npc-catalog.mjs generate --no-color

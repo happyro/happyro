@@ -58,6 +58,6 @@ Go API 的 NPC 查询已经改为服务端分页（`catalog_npcs` 表 + 分页 A
 
 名称按 ID／AegisName 和 RO321、DVG、同 ID 第三方中文证据审定，保留未确认项。来源与决策见[魔物名称审查](../localization/monster-name-scans/application/README.md)。服务器属性仍以当前 Renewal 数据为准，不随网站译名覆盖数值或掉落。
 
-核对客户端完整名、服务端 Name／JapaneseName、默认封包短名、魔物型佣兵、普通刷怪标签及任务目标；特殊副本名与通用任务条件不按字符串批量改写。`python3 -m tools.resources.monsters.verify_application verify --no-color` 验证这条应用链。
+核对客户端完整名、服务端 Name／JapaneseName、默认封包短名、魔物型佣兵、普通刷怪标签及任务目标；特殊副本名与通用任务条件不按字符串批量改写。`python3 -m tools.localization.monsters.verify_application verify --no-color` 验证这条应用链。
 
 客户端任务进度只在目标 ID 与当前默认短名同时匹配时恢复全名。任务 JSON 还需 Lua 编译／语义回读和运行目录哈希验证；目录须分别生成 Client 产物及 API 快照，再完整导入管理库。

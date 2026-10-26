@@ -28,9 +28,9 @@
 中间文件统一位于忽略目录 `work/npc-name-audit/`，包括基线／当前清单、分区决策、跨文本引用、工具边界检查及隔离加载日志。名称决策以脚本及原始历史证据为依据，不将自动候选标记视为译名批准。
 
 ```sh
-python3 tools/npc-name-audit/audit.py scan --no-color
-python3 tools/npc-name-audit/normalize.py preview --no-color
-python3 -m unittest discover -s tools/npc-name-audit -p 'test_*.py'
+python3 tools/localization/npcs/audit.py scan --no-color
+python3 tools/localization/npcs/normalize.py preview --no-color
+python3 -m unittest discover -s tools/localization/npcs -p 'test_*.py'
 node --test tools/resources/world/npc-script-source.test.mjs tools/resources/world/generate-npc-catalog.test.mjs
 ```
 

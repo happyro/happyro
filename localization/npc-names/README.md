@@ -4,7 +4,7 @@
 
 客户端完整名称的唯一运行来源是 `repos/happyro-client/src/DB/NpcNameTranslations.zh-CN.json`；通用职务使用中性译名，需要身份区别的实例在服务端使用显式显示名与稳定内部名。任务、导航资源按对应实体和任务 ID 同步，不能全局替换短人名。
 
-根目录执行 `python3 tools/npc-name-audit/normalize.py preview --no-color` 可检查规则是否仍匹配。明确使用 `apply` 才修改文件；先计算所有目标的变更并检查身份与可执行代码不变，再写回。仅允许规则中明确审核的两种表达式修复：复制 NPC 的对白标题读取当前显示名，以及身份比较改读稳定内部名；其余代码不可改变。规则不自动提交代码。
+根目录执行 `python3 tools/localization/npcs/normalize.py preview --no-color` 可检查规则是否仍匹配。明确使用 `apply` 才修改文件；先计算所有目标的变更并检查身份与可执行代码不变，再写回。仅允许规则中明确审核的两种表达式修复：复制 NPC 的对白标题读取当前显示名，以及身份比较改读稳定内部名；其余代码不可改变。规则不自动提交代码。
 
 背景、范围和验证见 [NPC 名称审计计划](../../docs/development/npc-name-audit/README.md)与[执行记录](../../docs/development/npc-name-audit/execution.md)。
 

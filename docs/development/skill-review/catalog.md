@@ -2,7 +2,7 @@
 
 [返回技能审查总览](README.md) · [已修复问题](fixes.md) · [未解决事项](pending.md)
 
-下列 JSON 证据存放在 `docs/development/skill-review/evidence/` 并纳入根仓库 Git，保留原始字节与哈希，不再引用忽略目录中的临时证据。实机脚本与核验入口见[技能审计工具](../../../tools/skill-audit/README.md)。新测试输出仍写入临时目录，经审查后再更新本目录，避免覆盖既有证据。
+下列 JSON 证据存放在 `docs/development/skill-review/evidence/` 并纳入根仓库 Git，保留原始字节与哈希，不再引用忽略目录中的临时证据。实机脚本与核验入口见[技能审计工具](../../../tools/acceptance/skills/README.md)。新测试输出仍写入临时目录，经审查后再更新本目录，避免覆盖既有证据。
 
 - [覆盖对账与证据哈希](evidence/coverage-verification.json)：607 个独立技能、606 项已处理及 1 项跳过。
 - [矿石发现停止采样记录](evidence/revalidation/finding-ore-retry.json)：用户要求跳过，不标记效果通过。

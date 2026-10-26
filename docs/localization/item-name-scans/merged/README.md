@@ -42,9 +42,9 @@
 ## 重建
 
 ```sh
-python3 tools/resources/catalog/build_item_names.py build --references docs/localization/item-name-scans --no-color
-python3 tools/resources/catalog/sync_item_names.py apply --no-color
-python3 tools/resources/catalog/sync_item_names.py check --no-color
+python3 tools/localization/items/build_item_names.py build --references docs/localization/item-name-scans --no-color
+python3 tools/localization/items/sync_item_names.py apply --no-color
+python3 tools/localization/items/sync_item_names.py check --no-color
 ```
 
 映射可从版本化快照与排除表精确复现；同步检查通过。目录工具 42 项测试、服务端物品名称判定测试和客户端物品来源测试通过。数值、资源路径和英文名已与 Git 基线逐项核对。修正已纳入本次提交。

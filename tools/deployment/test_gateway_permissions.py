@@ -55,6 +55,8 @@ test "$(stat -c '%u:%g:%a' /outside/file)" = 0:0:400
 
     def test_help_does_not_initialize_logs(self):
         result = self.run_container('''
+# The image precreates logs; remove only this disposable container fixture.
+rmdir /opt/gateway/logs
 happyro-gateway
 happyro-gateway --no-color
 test ! -e /opt/gateway/logs

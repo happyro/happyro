@@ -10,9 +10,9 @@
 从清单列出的补丁提取文件后，按安装工具的帮助提供来源目录；工具校验源与目标哈希，不用猜测名称或其他技能图片替代缺失资源。
 
 ```bash
-node tools/resources/install-fourth-job-icons.mjs install --source work/fourth-jobs/official-patches/extracted
-node tools/resources/install-fourth-job-icons.mjs verify --no-color
-node tools/resources/install-fourth-job-effects.mjs --no-color
+node tools/resources/install.mjs install --set fourth-job-icons --source work/fourth-jobs/official-patches/extracted
+node tools/resources/install.mjs verify --set fourth-job-icons --no-color
+node tools/resources/install.mjs --no-color
 node tools/resources/audit-fourth-jobs.mjs audit --no-color
 ```
 

@@ -41,7 +41,7 @@
 复验命令：
 
 ```bash
-python3 -m tools.resources.monsters.verify_application verify --no-color
+python3 -m tools.localization.monsters.verify_application verify --no-color
 node --test tools/resources/world/catalog-names.test.mjs
 ```
 

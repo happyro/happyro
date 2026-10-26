@@ -1,0 +1,1 @@
+for(const file of ['resource-helper.js','equip-helper.js','neutral-helper.js','status-hook.js']){const code=await fs.readFile('tools/acceptance/skills/'+file,'utf8');await eval('(async()=>{'+code+'})()');}return {ready:true};

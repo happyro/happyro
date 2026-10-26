@@ -1,6 +1,6 @@
 # 本机运维工具
 
-集中保存日常运维子命令，与 `tools/deployment/` 的构建发布工具分开。
+集中保存日常运维子命令，与 `tools/release/` 的构建发布及 `tools/deployment/` 的离线部署分开。
 使用 Python 3 标准库和本机 Docker CLI，目标为当前 Docker context 中的
 `happyro-database` 及 HappyRO 应用容器；只接受 Unix socket 连接。
 
@@ -35,3 +35,9 @@ python3 tools/operations/manage.py reset-characters --account happyro --execute
 ```bash
 python3 -m unittest discover -s tools/operations -p 'test_*.py'
 ```
+
+## macOS API 服务定义
+
+`native_api.py prepare --workspace PATH --binary PATH --environment PATH --output PATH` 生成 Go API launchd plist，不启动服务、不覆盖已有文件。实际服务启停由 `scripts/local/macos-services.sh` 执行。
+
+角色删除的数据库集成测试只在显式设置 `HAPPYRO_OPERATIONS_TEST_DATABASE` 时运行，目标必须是专用测试容器；默认工具测试只检查无副作用行为。临时表测试不会向真实账号表写入数据。

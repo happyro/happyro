@@ -2,15 +2,12 @@
 import hashlib
 import json
 from pathlib import Path
-import re
 import subprocess
 import tarfile
 import tempfile
 
-NAMES = ('gateway', 'server', 'api', 'database')
+NAMES = ('gateway', 'server', 'api', 'admin', 'database')
 ARCHES = ('amd64', 'arm64')
-REPOS = ('.', 'repos/happyro-client', 'repos/happyro-gateway',
-         'repos/happyro-server', 'repos/happyro-admin', 'repos/happyro-api')
 
 
 def digest(path):
@@ -19,23 +16,6 @@ def digest(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             checksum.update(chunk)
     return checksum.hexdigest()
-
-
-def version(root):
-    value = (root / 'deploy/docker/VERSION').read_text().strip()
-    if not re.fullmatch(r'v\d+\.\d+\.\d+', value):
-        raise ValueError('Invalid deploy/docker/VERSION')
-    return value
-
-
-def commits(root):
-    result = {}
-    for repo in REPOS:
-        if subprocess.check_output(['git', '-C', str(root / repo), 'status', '--porcelain']).strip():
-            raise ValueError(f'Dirty repository: {repo}')
-        result[repo] = subprocess.check_output(
-            ['git', '-C', str(root / repo), 'rev-parse', 'HEAD'], text=True).strip()
-    return result
 
 
 def reference(name, release_version):

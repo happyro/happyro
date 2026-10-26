@@ -26,8 +26,8 @@
 ## 更新方式
 
 ```sh
-python3 tools/tipbox-review/review.py generate --publish --workers 8 --no-color
-python3 tools/tipbox-review/review.py check --workers 8 --no-color
+python3 tools/resources/help/review.py generate --publish --workers 8 --no-color
+python3 tools/resources/help/review.py check --workers 8 --no-color
 ```
 
 不带参数只输出帮助。详细引用、来源位置、异常和图结构保存在 `work/tipbox-review/audit.json`。

@@ -36,7 +36,7 @@
 node --test tools/resources/world/map-name-application.test.mjs tools/resources/world/catalog-names.test.mjs tools/resources/world/generate-npc-catalog.test.mjs
 node scripts/resources/generate-navigation-data.mjs --check
 node tools/resources/world/generate-npc-catalog.mjs check --no-color
-python3 -m unittest discover -s tools/resources/maps/tests
+python3 -m unittest discover -s tools/localization/maps/tests
 bash scripts/client/refresh-client.sh verify --no-color
 ```
 

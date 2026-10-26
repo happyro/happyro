@@ -52,7 +52,7 @@ Web 管理后台提供账号与角色查询、物品与 Zeny 发放，以及经�
 
 ## 安装与体验
 
-当前功能变化见 [v0.6.0](https://happyro.kugarocks.com/changelog/releases/v0.6.0)：经典初心者流程、地图恢复、自动战斗与恢复、说明链接与帮助阅读器、资源补齐、后台 GM 与配置维护。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
+当前功能变化见 [v0.6.0](https://happyro.kugarocks.com/changelog/releases/v0.6.0)：经典初心者流程、地图恢复、自动战斗与恢复、说明链接与帮助阅读器、资源补齐、后台 GM 与配置维护。当前 v0.6.0 离线包已提供网盘下载，包含 Gateway、Server、API、Admin、Database 五类双架构镜像。2026-10-26 较早批次的验收和 Docker Hub 发布记录独立保留。离线包和镜像的实际交付信息见[下载说明](https://happyro.kugarocks.com/guide/downloads)，历史 v0.5.0 记录保持独立。
 
 首次体验可从[快速开始](https://happyro.kugarocks.com/guide/quick-start)选择入口。自行部署时，参考 [Docker 安装手册](https://happyro.kugarocks.com/deploy/docker)，下载[离线包](https://happyro.kugarocks.com/guide/downloads)，包内包含 `linux/amd64` 与 `linux/arm64` 镜像、运行资源、配置模板和配套工具。
 

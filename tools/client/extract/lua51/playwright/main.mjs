@@ -1,11 +1,24 @@
-import { chromium } from 'playwright';
+import {parseArgs} from 'node:util';
+import {fileURLToPath} from 'node:url';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const root = path.resolve(new URL('../../../../..', import.meta.url).pathname);
-const client = path.join(root, 'repos/happyro-client');
-const source = path.join(root, 'inputs/runtime/kro-20211105/client/System');
-const out = path.join(root, 'work/lub-reextract');
+const args = process.argv.slice(2);
+if (!args.length || args.includes('--help') || args.every(arg => arg === '--no-color')) {
+  const paint = (code, text) => args.includes('--no-color') ? text : `\x1b[${code}m${text}\x1b[0m`;
+  console.log(`\n${paint('1;36', 'HappyRO LUB snapshot extraction')}\n\n${paint('1;33', 'Usage')}\n  ${paint('1;32', '--run --browser-path PATH')} [--source DIR] [--output DIR] [--url URL] [--no-color]\n\n${paint('1;33', 'Example')}\n  ${paint('36', 'node tools/client/extract/lua51/playwright/main.mjs --run --browser-path /path/to/chromium')}\n`);
+  process.exit(0);
+}
+const {values} = parseArgs({args, options: {
+  run: {type: 'boolean'}, 'browser-path': {type: 'string'}, source: {type: 'string'},
+  output: {type: 'string'}, url: {type: 'string', default: 'http://127.0.0.1:3000/applications/tools/index.html'},
+  'no-color': {type: 'boolean'},
+}});
+if (!values.run || !values['browser-path']) throw new Error('--run and --browser-path are required');
+const {chromium} = await import('playwright-core');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');
+const source = path.resolve(values.source || path.join(root, 'inputs/runtime/kro-20211105/client/System'));
+const out = path.resolve(values.output || path.join(root, 'work/lub-reextract'));
 const targets = [
   ['achievement_list.lub', 'achievement_tbl', 'achievement_list.json'],
   ['OngoingQuestInfoList.lub', 'QuestInfoList', 'OngoingQuestInfoList.json'],
@@ -28,9 +41,10 @@ const targets = [
     ['tipbox.lub', 'tbl', 'tipbox.json'],
 ];
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({ headless: true, executablePath: values['browser-path'] });
+try {
 const page = await browser.newPage();
-await page.goto('http://127.0.0.1:3000/applications/tools/index.html');
+await page.goto(values.url);
 await fs.mkdir(out, { recursive: true });
 for (const [file, variable, output] of targets) {
   const bytes = await fs.readFile(path.join(source, file));
@@ -98,4 +112,6 @@ for (const [file, variable, output] of targets) {
   await fs.writeFile(path.join(out, output), JSON.stringify(result) + '\n');
   console.log(output);
 }
-await browser.close();
+} finally {
+  await browser.close();
+}

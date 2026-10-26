@@ -6,7 +6,9 @@
 | --- | --- |
 | `mariadb/` | 本机 MariaDB Compose 与初始化脚本 |
 | `rathena/` | 服务端地址和端口 profile |
-| `docker/` | 统一 VERSION、四类镜像 Dockerfile、离线 Compose 和环境模板 |
+| `docker/` | 统一 VERSION、Gateway／Server／Database Dockerfile、离线 Compose 和环境模板 |
+
+API 与 Admin 的 Dockerfile 分别位于 `repos/happyro-api/deploy/docker/` 和 `repos/happyro-admin/deploy/docker/`。发布工具统一构建五类双架构镜像，并将 API 与 Admin 分别收录到离线包。
 
 部署工具集中在 [tools/deployment](../tools/deployment)，完整交付流程见 [无源码 Docker 部署](../docs/operations/docker-deployment.md)。
 

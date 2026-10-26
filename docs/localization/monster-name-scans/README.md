@@ -38,11 +38,11 @@ RO321 只接受 `page=re_mob_db`。`page=mob_db&re_mob=1` 仍可能返回复兴�
 原始 HTML、断点与扫描日志位于本机 `work/monster-name-sources/`。正式文档按 250 条 JSON／100 条 Markdown 分片；源页面列表保存 URL、抓取时间、编码、哈希。project-baseline.json 固定项目目录内容哈希、各仓库提交与当前名称。
 
 ```sh
-python3 tools/resources/monsters/scan_sources.py scan --site both
-python3 tools/resources/monsters/scan_sources.py supplement --site ro321
-python3 -m tools.resources.monsters.verify_sources verify
-python3 -m tools.resources.monsters.merge_sources publish
-python3 -m tools.resources.monsters.verify_docs verify
+python3 tools/localization/monsters/scan_sources.py scan --site both
+python3 tools/localization/monsters/scan_sources.py supplement --site ro321
+python3 -m tools.localization.monsters.verify_sources verify
+python3 -m tools.localization.monsters.merge_sources publish
+python3 -m tools.localization.monsters.verify_docs verify
 ```
 
 每站单连接、两次请求开始时间至少间隔 2 秒，缓存按哈希校验；请求／解析失败停止该站并记录断点，不将失败页面算作不存在。解析器回归与独立 HTMLParser 对所有页面名称及内部名逐项复核，覆盖分页连续性、重复 ID 与分片哈希。

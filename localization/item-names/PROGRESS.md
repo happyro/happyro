@@ -44,12 +44,12 @@
 收到用户恢复指令后执行（自动跳过缓存，不从头抓取）：
 
 ```bash
-python3 tools/resources/catalog/ro321_scan.py scan --output work/item-name-sources --interval 8 --no-color
+python3 tools/localization/items/ro321_scan.py scan --output work/item-name-sources --interval 8 --no-color
 ```
 
 遇到 401／403／429 停止；不轮换代理或身份。扫描完整结束后：
 
-1. 执行 `python3 tools/resources/catalog/audit_ro321.py check --references work/item-name-sources --require-complete --no-color`，确认全页覆盖和数据一致。
+1. 执行 `python3 tools/localization/items/audit_ro321.py check --references work/item-name-sources --require-complete --no-color`，确认全页覆盖和数据一致。
 2. 汇总最终页数、唯一 ID、缺失项及来源核验结果，保留 RO321 独立名称快照和逐页证据。
 3. 将结果位置提供给用户，供其之后与小册子结果合并。当前任务不更新正式翻译或运行资源；未经用户要求不提交、不推送。
 

@@ -102,8 +102,8 @@
 可重复的静态检查入口：
 
 ```sh
-python3 tools/npc-name-audit/audit.py scan --no-color
-python3 -m unittest discover -s tools/npc-name-audit -p 'test_*.py'
+python3 tools/localization/npcs/audit.py scan --no-color
+python3 -m unittest discover -s tools/localization/npcs -p 'test_*.py'
 node --test tools/resources/world/npc-script-source.test.mjs tools/resources/world/generate-npc-catalog.test.mjs
 node tools/resources/world/generate-npc-catalog.mjs check --no-color
 ./scripts/client/refresh-client.sh verify --no-color

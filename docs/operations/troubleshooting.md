@@ -76,7 +76,7 @@ docker inspect --format '{{.State.Health.Status}}' happyro-mariadb
 
 ## Docker 部署下 Admin 后端改动未生效
 
-Docker 离线包的配置见[离线部署](docker-deployment.md)。当前源码使用 Go API 镜像并包含构建后的 Admin 静态资源；修改源码后必须重新构建对应产物。正式交付必须按[发布流程](docker-release.md)全量无缓存重建四类双架构镜像，部署完整新版包；本机开发须核对实际 Go 二进制和前端监听进程，不把重启当作编译或构建。
+Docker 离线包的配置见[离线部署](docker-deployment.md)。当前源码将 Go API 与 Admin 静态前端发布为独立镜像；修改源码后必须重新构建对应产物。正式交付必须按[发布流程](docker-release.md)全量无缓存重建五类双架构镜像，部署完整新版包；本机开发须核对实际 Go 二进制和前端监听进程，不把重启当作编译或构建。
 
 ## 保持登录或恢复失败
 

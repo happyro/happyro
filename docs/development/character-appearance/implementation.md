@@ -28,7 +28,7 @@
 
 0 为默认。阶段 1 二转、2 进阶二转、3 三转（含进阶变体）、4 四转；只允许 option.stage < actual.stage。一转、初心者、婴儿、第二服装和染色组合不在候选白名单。第二服装仍遵循既有显示优先级。
 
-[生成工具](../../../tools/character-appearance/README.md)同步 C++ 白名单、客户端资源解析表、Admin ID 白名单，三个产物都记录 canonical JSON SHA-256。check 模式逐字节核验，不只比较摘要；生成前验证唯一 ID、阶段、性别、引用、uint16 容量及身体／骑乘配对。新增普通分支维护配置后生成三仓并完成验收；新的特殊形态可能仍需代码。
+[生成工具](../../../tools/resources/appearance/README.md)同步 C++ 白名单、客户端资源解析表、Admin ID 白名单，三个产物都记录 canonical JSON SHA-256。check 模式逐字节核验，不只比较摘要；生成前验证唯一 ID、阶段、性别、引用、uint16 容量及身体／骑乘配对。新增普通分支维护配置后生成三仓并完成验收；新的特殊形态可能仍需代码。
 
 ## 服务端与 Admin
 

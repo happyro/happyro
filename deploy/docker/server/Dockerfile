@@ -21,17 +21,14 @@ WORKDIR /opt/rathena
 COPY --from=builder /src/conf/ ./conf/
 COPY --from=builder /src/db/ ./db/
 COPY --from=builder /src/npc/ ./npc/
-COPY --from=builder /src/login-server /opt/rathena/login-server
-COPY --from=builder /src/char-server /opt/rathena/char-server
-COPY --from=builder /src/map-server /opt/rathena/map-server
-COPY --from=builder /src/web-server /opt/rathena/web-server
-COPY deploy/docker/server/entrypoint.sh /usr/local/bin/happyro-server
-COPY deploy/docker/server/healthcheck.sh /usr/local/bin/happyro-server-health
+COPY --from=builder --chmod=755 /src/login-server /opt/rathena/login-server
+COPY --from=builder --chmod=755 /src/char-server /opt/rathena/char-server
+COPY --from=builder --chmod=755 /src/map-server /opt/rathena/map-server
+COPY --from=builder --chmod=755 /src/web-server /opt/rathena/web-server
+COPY --chmod=755 deploy/docker/server/entrypoint.sh /usr/local/bin/happyro-server
+COPY --chmod=755 deploy/docker/server/healthcheck.sh /usr/local/bin/happyro-server-health
 
-RUN chmod +x /opt/rathena/login-server /opt/rathena/char-server \
-      /opt/rathena/map-server /opt/rathena/web-server /usr/local/bin/happyro-server \
-    && chmod +x /usr/local/bin/happyro-server-health \
-    && mkdir -p /opt/rathena/log
+RUN mkdir -p /opt/rathena/log
 
 EXPOSE 6900 6121 5121 8889
 ENTRYPOINT ["/usr/local/bin/happyro-server"]

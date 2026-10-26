@@ -14,7 +14,7 @@ if (!args.length || args.includes('--help') || args.every(x => x === '--no-color
  process.exit(0);
 }
 if (args[0] !== 'generate' || args.slice(1).some(x => x !== '--no-color')) throw new Error('Expected generate [--no-color]');
-const require = createRequire(path.join(root, 'repos/happyro-gateway/package.json'));
+const require = createRequire(import.meta.url);
 const { GrfNode } = require('@chicowall/grf-loader');
 const runtime = path.join(root, 'inputs/runtime/kro-20211105/client');
 const fd = openSync(path.join(runtime, 'data.grf'), 'r');

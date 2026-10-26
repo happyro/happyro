@@ -11,7 +11,7 @@
 ## 生成命令
 
 ```bash
-python3 tools/resources/catalog/sync_item_names.py apply --no-color
+python3 tools/localization/items/sync_item_names.py apply --no-color
 python3 tools/resources/catalog/main.py items server
 bash tools/resources/catalog/generate-item-subtypes.sh generate --no-color
 python3 tools/resources/catalog/main.py items client

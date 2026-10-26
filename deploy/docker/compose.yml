@@ -65,6 +65,7 @@ x-api: &api
     SHOW_DEFAULT_CREDENTIALS: ${SHOW_DEFAULT_CREDENTIALS:-false}
     APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Shanghai}
     APP_URL: ${ADMIN_PUBLIC_URL:?Set ADMIN_PUBLIC_URL}
+    HTTP_TRUSTED_PROXIES: ${ADMIN_PROXY_IP:-172.30.81.2}
     ADMIN_PASSWORD_CHANGE_ENABLED: ${ADMIN_PASSWORD_CHANGE_ENABLED:-true}
     ADMIN_CSRF_ORIGIN_CHECK_ENABLED: ${ADMIN_CSRF_ORIGIN_CHECK_ENABLED:-false}
     DB_HOST: database
@@ -171,11 +172,31 @@ services:
   api:
     <<: *api
     container_name: happyro-api
+    networks: [default, admin-proxy]
     restart: unless-stopped
     depends_on: {api-init: {condition: service_completed_successfully}, web-api: {condition: service_healthy}}
-    ports: ["${ADMIN_PORT:-8000}:8080"]
     healthcheck:
       test: [CMD, curl, --fail, --silent, http://127.0.0.1:8080/api/health]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+  admin:
+    container_name: happyro-admin
+    networks:
+      admin-proxy:
+        ipv4_address: ${ADMIN_PROXY_IP:-172.30.81.2}
+    pull_policy: never
+    image: ${ADMIN_IMAGE:?Set ADMIN_IMAGE}
+    restart: unless-stopped
+    logging: *logging
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports: ["${ADMIN_PORT:-8000}:8080"]
+    depends_on: {api: {condition: service_healthy}}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/healthz]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -275,3 +296,11 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
+
+networks:
+  default: {}
+  admin-proxy:
+    ipam:
+      config:
+        - subnet: ${ADMIN_PROXY_SUBNET:-172.30.81.0/29}
+          ip_range: ${ADMIN_PROXY_DYNAMIC_RANGE:-172.30.81.4/30}

@@ -1,4 +1,4 @@
-"""Opt-in round trip against disposable Go Admin/Database images; no live services."""
+"""Opt-in API/Admin/Database round trip using the release proxy topology."""
 import argparse
 import json
 import os
@@ -11,10 +11,13 @@ import time
 import unittest
 import uuid
 
-import manage
+from tools.deployment import manage
+from tools.deployment.deployment_test_support import add_proxy_topology, release_compose
 
 
-@unittest.skipUnless(os.environ.get('HAPPYRO_GO_API_TEST_IMAGE') and os.environ.get('HAPPYRO_GO_DATABASE_TEST_IMAGE'), 'requires local Go Admin and Database test images')
+@unittest.skipUnless(all(os.environ.get(name) for name in (
+    'HAPPYRO_GO_API_TEST_IMAGE', 'HAPPYRO_GO_DATABASE_TEST_IMAGE', 'HAPPYRO_ADMIN_TEST_IMAGE')),
+    'requires local API, Admin and Database test images')
 class AdminGoBackupTest(unittest.TestCase):
     def test_restores_management_game_settings_and_custom_content(self):
         with tempfile.TemporaryDirectory(prefix='happyro-backup-') as directory:
@@ -29,7 +32,7 @@ class AdminGoBackupTest(unittest.TestCase):
                 shutil.copyfile(templates / name, custom / 'db' / name)
             (custom / 'npc/scripts.conf').write_text('// backed up custom scripts\n')
             (settings / 'battle_conf.txt').write_text('base_exp_rate: 250\n')
-            admin_image = os.environ['HAPPYRO_GO_API_TEST_IMAGE']
+            api_image = os.environ['HAPPYRO_GO_API_TEST_IMAGE']
             db_image = os.environ['HAPPYRO_GO_DATABASE_TEST_IMAGE']
             config = {
                 'name': 'happyro-backup-' + uuid.uuid4().hex[:12],
@@ -40,7 +43,7 @@ class AdminGoBackupTest(unittest.TestCase):
                         'HAPPYRO_LOG_DATABASE': 'happyro_log', 'HAPPYRO_ADMIN_PASSWORD': 'backup-test-admin',
                         'HAPPYRO_INTERSERVER_USER': 'interserver', 'HAPPYRO_INTERSERVER_PASSWORD': 'backuptestserver',
                     }},
-                    'api': {'image': admin_image, 'pull_policy': 'never', 'environment': {
+                    'api': {'image': api_image, 'pull_policy': 'never', 'environment': {
                         'DB_HOST': 'database', 'DB_DATABASE': 'happyro_admin',
                         'DB_USERNAME': 'happyro_admin', 'DB_PASSWORD': 'backup-test-admin',
                         'GAME_DB_HOST': 'database', 'GAME_DB_DATABASE': 'happyro',
@@ -53,19 +56,29 @@ class AdminGoBackupTest(unittest.TestCase):
                         {'type': 'bind', 'source': str(custom), 'target': '/opt/happyro/custom', 'read_only': True},
                     ]},
                     # The production tool resolves the customization root from the map mount.
-                    'map': {'image': admin_image, 'pull_policy': 'never', 'volumes': [
+                    'map': {'image': api_image, 'pull_policy': 'never', 'volumes': [
                         {'type': 'bind', 'source': str(custom / 'npc'), 'target': '/opt/happyro/custom/npc'},
                     ]},
                 },
             }
             browser_probe = os.environ.get('HAPPYRO_GO_BROWSER_PROBE')
             browser_url = None
+            config['services']['admin'] = {
+                'image': os.environ['HAPPYRO_ADMIN_TEST_IMAGE'], 'pull_policy': 'never',
+                'read_only': True, 'tmpfs': ['/tmp'],
+                'cap_drop': ['ALL'], 'security_opt': ['no-new-privileges:true'],
+            }
+            release = release_compose()
+            add_proxy_topology(config, release)
+            config['services']['api']['healthcheck'] = release['services']['api']['healthcheck']
+            config['services']['admin']['healthcheck'] = release['services']['admin']['healthcheck']
+            config['services']['admin']['depends_on'] = release['services']['admin']['depends_on']
             if browser_probe:
                 with socket.socket() as listener:
                     listener.bind(('127.0.0.1', 0))
                     port = listener.getsockname()[1]
                 browser_url = f'http://127.0.0.1:{port}'
-                config['services']['api']['ports'] = [f'127.0.0.1:{port}:8080']
+                config['services']['admin']['ports'] = [f'127.0.0.1:{port}:8080']
                 config['services']['api']['environment']['APP_URL'] = browser_url
             (root / 'compose.yaml').write_text(json.dumps(config))
             (root / '.env').write_text('# isolated round-trip environment\n')
@@ -101,24 +114,28 @@ class AdminGoBackupTest(unittest.TestCase):
                         self.fail(compose('logs', 'api').stdout)
                     time.sleep(0.25)
                 probe = '''import http.cookiejar,json,urllib.request,urllib.parse
-base='http://localhost:8080'
 jar=http.cookiejar.CookieJar()
 client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-for route in ['/','/user/login','/user/login/']:
- with client.open(base+route) as r: assert b'<html' in r.read().lower()
 client.open(base+'/api/auth/csrf').close()
 csrf=next(c.value for c in jar if c.name=='XSRF-TOKEN')
-request=urllib.request.Request(base+'/api/auth/login',data=json.dumps({'username':'admin','password':'admin'}).encode(),headers={'Content-Type':'application/json','Origin':origin,'X-XSRF-TOKEN':urllib.parse.unquote(csrf)})
+request=urllib.request.Request(base+'/api/auth/login',data=json.dumps({'username':'admin','password':'admin'}).encode(),headers={'Content-Type':'application/json','Origin':origin,'X-XSRF-TOKEN':urllib.parse.unquote(csrf),'X-Forwarded-For':'203.0.113.99','X-Real-IP':'203.0.113.99'})
 with client.open(request) as r: assert r.status==200
 with client.open(base+'/api/auth/user') as r: assert 'admin' in json.dumps(json.load(r))
 with client.open(base+'/api/game-data/items?perPage=1') as r: assert len(json.load(r)['data']) == 1
 '''
                 probe = 'origin=' + repr(config['services']['api']['environment']['APP_URL']) + '\n' + probe
-                compose('exec', '-T', 'api', 'python3', '-c', probe)
+                compose('exec', '-T', 'api', 'python3', '-c', "base='http://localhost:8080'\n" + probe)
+                compose('up', '-d', '--wait', '--wait-timeout', '45', 'admin')
+                identifier = compose('ps', '-q', 'api').stdout.strip()
+                container = json.loads(subprocess.check_output(['docker', 'inspect', identifier]))[0]
+                client_ip = container['NetworkSettings']['Networks'][config['name'] + '_admin-proxy']['IPAddress']
+                compose('exec', '-T', 'api', 'python3', '-c', "base='http://admin:8080'\n" + probe)
+                self.assertEqual(sql("SELECT last_login_ip FROM happyro_admin.users WHERE username='admin'"), client_ip)
+                self.assertEqual(sql("SELECT ip_address FROM happyro_admin.audit_logs WHERE action='auth.login_succeeded' ORDER BY id DESC LIMIT 1"), client_ip)
                 if browser_probe:
                     subprocess.run(['node', browser_probe, browser_url], check=True, timeout=120)
-                # Stop the API before intentionally replacing backed-up rows.
-                compose('stop', 'api')
+                # The backup tool requires only the database to remain running.
+                compose('stop', 'admin', 'api')
                 sql("UPDATE happyro.login SET email='snapshot@example.com' WHERE userid='happyro'")
                 backup = root / 'backup'
                 manage.backup(argparse.Namespace(directory=root, output=backup))

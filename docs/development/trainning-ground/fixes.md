@@ -10,7 +10,7 @@
 
 **修复：** 从官方 kRO 补丁提取三张地图及模型、贴图依赖，按来源清单和 SHA-256 安装到运行目录，保留官方输入和原 `data.grf`。没有把旧地图伪装成新地图，也没有修改受影响角色的位置。
 
-**相关文件：** [安装器](../../../tools/resources/install-training-maps.mjs)、[资源清单](../../../inputs/manifests/training-maps.json)、[教官脚本](../../../repos/happyro-server/npc/re/warps/other/TrainingZone123.txt)。
+**相关文件：** [安装器](../../../tools/resources/install.mjs)、[资源清单](../../../inputs/manifests/training-maps.json)、[教官脚本](../../../repos/happyro-server/npc/re/warps/other/TrainingZone123.txt)。
 
 **复验：** 实际角色分别通过教官三个菜单进入地图；三场均完成浏览器退出、登录和重新选角入场，地图与角色位置正确。见 [live.json](evidence/live.json) 和[重登摘要](evidence/verification.json)。
 

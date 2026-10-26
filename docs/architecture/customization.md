@@ -11,7 +11,7 @@ v0.5.0 增加用户维护的 NPC、数据库扩展和客户端资源目录，使
 | 服务端 NPC | Server 的 `src/map/npc_custom.hpp`、`npc.cpp`、`map.cpp` | 新增清单加载，按内置相对路径重定向 .txt 读取，保留原脚本身份 |
 | 数据库 | Server 原生 db/import | 挂载用户 db 目录，沿用原生 YAML 合并、脚本及重载语义 |
 | 资源请求 | Gateway 的 `src/controllers/clientController.js`、`src/routes/index.js` | data 请求先读 custom，绕过旧缓存，更新/删除影响后续请求 |
-| 静态目录 | 根仓库 `tools/deployment/catalogs.py`、API entrypoint | 从内置基线和有效声明重建快照并执行三类导入 |
+| 静态目录 | 根仓库 `repos/happyro-api/tools/catalogs.py`、API entrypoint | 从内置基线和有效声明重建快照并执行三类导入 |
 | NPC 空目录 | API 的 `internal/catalog/snapshot.go` | 合法空 NPC 目录允许清除旧条目，缺失必要字段仍失败 |
 
 本次不需要新增客户端协议；PWA 沿用原有游戏封包、资源 URL 和冒险工具接口。客户端名称、说明、SPR/ACT 映射及后台缩略图不由服务端 YAML 自动生成。

@@ -1,7 +1,7 @@
 FROM python:3.12-slim-bookworm AS navi-review
 
 WORKDIR /workspace
-COPY tools/navi-review/ ./tools/navi-review/
+COPY tools/resources/navigation/ ./tools/resources/navigation/
 COPY localization/sources/kro-20211105/merged/files/lub/ ./localization/sources/kro-20211105/merged/files/lub/
 COPY repos/happyro-server/npc/ ./repos/happyro-server/npc/
 COPY repos/happyro-server/conf/ ./repos/happyro-server/conf/
@@ -10,7 +10,7 @@ COPY repos/happyro-server/src/map/ ./repos/happyro-server/src/map/
 COPY repos/happyro-server/src/common/mmo.hpp ./repos/happyro-server/src/common/mmo.hpp
 COPY repos/happyro-client/src/DB/Map/SupportedMapTable.js ./repos/happyro-client/src/DB/Map/SupportedMapTable.js
 COPY repos/happyro-client/src/DB/Navigation/NaviTargets.json ./repos/happyro-client/src/DB/Navigation/NaviTargets.json
-RUN python3 tools/navi-review/review.py check --root /workspace --no-color
+RUN python3 tools/resources/navigation/review.py check --root /workspace --no-color
 
 FROM node:22-bookworm AS client-builder
 
@@ -38,11 +38,14 @@ ENV NODE_ENV=production \
 
 WORKDIR /opt/gateway
 COPY repos/happyro-gateway/package.json ./
-RUN npm install --omit=dev --ignore-scripts
-COPY repos/happyro-gateway/ ./
-COPY --from=client-builder /src/client/dist/Web /opt/robrowser
+RUN npm install --omit=dev --ignore-scripts \
+    && npm cache clean --force \
+    && rm -rf /root/.npm \
+    && chown -R node:node /opt/gateway
+COPY --chown=node:node repos/happyro-gateway/ ./
+COPY --from=client-builder --chown=node:node /src/client/dist/Web /opt/robrowser
 COPY localization/client/data/ /opt/overrides/
-COPY deploy/docker/gateway/entrypoint.sh /usr/local/bin/happyro-gateway
+COPY --chmod=755 deploy/docker/gateway/entrypoint.sh /usr/local/bin/happyro-gateway
 
 RUN mkdir -p /opt/gateway/resources /opt/overrides /opt/gateway/logs \
     && rm -rf /opt/gateway/resources /opt/gateway/AI /opt/gateway/BGM /opt/gateway/System \
@@ -50,8 +53,7 @@ RUN mkdir -p /opt/gateway/resources /opt/overrides /opt/gateway/logs \
     && ln -s /resources/kro-20211105/AI /opt/gateway/AI \
     && ln -s /resources/kro-20211105/BGM /opt/gateway/BGM \
     && ln -s /resources/kro-20211105/System /opt/gateway/System \
-    && chown -R node:node /opt/gateway /opt/robrowser \
-    && chmod 755 /usr/local/bin/happyro-gateway
+    && chown node:node /opt/gateway/logs
 ENTRYPOINT ["/usr/local/bin/happyro-gateway"]
 EXPOSE 3338
 CMD ["node", "start-prod.js"]

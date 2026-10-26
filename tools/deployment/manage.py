@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Prepare and operate offline bundles; only deploy explicitly starts services."""
+"""Operate verified offline bundles without a source checkout."""
 import argparse
+from contextvars import ContextVar
 import json
 import os
 from pathlib import Path
@@ -9,197 +10,30 @@ import secrets
 import shutil
 import subprocess
 import sys
-import tempfile
-import zipfile
-import custom
 
-from offline import (NAMES, commits, version, checked_path, verify_images, digest,
+if __package__ in (None, ''):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.deployment import custom
+from tools.deployment import progress
+
+from tools.deployment.bundle import verify, write_json
+from tools.deployment.offline import (NAMES, digest,
                      daemon_architecture, verify_loaded, reference)
 
 
-def is_macos_metadata(relative):
-    return any(part == '.DS_Store' or part.startswith('._') for part in Path(relative).parts)
+COMPOSE_OVERRIDE = ContextVar('compose_override', default=None)
 
 
-def files(root):
-    for path in sorted(root.rglob('*')):
-        if is_macos_metadata(path.relative_to(root)):
-            continue
-        if path.is_symlink():
-            raise ValueError(f'Symlinks are not allowed in packaged resources: {path}')
-        if path.is_file() and path != root / 'manifest.json':
-            yield path
+def inherited_lock():
+    value = os.environ.get('HAPPYRO_DEPLOYMENT_LOCK_FD')
+    if value is None:
+        return {}
+    descriptor = int(value)
+    os.fstat(descriptor)
+    return {'pass_fds': (descriptor,)}
 
 
-def write_json(path, data):
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
-
-
-def copy_directory(source, target):
-    if not source.is_dir():
-        raise ValueError(f'Missing resource directory: {source}')
-    list(files(source))  # Reject links before copying.
-    shutil.copytree(source, target, ignore=lambda directory, names: [
-        name for name in names if is_macos_metadata(name)])
-
-
-def prepare(args):
-    root, output = args.workspace.resolve(), args.output.resolve()
-    release_version = version(root)
-    source_commits = commits(root)
-    if output.exists():
-        raise ValueError('Output must be a new directory; existing deployments are never overwritten')
-    kro = root / 'inputs/runtime/kro-20211105/client'
-    sources = {
-        'catalog/items': root / 'work/game-data/items/kro-20211105',
-        'catalog/monsters': root / 'work/game-data/monsters/kro-20211105',
-        'catalog/npcs': root / 'repos/happyro-api/resources/game-data/world/npcs',
-        'catalog/maps': root / 'repos/happyro-api/resources/game-data/world/maps',
-        'catalog/terrain': root / 'repos/happyro-api/resources/game-data/world/terrain',
-    }
-    ini = (kro / 'DATA.INI').read_text()
-    grfs = re.findall(r'^\s*\d+\s*=\s*([^\r\n]+\.grf)\s*$', ini, re.I | re.M)
-    if not grfs or any(Path(name).name != name or not (kro / name).is_file() for name in grfs):
-        raise ValueError('DATA.INI must reference existing GRF basenames')
-    for source in sources.values():
-        if not source.is_dir():
-            raise ValueError(f'Missing resource directory: {source}')
-    output.mkdir(parents=True)
-    shutil.copyfile(root / 'deploy/docker/compose.yml', output / 'compose.yaml')
-    env = (root / 'deploy/docker/.env.example').read_text().replace('@VERSION@', release_version)
-    (output / '.env.example').write_text(env)
-    shutil.copyfile(root / 'docs/operations/docker-deployment.md', output / 'README.md')
-    tool = output / 'tools/deployment/manage.py'
-    tool.parent.mkdir(parents=True)
-    shutil.copyfile(Path(__file__), tool)
-    shutil.copyfile(Path(__file__).with_name('offline.py'), tool.with_name('offline.py'))
-    shutil.copyfile(Path(__file__).with_name('custom.py'), tool.with_name('custom.py'))
-    copy_directory(root / 'deploy/docker/custom-templates', output / 'examples/custom')
-    copy_directory(root / 'repos/happyro-server/db/import-tmpl', output / 'examples/custom/db')
-    (output / 'VERSION').write_text(release_version + '\n')
-    (output / 'images').mkdir()
-    resources = output / 'resources'
-    for name in ['database', 'control-socket', 'server-settings', 'server-logs', 'gateway-logs']:
-        (output / 'data' / name).mkdir(parents=True)
-    game = resources / 'kro-20211105'
-    game.mkdir(parents=True)
-    for name in ['DATA.INI', *grfs]:
-        if (kro / name).is_symlink():
-            raise ValueError(f'Unexpected link: {name}')
-        shutil.copyfile(kro / name, game / name)
-    for name in ['AI', 'BGM', 'System', 'data']:
-        copy_directory(kro / name, game / name)
-    for destination, source in sources.items():
-        copy_directory(source, resources / destination)
-    for path in resources.rglob('*'):
-        path.chmod(0o755 if path.is_dir() else 0o644)
-    entries = [{'path': p.relative_to(resources).as_posix(), 'size': p.stat().st_size, 'sha256': digest(p)} for p in files(resources)]
-    write_json(resources / 'manifest.json', {'schema': 1, 'version': release_version, 'source': 'kro-20211105 runtime and generated catalog images', 'files': entries})
-    if commits(root) != source_commits:
-        raise ValueError('Source commits changed while preparing')
-    bundle_files = ['VERSION', 'compose.yaml', '.env.example', 'README.md',
-                    'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py']
-    bundle_files += [p.relative_to(output).as_posix() for p in files(output / 'examples/custom')]
-    write_json(output / 'release-manifest.json', {'schema': 2, 'version': release_version,
-        'commits': source_commits, 'files': {name: digest(output / name) for name in bundle_files},
-        'resource_manifest_sha256': digest(resources / 'manifest.json'),
-        'images': {}, 'status': 'prepared-not-built'})
-    print(f'Prepared {output}; {len(entries)} resource files. No images were built or pushed.')
-
-
-def verify(args):
-    root = args.directory.resolve()
-    release = json.loads((root / 'release-manifest.json').read_text())
-    if release['schema'] != 2 or (root / 'VERSION').read_text().strip() != release['version']:
-        raise ValueError('Bundle version/schema mismatch')
-    required = {'VERSION', 'compose.yaml', '.env.example', 'README.md',
-                'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py'}
-    required.update(p.relative_to(root).as_posix() for p in files(root / 'examples/custom'))
-    if not (root / 'examples/custom/npc/scripts.conf').is_file():
-        raise ValueError('Missing customization templates')
-    if set(release['files']) != required:
-        raise ValueError('Incomplete bundle file checksums')
-    for name, expected_hash in release['files'].items():
-        if digest(checked_path(root, name)) != expected_hash:
-            raise ValueError(f'Bundle file mismatch: {name}')
-    resource_root = root / 'resources'
-    if resource_root.is_symlink():
-        raise ValueError('Resource root cannot be a symlink')
-    manifest_path = resource_root / 'manifest.json'
-    if digest(manifest_path) != release['resource_manifest_sha256']:
-        raise ValueError('Resource manifest does not match this deployment release')
-    manifest = json.loads(manifest_path.read_text())
-    if manifest['version'] != release['version']:
-        raise ValueError('Resource version must match the application version')
-    expected = set()
-    for entry in manifest['files']:
-        relative = Path(entry['path'])
-        if relative.is_absolute() or '..' in relative.parts:
-            raise ValueError('Unsafe resource manifest path')
-        path = resource_root / relative
-        if any(parent.is_symlink() for parent in path.parents if parent != root.parent):
-            raise ValueError(f'Symlink in resource path: {relative}')
-        if not path.is_file() or path.is_symlink() or path.stat().st_size != entry['size'] or digest(path) != entry['sha256']:
-            raise ValueError(f'Resource mismatch: {relative}')
-        expected.add(relative.as_posix())
-    actual = {p.relative_to(resource_root).as_posix() for p in files(resource_root)}
-    if actual != expected:
-        raise ValueError('Unlisted or missing resource files')
-    if not getattr(args, 'prepared', False):
-        verify_images(root, release)
-    print(f'Verified {len(expected)} resource files for {release["version"]}')
-    return release
-
-
-def validate_zip_target(root, output):
-    root, output = root.resolve(), output.resolve()
-    if output.suffix.lower() != '.zip':
-        raise ValueError('Offline bundle output must use the .zip extension')
-    if output.is_relative_to(root):
-        raise ValueError('Offline bundle archive must be outside the source directory')
-    if output.exists():
-        raise ValueError('Offline bundle archive must not already exist')
-    if (root / '.env').exists():
-        raise ValueError('Remove .env before creating an offline bundle archive')
-    if (root / 'custom').exists():
-        raise ValueError('Do not package user custom/; distribute examples/custom only')
-    data = root / 'data'
-    if data.is_dir() and any(path.is_file() and not is_macos_metadata(path.relative_to(data))
-                             for path in data.rglob('*')):
-        raise ValueError('Offline bundle data/ must not contain runtime files')
-    paths = [path for path in sorted(root.rglob('*'))
-             if not is_macos_metadata(path.relative_to(root))]
-    if any(path.is_symlink() for path in paths):
-        raise ValueError('Symlinks are not allowed in an offline bundle archive')
-    return paths
-
-
-def create_zip(root, output, release):
-    root, output = root.resolve(), output.resolve()
-    paths = validate_zip_target(root, output)
-
-    output.parent.mkdir(parents=True, exist_ok=True)
-    archive_root = f'happyro-{release["version"]}'
-    with tempfile.NamedTemporaryFile(prefix=f'.{output.name}.', suffix='.tmp',
-                                     dir=output.parent, delete=False) as temporary:
-        temporary_path = Path(temporary.name)
-    try:
-        with zipfile.ZipFile(temporary_path, 'w', compression=zipfile.ZIP_DEFLATED,
-                             compresslevel=6, allowZip64=True) as archive:
-            archive.writestr(f'{archive_root}/', b'')
-            for path in paths:
-                relative = path.relative_to(root).as_posix()
-                archive.write(path, f'{archive_root}/{relative}')
-        with zipfile.ZipFile(temporary_path) as archive:
-            broken = archive.testzip()
-            if broken is not None:
-                raise ValueError(f'ZIP integrity check failed: {broken}')
-        temporary_path.replace(output)
-    finally:
-        temporary_path.unlink(missing_ok=True)
-    print(f'Offline bundle archive: {output}')
-
-
+@progress.operation('初始化部署配置')
 def initialize(args):
     verify(args)
     target = args.directory.resolve() / '.env'
@@ -213,26 +47,30 @@ def initialize(args):
     with os.fdopen(fd, 'w') as stream:
         stream.write(template)
     initialize_custom_directory(args.directory.resolve())
-    print('Created .env with unique secrets. Set public URLs before starting Compose.')
+    progress.message('Created .env with unique secrets. Set public URLs before starting Compose.')
 
 
+@progress.operation('导入本机架构镜像')
 def import_images(args):
     release = verify(args)
     arch = daemon_architecture()
-    for name in NAMES:
-        subprocess.run(['docker', 'load', '--input',
-                        str(args.directory.resolve() / 'images' / arch / f'{name}.tar')], check=True)
+    for index, name in enumerate(NAMES, 1):
+        progress.message(f'[{index}/{len(NAMES)}] 导入 {name} linux/{arch}', 'stage')
+        with progress.step(f'导入 {name} linux/{arch}'):
+            subprocess.run(['docker', 'load', '--input',
+                            str(args.directory.resolve() / 'images' / arch / f'{name}.tar')], check=True, **inherited_lock())
     verify_loaded(release, arch)
-    print(f'Loaded and verified {release["version"]} linux/{arch} images')
+    progress.message(f'Loaded and verified {release["version"]} linux/{arch} images')
 
 
+@progress.operation('启动部署服务')
 def deploy(args):
     root = args.directory.resolve()
     if not (root / '.env').is_file():
         raise ValueError('Run initialize and edit .env public URLs before deploying')
     release = verify(args)
     config = json.loads(compose(root, 'config', '--format', 'json', capture_output=True, text=True).stdout)
-    services = {'gateway': 'gateway', 'api': 'api', 'api-init': 'api',
+    services = {'gateway': 'gateway', 'admin': 'admin', 'api': 'api', 'api-init': 'api',
                 'database': 'database', 'login': 'server', 'char': 'server',
                 'map': 'server', 'web-api': 'server'}
     if set(config['services']) != set(services):
@@ -254,7 +92,11 @@ def deploy(args):
 
 
 def compose(root, *args, **kwargs):
-    return subprocess.run(['docker', 'compose', '--project-directory', str(root), '-f', str(root / 'compose.yaml'), *args], check=True, **kwargs)
+    command = ['docker', 'compose', '--project-directory', str(root), '-f', str(root / 'compose.yaml')]
+    override = COMPOSE_OVERRIDE.get()
+    if override is not None:
+        command += ['-f', str(override)]
+    return subprocess.run([*command, *args], check=True, **inherited_lock(), **kwargs)
 
 
 def custom_config(root):
@@ -264,7 +106,7 @@ def custom_config(root):
 def initialize_custom_directory(root):
     destination = custom.custom_root(custom_config(root))
     custom.initialize(destination, root / 'examples/custom')
-    print(f'Initialized custom directories at {destination}; existing files preserved')
+    progress.message(f'Initialized custom directories at {destination}; existing files preserved')
 
 
 def initialize_custom(args):
@@ -272,6 +114,7 @@ def initialize_custom(args):
     initialize_custom_directory(args.directory.resolve())
 
 
+@progress.operation('刷新自定义资料目录')
 def refresh_custom_catalogs(args):
     root = args.directory.resolve()
     verify(args)
@@ -279,6 +122,7 @@ def refresh_custom_catalogs(args):
     compose(root, 'run', '--rm', '--no-deps', '-T', 'api', 'refresh-custom-catalogs')
 
 
+@progress.operation('备份部署数据')
 def backup(args):
     root, output = args.directory.resolve(), args.output.resolve()
     if output.exists():
@@ -300,9 +144,10 @@ def backup(args):
     for name in ['.env', 'compose.yaml', 'release-manifest.json']:
         shutil.copyfile(root / name, output / name)
     write_json(output / 'checksums.json', {p.name: digest(p) for p in output.iterdir() if p.is_file()})
-    print(f'Backup saved to {output}; contains secrets, keep private')
+    progress.message(f'Backup saved to {output}; contains secrets, keep private')
 
 
+@progress.operation('恢复部署数据')
 def restore(args):
     if not args.confirm_replace:
         raise ValueError('Restore replaces existing data; use --confirm-replace after stopping all writers')
@@ -326,7 +171,7 @@ def restore(args):
     with (source / 'server-settings.tar').open('rb') as stream:
         compose(root, 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'tar', 'api', '-xf', '-', '-C', '/', stdin=stream)
     custom.restore(source / 'custom-files.tar', custom_directory)
-    print('Restored databases, custom content and server settings. Use the backed-up environment and matching image release before starting.')
+    progress.message('Restored databases, custom content and server settings. Use the backed-up environment and matching image release before starting.')
 
 
 def help_text(no_color):
@@ -334,11 +179,11 @@ def help_text(no_color):
         return text if no_color else f'\033[{code}m{text}\033[0m'
     print('\n' + color('1;36', 'HappyRO deployment tools') + '\n')
     print(color('1;33', 'Commands'))
-    print(color('1;32', '  prepare | verify | initialize | initialize-custom | refresh-custom-catalogs | import-images | deploy | backup | restore'))
+    print(color('1;32', '  verify | initialize | initialize-custom | refresh-custom-catalogs | import-images | deploy | backup | restore'))
     print('\n' + color('1;33', 'Examples'))
-    for line in ['prepare --workspace . --output artifacts/deployment/release', 'verify --directory ./happyro-deploy', 'import-images --directory ./happyro-deploy', 'initialize --directory ./happyro-deploy', 'initialize-custom --directory ./happyro-deploy', 'refresh-custom-catalogs --directory ./happyro-deploy', 'deploy --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup', 'restore --directory ./happyro-deploy --backup ./backup --confirm-replace']:
+    for line in ['verify --directory ./happyro-deploy', 'import-images --directory ./happyro-deploy', 'initialize --directory ./happyro-deploy', 'initialize-custom --directory ./happyro-deploy', 'refresh-custom-catalogs --directory ./happyro-deploy', 'deploy --directory ./happyro-deploy', 'backup --directory ./happyro-deploy --output ./backup', 'restore --directory ./happyro-deploy --backup ./backup --confirm-replace']:
         print(color('36', '  python3 tools/deployment/manage.py ' + line))
-    print('\nUse --no-color for plain output; COMMAND --help lists arguments.\n')
+    print('\nUse --compose-override PATH for an additional Compose file; --no-color disables colors.\n')
 
 
 def main():
@@ -350,21 +195,31 @@ def main():
         return
     parser = argparse.ArgumentParser(description='HappyRO deployment tools')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name in ['prepare', 'verify', 'initialize', 'initialize-custom', 'refresh-custom-catalogs', 'import-images', 'deploy', 'backup', 'restore']:
+    for name in ['verify', 'initialize', 'initialize-custom', 'refresh-custom-catalogs', 'import-images', 'deploy', 'backup', 'restore']:
         command = commands.add_parser(name)
-        if name == 'prepare':
-            command.add_argument('--workspace', type=Path, required=True)
-        else:
-            command.add_argument('--directory', type=Path, required=True)
-        if name in ['prepare', 'backup']:
+        command.add_argument('--directory', type=Path, required=True)
+        command.add_argument('--compose-override', type=Path, help='Additional Compose file for this invocation')
+        if name == 'backup':
             command.add_argument('--output', type=Path, required=True)
         if name == 'restore':
             command.add_argument('--backup', type=Path, required=True)
             command.add_argument('--confirm-replace', action='store_true')
         if name == 'verify':
             command.add_argument('--prepared', action='store_true', help='Check a preparation bundle before images are packaged')
+    progress.configure(no_color=no_color)
     args = parser.parse_args(argv)
-    {'prepare': prepare, 'verify': verify, 'initialize': initialize, 'import-images': import_images,
+    if args.compose_override is not None:
+        args.compose_override = args.compose_override.resolve(strict=True)
+    token = COMPOSE_OVERRIDE.set(args.compose_override)
+    try:
+        with progress.step(f'部署命令：{args.command}'):
+            dispatch(args)
+    finally:
+        COMPOSE_OVERRIDE.reset(token)
+
+
+def dispatch(args):
+    {'verify': verify, 'initialize': initialize, 'import-images': import_images,
      'deploy': deploy, 'backup': backup, 'restore': restore, 'initialize-custom': initialize_custom, 'refresh-custom-catalogs': refresh_custom_catalogs}[args.command](args)
 
 
@@ -372,4 +227,5 @@ if __name__ == '__main__':
     try:
         main()
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
-        sys.exit(str(error))
+        progress.message(str(error), 'failed')
+        sys.exit(1)

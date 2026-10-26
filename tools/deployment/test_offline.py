@@ -8,10 +8,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+import subprocess
+import sys
 
-import images
-import manage
-from offline import ARCHES, NAMES, archive_metadata, digest, reference, verify_images, verify_loaded
+from tools.release import images, package
+from tools.deployment import manage, bundle
+from tools.deployment.offline import ARCHES, NAMES, archive_metadata, digest, reference, verify_images, verify_loaded
 
 
 class OfflineTests(unittest.TestCase):
@@ -42,13 +44,13 @@ class OfflineTests(unittest.TestCase):
         release = {'schema': 2, 'version': 'v9.0.0', 'status': 'offline-ready', 'images': {}, 'files': {}}
         (self.root / 'VERSION').write_text('v9.0.0\n')
         for name in ['compose.yaml', '.env.example', 'README.md',
-                     'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py', 'examples/custom/npc/scripts.conf']:
+                     'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py', 'tools/deployment/bundle.py', 'tools/deployment/progress.py', 'examples/custom/npc/scripts.conf']:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture')
         release['files'] = {name: digest(self.root / name) for name in [
             'VERSION', 'compose.yaml', '.env.example', 'README.md',
-            'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py', 'examples/custom/npc/scripts.conf']}
+            'tools/deployment/manage.py', 'tools/deployment/offline.py', 'tools/deployment/custom.py', 'tools/deployment/bundle.py', 'tools/deployment/progress.py', 'examples/custom/npc/scripts.conf']}
         resources = self.root / 'resources'
         resources.mkdir()
         (resources / 'manifest.json').write_text(json.dumps({'version': 'v9.0.0', 'files': []}))
@@ -96,7 +98,7 @@ class OfflineTests(unittest.TestCase):
         def save(command, **kwargs):
             self.archive(Path(command[4]), tag, 'arm64')
 
-        with patch('offline.subprocess.check_output', return_value=info), patch('offline.subprocess.run', side_effect=save):
+        with patch('tools.deployment.offline.subprocess.check_output', return_value=info), patch('tools.deployment.offline.subprocess.run', side_effect=save):
             verify_loaded(release, 'arm64')
             metadata['id'] = 'sha256:changed-config'
             with self.assertRaisesRegex(ValueError, 'does not match'):
@@ -113,9 +115,9 @@ class OfflineTests(unittest.TestCase):
     def test_import_only_daemon_architecture(self):
         release = self.bundle()
         (self.root / 'release-manifest.json').write_text(json.dumps(release))
-        with patch('manage.daemon_architecture', return_value='arm64'), patch('manage.subprocess.run') as run, patch('manage.verify_loaded') as loaded:
+        with patch('tools.deployment.manage.daemon_architecture', return_value='arm64'), patch('tools.deployment.manage.subprocess.run') as run, patch('tools.deployment.manage.verify_loaded') as loaded:
             manage.import_images(argparse.Namespace(directory=self.root))
-            self.assertEqual(run.call_count, 4)
+            self.assertEqual(run.call_count, len(NAMES))
             self.assertTrue(all('/images/arm64/' in call.args[0][-1] for call in run.call_args_list))
             loaded.assert_called_once_with(release, 'arm64')
 
@@ -124,9 +126,9 @@ class OfflineTests(unittest.TestCase):
         bundle = self.root / 'bundle'
         output.mkdir()
         bundle.mkdir()
-        (output / 'built.json').write_text(json.dumps({'version': 'v9.0.0', 'commits': {'root': 'a'}}))
-        (bundle / 'release-manifest.json').write_text(json.dumps({'version': 'v9.0.0', 'commits': {'root': 'b'}, 'status': 'prepared-not-built'}))
-        with patch('images.run') as run, self.assertRaisesRegex(ValueError, 'same version'):
+        (output / 'built.json').write_text(json.dumps({'version': 'v9.0.0', 'sources': {'root': 'a'}}))
+        (bundle / 'release-manifest.json').write_text(json.dumps({'version': 'v9.0.0', 'sources': {'root': 'b'}, 'status': 'prepared-not-built'}))
+        with patch('tools.release.images.run') as run, self.assertRaisesRegex(ValueError, 'same version'):
             images.package(argparse.Namespace(output=output, bundle=bundle))
         run.assert_not_called()
 
@@ -134,8 +136,8 @@ class OfflineTests(unittest.TestCase):
         release = self.bundle()
         (self.root / '.env').write_text('fixture')
         services = {name: {'image': 'old:version', 'pull_policy': 'never'} for name in
-                    ['gateway', 'api', 'api-init', 'database', 'login', 'char', 'map', 'web-api']}
-        with patch('manage.verify', return_value=release), patch('manage.compose') as compose:
+                    ['gateway', 'admin', 'api', 'api-init', 'database', 'login', 'char', 'map', 'web-api']}
+        with patch('tools.deployment.manage.verify', return_value=release), patch('tools.deployment.manage.compose') as compose:
             compose.return_value.stdout = json.dumps({'services': services})
             with self.assertRaisesRegex(ValueError, 'Update .env'):
                 manage.deploy(argparse.Namespace(directory=self.root))
@@ -145,7 +147,7 @@ class OfflineTests(unittest.TestCase):
     def test_schema_failure_prevents_starting_game_services(self):
         release = {'version': 'v9.0.0'}
         (self.root / '.env').write_text('fixture')
-        names = {'gateway': 'gateway', 'api': 'api', 'api-init': 'api',
+        names = {'gateway': 'gateway', 'admin': 'admin', 'api': 'api', 'api-init': 'api',
                  'database': 'database', 'login': 'server', 'char': 'server',
                  'map': 'server', 'web-api': 'server'}
         config = {'services': {service: {'image': reference(image, release['version']),
@@ -157,9 +159,9 @@ class OfflineTests(unittest.TestCase):
                 return argparse.Namespace(stdout=json.dumps(config))
             if args[0] == 'exec':
                 raise RuntimeError('schema failed')
-        with patch('manage.verify', return_value=release), patch('manage.compose', side_effect=compose), \
-             patch('manage.custom.custom_root'), patch('manage.custom.validate'), \
-             patch('manage.verify_loaded'), patch('manage.daemon_architecture', return_value='amd64'):
+        with patch('tools.deployment.manage.verify', return_value=release), patch('tools.deployment.manage.compose', side_effect=compose), \
+             patch('tools.deployment.manage.custom.custom_root'), patch('tools.deployment.manage.custom.validate'), \
+             patch('tools.deployment.manage.verify_loaded'), patch('tools.deployment.manage.daemon_architecture', return_value='amd64'):
             with self.assertRaisesRegex(RuntimeError, 'schema failed'):
                 manage.deploy(argparse.Namespace(directory=self.root))
         starts = [call for call in calls if call[0] == 'up']
@@ -172,7 +174,7 @@ class OfflineTests(unittest.TestCase):
         output.mkdir()
         (bundle / 'images').mkdir(parents=True)
         (bundle / 'data/database').mkdir(parents=True)
-        state = {'version': 'v9.0.0', 'commits': {'root': 'a'}, 'images': {}}
+        state = {'version': 'v9.0.0', 'sources': {'root': 'a'}, 'images': {}}
         for name in NAMES:
             path = output / f'{name}.tar'
             path.write_bytes(b'oci-fixture')
@@ -188,7 +190,7 @@ class OfflineTests(unittest.TestCase):
             self.archive(Path(path), tag, command[4])
             self.assertEqual(json.loads(manifest.read_text())['status'], 'prepared-not-built')
 
-        with patch('images.verify'), patch('images.inspect'), patch('images.run', side_effect=convert):
+        with patch('tools.release.images.verify'), patch('tools.release.images.inspect'), patch('tools.release.images.run', side_effect=convert):
             archive = self.root / 'happyro-v9.0.0.zip'
             images.package(argparse.Namespace(output=output, bundle=bundle))
         final = json.loads(manifest.read_text())
@@ -236,15 +238,20 @@ class OfflineTests(unittest.TestCase):
             path = workspace / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-        with patch('manage.commits', return_value={'root': 'fixture'}), \
-             patch('manage.version', return_value='v9.0.0'):
-            manage.prepare(argparse.Namespace(workspace=workspace, output=output))
-        self.assertFalse(any(manage.is_macos_metadata(p.relative_to(output)) for p in output.rglob('*')))
+        with patch('tools.release.package.snapshot', return_value={'root': 'fixture'}), \
+             patch('tools.release.package.version', return_value='v9.0.0'):
+            package.prepare(argparse.Namespace(workspace=workspace, output=output))
+        self.assertFalse(any(bundle.is_macos_metadata(p.relative_to(output)) for p in output.rglob('*')))
         self.assertTrue((workspace / sources[0] / '._real.txt').exists())
         manifest = json.loads((output / 'resources/manifest.json').read_text())
         self.assertEqual(len(manifest['files']), 11)
         self.assertTrue((output / '.env.example').exists())
         manage.verify(argparse.Namespace(directory=output, prepared=True))
+        # The copied tools must run with neither the source checkout nor PYTHONPATH.
+        result = subprocess.run([sys.executable, '-I', str(output / 'tools/deployment/manage.py'),
+                                 'verify', '--directory', str(output), '--prepared'],
+                                cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_zip_omits_metadata_added_after_preparation(self):
         release = self.bundle()
@@ -257,9 +264,9 @@ class OfflineTests(unittest.TestCase):
         manage.verify(argparse.Namespace(directory=self.root))
         with tempfile.TemporaryDirectory() as destination:
             archive_path = Path(destination) / 'bundle.zip'
-            manage.create_zip(self.root, archive_path, release)
+            package.create_zip(self.root, archive_path, release)
             with zipfile.ZipFile(archive_path) as archive:
-                self.assertFalse(any(manage.is_macos_metadata(name) for name in archive.namelist()))
+                self.assertFalse(any(bundle.is_macos_metadata(name) for name in archive.namelist()))
                 self.assertIn('happyro-v9.0.0/.env.example', archive.namelist())
                 extracted = Path(destination) / 'extracted'
                 archive.extractall(extracted)
@@ -269,14 +276,14 @@ class OfflineTests(unittest.TestCase):
         release = self.bundle()
         (self.root / 'release-manifest.json').write_text(json.dumps(release))
         with self.assertRaisesRegex(ValueError, '\\.zip extension'):
-            manage.create_zip(self.root, self.root.parent / 'bundle.tar.gz', release)
+            package.create_zip(self.root, self.root.parent / 'bundle.tar.gz', release)
         (self.root / '.env').write_text('secret')
         with self.assertRaisesRegex(ValueError, 'Remove .env'):
-            manage.create_zip(self.root, self.root.parent / 'bundle.zip', release)
+            package.create_zip(self.root, self.root.parent / 'bundle.zip', release)
         (self.root / '.env').unlink()
         (self.root / 'data/database/runtime-file').write_text('state')
         with self.assertRaisesRegex(ValueError, 'must not contain runtime files'):
-            manage.create_zip(self.root, self.root.parent / 'bundle.zip', release)
+            package.create_zip(self.root, self.root.parent / 'bundle.zip', release)
 
 
 if __name__ == '__main__':

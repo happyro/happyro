@@ -4,7 +4,7 @@ import {createRequire} from 'node:module';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import sharp from '../../../repos/happyro-client/node_modules/sharp/lib/index.js';
+import sharp from 'sharp';
 
 const root = path.resolve(import.meta.dirname, '../../..');
 const client = path.join(root, 'repos/happyro-client');
@@ -24,7 +24,7 @@ if (command !== 'generate') {
   if(!resource)throw Error('No runtime map resource: '+map);
   try{return await fs.readFile(path.join(runtime,resource.altitude));}catch(error){if(error.code!=='ENOENT')throw error;}
   if(!grf){
-   const {GrfNode}=createRequire(path.join(root,'repos/happyro-gateway/package.json'))('@chicowall/grf-loader');
+   const {GrfNode}=createRequire(import.meta.url)('@chicowall/grf-loader');
    descriptor=openSync(path.join(runtime,'data.grf'),'r');grf=new GrfNode(descriptor,{filenameEncoding:'cp949'});await grf.load();
   }
   const result=await grf.getFile(resource.altitude);

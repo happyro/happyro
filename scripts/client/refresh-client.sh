@@ -86,7 +86,7 @@ sync_npc_catalog() {
 }
 
 if [[ "$command_name" == "build" ]]; then
-	python3 "$PROJECT_ROOT/tools/navi-review/review.py" check --root "$PROJECT_ROOT" --no-color
+	python3 "$PROJECT_ROOT/tools/resources/navigation/review.py" check --root "$PROJECT_ROOT" --no-color
 	cd "$CLIENT_REPO"
 	[[ -d node_modules ]] || npm install
 	python3 "$PROJECT_ROOT/tools/resources/catalog/generate-item-services.py" generate --no-color

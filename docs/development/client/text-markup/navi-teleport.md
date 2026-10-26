@@ -25,7 +25,7 @@ NPC 对话中的 NAVI 使用结束对话后的独立入口；任务、物品中�
 
 ## 清单及统计口径
 
-生成器：`tools/navi-review/review.py`。发布清单：`repos/happyro-client/src/DB/Navigation/NaviTargets.json`。
+生成器：`tools/resources/navigation/review.py`。发布清单：`repos/happyro-client/src/DB/Navigation/NaviTargets.json`。
 
 当前产物为 **2410 个规范化 INFO 目标**：2048 个坐标动作、40 个魔物动作、322 个禁止直接传送。来自 7377 条展开引用；NPC 源码中的 593 处包含 12 处依斯鲁得动态地图调用，按实际 5 个地图实例展开为 641 条引用，因此比审查报告的 7329 条原始出现次数多 48 条。不是新增了 48 处对话。
 
@@ -42,14 +42,14 @@ NPC 对话中的 NAVI 使用结束对话后的独立入口；任务、物品中�
 1. 修改 NAVI、地图支持、地图缓存、加载脚本、魔物资料或传送实现后执行：
 
    ```sh
-   python3 tools/navi-review/review.py generate --no-color
+   python3 tools/resources/navigation/review.py generate --no-color
    ```
 
 2. 审查 `work/navi-review/navi-targets.json` 与 `navi-targets-evidence.json` 的变化。核实批准／阻止状态及来源，不能仅为了构建通过而覆盖旧清单。
 3. 完成审查后将产物更新至客户端 `src/DB/Navigation/NaviTargets.json`，再执行：
 
    ```sh
-   python3 tools/navi-review/review.py check --no-color
+   python3 tools/resources/navigation/review.py check --no-color
    ```
 
 4. 客户端使用 `npm run build -- --all`，保持 PWA 启动页及全部查看器。构建入口先校验发布清单摘要和客户端来源；清单 JSON、支持地图表使用固定 LF，避免检出换行差异造成摘要误报。
@@ -57,7 +57,7 @@ NPC 对话中的 NAVI 使用结束对话后的独立入口；任务、物品中�
 门禁分工：
 
 - 根仓库 `check` 重新生成完整决策并比较，检查输入哈希和新增／删除源文件，不仅检查 JSON 的自有摘要。
-- `scripts/client/refresh-client.sh build`、`tools/deployment/images.py build` 在实际构建前执行完整检查，失败时不继续构建。
+- `scripts/client/refresh-client.sh build`、`tools/release/release.py stage build` 在实际构建前执行完整检查，失败时不继续构建。
 - Gateway Dockerfile 增加独立审查 stage，复制服务端、翻译源与清单进行完整核对；客户端 builder 必须消费此 stage 的清单，不能绕过它直接构建。
 - 独立客户端 checkout 的 `scripts/verify-navi-review.mjs` 核对清单完整性、策略与客户端拥有的源文件。它不声称能读取 checkout 外的服务端资料；发布构建由前述根门禁／Docker stage 完成跨仓库核对。
 - 构建过程不会自动生成并发布新白名单。
