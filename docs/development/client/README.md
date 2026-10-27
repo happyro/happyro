@@ -2,6 +2,8 @@
 
 [返回开发文档](../README.md)
 
+查看功能界面与实际操作步骤，请先阅读[玩家指南](https://happyro.kugarocks.com/game/)；其中包含当前 UI 截图和电脑、手机、平板的操作差异。本目录记录实现与验收专题，功能说明统一链接玩家指南。
+
 - [说明标签专题](text-markup/README.md)：NAVI、TIPBOX、物品引用、URL、FONT 的规则、跨窗口交互及审查边界。
 - [移动端 UI 开发与验收](mobile-ui.md)：客户端规范入口、跨端检查和菜单样式维护。
 - [移动端性能诊断](mobile-diagnostics.md)：本机接收手机日志、复现战斗长帧、分段指标和分析限制。

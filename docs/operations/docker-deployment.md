@@ -94,6 +94,8 @@ docker compose ps -a
 
 v0.5.0 首次空库初始化还会为 `happyro` 创建第一角色位“罗安”（男剑士 Base 99 / Job 50、10,000 Zeny），配置技能、普通剑、各 100 瓶红／蓝药水、收回的波利蛋与前六个快捷栏。完整属性见[默认角色配置](https://happyro.kugarocks.com/deploy/docker)。已有数据库不补建、不覆盖角色。
 
+当前初始化脚本另创建普通玩家账号 `happyro2/happyro2`，第一角色「玛雅」为女性铁匠 Base 99 / Job 50，位于罗安附近；基本技能 Lv.9，配置合法商人／铁匠技能、已装备斧、药水、手推车测试商品及六格快捷栏。手推车通过正常游戏入口租用。该配置随 Database 镜像构建进入下一次完整离线包，不回写已发布 ZIP，也不更新现有数据库。
+
 api-init 依次执行 Go 管理库迁移（`migrate`）、初始账号创建（`init`）、自定义资料刷新及四份目录的原子导入（`catalog import`）。任一步骤失败即停止，不启动 API 服务。
 
 游戏入口：HAPPYRO_GAME_PUBLIC_URL/applications/pwa/index.html，应先显示启动页。后台入口为 HAPPYRO_ADMIN_PUBLIC_URL。

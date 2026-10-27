@@ -8,6 +8,7 @@
 
 | 分类 | 面向 | 入口 |
 | --- | --- | --- |
+| [玩家指南](https://happyro.kugarocks.com/game/) | 玩家与功能体验 | 各功能的界面截图、交互步骤及电脑／手机／平板操作差异 |
 | [架构](architecture/README.md) | 长期稳定设计 | 七仓库职责、运行时数据流、资料与本地化边界 |
 | [开发](development/README.md) | 开发者 | 安装、启动、常用命令、测试、Git 规则 |
 | [运维](operations/README.md) | 部署维护 | systemd、端口、环境变量、数据库、Docker 发布、故障检查 |
@@ -57,7 +58,7 @@
 
 面向玩家、服主和外部贡献者的使用说明统一维护在 [HappyRO 文档站](https://happyro.kugarocks.com/guide/quick-start)。本目录保留实现设计、内部维护流程与验收记录，不复制公开教程正文。
 
-- [玩家指南](https://happyro.kugarocks.com/game/)与[转职攻略](https://happyro.kugarocks.com/strategy/job-change/)
+- [玩家指南](https://happyro.kugarocks.com/game/)：HappyRO 功能的图文操作说明，涵盖装备、技能、坐下、NPC、商店、仓库、交易、摆摊等交互；任务流程见[转职攻略](https://happyro.kugarocks.com/strategy/job-change/)。
 - [安装运维](https://happyro.kugarocks.com/deploy/)与[管理后台](https://happyro.kugarocks.com/admin/)
 - [公开开发指南](https://happyro.kugarocks.com/development/)
 

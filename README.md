@@ -9,6 +9,7 @@
   <a href="https://happyro-admin.kugarocks.com">后台演示</a> ·
   <a href="https://happyro.kugarocks.com/guide/downloads">资源下载</a> ·
   <a href="https://happyro.kugarocks.com/guide/quick-start">快速开始</a> ·
+  <a href="https://happyro.kugarocks.com/game/">玩家指南</a> ·
   <a href="https://happyro.kugarocks.com/deploy/docker">Docker 安装</a>
 </p>
 
@@ -18,6 +19,8 @@
 
 HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面、触屏操作、游戏图鉴与冒险工具，并配备独立管理后台和双架构离线部署包。中文内容覆盖物品、技能、魔物、地图、系统消息与 NPC 对话，翻译范围与已知限制见[关于汉化](https://happyro.kugarocks.com/guide/localization)。
 
+[玩家指南](https://happyro.kugarocks.com/game/)集中提供 HappyRO 各功能的界面截图与操作步骤，包括坐下、穿戴装备、NPC 对话、购买、仓库存取、玩家交易和摆摊，并说明电脑、手机和平板的操作差异。
+
 ## 触屏与跨端体验
 
 电脑端采用经典桌面界面，手机和平板分别针对屏幕尺寸与触控方式进行独立 UI 优化，支持横竖屏切换。移动端的拖动移动、点按交谈与拾取、动作／取消入口、独立战斗设置与六格分页快捷栏，以及背包、技能、社交等常用窗口均针对触屏操作进行适配。手机和平板还可通过启动页「分享 → 添加到主屏幕」，实现全屏效果。
@@ -25,6 +28,8 @@ HappyRO 是一个中文友好的网页端 RO 项目，提供中文游戏界面�
 <p><img src="docs/assets/readme/happyro-responsive-skills.png" alt="剑士狂击技能在平板横屏中的左右分栏与手机竖屏中的上下布局" width="100%"></p>
 
 操作说明见[界面与操作](https://happyro.kugarocks.com/game/controls)、[快捷键与技能](https://happyro.kugarocks.com/game/shortcuts)、[背包与装备](https://happyro.kugarocks.com/game/inventory-equipment)、[任务与目标](https://happyro.kugarocks.com/game/quests)及[PWA 使用方法](https://happyro.kugarocks.com/game/pwa)；频道、私聊和组队见[聊天与社交](https://happyro.kugarocks.com/game/social)，物品往来见[交易与摆摊](https://happyro.kugarocks.com/game/trading)及[邮件与附件](https://happyro.kugarocks.com/game/mail)。
+
+与 NPC 交谈、购买和出售见[NPC 对话与商店](https://happyro.kugarocks.com/game/npc-shops)，物品与 Zeny 存取见[仓库、手推车与银行](https://happyro.kugarocks.com/game/storage-bank)，显示和音效配置见[画面、声音与镜头](https://happyro.kugarocks.com/game/settings)。
 
 ## 图鉴与冒险工具
 
@@ -58,11 +63,11 @@ Web 管理后台提供账号与角色查询、物品与 Zeny 发放，以及经�
 
 | 入口 | 内容 |
 | --- | --- |
-| [玩家指南](https://happyro.kugarocks.com/game/) / [转职攻略](https://happyro.kugarocks.com/strategy/job-change/) | 登录、日常操作与职业任务 |
+| [玩家指南](https://happyro.kugarocks.com/game/) / [转职攻略](https://happyro.kugarocks.com/strategy/job-change/) | 各功能的交互 UI、图文操作说明与职业任务 |
 | [Docker 部署](https://happyro.kugarocks.com/deploy/docker) | 离线安装与首次启动 |
 | [HTTPS 与反向代理](https://happyro.kugarocks.com/deploy/reverse-proxy) | 域名访问、证书与 WebSocket 转发 |
 | [日常维护](https://happyro.kugarocks.com/deploy/maintenance) / [故障排查](https://happyro.kugarocks.com/deploy/troubleshooting) | 服务状态、日志、重启与常见问题 |
-| [升级](https://happyro.kugarocks.com/deploy/upgrade) / [备份与恢复](https://happyro.kugarocks.com/deploy/backup-restore) | 数据保留、版本升级与回退 |
+| [全新环境安装](https://happyro.kugarocks.com/deploy/upgrade) / [备份与恢复](https://happyro.kugarocks.com/deploy/backup-restore) | 当次版本全新安装、同一完整包的数据备份与恢复 |
 | [自定义功能](https://happyro.kugarocks.com/deploy/customization) | NPC、数据库与客户端资源定制 |
 | [源码开发](https://happyro.kugarocks.com/development/) | 依赖、资源准备、构建与本机服务 |
 
