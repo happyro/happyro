@@ -29,7 +29,7 @@ Admin 地图名 JSON 位于 `repos/happyro-api/resources/game-data/world/map-nam
 | 地图目录（懒加载） | `repos/happyro-client/applications/pwa/data/navigation/map-catalog.json` |
 | Admin 世界资源 | `repos/happyro-api/resources/game-data/world/` |
 
-客户端不再把地图目录打进主包，冒险工具地图图鉴和右上角导航改为运行时按需请求 `map-catalog.json`。
+右上角导航按需加载客户端 `map-catalog.json`。冒险工具地图图鉴调用 `/api/adventure-tools/maps`，后台地图列表调用 API 的地图查询接口；API 在启动时读取世界资源目录中的地图目录并保存在内存中，修改 JSON 后必须重启 API 才会生效。
 
 ## 消费者
 
@@ -51,3 +51,24 @@ Admin 地图名 JSON 位于 `repos/happyro-api/resources/game-data/world/map-nam
 ## 官方共享资源映射
 
 支持目录同时检查实体文件和 `resnametable.txt` 映射后的 RSW、GND、GAT。经典 `new_1-1` 至 `new_5-4` 共 20 张逻辑地图共用 `new_zone01～04`；不能因 GRF 中没有同名 RSW 就将其标记为不支持。当前清单生成出 1,088 张客户端资源完整且服务端启用的地图。此统计只验证三个基础文件，完整模型／贴图解析的范围见各专题验收记录。
+
+## 展示与传送范围
+
+`localization/maps/player-visibility.json` 统一登记非正常游戏入口。`new_zone01～04` 是经典训练场共享场景资源，玩家列表与搜索隐藏，正常入口使用 `new_1-1～4` 及对应分流。生成目录同时更新 Client 与 API 副本。
+
+同一规则隐藏赛道和试炼共享场景 `alde_tt02`、`ordeal_a00`、`ordeal_a02`，当前 Renewal 未使用的 `job_sword1`、无已加载玩法入口的 `quiz_01`，以及任务脚本未启用的 `que_job02`、`que_job03`。正常赛道 `turbo_*`、试炼 `ordeal_*-1/2` 和各机场地图保留；不根据共享资源或 NPC 数量自动推断隐藏范围。
+
+后台游戏地图范围使用相同过滤，全部服务端地图仍保留资料查询；API 返回 `player_hidden`，后台据此隐藏地图和 NPC 传送操作。此字段用于展示，不作为游戏服传送权限校验；实际位置、名称解析和底层资源映射不删除。
+
+## 更新后的验收
+
+重新生成地图目录后，完整构建 PWA（`npm run build -- --all`），确认 Gateway 提供新产物；同时重启使用新目录的 API。若修改了 API 代码，应先重新构建 API。仅刷新浏览器或重建 PWA 不会更新 API 内存中的目录。
+
+在实际使用的域名登录，分别验证：
+
+- 冒险工具搜索「初心者」不包含 `new_zone01～04`，分线关闭时保留 `new_1-1～4`；检查登录后的 `/api/adventure-tools/maps` 响应，而不是只检查静态 JSON。
+- 右上角导航的地图搜索同样不包含隐藏地图；分线开关两种模式下正常入口均保留。
+- 后台游戏地图范围不包含隐藏地图；全部地图范围仍能查看资料，但不显示地图及 NPC 传送按钮。
+- 正常赛道、试炼和机场仍可查询；当前地图名称、图片资源与服务端权限校验保持可用。
+
+隐藏规则只限制目录展示，不是地图服的禁止进入规则。当前位置、已有坐标目标和资源查看不因隐藏而丢失；不要把仍可解析地图名称或加载场景判为隐藏失效。

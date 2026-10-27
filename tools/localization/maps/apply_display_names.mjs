@@ -87,10 +87,6 @@ for (const key of Object.keys(spawns)) {
  if (maps[id]) spawns[key] = maps[id].displayName;
 }
 json(spawnFile, spawns);
-const mapping = read('repos/happyro-admin/src/data/game/maps.ts');
-const labels = Object.fromEntries([...mapping.matchAll(/\s+(\w+): '(players\.map\.[^']+)'/g)].map(m => [m[2], maps[m[1]]?.displayName]).filter(([, name]) => name));
-const localeFile = 'repos/happyro-admin/src/locales/zh-CN.ts';
-write(localeFile, read(localeFile).replace(/'(players\.map\.[^']+)': '([^']*)'/g, (all, key) => labels[key] ? `'${key}': '${labels[key]}'` : all));
 const teleporter = 'repos/happyro-server/npc/custom/warper.txt';
 write(teleporter, updateTeleporterLabels(read(teleporter), maps));
 if (check && changed.length) throw Error(`Map display outputs require generation:\n${changed.join('\n')}`);

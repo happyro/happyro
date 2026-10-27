@@ -31,19 +31,14 @@ test('world map, navigation and NPC location labels agree by exact map identity'
  for (const npc of npcs.entries) if (selected[npc.map]) assert.equal(npc.map_name_zh_cn, selected[npc.map], `NPC ${npc.id}`);
 });
 
-test('admin character and monster-spawn map translations follow the canonical map table', () => {
+test('admin monster-spawn map translations follow the canonical map table', () => {
  const admin = 'repos/happyro-admin/src/';
  const spawn = read(admin + 'locales/zh-CN/monster-spawn-maps.json');
  for (const [key, name] of Object.entries(spawn)) {
   const id = key.replace('gameData.monster.spawnMap.', '');
   if (maps[id + '.rsw']) assert.equal(name, maps[id + '.rsw'].displayName, `admin spawn ${id}`);
  }
- const mapping = fs.readFileSync(path.join(root, admin, 'data/game/maps.ts'), 'utf8');
- const locale = fs.readFileSync(path.join(root, admin, 'locales/zh-CN.ts'), 'utf8');
- const labels = Object.fromEntries([...locale.matchAll(/'(players\.map\.[^']+)': '([^']*)'/g)].map(m => [m[1], m[2]]));
- for (const [, id, key] of mapping.matchAll(/\s+(\w+): '(players\.map\.[^']+)'/g)) {
-  if (maps[id + '.rsw']) assert.equal(labels[key], maps[id + '.rsw'].displayName, `admin player ${id}`);
- }
+
 });
 
 test('legacy town teleporter labels match their actual destination map IDs', () => {
