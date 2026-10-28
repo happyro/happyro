@@ -74,7 +74,7 @@ HappyRO 覆盖写在 `repos/happyro-server/conf/import/`。本机 `make configur
 
 ## 玩法与工具权限
 
-地图服统一提供 32 项 `HAPPYRO_GAME_*` 部署覆盖，支持同步范围、导航、召怪、工具权限、经验、掉落和精炼。布尔值为 true/false，倍率为百分整数（100=1倍）。配置入口同上，值留空交由文件和后台管理。非空覆盖项提交修改时由 API 明确拒绝，地图服同时校验；需更新地图服和 API。完整变量表与示例见[环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables#玩法与工具权限环境变量)。
+地图服统一提供 34 项 `HAPPYRO_GAME_*` 部署覆盖，支持同步范围、导航、召怪、工具权限、经验、掉落、精炼和升阶。布尔值为 true/false，倍率为百分整数（100=1倍）。配置入口同上，值留空交由文件和后台管理。非空覆盖项提交修改时由 API 明确拒绝，地图服同时校验；需更新地图服和 API。完整变量表与示例见[环境变量配置参考](https://happyro.kugarocks.com/deploy/environment-variables#玩法与工具权限环境变量)。
 
 ## 后台账号改密与演示环境
 
