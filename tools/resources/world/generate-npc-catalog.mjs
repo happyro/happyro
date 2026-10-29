@@ -264,7 +264,11 @@ async function buildCatalog() {
 		left.map.localeCompare(right.map) || left.x - right.x || left.y - right.y || left.id.localeCompare(right.id)
 	);
 	entries.forEach((entry, catalogOrder) => {
-		entry.game_visible = entry.capabilities.can_teleport_to_npc && entry.display_sprite_id !== null;
+		// Adventure Tools must list every visible NPC instance, including NPCs
+		// missing an official navigation row. Navigation data controls teleport
+		// capability; it must not hide functional refinement, enchantment, or
+		// card-separation NPCs from search.
+		entry.game_visible = entry.display_sprite_id !== null;
 		entry.catalog_order = catalogOrder;
 	});
 	const configHash = crypto.createHash('sha256');
